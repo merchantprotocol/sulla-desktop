@@ -8,7 +8,7 @@
   <main class="file-detail-main">
     <div class="detail-top">
       <div class="crumbs"><button type="button" @click="emit('close')">My Files</button><template v-for="crumb in pathCrumbs" :key="crumb"><span>›</span><span>{{ crumb }}</span></template></div>
-      <div class="title"><span class="file-glyph" v-html="fileIcon(item.mime)" /><b>{{ name }}</b><span v-if="viewVersion" class="pill idle">{{ viewVersionLabel }}</span></div>
+      <div class="title"><span class="file-glyph" v-html="fileIcon(item.mime)" /><b>{{ name }}</b><span v-if="viewVersion" class="pill idle" :title="viewVersion.id">{{ viewVersionLabel }}</span></div>
       <div class="top-actions">
         <button class="btn ghost ico" type="button" title="Back to files" @click="emit('close')"><span class="bi" v-html="icons.previous" /></button>
         <button v-if="viewVersion || supportsDocumentEditor(item.path)" class="btn" type="button" @click="emit('open')">Open</button>
@@ -23,9 +23,9 @@
       <div class="detail-grid">
         <section class="card preview-card">
           <div class="player">
-            <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" />
-            <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" />
-            <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name">
+            <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
+            <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
+            <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name" @error="onMediaError">
             <iframe v-else-if="mediaUrl && item.mime === 'application/pdf'" :src="mediaUrl" :title="name" sandbox="" />
             <div v-else-if="dataSource.syntheticPreview" class="synthetic-frame" aria-label="Synthetic media preview"><div class="window"><i /><i /><i /><div class="sidebar" /><div class="lines" /></div><span class="play" v-html="icons.play" /></div>
             <div v-else class="preview-unavailable"><span class="unavailable-icon" v-html="fileIcon(item.mime)" /><b>Preview unavailable</b><small>{{ previewStatus }}</small></div>
@@ -148,7 +148,7 @@ const itemDisposalApproved = computed(() => item.disposal?.status === 'approved'
 const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
 const canPurge = computed(() => Boolean(trashItem.value && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
 const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
-const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
+const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(props.viewVersion?.size ?? item.size) } · ${ item.mime }`);
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
 const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
@@ -173,10 +173,11 @@ onMounted(async() => {
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
-  else previewError.value = source.reason instanceof Error ? source.reason.message : String(source.reason);
+  else onMediaError();
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
+function onMediaError() { mediaUrl.value = ''; previewError.value = 'Couldn’t load this preview. Check your Files connection or try opening the file.' }
 async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, viewVersionId.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
 type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
