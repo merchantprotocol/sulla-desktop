@@ -37,7 +37,7 @@
         type="button"
         @click.stop="navigate('share-review')"
       >
-        <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5" /></svg><span>Link</span>
+        <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1.5 1.5" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5" /></svg><span>{{ reference.versionId ? 'Link latest' : 'Link' }}</span>
       </button>
     </div>
     <span v-if="navigationError" class="navigation-error" role="alert" @click.stop>{{ navigationError }}</span>

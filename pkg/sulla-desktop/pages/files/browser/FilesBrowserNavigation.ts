@@ -210,7 +210,14 @@ export class FilesBrowserNavigation {
     const state = this.state;
     const request = state.props.navigation;
     if (!request) { this.consumedNavigation = undefined; return }
-    if (!state.mounted || state.busy.value || state.loading.value || !state.snapshot.value || this.consumedNavigation === request) return;
+    if (!state.mounted || state.busy.value || state.loading.value || this.consumedNavigation === request) return;
+    if (!state.snapshot.value) {
+      if (state.error.value && (request.fileId !== undefined || request.versionId !== undefined)) {
+        state.navigationError.value = 'Couldn’t open this file reference because Files didn’t load. Check your connection and access, then select Try again in Files.';
+      }
+      // Keep the request pending so the Files retry can replay it after a successful load.
+      return;
+    }
     this.consumedNavigation = request;
     void this.navigateTo(request);
     state.emit('navigation-consumed');

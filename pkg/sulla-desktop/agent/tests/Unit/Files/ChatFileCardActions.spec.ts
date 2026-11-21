@@ -46,6 +46,7 @@ describe('chat Files card workspace handoff', () => {
   // risk: the inner action bubbling to the card's Open or escaping the review path.
   it.each([
     ['History', 'versions', canonical, 'fixture-v1', 'Fake/note.pdf'],
+    ['Link latest', 'share-review', canonical, 'fixture-v1', 'Fake/note.pdf'],
     ['Link', 'share-review', bare, undefined, fileId],
   ] as const)('requests only %s via native keyboard button activation', async(label, section, link, versionId, path) => {
     const [reference] = parseDurableFileReferences(link);

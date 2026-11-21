@@ -57,6 +57,38 @@ describe('FilesBrowserController', () => {
 
   const keysOf = () => browser.listing.displayedEntries.value.map(entry => entry.key);
 
+  // risk: a card request disappears after an initial listing failure instead of being retried.
+  it('reports an initial listing failure and retries the same file reference after Files reloads', async() => {
+    const fileId = 'synthetic-video';
+    const lookup = vi.spyOn(source, 'detail');
+    vi.spyOn(source, 'load').mockRejectedValueOnce(new Error('private listing bridge failure'));
+    browser = new FilesBrowserController({ dataSource: source, tabId: 'tab', navigation: { fileId, section: 'detail' } }, emit, useFilesExplorerInteractions('tab'), operationsFor(source));
+    browser.state.mounted = true;
+
+    const firstLoad = browser.refresher.refresh();
+    browser.navigation.consumeNavigation();
+    expect(emit).not.toHaveBeenCalled();
+    expect(browser.state.navigationError.value).toBe('');
+    await firstLoad;
+    browser.navigation.consumeNavigation();
+    expect(browser.state.navigationError.value).toContain('Try again');
+    expect(browser.state.navigationError.value).not.toContain('private listing');
+    expect(lookup).not.toHaveBeenCalled();
+    expect(emit).not.toHaveBeenCalled();
+
+    await browser.refresher.refresh();
+    browser.state.busy.value = true;
+    browser.navigation.consumeNavigation();
+    expect(lookup).not.toHaveBeenCalled();
+    browser.state.busy.value = false;
+    browser.navigation.consumeNavigation();
+    browser.navigation.consumeNavigation();
+    await vi.waitFor(() => expect(browser.state.selected.value?.id).toBe(fileId));
+    expect(browser.state.navigationError.value).toBe('');
+    expect(lookup).toHaveBeenCalledExactlyOnceWith(fileId);
+    expect(emit).toHaveBeenCalledExactlyOnceWith('navigation-consumed');
+  });
+
   // risk: an immutable URL opens the current file instead, or Link publishes on click.
   it('opens the exact older version, defaults a bare reference, and only reviews sharing', async() => {
     const fileId = 'synthetic-video';
@@ -82,7 +114,9 @@ describe('FilesBrowserController', () => {
     expect(browser.state.selected.value?.id).toBe(fileId);
     expect(browser.state.detailTab.value).toBe('versions');
 
-    await browser.navigation.navigateTo({ fileId, path: fileId, section: 'share-review' });
+    await browser.navigation.navigateTo({ ...ref, section: 'share-review' });
+    expect(browser.state.detailVersion.value).toBeUndefined();
+    expect(browser.state.selected.value?.currentVersionId).toBe(file.currentVersionId);
     expect(browser.state.shareTarget.value).toMatchObject({ id: fileId, path: file.path, folder: false });
     expect(publish).not.toHaveBeenCalled();
   });

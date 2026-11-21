@@ -40,7 +40,7 @@ export class FilesBrowserLifecycle {
     watch([state.selectedKeys, b.listing.visibleEntries], b.dragSnapshots.revalidate, { flush: 'sync' });
     onBeforeUnmount(b.dragSnapshots.invalidate);
     watch([state.query, state.section, state.busy], b.search.onQueryChanged);
-    watch([state.busy, state.loading], ([busy, loading]) => { if (!busy && !loading) b.navigation.consumeNavigation() });
+    watch([state.busy, state.loading, () => Boolean(state.snapshot.value)], ([busy, loading]) => { if (!busy && !loading) b.navigation.consumeNavigation() });
     watch(() => state.props.navigation, () => b.navigation.consumeNavigation());
     watch([state.busy, state.loading], ([mutating, fetching]) => { if (!mutating && !fetching && b.liveUpdates.pendingChange) b.liveUpdates.scheduleFilesRefresh() });
     watch(state.currentPath, b.folderLoader.loadFolder);
