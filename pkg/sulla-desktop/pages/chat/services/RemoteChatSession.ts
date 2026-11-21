@@ -96,11 +96,15 @@ export class RemoteChatSession {
     return { type, conversationId: binding.threadId, targetDeviceId: binding.deviceId, ...extra };
   }
 
-  async refresh(): Promise<void> {
+  async refresh(catchUp = false): Promise<void> {
     try {
       const scope = await this.transport.connect();
       if (this.disposed || !scope) return;
       this.ready(scope);
+      const binding = this.bound.value;
+      if (catchUp && binding && this.subscribed === binding.threadId && !this.buffer && !binding.pending) {
+        void this.catchUp(binding);
+      }
     } catch { /* No Cloud dependency for local mode. */ }
   }
 
@@ -192,9 +196,10 @@ export class RemoteChatSession {
   }
 
   canSend(): boolean {
+    const status = this.status.value;
     const b = this.bound.value;
     const model = this.model.value;
-    return !!this.scope && !!model && !b?.pending && !this.routing && !this.running.value && (!b || !!this.subscribed)
+    return !!this.scope && !!model && !b?.pending && !this.routing && !this.running.value && (!b || (!!this.subscribed && status.startsWith('Connected')))
       && this.models.value.some(candidate => candidate.providerId === model.providerId && candidate.modelId === model.modelId);
   }
 
@@ -295,8 +300,11 @@ export class RemoteChatSession {
         clearTimeout(this.sendTimer);
         const { pending, ...binding } = b;
         this.routing = false;
-        this.updateBinding(binding);
-        this.committed({ kind: 'user', id: asMessageId(pending.id), text: pending.text, createdAt: Date.now() });
+        const thread = this.chat.thread.value;
+        const accepted: Message = { kind: 'user', id: asMessageId(pending.id), text: pending.text, createdAt: Date.now() };
+        this.chat.thread.value = { ...thread, remote: binding, messages:
+          thread.messages.some(message => message.id === pending.id) ? thread.messages : [...thread.messages, accepted] };
+        this.chat.persistThread();
         if (this.chat.thread.value.title === 'New chat') {
           this.chat.renameThread(pending.text.trim().slice(0, 44));
         }
