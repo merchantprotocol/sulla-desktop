@@ -72,3 +72,90 @@ describe('SullaFilesCapturePathClipboardService', () => {
     }
   });
 });
+
+describe('tray screenshot Save to Files', () => {
+  async function fixture(run:(directory:string) => Promise<void>) {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sulla-save-spec-'));
+    try { await run(await fs.realpath(directory)) } finally { await fs.rm(directory, { recursive: true, force: true }) }
+  }
+
+  const bytes = Buffer.from([0, 127, 255, 42]);
+  const name = 'Screenshot.png';
+
+  // risk: data integrity — a vanished Files root must not lose the original or overwrite a same-named download.
+  it('retains original bytes when capture starts without Files, then exclusively writes concurrent duplicate save names', async() => fixture(async directory => {
+    const files = path.join(directory, 'Files');
+    const downloads = path.join(directory, 'Downloads');
+    await fs.mkdir(downloads);
+    await fs.writeFile(path.join(downloads, name), 'existing');
+    const clipboard = vi.fn();
+    const choose = vi.fn();
+    const importer = vi.fn();
+    const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard, () => downloads);
+    const service = new SullaFilesCaptureService(undefined, undefined, clipboard, importer);
+    const pending = await service.prepareTrayScreenshot(name, bytes, destinations);
+    expect(importer).not.toHaveBeenCalled();
+    expect(clipboard).not.toHaveBeenCalled();
+    expect(await fs.readdir(downloads)).toEqual([name]);
+
+    const saved = await Promise.all([1, 2].map(() => destinations.saveScreenshot(pending, choose)));
+    expect(new Set(saved).size).toBe(2);
+    for (const file of saved) expect(await fs.readFile(file!)).toEqual(bytes);
+    expect(await fs.readFile(path.join(downloads, name), 'utf8')).toBe('existing');
+    expect(clipboard.mock.calls.map(([file]) => file).sort()).toEqual(saved.sort());
+    expect(choose).not.toHaveBeenCalled();
+  }));
+
+  // risk: data integrity — a capture already imported into Files must copy that path while available; if the root disappears, retry with original bytes.
+  it('prefers Files, then preserves a cancelled native save for retry when both roots disappear', async() => fixture(async directory => {
+    const files = path.join(directory, 'Files');
+    const downloads = path.join(directory, 'missing-downloads');
+    await fs.mkdir(path.join(files, 'Screenshots'), { recursive: true });
+    const relativePath = `Screenshots/${ name }`;
+    const absolute = path.join(files, relativePath);
+    const selected = path.join(directory, 'chosen.png');
+    await fs.writeFile(absolute, bytes);
+    const clipboard = vi.fn();
+    const occupied = path.join(directory, 'existing.png');
+    await fs.writeFile(occupied, 'keep');
+    const choose = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(occupied).mockResolvedValueOnce(selected);
+    const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard, () => downloads);
+    const service = new SullaFilesCaptureService(undefined, undefined, clipboard, async() => [{
+      fileId: 'f1', versionId: 'v1', path: relativePath, name, mime: 'image/png', size: bytes.length, updatedAt: '',
+    }]);
+    const pending = await service.prepareTrayScreenshot(name, bytes, destinations);
+
+    expect(await destinations.saveScreenshot(pending, choose)).toBe(absolute);
+    expect(choose).not.toHaveBeenCalled();
+    await fs.rename(files, path.join(directory, 'detached'));
+    expect(await destinations.saveScreenshot(pending, choose)).toBeUndefined();
+    await expect(destinations.saveScreenshot(pending, choose)).rejects.toMatchObject({ code: 'EEXIST' });
+    expect(await fs.readFile(occupied, 'utf8')).toBe('keep');
+    expect(clipboard.mock.calls).toEqual([[absolute]]);
+    expect(await destinations.saveScreenshot(pending, choose)).toBe(selected);
+    expect(await fs.readFile(selected)).toEqual(bytes);
+    expect(clipboard.mock.calls).toEqual([[absolute], [selected]]);
+  }));
+
+  // risk: unintended file writes — a missing item under an available root or stale ownership must not create a copy elsewhere.
+  it('does not fall back for a missing Files item or write after a native dialog loses its capture', async() => fixture(async directory => {
+    const files = path.join(directory, 'Files');
+    await fs.mkdir(files);
+    const selected = path.join(directory, 'stale.png');
+    const clipboard = vi.fn();
+    const destinations = new SullaFilesCapturePathClipboardService(() => files, clipboard, () => path.join(directory, 'absent'));
+    const pending = { bytes, name, capture };
+    const choose = vi.fn();
+    await expect(destinations.saveScreenshot(pending, choose)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(choose).not.toHaveBeenCalled();
+
+    await fs.rmdir(files);
+    let current = true;
+    await expect(destinations.saveScreenshot(pending, async() => {
+      current = false;
+      return selected;
+    }, () => current)).resolves.toBeUndefined();
+    await expect(fs.stat(selected)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(clipboard).not.toHaveBeenCalled();
+  }));
+});
