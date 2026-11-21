@@ -168,8 +168,8 @@ export class DesktopRelayRequestHandlers {
     let acceptance: Awaited<ReturnType<DesktopRelayTurnScribe['acceptUserTurn']>>;
     try {
       acceptance = await this.scribe.acceptUserTurn(conversationId, msg.userMessageId, transcriptText(turn));
-    } catch (error) {
-      this.log.warn('[DesktopRelay] Could not commit relay acceptance:', error);
+    } catch {
+      this.log.warn('[DesktopRelay] Could not commit relay acceptance');
       this.outbox.sendChatFrame(conversationId, { type: 'error', reason: 'acceptance_unavailable', ...identity });
       return;
     }

@@ -175,10 +175,11 @@ export async function acceptRelayUserTurn(input: MirrorInput & { id: string }): 
       const receipt = await client.query(
         `SELECT id FROM claude_messages
           WHERE id = $1 AND contractor_id = $2 AND conversation_id = $3 AND role = 'user'
-            AND content = $4 AND deleted_at IS NULL`,
+            AND content = $4 AND status = 'sent' AND routed_to = 'desktop' AND deleted_at IS NULL`,
         [id, contractorId, conversationId, content],
       );
-      // Roll back any conversation row created while handling a foreign id.
+      // A queued/synced or foreign row does not prove acceptance. Fail closed
+      // instead of acknowledging it or attempting a potentially ambiguous repeat.
       if (!receipt.rowCount) throw new RelayMessageConflict();
       return 'duplicate';
     }
