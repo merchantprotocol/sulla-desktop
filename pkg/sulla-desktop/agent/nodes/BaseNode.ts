@@ -1012,6 +1012,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return true;
   }
 
+  private staleStallReply(state: BaseThreadState): NormalizedResponse {
+    state.metadata.cycleComplete = true;
+
+    return { content: '', metadata: { tokens_used: 0, time_spent: 0, finish_reason: FinishReason.Stop, reusedAssistantMessage: true } };
+  }
+
   /**
      * Unified chat: takes state + new system prompt + user message.
      * - Replaces last system prompt (or appends new one)
