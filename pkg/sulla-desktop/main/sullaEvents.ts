@@ -35,6 +35,7 @@ import { initRecipeRailApps } from './marketplace/recipeRailApps';
 import { MainIpcControllersProvider } from './ipc/MainIpcControllersProvider';
 import { initDebugErrorReporting } from './DebugErrorService';
 import { initThreadShelfIpc } from './threadShelf';
+import { initRemoteChatViewerIpc } from './cloud/remoteChat/ipc';
 
 import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
@@ -87,6 +88,7 @@ export function initSullaEvents(): void {
   ipcControllers.orgConversations.register();
   initConversationHistoryIpc();
   initThreadShelfIpc();
+  initRemoteChatViewerIpc();
   ipcControllers.bookmarks.register();
   ipcControllers.chatMessages.register();
   ipcControllers.conversationMessages.register();

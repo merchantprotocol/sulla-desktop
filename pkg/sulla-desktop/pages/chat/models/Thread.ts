@@ -68,6 +68,17 @@ export interface SidebarState {
  * Persistence happens at this granularity. Live mutations happen through the
  * controller so the reactive view layer can respond.
  */
+export interface RemoteThreadBinding {
+  accountId: string;
+  workspaceId: string;
+  threadId: string;
+  deviceId: string;
+  name: string;
+  cursor?: string;
+  removedFromCache?: string[];
+  pending?: { id: string; text: string };
+}
+
 export interface Thread {
   id:               ThreadId;
   title:            string;
@@ -80,6 +91,7 @@ export interface Thread {
   agentId?:         string | null;
   providerId?:      string | null;
   runLocation?: 'vm' | 'container';
+  remote?: RemoteThreadBinding;
 }
 
 /** The full saveable state of a live chat session. */

@@ -95,6 +95,15 @@ export class DesktopRelayRuntimePorts {
           return prefs.enabled && prefs.conversations && prefs.remoteAccess;
         },
         approveViewer: async(id, key) => (await getCloudPreferences()).remoteAccess && ApprovedClients.get(id)?.publicKey === key,
+        hasScopedReceipt: async(thread, message, scope) => {
+          const receipt = await postgresClient.queryWithResult(
+            `SELECT m.id FROM claude_messages m JOIN claude_conversations c ON c.id = m.conversation_id AND c.contractor_id = m.contractor_id
+              WHERE m.id = $1 AND c.id = $2 AND c.contractor_id = $3 AND c.relay_workspace_id = $4 AND c.relay_host_device_id = $5
+                AND m.role = 'user' AND m.status = 'sent' AND m.routed_to = 'desktop' AND m.deleted_at IS NULL AND c.deleted_at IS NULL`,
+            [message, thread, scope.accountId, scope.workspaceId, scope.hostDeviceId],
+          );
+          return receipt.rows.length === 1;
+        },
         modelCapabilities: async() => {
           const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
           const service = getModelProviderService();
