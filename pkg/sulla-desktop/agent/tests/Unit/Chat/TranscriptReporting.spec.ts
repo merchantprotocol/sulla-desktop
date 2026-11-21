@@ -325,28 +325,55 @@ it('renders ordered citation links inline only in Detailed on stream, replay and
 });
 
 // risk: Detailed paraphrases authorized visible fields, leaks free-form
-// values, reorders events, or changes the records carried into history.
-it('projects benign visible tool fields verbatim live and from unchanged saved records', async() => {
+// values or timing into lower reporting levels, reorders events, or changes
+// the timing and other records carried into history.
+it('projects benign visible tool fields and recorded time from unchanged live and saved records', async() => {
   const live = new ReportingFixture();
   live.emit('assistant_message', { kind: 'thinking', content: 'Steering Claude with your message…', reportingActivity: 'status' });
   live.emit('progress', { phase: 'tool_call', toolRunId: 'benign-run', toolName: 'exec', args: {} });
   live.emit('progress', { phase: 'tool_result', toolRunId: 'benign-run', success: true, result: 'PRIVATE_OUTPUT' });
   live.emit('assistant_message', { kind: 'thinking', content: 'PRIVATE_HIDDEN_REASONING' });
   live.emit('assistant_message', { kind: 'thinking', content: 'Claude picked up your message', reportingActivity: 'status' });
+  live.chat.appendMessage({
+    id: asMessageId('undated-status'), kind: 'thinking', createdAt: 0,
+    thoughts: ['Preparing your turn…'], reportingActivity: 'status', startedAt: 0, completed: true,
+  });
   const saved = JSON.stringify(live.chat.serialize());
   const originalRecords = JSON.stringify(live.chat.messages.value);
   const tool = live.chat.messages.value.find(message => message.kind === 'tool')!;
   expect(tool).toMatchObject({ tool: 'Bash', status: 'ok', desc: 'Running command' });
-  const expected = ['Steering Claude with your message…', 'Bash · ok · Running command · Details withheld', 'Claude picked up your message'];
+  const recordedTime = new Date(Number(tool.id.split('_')[0])).toISOString();
+  const expected = [
+    'Steering Claude with your message…', 'Bash · ok · Running command · Details withheld',
+    'Claude picked up your message', 'Preparing your turn…',
+  ];
   const wrapper = live.mount('info');
   expect(wrapper.findAll('.report-activity').map(row => row.text())).toEqual(['Shell · Completed']);
+  expect(wrapper.find('.report-activity time').exists()).toBe(false);
+  await wrapper.setProps({ reportingLevel: 'fatal' });
+  expect(wrapper.find('.report-activity').exists()).toBe(false);
   await wrapper.setProps({ reportingLevel: 'debug' });
-  expect(wrapper.findAll('.report-activity').map(row => row.text())).toEqual(expected);
+  expect(wrapper.findAll('.report-activity-text').map(row => row.text())).toEqual(expected);
+  const toolTime = wrapper.findAll('.report-activity')[1].get('time');
+  expect(toolTime.attributes('datetime')).toBe(recordedTime);
+  expect(toolTime.text()).not.toBe('');
+  const undated = wrapper.findAll('.report-activity').at(-1)!;
+  expect(undated.find('time').exists()).toBe(false);
+  expect(undated.text()).toContain('Time unavailable');
   expect(wrapper.text()).not.toContain('PRIVATE_');
   expect(JSON.stringify(live.chat.messages.value)).toBe(originalRecords);
 
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(saved) }));
   const hydrated = reopened.mount('debug');
-  expect(hydrated.findAll('.report-activity').map(row => row.text())).toEqual(expected);
+  expect(hydrated.findAll('.report-activity-text').map(row => row.text())).toEqual(expected);
+  const restoredTime = hydrated.findAll('.report-activity')[1].get('time');
+  expect(restoredTime.attributes('datetime')).toBe(recordedTime);
+  expect(restoredTime.text()).toBe(toolTime.text());
+  expect(hydrated.text()).not.toContain('PRIVATE_');
+  await hydrated.setProps({ reportingLevel: 'info' });
+  expect(hydrated.findAll('.report-activity').map(row => row.text())).toEqual(['Shell · Completed']);
+  expect(hydrated.find('.report-activity time').exists()).toBe(false);
+  await hydrated.setProps({ reportingLevel: 'fatal' });
+  expect(hydrated.find('.report-activity').exists()).toBe(false);
   expect(JSON.stringify(reopened.chat.messages.value)).toBe(originalRecords);
 });

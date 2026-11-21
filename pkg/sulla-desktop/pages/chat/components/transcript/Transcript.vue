@@ -32,7 +32,15 @@
             :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
           >{{ entry.label }}</span>
           <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" />
-          <div v-else class="report-activity">{{ entry.text }}</div>
+          <div v-else class="report-activity">
+            <span class="report-activity-text">{{ entry.text }}</span>
+            <template v-if="reportingLevel === 'debug'">
+              <time v-if="activityTimes.get(entry.id)" class="report-activity-time" :datetime="activityTimes.get(entry.id)?.iso">
+                {{ activityTimes.get(entry.id)?.label }}
+              </time>
+              <span v-else class="report-activity-time">Time unavailable</span>
+            </template>
+          </div>
         </div>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
@@ -83,13 +91,27 @@ const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
   entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
-// A compact activity line doesn't render a minute stamp; let the next
-// visible card claim it instead.
+// Detailed activity has its own timestamps; only cards participate in
+// the existing shared card-minute stamps.
 const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(entry => entry.kind === 'card').map(entry => ({
   id: entry.id,
   at: LineTimes.idTime(entry.sourceId) ?? entry.createdAt,
 }))));
 provide(LineTimeKey, id => times.value.get(id));
+
+const activityTimes = computed(() => {
+  const recorded = new Map<string, { iso: string; label: string }>();
+  if (props.reportingLevel !== 'debug') return recorded;
+  for (const entry of transcriptEntries.value) {
+    if (entry.kind !== 'activity') continue;
+    const at = LineTimes.idTime(entry.sourceId) ?? entry.createdAt;
+    const date = new Date(at);
+    if (at > 0 && Number.isFinite(date.getTime())) {
+      recorded.set(entry.id, { iso: date.toISOString(), label: LineTimes.fullTime(at) });
+    }
+  }
+  return recorded;
+});
 
 // "Jump to" from the side dock, status line or quick switcher: whichever
 // transcript shows the message scrolls to it.
@@ -179,6 +201,7 @@ defineExpose({ scroller, scrollToBottom });
 }
 .report-label-user { align-self: flex-end; }
 .report-activity { color: var(--text-secondary); font-size: 13px; }
+.report-activity-time { margin-inline-start: 8px; color: var(--text-muted); }
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
 .scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }
