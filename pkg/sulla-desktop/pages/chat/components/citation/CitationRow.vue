@@ -5,57 +5,54 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <details class="supporting-reports">
-    <summary>{{ heading }} <span>{{ msg.sources.length }}</span></summary>
-    <ul>
-      <li
-        v-for="source in msg.sources"
-        :key="source.num"
-        class="report-row"
-      >
-        <svg
-          class="report-icon"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.6"
-          aria-hidden="true"
-        ><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6" /></svg>
-        <div class="report-copy">
-          <b>{{ source.title }}</b>
-          <small>{{ resolver.webUrl(source) ? 'Web source' : 'Saved report reference' }}</small>
-          <details class="report-location">
-            <summary>Location</summary><p>{{ source.origin }}</p>
-          </details>
-          <p
-            v-if="errors[source.num]"
-            class="report-error"
-            role="alert"
-          >
-            {{ errors[source.num] }}
-          </p>
-        </div>
-        <a
-          v-if="resolver.webUrl(source)"
-          :href="resolver.webUrl(source)"
-          target="_blank"
-          rel="noopener noreferrer"
-        >Read source <span aria-hidden="true">↗</span></a>
-        <button
-          v-else
-          type="button"
-          :disabled="busy.has(source.num)"
-          @click="open(source)"
+  <ul class="supporting-reports" aria-label="Sources and reports">
+    <li
+      v-for="(source, index) in msg.sources"
+      :key="index"
+      class="report-row"
+    >
+      <svg
+        class="report-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        aria-hidden="true"
+      ><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6" /></svg>
+      <div class="report-copy">
+        <b>{{ source.title }}</b>
+        <small>{{ resolver.webUrl(source) ? 'Web source' : 'Saved report reference' }}</small>
+        <details class="report-location">
+          <summary>Location</summary><p>{{ source.origin }}</p>
+        </details>
+        <p
+          v-if="errors[index]"
+          class="report-error"
+          role="alert"
         >
-          {{ busy.has(source.num) ? 'Opening…' : 'Read report' }} <span aria-hidden="true">↗</span>
-        </button>
-      </li>
-    </ul>
-  </details>
+          {{ errors[index] }}
+        </p>
+      </div>
+      <a
+        v-if="resolver.webUrl(source)"
+        :href="resolver.webUrl(source)"
+        target="_blank"
+        rel="noopener noreferrer"
+      >Read source <span aria-hidden="true">↗</span></a>
+      <button
+        v-else
+        type="button"
+        :disabled="busy.has(index)"
+        @click="open(source, index)"
+      >
+        {{ busy.has(index) ? 'Opening…' : 'Read report' }} <span aria-hidden="true">↗</span>
+      </button>
+    </li>
+  </ul>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from 'vue';
+import { reactive } from 'vue';
 
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
 
@@ -65,29 +62,28 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { CitationMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CitationMessage }>();
+defineProps<{ msg: CitationMessage }>();
 const resolver = new SupportingReportResolver(ipcRenderer);
-const heading = computed(() => props.msg.sources.some(source => resolver.webUrl(source)) ? 'Sources and reports' : 'Supporting reports');
 const busy = reactive(new Set<number>());
 const errors = reactive<Record<number, string>>({});
 
-async function open(source: CitationMessage['sources'][number]): Promise<void> {
-  if (busy.has(source.num)) return;
-  busy.add(source.num); delete errors[source.num];
+async function open(source: CitationMessage['sources'][number], index: number): Promise<void> {
+  if (busy.has(index)) return;
+  busy.add(index); delete errors[index];
   try {
     const file = await resolver.file(source);
     await resolver.verify(file);
     if (supportsDocumentEditor(file.path)) await openWorkspaceTab({ mode: 'paper', documentFile: file });
     else await openWorkspaceTab({ mode: 'files', title: source.title, filesNavigation: { ...file, section: 'detail' } });
-  } catch (error) { errors[source.num] = error instanceof Error ? error.message : 'The report could not be opened. Please retry.' } finally { busy.delete(source.num) }
+  } catch (error) { errors[index] = error instanceof Error ? error.message : 'The report could not be opened. Please retry.' } finally { busy.delete(index) }
 }
 </script>
 
 <style scoped>
-.supporting-reports { margin: 12px 0; color: var(--text-secondary); font: 12px var(--font-body); }
-.supporting-reports > summary { display: list-item; width: fit-content; cursor: pointer; padding: 5px 0; color: var(--text-muted); }
-.supporting-reports > summary span { margin-left: 6px; font-variant-numeric: tabular-nums; }
-ul { margin: 6px 0 0; padding: 0; list-style: none; max-width: 680px; }
+.supporting-reports {
+  margin: 12px 0; padding: 0; list-style: none; max-width: 680px;
+  color: var(--text-secondary); font: 12px var(--font-body);
+}
 .report-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border-default); }
 .report-icon { width: 18px; height: 20px; flex: none; margin-top: 1px; color: var(--text-muted); }
 .report-copy { min-width: 0; flex: 1; }

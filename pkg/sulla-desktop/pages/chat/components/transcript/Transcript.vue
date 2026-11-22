@@ -21,30 +21,36 @@
           :label="todayLabel"
         />
 
-        <template
+        <div
           v-for="entry in transcriptEntries"
           :key="entry.id"
+          :ref="el => jumper.register(entry.id, el)"
+          class="report-entry"
         >
-          <ThinkingGroup
-            v-if="entry.kind === 'thinking-group'"
-            :ref="el => jumper.register(entry.id, el)"
-            :messages="entry.messages"
-            :line-id="entry.id"
+          <span
+            class="report-label"
+            :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
+          >{{ entry.label }}</span>
+          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" />
+          <div v-else class="report-activity">
+            <span class="report-activity-text">{{ entry.text }}</span>
+            <template v-if="reportingLevel === 'debug'">
+              <time v-if="activityTimes.get(entry.id)" class="report-activity-time" :datetime="activityTimes.get(entry.id)?.iso">
+                {{ activityTimes.get(entry.id)?.label }}
+              </time>
+              <span v-else class="report-activity-time">Time unavailable</span>
+            </template>
+          </div>
+        </div>
+        <div v-if="waiting" :key="waiting.since" class="report-entry">
+          <span class="report-label">Status</span>
+          <TurnWaiting
+            :since="waiting.since"
+            :can-resend="!waiting.message.attachments?.length"
+            @stop="controller.stop()"
+            @resend="resend"
           />
-          <MessageRouter
-            v-else
-            :ref="el => jumper.register(entry.id, el)"
-            :msg="entry"
-          />
-        </template>
-        <TurnWaiting
-          v-if="waiting"
-          :key="waiting.since"
-          :since="waiting.since"
-          :can-resend="!waiting.message.attachments?.length"
-          @stop="controller.stop()"
-          @resend="resend"
-        />
+        </div>
       </div>
     </div>
 
@@ -60,36 +66,52 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
-import { groupTranscriptThinking } from './toolGroups';
+import { TranscriptReporting } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
-import { returnCoveredByCard } from '../../messages/handoffCover';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
 import { TranscriptJump } from '../../messages/transcriptJump';
 import { waitingOn } from '../../messages/waitingStatus';
-import ThinkingGroup from '../thinking/ThinkingGroup.vue';
+import type { ReportingLevel } from '../../models/ReportingLevel';
 
+const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
+const reporting = new TranscriptReporting();
 
-const { showPill, scrollToBottom } = useScrollAnchor(scroller, controller.messages);
-const transcriptEntries = computed(() => groupTranscriptThinking(controller.messages.value));
+const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
+  entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
+const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
-// Each line's time, shown once per minute (see lineTime.ts). Lines that are
-// not shown don't count, or they would take the minute from the line below.
-const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(entry =>
-  !(entry.kind === 'subagent_exchange' && returnCoveredByCard(entry, controller.messages.value))).map(entry => ({
+// Detailed activity has its own timestamps; only cards participate in
+// the existing shared card-minute stamps.
+const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(entry => entry.kind === 'card').map(entry => ({
   id: entry.id,
-  at: LineTimes.idTime(entry.id) ?? (entry.kind === 'thinking-group' ? Math.min(...entry.messages.map(m => m.createdAt)) : entry.createdAt),
+  at: LineTimes.idTime(entry.sourceId) ?? entry.createdAt,
 }))));
 provide(LineTimeKey, id => times.value.get(id));
+
+const activityTimes = computed(() => {
+  const recorded = new Map<string, { iso: string; label: string }>();
+  if (props.reportingLevel !== 'debug') return recorded;
+  for (const entry of transcriptEntries.value) {
+    if (entry.kind !== 'activity') continue;
+    const at = LineTimes.idTime(entry.sourceId) ?? entry.createdAt;
+    const date = new Date(at);
+    if (at > 0 && Number.isFinite(date.getTime())) {
+      recorded.set(entry.id, { iso: date.toISOString(), label: LineTimes.fullTime(at) });
+    }
+  }
+  return recorded;
+});
 
 // "Jump to" from the side dock, status line or quick switcher: whichever
 // transcript shows the message scrolls to it.
@@ -100,6 +122,12 @@ function onJump(event: Event): void {
 }
 let loadingOlder = false;
 let historyExhausted = false;
+let pageEpoch = 0;
+watch(() => controller.thread.value.id, () => {
+  pageEpoch++;
+  loadingOlder = false;
+  historyExhausted = false;
+}, { flush: 'sync' });
 async function loadOlderOnScroll(): Promise<void> {
   const el = scroller.value;
   if (!el) return;
@@ -108,23 +136,26 @@ async function loadOlderOnScroll(): Promise<void> {
   const messages = controller.messages.value;
   const oldest = messages[0];
   if (!oldest) return;
+  const threadId = controller.thread.value.id;
+  const epoch = pageEpoch;
   loadingOlder = true;
   try {
-    const count = await ipcRenderer.invoke('chat-messages:message-count', controller.thread.value.id);
+    const count = await ipcRenderer.invoke('chat-messages:message-count', threadId);
+    if (epoch !== pageEpoch) return;
     if (!count.success || count.count <= messages.length) { historyExhausted = true; return; }
     const prevHeight = el.scrollHeight;
     const prevTop = el.scrollTop;
-    const page = await ipcRenderer.invoke('chat-messages:load-before', { threadId: controller.thread.value.id, beforeMessageId: oldest.id, limit: 50 });
-    if (!page.success) return;
+    const page = await ipcRenderer.invoke('chat-messages:load-before', { threadId, beforeMessageId: oldest.id, limit: 50 });
+    if (epoch !== pageEpoch || !page.success) return;
     const older = page.data ?? [];
     controller.prependOlder(older);
     if (older.length < 50) historyExhausted = true;
     await nextTick();
-    el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
-  } finally { loadingOlder = false; }
+    if (epoch === pageEpoch) el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+  } finally { if (epoch === pageEpoch) loadingOlder = false; }
 }
 onMounted(() => { window.addEventListener('chat:jump-to-message', onJump); scroller.value?.addEventListener('scroll', loadOlderOnScroll, { passive: true }); });
-onBeforeUnmount(() => { window.removeEventListener('chat:jump-to-message', onJump); scroller.value?.removeEventListener('scroll', loadOlderOnScroll); });
+onBeforeUnmount(() => { pageEpoch++; window.removeEventListener('chat:jump-to-message', onJump); scroller.value?.removeEventListener('scroll', loadOlderOnScroll); });
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
 const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
@@ -162,6 +193,15 @@ defineExpose({ scroller, scrollToBottom });
   --tr-fade-end: calc(var(--composer-h, 140px) - 4px);
   mask-image: linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
 }
+.report-entry { display: flex; flex-direction: column; min-width: 0; }
+.report-label {
+  color: var(--text-muted); margin-bottom: 4px;
+  font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.report-label-user { align-self: flex-end; }
+.report-activity { color: var(--text-secondary); font-size: 13px; }
+.report-activity-time { margin-inline-start: 8px; color: var(--text-muted); }
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
 .scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }

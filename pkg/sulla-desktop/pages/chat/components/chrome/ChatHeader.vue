@@ -41,6 +41,11 @@
       >{{ controller.thread.value.title }}</span>
     </div>
 
+    <select v-model="reportingLevel" class="ch-reporting" aria-label="Reporting" title="Reporting">
+      <option value="fatal">Brief</option>
+      <option value="info">Standard</option>
+      <option value="debug">Detailed</option>
+    </select>
   </header>
 </template>
 
@@ -49,6 +54,9 @@ import { inject, ref, type Ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 
+import type { ReportingLevel } from '../../models/ReportingLevel';
+
+const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { default: 'info' });
 const controller = useChatController();
 /** Set when this chat is an agent's own tab: who launched it, and a way back. */
 const origin = inject<Ref<{ name: string; back: () => void } | null>>('chat:agent-origin', ref(null));
@@ -98,4 +106,10 @@ function cancelTitle(): void {
 .ch-origin:hover { color: var(--accent); border-color: var(--accent); }
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-reporting {
+  justify-self: end; max-width: 100%; height: 28px; padding: 0 6px;
+  color: var(--text-primary); background: var(--bg-surface);
+  border: 1px solid var(--border-default); border-radius: 6px; font: inherit; font-size: 12px;
+}
+.ch-reporting:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>

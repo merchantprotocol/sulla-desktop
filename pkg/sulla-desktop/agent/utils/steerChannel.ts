@@ -62,7 +62,14 @@ export function markSteerPending(message: ChatMessage): void {
  * Append a steer to the running state and offer it to the live CLI turn, if
  * one is listening. Stays pending when no listener takes it.
  */
-export function injectSteer(state: { messages: ChatMessage[] }, message: ChatMessage): boolean {
+export function injectSteer(state: {
+  messages: ChatMessage[];
+  metadata?: { reportingDecisionFollowUp?: { id: string; threadId: string }; reportingSteerRevision?: number };
+}, message: ChatMessage): boolean {
+  if (state.metadata) {
+    delete state.metadata.reportingDecisionFollowUp;
+    state.metadata.reportingSteerRevision = (state.metadata.reportingSteerRevision ?? 0) + 1;
+  }
   (message as any).metadata = { ...((message as any).metadata || {}), steerPending: true };
   DeferredStallInput.appendActionable(state, message);
   return offerSteer(state, message);
