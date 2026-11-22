@@ -16,12 +16,13 @@ type Request = (thread: string, cursor: string, ids: string[], reconcileOnly: bo
 export class RemoteChatHistory {
   constructor(private readonly fetchPage: Request) {}
 
-  async catchUp(binding: RemoteThreadBinding, cached: readonly Message[], alive: () => boolean): Promise<{ cursor: string; messages: Message[]; removed: string[] } | undefined> {
+  async catchUp(binding: RemoteThreadBinding, cached: readonly Message[], alive: () => boolean): Promise<{ cursor: string; messages: Message[]; removed: string[]; confirmed: string[] } | undefined> {
     let cursor = binding.cursor ?? 'start';
     const rows = new Map(cached.filter(message => message.kind !== 'streaming').map(message => [String(message.id), message]));
     const revisions = new Map<string, number>();
     const removed = new Set<string>();
-    const cachedIds = [...rows.keys()].filter(id => /^[A-Za-z0-9_.:-]{1,200}$/.test(id));
+    const unconfirmed = new Set(binding.unconfirmedMessageIds ?? []);
+    const cachedIds = [...rows.keys()].filter(id => !unconfirmed.has(id) && /^[A-Za-z0-9_.:-]{1,200}$/.test(id));
     const apply = (page: Page) => {
       for (const id of page.removedMessageIds ?? []) { rows.delete(id); removed.add(id) }
       for (const row of page.messages) {
@@ -65,7 +66,7 @@ export class RemoteChatHistory {
         if (!alive() || batch.status !== 200 || !batch.page || !Array.isArray(batch.page.messages)) return;
         apply(batch.page);
       }
-      return { cursor, removed: [...removed], messages: [...rows.values()].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) };
+      return { cursor, removed: [...removed], confirmed: [...revisions.keys()].filter(id => !removed.has(id)), messages: [...rows.values()].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) };
     }
   }
 }

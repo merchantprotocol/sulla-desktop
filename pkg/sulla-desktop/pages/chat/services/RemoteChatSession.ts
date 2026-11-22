@@ -253,7 +253,10 @@ export class RemoteChatSession {
   private committed(message: Message): void {
     if (this.buffer) { this.buffer.set(message.id, message); return }
     const thread = this.chat.thread.value;
-    if (!thread.messages.some(existing => existing.id === message.id)) this.chat.appendMessage(message);
+    if (thread.messages.some(existing => existing.id === message.id) || !thread.remote) return;
+    const unconfirmedMessageIds = [...new Set([...(thread.remote.unconfirmedMessageIds ?? []), String(message.id)])];
+    this.chat.thread.value = { ...thread, remote: { ...thread.remote, unconfirmedMessageIds } };
+    this.chat.appendMessage(message);
     this.chat.persistThread();
   }
 
@@ -273,13 +276,19 @@ export class RemoteChatSession {
       return;
     }
     const merged = new Map(result.messages.map(message => [String(message.id), message]));
-    for (const [id, message] of live) if (!merged.has(id)) merged.set(id, message);
+    const unconfirmed = new Set(this.bound.value?.unconfirmedMessageIds ?? []);
+    for (const id of result.confirmed) unconfirmed.delete(id);
+    for (const [id, message] of live) {
+      if (merged.has(id)) continue;
+      merged.set(id, message);
+      unconfirmed.add(id);
+    }
     const messages = [...merged.values()].sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const stream = this.chat.messages.value.find(message => message.kind === 'streaming');
     if (stream) messages.push(stream);
     const removedFromCache = result.removed.filter(id => !merged.has(id));
     this.chat.thread.value = { ...this.chat.thread.value, messages,
-      remote: { ...this.bound.value!, cursor: result.cursor, removedFromCache } };
+      remote: { ...this.bound.value!, cursor: result.cursor, removedFromCache, unconfirmedMessageIds: [...unconfirmed] } };
     this.chat.persistThread();
     this.chat.thread.value = { ...this.chat.thread.value, remote: { ...this.bound.value!, removedFromCache: undefined } };
     this.status.value = 'Connected';
@@ -313,7 +322,8 @@ export class RemoteChatSession {
         this.routing = false;
         const thread = this.chat.thread.value;
         const accepted: Message = { kind: 'user', id: asMessageId(pending.id), text: pending.text, createdAt: Date.now() };
-        this.chat.thread.value = { ...thread, remote: binding, messages:
+        const unconfirmedMessageIds = [...new Set([...(binding.unconfirmedMessageIds ?? []), pending.id])];
+        this.chat.thread.value = { ...thread, remote: { ...binding, unconfirmedMessageIds }, messages:
           thread.messages.some(message => message.id === pending.id) ? thread.messages : [...thread.messages, accepted] };
         this.chat.persistThread();
         if (this.chat.thread.value.title === 'New chat') {
@@ -326,8 +336,8 @@ export class RemoteChatSession {
           this.subscribed = b.threadId;
           this.liveRun = pending.id;
           this.running.value = true;
-          await this.catchUp(binding);
-        } else this.subscribe(binding);
+          await this.catchUp(this.bound.value!);
+        } else this.subscribe(this.bound.value!);
         return;
       }
       if (frame.type === 'error' && frame.definitelyNotAccepted === true) {
