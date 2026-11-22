@@ -24,6 +24,7 @@ const GUEST_PATH_ROOTS = [GUEST_RUNTIME_ROOT, '/dev/shm/sulla-agent-secrets'];
 const CAPTURE_LIMIT = 64 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const TRANSFER_TIMEOUT_MS = 5 * 60_000;
+const WORKSPACE_DISK_RESERVE_KIB = 1024 * 1024;
 
 export interface GuestRuntimeIdentity {
   uid: number;
@@ -160,12 +161,14 @@ export async function ensureGuestRuntimeDirectories(parent: string, relativeName
     [
       'set -eu', 'umask 077',
       'parent="$1"; uid="$2"; gid="$3"; root="$4"; shift 4',
+      '[ "$(realpath -m "$parent")" = "$parent" ]',
       'sudo install -d -m 0700 -o "$uid" -g "$gid" "$parent"',
       '[ "$(realpath "$parent")" = "$parent" ]',
       'case "$parent" in "$root"|"$root"/*) ;; *) exit 73;; esac',
       [
         'for target; do',
         'case "$target" in "$parent"/*) ;; *) exit 73;; esac',
+        '[ "$(realpath -m "$target")" = "$target" ]',
         'sudo install -d -m 0700 -o "$uid" -g "$gid" "$target"',
         '[ "$(realpath "$target")" = "$target" ]',
         '[ "$(stat -c %u:%g "$target")" = "$uid:$gid" ]',
@@ -175,6 +178,124 @@ export async function ensureGuestRuntimeDirectories(parent: string, relativeName
     'sulla-stable-guest-mkdirs', boundedParent, String(uid), String(gid), GUEST_RUNTIME_ROOT, ...targets,
   ]);
   return targets;
+}
+
+/** Prepare the private scratch directory without changing an existing worktree root. */
+export async function ensureGuestWorktreeDirectories(identity: GuestRuntimeIdentity): Promise<void> {
+  if (![identity.uid, identity.gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
+    throw new Error('Invalid guest worktree ownership');
+  }
+  await runGuest([
+    'python3', '-c',
+    [
+      'import os, stat, sys',
+      'root, uid, gid = sys.argv[1:]',
+      'uid, gid = int(uid), int(gid)',
+      'try: os.mkdir(root, 0o755)',
+      'except FileExistsError: pass',
+      'flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW',
+      'root_fd = os.open(root, flags)',
+      'try: os.mkdir("_scratch", 0o700, dir_fd=root_fd)',
+      'except FileExistsError: pass',
+      'scratch_fd = os.open("_scratch", flags, dir_fd=root_fd)',
+      'info = os.fstat(scratch_fd)',
+      'if (info.st_uid, info.st_gid) != (uid, gid): os.fchown(scratch_fd, uid, gid)',
+      'if stat.S_IMODE(info.st_mode) != 0o700: os.fchmod(scratch_fd, 0o700)',
+    ].join('\n'), '/mnt/worktrees', String(identity.uid), String(identity.gid),
+  ]);
+}
+
+/**
+ * Initialize a stable conversation workspace from a clean VM worktree once.
+ * The marker lives inside .git, so it never dirties the worker checkout. The
+ * staged clone and marker move into place together; a crash cannot publish a
+ * half-cloned workspace as resumable.
+ */
+export async function seedGitWorktreeIntoStableGuest(source: string, target: string, existingJobKey?: string): Promise<string> {
+  const normalizedSource = path.posix.resolve(source);
+  if (normalizedSource !== '/mnt/worktrees' && !normalizedSource.startsWith('/mnt/worktrees/')) {
+    throw new Error('Container workspacePath must be an existing worktree under /mnt/worktrees');
+  }
+  const boundedTarget = assertGuestPath(target, [GUEST_CONVERSATIONS_ROOT]);
+  if (existingJobKey && !/^[a-zA-Z0-9_.-]+$/.test(existingJobKey)) throw new Error('Invalid existing worktree job key');
+  const workspace = await runGuest([
+    'python3', '-c',
+    [
+      'import fcntl, os, sys',
+      'root, command, *args = sys.argv[1:]',
+      'fd = os.open(root + "/.workspace-seed.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)',
+      'fcntl.flock(fd, fcntl.LOCK_EX)',
+      'os.set_inheritable(fd, True)',
+      'os.execvp("sh", ["sh", "-c", command, *args])',
+    ].join('\n'), GUEST_CONVERSATIONS_ROOT,
+    [
+      'set -eu',
+      'umask 077',
+      'source_input="$1"; target="$2"; root="$3"; reserve_kib="$4"; legacy_root="$5"; legacy_key="$6"',
+      'case "$target" in "$root"/*/workspace) ;; *) exit 73;; esac',
+      '[ -d "$target" ] && [ "$(realpath "$target")" = "$target" ]',
+      'marker="$target/.git/sulla-workspace-binding"',
+      'if [ -f "$marker" ]; then [ "$(realpath "$marker")" = "$marker" ] && [ "$(sed -n "1p" "$marker")" = "$source_input" ] || { echo "stable workspace belongs to another seed" >&2; exit 74; }; git -c safe.directory="$target" -C "$target" rev-parse --is-inside-work-tree >/dev/null; printf "%s" "$target"; exit 0; fi',
+      '[ -z "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo "refusing to replace a nonempty unbound stable workspace" >&2; exit 76; }',
+      'source=$(realpath "$source_input")',
+      'case "$source" in /mnt/worktrees/*) ;; *) exit 73;; esac',
+      '[ -d "$source" ] && [ ! -L "$source_input" ]',
+      'git_source() { git -c safe.directory="$source" -C "$source" "$@"; }',
+      '[ "$(realpath "$(git_source rev-parse --show-toplevel)")" = "$source" ]',
+      'head=$(git_source rev-parse HEAD)',
+      'branch=$(git_source symbolic-ref --quiet --short HEAD || true)',
+      'remote=$(git_source remote get-url origin 2>/dev/null || true)',
+      'case "$remote" in *://*@*|http*://*[?#]*) echo "refusing a Git remote containing credentials" >&2; exit 78;; esac',
+      'remote_head=""; if [ -n "$branch" ]; then [ "$(git_source rev-parse "refs/heads/$branch")" = "$head" ]; remote_head=$(git_source rev-parse --verify "refs/remotes/origin/$branch" 2>/dev/null || true); fi',
+      'common=$(git_source rev-parse --path-format=absolute --git-common-dir); repository=$(basename "$(dirname "$common")"); common=$(realpath "$common")',
+      'case "$common" in /mnt/worktrees/*) ;; *) exit 73;; esac',
+      [
+        'if [ -n "$legacy_key" ]; then',
+        '# Reproduce the old checkout prefix, including the mktemp prefix limit.',
+        'prefix=$(printf "%s-%s-%s-" "$repository" "${branch:-detached-$(printf %.12s "$head")}" "$legacy_key" | LC_ALL=C sed \'s/[^a-zA-Z0-9_.-]/-/g\')',
+        'legacy_prefix=$(printf %.80s "$prefix")',
+        'unsafe_checkout() { echo "could not identify a single safe retained checkout for the interrupted task" >&2; exit 74; }',
+        'set -- "$legacy_root/$legacy_prefix"????????',
+        'if [ -e "$1" ] || [ -L "$1" ]; then',
+        '[ "$#" -eq 1 ] && [ "$prefix" = "$legacy_prefix" ] || unsafe_checkout',
+        'checkout="$1"; suffix=${checkout#"$legacy_root/$legacy_prefix"}',
+        'case "$suffix" in *[!A-Za-z0-9]*) unsafe_checkout;; esac',
+        '[ -d "$checkout/.git" ] && [ "$(realpath "$checkout/.git")" = "$checkout/.git" ] || unsafe_checkout',
+        'git_legacy() { git -c safe.directory="$checkout" -C "$checkout" "$@"; }',
+        '[ "$(git_legacy rev-parse --show-toplevel)" = "$checkout" ] && git_legacy merge-base --is-ancestor "$head" HEAD || unsafe_checkout',
+        'legacy_remote=$(git_legacy remote get-url origin 2>/dev/null || true)',
+        'if [ "$legacy_remote" != "$remote" ]; then',
+        'case "$legacy_remote" in "$checkout".bundle-????????-????-????-????-????????????) [ -z "$remote" ] || unsafe_checkout;; *) unsafe_checkout;; esac',
+        'fi',
+        'printf "%s" "$checkout"; exit 0;',
+        'fi',
+        'fi',
+      ].join('\n'),
+      '[ -z "$(git_source status --porcelain=v1 --untracked-files=normal)" ] || { echo "container workspacePath must be clean before guest transport" >&2; exit 77; }',
+      'stage="$(dirname "$target")/.workspace-initializing"',
+      'rm -rf -- "$stage"',
+      'trap \'rm -rf -- "$stage"\' EXIT',
+      'trap \'exit 75\' INT TERM',
+      'workspace_size=$(du -sk "$source") && workspace_size=${workspace_size%%[!0-9]*}',
+      'git_size=$(du -sk "$common") && git_size=${git_size%%[!0-9]*}',
+      'disk=$(df -Pk "$target"); free=$(printf "%s\\n" "$disk" | awk \'NR == 2 {print $4}\')',
+      '[ -n "$workspace_size" ] && [ -n "$git_size" ] && [ -n "$free" ]',
+      '[ "$free" -ge "$((reserve_kib + workspace_size + git_size))" ] || { echo "no space left on device for a durable workspace and VM reserve" >&2; exit 79; }',
+      'git clone --no-local "$source" "$stage" >/dev/null 2>&1',
+      'git -C "$stage" checkout --detach "$head" >/dev/null 2>&1',
+      '[ "$(git -C "$stage" rev-parse HEAD)" = "$head" ]',
+      'if [ -n "$branch" ]; then git -C "$stage" checkout -B "$branch" "$head" >/dev/null 2>&1; fi',
+      'if [ -n "$remote" ]; then git -C "$stage" remote set-url origin "$remote"; else git -C "$stage" remote remove origin 2>/dev/null || true; fi',
+      'if [ -n "$branch" ]; then if [ -n "$remote_head" ]; then git -C "$stage" update-ref "refs/remotes/origin/$branch" "$remote_head"; else git -C "$stage" update-ref -d "refs/remotes/origin/$branch"; fi; fi',
+      'printf "%s\\n%s\\n" "$source_input" "$head" > "$stage/.git/sulla-workspace-binding"',
+      'python3 -c \'import os, sys; os.replace(sys.argv[1], sys.argv[2])\' "$stage" "$target"',
+      'trap - EXIT INT TERM',
+      'printf "%s" "$target"',
+    ].join('; '),
+    'sulla-stable-workspace-seed', normalizedSource, boundedTarget, GUEST_CONVERSATIONS_ROOT, String(WORKSPACE_DISK_RESERVE_KIB),
+    GUEST_AGENT_WORKSPACES_ROOT, existingJobKey ?? '',
+  ], undefined, TRANSFER_TIMEOUT_MS);
+  return await existingGuestPath(workspace, [workspace === boundedTarget ? GUEST_CONVERSATIONS_ROOT : GUEST_AGENT_WORKSPACES_ROOT]);
 }
 
 export async function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): Promise<void> {
