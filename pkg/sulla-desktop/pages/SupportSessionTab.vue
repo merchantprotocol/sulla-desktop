@@ -7,7 +7,7 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
     <div v-else-if="error && !session" class="state error"><b>{{ errorTitle }}</b><span>{{ error }}</span><button @click="manualRefresh">Retry</button></div>
     <template v-else-if="session">
       <header class="session-head">
-        <div class="title-row"><div><b>Support · {{ session.user?.name || session.device?.name || 'User' }}</b><span class="pill" :class="active ? 'active' : 'ended'">{{ active ? 'Connected' : session.status }}</span></div><div class="actions"><button class="ghost" :disabled="refreshing" @click="manualRefresh">{{ refreshing ? 'Refreshing…' : 'Refresh' }}</button><button v-if="active" class="danger" :disabled="ending" @click="confirmEnd = true">{{ ending ? 'Ending…' : 'End session' }}</button></div></div>
+        <div class="title-row"><div><b>Support · {{ session.user?.name || session.device?.name || 'User' }}</b><span class="pill" :class="connection === 'connected' ? 'active' : 'ended'">{{ connectionLabel }}</span></div><div class="actions"><button class="ghost" :disabled="refreshing" @click="manualRefresh">{{ refreshing ? 'Refreshing…' : 'Refresh' }}</button><button v-if="active" class="danger" :disabled="ending" @click="confirmEnd = true">{{ ending ? 'Ending…' : 'End session' }}</button></div></div>
         <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
         <div class="request"><span class="avatar">{{ initials }}</span><div><small>User's request</small><p>{{ session.message || 'No message supplied.' }}</p></div></div>
         <div v-if="toolWaiting" class="waiting">Waiting for the computer… {{ toolWaitingSeconds }}s</div>
@@ -52,22 +52,56 @@ SPDX-License-Identifier: GPL-2.0-or-later -->
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ChatPage from './chat/ChatPage.vue';
+import { SupportSessionReadiness } from './SupportSessionReadiness';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const props=defineProps<{tabId:string;sessionId:string;isVisible:boolean}>();
 const toolNames=['support.logs.tail','support.diagnostics.snapshot','support.containers.list','support.containers.restart','support.containers.logs','support.containers.set_memory_limit','support.ai.retry_connection','support.update.set_channel','support.update.check_and_install','support.update.status'];
 const session=ref<any>(null), loading=ref(true), error=ref(''), errorTitle=ref('Could not open support session'), path=ref<'a'|'b'>('a'), prUrl=ref(''), refreshing=ref(false), ending=ref(false), confirmEnd=ref(false); let timer:any;
+const sessionVerified=ref(false);
+let sessionReadVersion=0;
 const active=computed(()=>session.value?.status==='active' && (!session.value.expiresAt || Date.parse(session.value.expiresAt)>Date.now()));
 const initials=computed(()=>String(session.value?.user?.name||'User').split(/\s+/).map((x:string)=>x[0]).slice(0,2).join('').toUpperCase());
 const approvalLeft=computed(()=>{const n=session.value?.approvalSecondsRemaining ?? (session.value?.expiresAt ? Math.max(0,Math.floor((Date.parse(session.value.expiresAt)-Date.now())/1000)):0); return active.value ? `${Math.floor(n/3600)} h left` : 'Ended';});
 const aiStatus=computed(()=>session.value?.aiStatus || (session.value?.runtimeHealth==='healthy'?'Connected':'Needs attention'));
 const healthClass=computed(()=>session.value?.runtimeHealth==='healthy'?'good':'warn');
-async function refresh(){try{const r:any=await ipcRenderer.invoke('support-session:get' as any,props.sessionId); session.value=r.session; error.value='';}catch(e:any){error.value=e?.message||String(e); if(e?.status===403||/super_admin_required|not authorized/i.test(error.value)) errorTitle.value='Not authorized';}finally{loading.value=false;}}
-async function endSession(){if(ending.value)return; ending.value=true; try{const result:any=await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'ended_by_supporter'); if(result?.session)session.value=result.session; else await refresh(); error.value=''; confirmEnd.value=false;}catch(e:any){error.value=e?.message||String(e);}finally{ending.value=false;}}
-async function markResolved(){if(ending.value)return; ending.value=true; try{const result:any=await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'resolved'); if(result?.session)session.value=result.session; else await refresh(); error.value='';}catch(e:any){error.value=e?.message||String(e);}finally{ending.value=false;}}
+async function refresh(){
+  const version=++sessionReadVersion;
+  try{
+    const result=await ipcRenderer.invoke('support-session:get',props.sessionId);
+    if(version!==sessionReadVersion)return;
+    session.value=result.session;
+    sessionVerified.value=true;
+    error.value='';
+    errorTitle.value='Could not open support session';
+  }catch(e:any){
+    if(version!==sessionReadVersion)return;
+    sessionVerified.value=false;
+    error.value=e?.message||String(e);
+    errorTitle.value=e?.status===403||/super_admin_required|not authorized/i.test(error.value)
+      ? 'Not authorized'
+      : 'Could not open support session';
+  }finally{
+    if(version===sessionReadVersion)loading.value=false;
+  }
+}
+async function endSession(){if(ending.value)return; ending.value=true; try{const result:any=await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'ended_by_supporter'); if(result?.session){sessionReadVersion++;session.value=result.session;error.value='';} else await refresh(); confirmEnd.value=false;}catch(e:any){error.value=e?.message||String(e);}finally{ending.value=false;}}
+async function markResolved(){if(ending.value)return; ending.value=true; try{const result:any=await ipcRenderer.invoke('support-session:end' as any,props.sessionId,'resolved'); if(result?.session){sessionReadVersion++;session.value=result.session;error.value='';} else await refresh();}catch(e:any){error.value=e?.message||String(e);}finally{ending.value=false;}}
 function seedPrompt(text:string){window.dispatchEvent(new CustomEvent('sulla:support-chat-prompt',{detail:{tabId:props.tabId,text}}));}
 
 // ─── Device presence pill ──────────────────────────────────────────
-const presence=ref<{online:boolean;lastSeenAt:string|null}|null>(null);
+const presence=ref<{online:boolean;lastSeenAt:string|null}|null>();
+let presenceReadVersion=0;
+const readiness=new SupportSessionReadiness();
+const connection=computed(()=>readiness.connection(active.value,sessionVerified.value,presence.value===null?null:presence.value?.online));
+const connectionLabel=computed(()=>{
+  switch(connection.value){
+  case 'connected': return 'Connected';
+  case 'offline': return 'Device offline';
+  case 'checking': return 'Checking device…';
+  case 'unverified': return 'Connection unverified';
+  case 'inactive': return session.value?.status==='active'?'Expired':session.value?.status;
+  }
+});
 function minutesAgo(value:string|null){
   if(!value)return 'unknown';
   const minutes=Math.max(0,Math.round((Date.now()-Date.parse(value))/60000));
@@ -77,10 +111,19 @@ function minutesAgo(value:string|null){
   return hours<24?`${hours}h ago`:`${Math.round(hours/24)}d ago`;
 }
 const presenceLabel=computed(()=>{
+  if(presence.value===null)return 'Unavailable';
   if(!presence.value)return 'Checking…';
   return presence.value.online?'Online':`Offline · last seen ${minutesAgo(presence.value.lastSeenAt)}`;
 });
-async function refreshPresence(){try{presence.value=await ipcRenderer.invoke('support-session:presence' as any,props.sessionId);}catch{/* keep last-known presence on a transient fetch failure */}}
+async function refreshPresence(){
+  const version=++presenceReadVersion;
+  try{
+    const result=await ipcRenderer.invoke('support-session:presence',props.sessionId);
+    if(version===presenceReadVersion)presence.value=result;
+  }catch{
+    if(version===presenceReadVersion)presence.value=null;
+  }
+}
 async function manualRefresh(){if(refreshing.value)return; refreshing.value=true; await Promise.all([refresh(),refreshPresence()]); refreshing.value=false;}
 
 // ─── "Waiting for the computer…" while a support tool call is in flight ───
