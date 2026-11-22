@@ -183,6 +183,7 @@ export interface DesktopRelayChatPorts {
   allowScopedHistory?(): Promise<boolean>;
   approveViewer?(id: string, key: string): Promise<boolean>;
   hasScopedReceipt?(thread: string, message: string, scope: ScopedRelayBinding): Promise<boolean>;
+  discoverThreads?(scope: ScopedRelayBinding): Promise<{ id: string; updatedAt: number }[]>;
   modelCapabilities?(): Promise<readonly { providerId: string; modelId: string }[]>;
   relayApprovals?(): readonly (readonly [string, string])[];
   admitRelayThread?(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean>;

@@ -294,6 +294,9 @@ import { useCommandPopover } from '../../composables/useCommandPopover';
 import { DockPositions } from '../../composables/useDockPosition';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
+import { ChatController } from '../../controller/ChatController';
+import { LocalStoragePersister } from '../../services/LocalStoragePersister';
+import { asThreadId } from '../../types/chat';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
@@ -363,6 +366,36 @@ function onRemoteModel(event: Event): void {
   remoteChat.model.value = remoteChat.models.value.find(model => modelKey(model) === key);
   remoteChat.note.value = '';
 }
+async function openDiscoveredThread(canonicalId: string): Promise<void> {
+  const discovery = controller.remoteDiscoveries.value.find(item => item.binding.threadId === canonicalId);
+  if (!discovery) return;
+  const persister = new LocalStoragePersister();
+  const existing = persister.list().find(state => state.thread.remote?.threadId === canonicalId
+    && state.thread.remote.accountId === discovery.binding.accountId
+    && state.thread.remote.workspaceId === discovery.binding.workspaceId);
+  const id = existing?.thread.id ?? asThreadId(`t_view_${canonicalId}`);
+  let state = existing ?? await persister.loadAsync(id).catch(() => undefined);
+  if (state === undefined) return; // A DB error is not a cache miss.
+  if (!controller.remoteDiscoveries.value.some(item => item.binding.threadId === canonicalId
+      && item.binding.accountId === discovery.binding.accountId && item.binding.workspaceId === discovery.binding.workspaceId)) return;
+  if (!state) {
+    const blank = new ChatController();
+    try {
+      state = blank.serialize();
+      state.thread = { ...state.thread, id, title: `Remote chat · ${ discovery.binding.name }`,
+        updatedAt: discovery.updatedAt, remote: discovery.binding };
+      persister.save(state);
+    } finally { blank.dispose() }
+  } else if (!state.thread.remote || state.thread.remote.accountId !== discovery.binding.accountId
+      || state.thread.remote.workspaceId !== discovery.binding.workspaceId
+      || state.thread.remote.threadId !== canonicalId || state.thread.remote.deviceId !== discovery.binding.deviceId) {
+    return;
+  }
+  const tab = createTab('about:blank', { mode: 'chat', title: state.thread.title });
+  persister.setTabThread(tab.id, id);
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+}
+
 function chooseEnvironment(device?: RemoteDevice): void {
   const bound = remoteChat.bound.value;
   if ((bound?.deviceId ?? remoteChat.selected.value?.id) === device?.id) return;
@@ -785,6 +818,7 @@ let remoteRefreshTimer: ReturnType<typeof setInterval>;
 watch(() => tabActive?.value, resumeRemote);
 onBeforeUnmount(() => {
   remoteChat.dispose();
+  controller.openRemoteDiscovery = undefined;
   clearInterval(remoteRefreshTimer);
   window.removeEventListener('online', resumeRemote);
   window.removeEventListener('focus', resumeRemote);
@@ -849,6 +883,7 @@ async function prefillFirstRunStarter(): Promise<void> {
 
 onMounted(() => {
   remoteChat.mount();
+  controller.openRemoteDiscovery = id => { void openDiscoveredThread(id) };
   if (activityContext.tabId) {
     const key = `remote-chat-environment:${ activityContext.tabId }`;
     const handoff = sessionStorage.getItem(key);
