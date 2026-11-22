@@ -384,6 +384,28 @@ Actual data limitation: the main chat's running job records checked during imple
 Focused tests cover true links versus identical titles, shared task assignments without invented delegation, chat isolation, completed/missing parents, cycles, task ID projection and collapse during live updates. Browser checks use the actual AgentLanes component with synthetic recorded relationships at desktop and 390px. Live activation and ACTIVE-worker restart acceptance remain pending a safe maintenance window. The prior user instruction to keep waiting while project work is running remains in force; QA is open.
 
 
+## Workstream outcomes
+
+Sulla places a report inside an expanded job only when the report’s recorded job ID and task index match the row. Other reports with one recorded workstream stay under Reports for this work. Reports without an active workstream appear under Recent outcomes. Activity links to the exact original report and expands its job when visible. The separate Results tab was retired after checking settlement against original IDS report data.
+
+`useChatOutcomes.ts` owns the shared view for Sulla and AI Team. The trusted local `chat-workflow:outcomes` read combines persisted report cards from the current transcript with existing job completions. Raw receipts are projected without calling a classifier, rerunning an agent, changing retention, or writing a chat. Saved transcript reports remain visible outside the loaded message window. Reports only present on job records follow the existing job retention. Live cards are attached using recorded job and task keys.
+
+Verification covers four stored IDS reports, active-to-settled movement, unchanged original report text, and AI Team navigation to the exact earlier report. The focused Vitest specs cover the dock, grouping, and IPC registration.
+
+## Chat composer sizing
+
+`ComposerInput.vue` uses the textarea’s native content sizing. Empty and single-line drafts start at 54 px. The field expands as a draft wraps and scrolls internally at the existing 160 px limit. Sending or clearing a draft returns the field to its resting height, including when the queued-message placeholder wraps.
+
+## Sidebar handoff map
+
+The Sulla tab uses `AgentWorkTree` to connect exact delegation and follow-up references within the open chat. `AgentHandoffMap.vue` renders indented job cards and anchors the solid assignment or dashed follow-up line to their headers as details expand. Every recorded relationship has a text label next to its job. Shared Projects task IDs group work without implying delegation. Dense or cyclic relationships keep the recorded references on each row. Unlinked jobs group by activity, with the oldest quiet jobs first and large working groups collapsed.
+
+`AgentLanes.vue` reads the same live snapshot as the composer. The publisher sends each coalesced change to registered chat tab views and desktop windows so the map can update before the periodic recovery check. If an active handoff references an earlier job outside that snapshot, the sidebar checks the existing bounded chat history for that exact reference. A missing reference appears as an unavailable earlier job. Finished jobs stay outside the active counts. Each job opens its own details below its header. The details show the persisted recovery count on the existing job. A related For You control appears for an explicit decision ID in the active request list and opens that card through the existing store.
+
+`AgentJobRepository.jobsForProjection` includes recorded response models and decision IDs from the task JSON. The card distinguishes selected or mapped model settings from a recorded response. It reports missing output when no response evidence exists. Job identity, routing, worker lifecycle, and persistence APIs use their existing paths.
+
+Sulla, Activity, and the composer use compact local timestamps from the recorded end, latest activity, or start. Report timestamps use the recorded report time. Times without evidence are omitted. Browser QA with 27 recorded jobs at 320 px and 460 px checked inline expansion, connector anchors, exact report ownership, live timestamp updates, and navigation from Activity to the original report. The earlier nine design scenarios used the real SideDock and AgentLanes components with isolated snapshots at 360 px and 460 px. Run the focused chat and state tests using `vitest.agent.config.mts`. The projection query was also exercised against isolated PostgreSQL data. The restart scenario used before/after snapshots, with native activation deferred to a maintenance window.
+
 ## Codex quiet-stream allowance (2026-11-16)
 
 `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/agent/languagemodels/CodexService.ts` now permits ten minutes without stdout/stderr before terminating a Codex process. This is a bounded silence allowance, not evidence that an otherwise silent model is thinking. Actual stream bytes reset the clock; existing active-tool and approval guards, confirmed teardown and replay-safety checks remain unchanged. Model/provider/effort selection, shared CLI settings and billing are unchanged.
@@ -403,7 +425,11 @@ Regression command: run /Users/seth/Code/SullaDesktop/pkg/sulla-desktop/agent/te
 
 AI Models adds an individual mapping for enabled named agents. Stable definition IDs/slugs, prompts, tools, workflow selection, storage and memory remain unchanged. An unconfigured worker retains its existing routing. Configured workers use an ordered list of exact model versions and optional effort levels on existing Claude Code/Codex subscription connections. Shared-role edits and resets preserve these individual mappings; resetting one worker restores its existing shared defaults. A preview identifies the single affected worker. Generic agent settings writes cannot create, erase or replace owner mappings.
 
+Agent profile, Team, Product Owner workflow preview and chat model controls all read model versions from the same validated, persisted shared catalog used by AI Models. A failed refresh keeps that last-known-good catalog and the user's saved routes. Built-in agent definitions express only capability classes, never a provider-specific model version; owner-saved per-agent tiers remain authoritative for future launches. Claude CLI selectors such as `sonnet[1m]` stay selectable catalog aliases: the provider bridge compares the selected alias family after Claude resolves it to a full model ID, while exact pins and cross-family requests remain fail-closed.
+
 The owner control is `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/components/settings/sections/modelRouting/WorkerModelMappings.vue`; its dedicated IPC handler is `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/main/modelRoutingIpc.ts`. Optimistic revision plus edit token rejects stale edits, including reset/recreate. Routing data stays in the existing modelRouting settings JSON; existing job/task/thread JSON stores the launch snapshot. No migration or storage replacement is introduced.
+
+AI Models waits for the database boot gate before showing, saving, resetting, or refreshing routing. The startup settings file can contain older selections, so an early routing read also skips saving legacy defaults until database settings are ready. Verify with the cold-start cases in `pkg/sulla-desktop/main/ipc/IpcControllers.spec.ts` and `pkg/sulla-desktop/agent/tests/Unit/ModelRouting/ModelCatalogRefreshFailure.spec.ts`.
 
 `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/agent/services/WorkerModelRouting.ts` captures the definition identity, candidate list, non-secret subscription account references and selected candidate at a new launch. Hidden and visible-tab launches use the same policy. Existing raw model suggestions from autonomous callers cannot bypass a configured worker. An explicit human chat-picker choice remains a chat-scoped exception. New idle, unpinned human turns can adopt updated mappings; live steering, automatic workflow/scheduler continuations, parked tasks and restart recovery keep their saved selection.
 
@@ -420,6 +446,8 @@ Desktop broker calls in `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/vault-b
 The transcript's contextual block reply is an inset 28px icon with a 36px internal text rail and an accessible Reply to this part label. It no longer projects beyond the message's right edge or covers the message text. Quote selection, draft dispatch and hover grace remain unchanged. Actual component browser QA checks desktop and 390px placement and the selected excerpt; native activation awaits the next safe candidate load.
 
 ## For You and returned Results (2026-11-16)
+
+For You receives decision updates in registered native chat tabs as well as standalone desktop windows. Opening the panel also rechecks the current chat’s saved requests so a missed update can recover without a manual refresh.
 
 The existing per-chat Decisions dock becomes For You. `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/pages/chat/composables/useChatDecisions.ts` owns one scoped subscription and shared in-memory drafts per mounted chat; the side tab, bottom composer and transcript references use that same store. `/Users/seth/Code/SullaDesktop/pkg/sulla-desktop/pages/chat/components/sidedock/ForYouPanel.vue` reuses ToolQuestion/ToolTask controls. Active question records remain visible until answered or explicitly dismissed, independently of their execution wait timeout. Past is collapsed initially and paginates every earlier scoped record. The tab is yellow only while an actionable request remains. Original context, options and recorded answers are retained. Existing already-expired legacy questions without a durable active marker remain historical; they are not silently reopened. Expired approvals remain closed and require fresh authorization.
 
@@ -668,6 +696,12 @@ The built-in seed hash now covers only what `AgentDefinitionModel` stores. The m
 
 Seed specs build their rows through the real `AgentDefinitionModel.create`/`findBySlug` against `agent/tests/Support/AgentDefinitionTableFake.ts`, an in-memory `agent_definitions` table that answers the model's SQL. `BuiltinSeedStoredRows.spec.ts` runs the real seeder and model end to end. It covers an older-hash row that differs from the bundle staying byte-identical across two boots, an identical older-hash row getting a hash-only re-stamp and later normal upgrades, and v2 prompt upgrades that keep the human's model class. `ChatPageTryHandoff.spec.ts` covers Try, then Default or a plain model, then remount.
 
+## Agent editor removal and export (2026-11-19)
+
+The Agents editor removes standalone definitions and releases model settings owned by that definition. Removing a Files-backed agent archives and disables the definition, keeps the linked package in Files, and prevents the Files scanner from registering it again. This also applies while the first Use Cases migration is pending. Failed removals show an error in the editor. Agent exports carry routine references, and older manifests that omit them preserve an existing agent’s routines when imported. Running jobs retain the configuration captured at launch.
+
+`PublishedAgentActivation.spec.ts` exercises these persistence rules against Postgres, including a fresh scan of a newer package version and the pending-migration path. Run it with the editor, model routing, and Try handoff suites using `yarn test:agent` and a disposable `SULLA_TEST_DATABASE_URL`.
+
 ## Vault view cold-start readiness (2026-11-18)
 
 On a cold start, the renderer restores the Vault page and calls `vault:view-open` before the backend has registered its lifecycle services. On R6 that registration came about 26s after launch, and the vault was ready about 27.4s after launch after a 1.45s initialization. `VaultViewIpc` used to wait on `waitUntilStarted('vault')` with the lifecycle's general 15s default. That timeout is not a transient error in `vaultTransient`, so VaultPage stayed on "Vault unavailable" until the user pressed Retry.
@@ -705,3 +739,100 @@ The affected Vitest suites use `vitest.agent.config.mts`. Run the PostgreSQL and
 The main shell owns the tab list. A hosted tab requests a new tab in its owning shell when a user opens a Supporting report or clicks Try in the agent editor. Supporting reports still resolve and verify their Files identity first. Try still selects the saved agent on a fresh chat. Hosted chat activity follows its owning window and resets when the renderer closes or crashes. The hosted Vault view keeps the existing readiness wait and uses its owning window's theme.
 
 Re-run the startup, internal tab, Vault, Supporting reports, and agent editor suites with the recovery regression set. Build in the PR checkout using the command above. Test hosted tabs with isolated data before loading a candidate into a user's Sulla instance.
+
+## Rename a top tab
+
+The tab menu closes before `main/tabContextMenuWindow.ts` returns native keyboard focus to the tab strip that opened it. Enter saves the name in `pages/agent/AgentHeader.vue`. Escape cancels the edit without invoking chat shortcuts. Verify both the shell and hosted tab path with a draft in the composer, and run `yarn vitest run -c vitest.agent.config.mts TabContextMenuRename`.
+
+## Chat tab activity
+
+The tab strip uses the composer's activity state. The animated bars track lead and worker execution separately from attention status, so a pending question or stalled worker can appear alongside active work. An isolated chat renderer sends state changes to its owning shell through `InternalTabViewManager`. Hidden chats keep reporting activity. Moving a tab transfers its indicator, and reloading or closing the chat clears the old state. The working bars respect reduced motion.
+
+Run `yarn vitest run -c vitest.agent.config.mts ThreadStatusLine ThreadActivity internalTabViewManager`. In a hosted chat, check that delegated work shows the bars after a lead reply ends, and that the tab returns to a quiet or idle indicator when work settles.
+
+## Open files from chat
+
+The file card and Files drawer resolve the saved Files ID before asking the owning shell to open a document or file preview. The Files tab can preview or download the version attached to the chat. Right-click a saved row or card to open that version with the default app, or choose a macOS app. External actions use the existing Files authorization and downloaded-copy path. The menu stays open when the secondary mouse button is released. A selection, primary click outside, another context menu, or Escape closes it.
+
+Run `yarn vitest run -c vitest.agent.config.mts OpenChatFile internalTabViewManager SullaFilesIpcOpenedCopyService`. In a hosted chat, open a saved document and an attached screenshot, then check the right-click actions and the Files toolbar.
+
+## Chat message actions
+
+User messages reserve space for Edit and Copy below the bubble so their buttons clear the following reply’s header actions. Copy uses the text of the message that owns the button.
+
+## Chat and side-panel header
+
+The chat title and side-panel toolbar share one header height, surface and divider. Tab selection keeps the same button footprint. Sulla, For You, AI Team, Files and optional Artifacts use the same compact type scale, 14 px panel inset, card radii and muted-text hierarchy. For You always keeps its title and scope line aligned with Refresh. Its empty state is a deliberate bordered card rather than unused space, and active requests and Past use the same card treatment. Embedded Files and Artifacts fill the side panel instead of retaining standalone drawer widths.
+
+## AI Team in chat
+
+Sulla is the operational view for the current chat. It combines the live agent snapshot with bounded handoff history, current outcomes and exact ownership links. A **View full history** action opens the chronological audit inside Sulla and returns to the current-work tree without changing the selected top-level tab. Active branches come first, with their known parents retained. The synthetic chat lead reads **Coordinating** while delegated agents work and is excluded from the launched-agent count. The view distinguishes a selected model from models that returned output. Saved-outcome reads retry automatically after short runtime stalls, preserve cached reports while refreshing and expose a working manual retry only after the bounded attempts fail.
+
+In Product Owner chats, the AI Team tab holds Team Setup to show the feature path and change routing for future handoffs. The plan follows the existing Product Owner and Coding Manager guidance. Product Owner still handles simple requests directly. Design and independent review are conditional. The saved lineage read includes live jobs and up to 100 recent jobs. Full history displays runtime-reported model and effort after a model returns output. Settlement saves that evidence on the job task, including a fallback reason when the existing retry path supplied one. This also covers recovered workers that complete without their original runner. A saved terminal return takes precedence over a delayed live status. Older runs may lack this evidence.
+
+A change belongs to one backend chat ID and one handoff step. The Workflow save handler validates the exact agent against the delegator's team and validates explicit model priorities through WorkerModelRouting. The existing settings database stores the choice and revision. The canonical spawn path captures the validated route before job creation. Recovery uses the saved job route. Scope and handoff share the chat lead's model settings, and the chat's agent picker controls the lead. Edits become available after the chat has a backend thread. Tagged implementation and review tasks identify their step explicitly. A reviewer configured to use a different provider must reference the completed implementation in the same chat and have a candidate from a company absent from that implementation's recorded model use.
+
+`useAgentLanes.ts` binds the current-work tree and outcome controls. `useWorkflowPanel.ts` loads Team and Full history. `ProductOwnerWorkflowHistory` projects archived runs and reports, and `WorkerModelSelection` persists selections against the captured job identity.
+
+Run the WorkflowPanel, ProductOwnerWorkflow, SideDock, worker routing, agent-state and spawn characterization specs with the agent Vitest configuration. Use a separate Electron profile and disposable services for UI and restart-sensitive verification.
+
+## Settings and setup startup loading
+
+Password Vault keeps its loading state while the tab has no usable layout, while the protected view starts, or while its open request is cancelled. It retries only while the visible tab owns the view. The vault itself still presents setup and unlock. Preferences waits for the existing startup gate and saved settings before rendering the selected section. Model routing, defaults, extension permissions, integration metadata, the agent catalog, and saved workflows use their existing read paths to recover automatically. Transient connection and readiness failures show loading. A genuine failure shows a retry action. A locked vault leaves the public integration catalog and setup available with an unlock hint for connection details.
+
+Edit hotspots are `pages/VaultPage.vue`, `pages/Preferences.vue`, `composables/useConfigurationLoad.ts`, and `components/settings/ConfigurationLoadState.vue`. Workflow list and editor opt in to strict reads in `main/sullaWorkflowEvents.ts` so temporary unavailability cannot look like an empty list or saved workflow. Startup retries are limited to reads and opening the existing vault surface.
+
+Run focused verification with `yarn vitest run -c vitest.agent.config.mts ConfigurationStartupLoading StudioAgentsCatalogRefresh VaultViewOpenColdStart useRoutines IpcControllers`. Native acceptance opens Vault immediately on a cold start, checks that it fills in without a click, and confirms saved models, agent records and workflow definitions in the existing app profile.
+
+On macOS an isolated Vault view can finish loading inside a tab host while the host still covers it and receives mouse input. `window/vaultViewManager.ts` places the protected view directly in the owning window above the active host and clips it to the host rectangle reported by `window/internalTabViewManager.ts`. The Vault detaches on tab hide and shuts down when its host closes or crashes, when the vault locks, or when its human session expires. Explicitly hidden renderers can be reused for up to five minutes for the same page target. On return, a Vault tab checks that it still owns the protected view before requesting an open. The existing isolated session, trusted sender checks, permissions and window content protection still apply. Native acceptance uses the Password Vault rail button and checks that actual macOS pointer events reach the visible Vault, then switches to another tab and back.
+
+The Vault console's main pane uses its own `--content-bg` token. The Desktop theme bridge maps that token to `--bg-page` on the root and body, so the pane follows the same page color as the surrounding app in light and dark themes. Standalone console defaults stay available when Desktop does not supply a theme.
+
+The Agent window and hosted tabs use a dark native startup canvas. The Agent HTML starts with the default dark class and the renderer applies the locally cached theme before mounting. The existing saved theme still takes precedence when settings load. `window/VaultRendererFactory.ts` creates the protected renderer and pins its isolated session. The Vault view loads offscreen and applies its presentation colors before attaching to the window, so its own light defaults cannot flash over the loading pane.
+
+
+### Sulla Files agent cache refresh
+
+The native Files adapter in `services/sulla-files-fuse/sulla_files_fuse.py` consumes `/v1/fuse/changes` from the Files service. The path event marks cached rows stale before notifying the kernel. The next lookup or inode attribute request refreshes the row through the existing Files entry endpoint. A remote edit updates cached attributes and bytes while preserving the inode for open handles.
+
+For an older source install showing HTTP 404 at this endpoint, check that the local Files service image contains the change-feed route and that its migration ledger includes the Files change journal. Rehearse the migrations on an isolated copy, then replace the affected service while agents are idle. Run the adapter tests with a private umask. For live QA, warm a disposable file in an agent container, save a new version through Desktop Files, and verify the same container sees the new size and bytes before the attribute cache would expire.
+
+## Worker model tiers and restart recovery
+
+The Agents profile saves explicit model changes through the existing worker settings handler. Unedited agents follow their live shared class or Agents list. A version-1 job records its ordered candidates and current position. Inherited workers record the selected provider, model and effort on the task before a model call. A wake restores that selection. The agent’s response history distinguishes provider-supplied model identities from unconfirmed selections. Tier policy and candidate ordering live in `agent/languagemodels/agentModelTiers.ts`. `WorkerModelRouting` stores and restores the captured selection. Run the WorkerModelTiersRestart suite with an isolated PostgreSQL test database to exercise an actual process boundary and competing wakes.
+
+### Product Owner next-launch preview
+
+Open **AI Team** in a Product Owner chat and select a step. Each step previews its agent and next model with the configured effort. The expanded view explains the selection and lists eligible fallbacks in order. Scope and final handoff share the lead. An unassigned implementation or review stays conditional until the build lead chooses its worker. Independent review also needs the completed implementation’s recorded providers. **Activity** keeps the historical responses.
+
+The chat plan and agent profile use `LaunchPreviewSession` through the existing model routing IPC. A preview reads settings, catalog and approved subscription identities. A new job captures its own route at dispatch. Keep preview reads out of job creation, wake scheduling and settings writes. Exercise `ProductOwnerPreviewHandoff`, `ModelLaunchPreview` and `WorkerModelTiersRestart` with the agent Vitest config and a disposable PostgreSQL database.
+
+
+The preview follows the chat’s current agent and model picker, including a change made before sending a message. After restart, a root chat with only a generic desktop identity can recover its explicitly saved Product Owner selection from the linked chat. A named live persona or a delegated job takes precedence. Choosing Default reads the saved preference. Previewing does not save settings or schedule work.
+
+In **Use Cases → Agents**, the agent profile edits tier order, effort and fallback behavior. Export and import use version 1 of `spec.models` and omit subscription account identifiers. An approved file update can replace settings that are still owned by that file version. An owner edit, including an explicit return to shared settings, takes precedence. A manager can see the reason for a conflict under **Files → Activity** on the relevant file version. Exercise this with the AgentEditorLifecycle, PublishedAgentActivation and FilesDetailRoutes suites.
+
+### Agent Team defaults
+
+Open **Use Cases → Agents → Team** on a saved coordinating agent to inspect every enabled agent reachable through its existing `can_call` delegation graph. Product Owner groups its workflow leads, the Coding Manager implementation and review roster, the UI Test Manager acceptance roster, and any other eligible specialist. Other coordinators expand the same graph recursively. Cycles are visited once, and disabled, archived or missing references remain visible as unavailable rather than silently disappearing.
+
+Selecting a team member opens the existing model-tier editor for that exact worker definition. Saving writes through the existing worker-model binding and does not change the coordinator's routing card, prompt or launch code. A chat's explicit **AI Team** choice stays first. The Team default is consulted only for a future handoff that does not have a per-chat override. Running and parked jobs keep the model route captured at launch.
+
+Run `AgentTeamFields`, `AgentEditorLifecycle`, `ProductOwnerWorkflow` and `WorkerModelBindings` with the agent Vitest configuration. Product Owner coverage must include every enabled delegate, coordinator traversal must be cycle-safe, and a save must leave the owner's `can_call` list unchanged.
+
+### Built-in job names
+
+AI Team, the chat picker, and Use Cases read the saved name and slug for Quick Fixer (`quick-fixer`), Builder (`builder`), Generalist (`generalist`), Lookup (`lookup`), Advisor (`advisor`), and Designer (`designer`). Migration `0167_builtin_agent_identities` keeps each definition ID, carries model and workflow settings forward, and preserves owner-edited names and prompts. Exact slugs take priority. Old slugs resolve only to an existing built-in if there is no exact match. Occupied new slugs keep their existing owner and the built-in retains its prior slug. Deletion markers carry forward. Persisted jobs and chat history keep their recorded identifiers. Roll back the app and its data together from the verified pre-upgrade checkpoint.
+
+
+### Capability-based Product Owner delegation
+
+Product Owner tags design, build and acceptance handoffs and can let AI Team choose the agent. The build lead proposes implementation and review specialists by capability. AI Team retains authority over saved per-chat assignments and model order. A tagged lead step with no explicit agent uses the eligible built-in for that step. An unassigned implementation or review needs a specialist before launch.
+
+The built-in seeder recognizes five exact predecessors from older releases. It compares complete managed content after accounting for the two tokens expanded during installation. A different prompt or routing card, a custom row, or a deleted built-in remains protected. Provider settings, worker IDs and captured job routes use their existing paths.
+
+For a configured independent review, Sulla takes inline source from the completed implementation's saved contract. It supplies the original UTF-8 text and its checksum in the reviewer brief. Reviews with the same parent, implementation reference, source checksum, reviewer definition and saved route revision reuse the retained in-flight or completed job. Failed attempts and revised implementations can launch another review.
+
+Advisor's legacy identity cleanup matches only exact shipped phrases in the installed description, prompt and goals. The seeder keeps adjacent text, extra prompt files, identity, model settings and the previous ownership hash.
+
+Product Owner passes the completed implementation job and task as `implementationSource` on an inline acceptance handoff. Sulla verifies the source belongs to the same chat and lets the assigned reviewer and tester stream saved UTF-8 bytes into review and test commands with `sulla agents/check_agent_jobs '{"view":"implementation_source"}'`. The read is scoped to the calling task and verifies the recorded digest. Source can be a named field in the result or its output, or the original plain-text output. It records the reference and SHA-256 on the acceptance task. Repository and preview tests continue to use the existing handoff.

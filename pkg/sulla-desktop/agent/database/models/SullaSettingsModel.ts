@@ -9,10 +9,14 @@ import crypto from 'crypto';
 import * as fs from 'fs/promises';
 
 import { ServiceSecretGenerator } from '../../app/Services/ServiceSecret/ServiceSecretGenerator';
+import { assertWorkflowWrite } from '../../services/WorkflowWriteAuthority';
 import { assertWorkerBindingsUnchanged } from '../../languagemodels/workerBindingAuthority';
 import { assertConfirmedCliUpdate } from '../../../shared/providerCliUpdateAuthority';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
+import { postgresClient } from '../PostgresClient';
+
+import type { PoolClient } from 'pg';
 
 import { SettingsBootstrapFile } from './SettingsBootstrapFile';
 
@@ -388,10 +392,12 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    * @returns
    */
   public static async setSetting(property: string, value: any, cast?: string): Promise<void> {
+    assertWorkflowWrite(property);
     if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
     if (property === 'modelRouting') {
       const previous = await this.get(property, null);
       assertWorkerBindingsUnchanged(previous?.workerBindings, value?.workerBindings);
+      assertWorkerBindingsUnchanged(previous?.workerInheritance, value?.workerInheritance);
     }
     const valueCast = cast || typeof value;
     const stringValue = this.toStringValue(value, valueCast);
@@ -415,6 +421,29 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
     this.pendingBootstrapWrites.set(property, value);
     await this.writeBootstrapSetting(property, value);
+  }
+
+  /** Commit a routing change and its published definition together, using the primary settings row. */
+  public static async projectModelRouting(
+    project: (client: PoolClient, current: any) => Promise<unknown>,
+  ): Promise<void> {
+    const property = 'modelRouting';
+    if (!this.isReady) throw new Error('Routing settings are still loading. The file publication will be retried.');
+    const value = await postgresClient.transaction(async client => {
+      const row = (await client.query<{ value: string }>('SELECT value FROM sulla_settings WHERE property=$1 FOR UPDATE', [property])).rows[0];
+      if (!row) throw new Error('Routing settings are not initialized. The file publication will be retried.');
+      const current = JSON.parse(row.value);
+      const next = await project(client, current);
+      const routing = next as { workerBindings?: unknown; workerInheritance?: unknown };
+      assertWorkerBindingsUnchanged(current?.workerBindings, routing.workerBindings);
+      assertWorkerBindingsUnchanged(current?.workerInheritance, routing.workerInheritance);
+      const serialized = JSON.stringify(next);
+      await client.query('UPDATE sulla_settings SET value=$2,"cast"=$3 WHERE property=$1', [property, serialized, 'json']);
+      return serialized;
+    });
+    this.invalidateLocal(property);
+    await this.cachePut(property, value);
+    this.invalidateLocal(property);
   }
 
   // The pre-database settings file: atomic, serialised, corruption-safe I/O.
@@ -460,8 +489,13 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   // ──────────────────────────────────────────────
 
   public static async delete(property: string): Promise<void> {
+    assertWorkflowWrite(property);
     if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
-    if (property === 'modelRouting') assertWorkerBindingsUnchanged((await this.get(property, null))?.workerBindings, undefined);
+    if (property === 'modelRouting') {
+      const previous = await this.get(property, null);
+      assertWorkerBindingsUnchanged(previous?.workerBindings, undefined);
+      assertWorkerBindingsUnchanged(previous?.workerInheritance, undefined);
+    }
     if (isRendererProcess()) {
       return getIpcRenderer().invoke('sulla-settings-delete', property);
     }

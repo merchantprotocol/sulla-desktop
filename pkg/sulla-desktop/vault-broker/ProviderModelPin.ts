@@ -6,22 +6,31 @@
 /**
  * Which models a pinned provider bridge accepts. A bridge is pinned to the
  * model its CLI was launched with; a request for any other model is refused.
- * Claude Code's own aliases ("opus", "sonnet", "haiku") are resolved by the
- * CLI to a full id ("claude-opus-5-5") before it sends the request, so a pin
- * on an alias accepts that family and nothing else.
+ * Claude Code's own aliases are resolved by the CLI to a full id before it
+ * sends the request, so a pin on an alias accepts that family and nothing else.
  */
 export class ProviderModelPin {
-  private static readonly FAMILIES: Readonly<Record<string, RegExp>> = {
-    opus:   /^claude-opus-[\w.-]+(\[[\w]+\])?$/,
-    sonnet: /^claude-sonnet-[\w.-]+(\[[\w]+\])?$/,
-    haiku:  /^claude-haiku-[\w.-]+(\[[\w]+\])?$/,
-  };
+  /**
+   * Claude Code decorates aliases with context selectors such as `sonnet[1m]`.
+   * The request sent upstream contains the resolved model id instead, so the
+   * bridge must compare the underlying alias family rather than the selector.
+   * Alias names come from Claude Code's refreshed model catalog, including
+   * families Sulla did not know at build time. Exact model pins remain exact.
+   */
+  private static family(pin: string): RegExp | undefined {
+    const alias = pin.toLowerCase().match(/^([a-z][a-z0-9-]*)(?:\[[a-z0-9-]+\])?$/)?.[1];
+
+    if (!alias || alias.startsWith('claude-')) return undefined;
+    const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    return new RegExp(`^claude-${ escaped }-[\\w.-]+(?:\\[[\\w]+\\])?$`);
+  }
 
   /** True when `model` is one of `pins`, or of the family a pinned alias names. No pins: anything goes. */
   static allows(model: unknown, pins: readonly string[] | undefined): boolean {
     if (!pins?.length) return true;
     if (typeof model !== 'string' || !model) return false;
-    return pins.some(pin => pin === model || (ProviderModelPin.FAMILIES[pin.toLowerCase()]?.test(model) ?? false));
+    return pins.some(pin => pin === model || (ProviderModelPin.family(pin)?.test(model) ?? false));
   }
 
   /** The request body's model, if it names one. */

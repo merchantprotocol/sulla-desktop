@@ -103,6 +103,13 @@ async function legacySeeded(bundled: BuiltinAgentSpec, options: { frontDoor?: bo
 beforeEach(() => { db.table = new AgentDefinitionTableFake() });
 
 describe('seeding built-ins against stored rows', () => {
+  it('ships capability classes instead of stale provider-specific model ids', () => {
+    for (const agent of getBuiltinAgentSpecs()) {
+      expect(agent.provider, agent.slug).toBeFalsy();
+      expect([undefined, null, 'frontier', 'standard', 'fast', 'coding', 'local'], agent.slug).toContain(agent.model);
+    }
+  });
+
   it('sees every shipped built-in as unchanged on the boot after it was installed', async() => {
     const shipped = getBuiltinAgentSpecs();
     const first = await seedBuiltinAgents(shipped);
@@ -131,6 +138,43 @@ describe('seeding built-ins against stored rows', () => {
     expect(row!.config.modelChoice).toEqual({ mode: 'class', class: 'coding' });
     expect(row!.builtin_hash).toBe(hashManagedContent(renderBuiltinAgent(spec({ prompt: 'Version two.' }), '/tmp/qa-home', GIT)));
     expect((await seedBuiltinAgents([spec({ prompt: 'Version two.' })])).unchanged).toBe(1);
+  });
+
+  it('stores the actual shipped name and slug and can still look up earlier selectors', async() => {
+    const quickFixer = getBuiltinAgentSpecs().find(item => item.slug === 'quick-fixer')!;
+    await seedBuiltinAgents([quickFixer]);
+    expect(db.table.stored('quick-fixer')).toMatchObject({ slug: 'quick-fixer', name: 'Quick Fixer', is_builtin: true });
+    expect(db.table.stored('codex-luna-worker')).toBeUndefined();
+    expect(await AgentDefinitionModel.findBySlug('codex-luna-worker')).toMatchObject({ slug: 'quick-fixer', name: 'Quick Fixer' });
+  });
+
+  it('keeps a user-owned canonical slug through repeated seeding', async() => {
+    const builder = getBuiltinAgentSpecs().find(item => item.slug === 'builder')!;
+    await legacySeeded({ ...builder, slug: 'codex-sol-worker' });
+    await AgentDefinitionModel.create({ slug: 'builder', name: 'My Builder', promptContent: 'My instructions.' });
+    const custom = await AgentDefinitionModel.findBySlug('builder');
+    const builtin = await AgentDefinitionModel.findBySlug('codex-sol-worker');
+
+    await seedBuiltinAgents([builder]);
+    await seedBuiltinAgents([builder]);
+    expect(await AgentDefinitionModel.findBySlug('builder')).toEqual(custom);
+    expect(await AgentDefinitionModel.findBySlug('codex-sol-worker')).toMatchObject({ id: builtin?.id, is_builtin: true, name: 'Builder' });
+  });
+
+  it('updates only the shipped Advisor identity in a customized installed prompt', async() => {
+    const advisor = getBuiltinAgentSpecs().find(item => item.slug === 'advisor')!;
+    const legacy = 'You are the **Opus Worker** — a high-capability Claude agent running in your Preferences model slot spawned by the primary Sulla agent.\nCustom review guidance.';
+    await legacySeeded({ ...advisor, prompt: legacy });
+    const original = await AgentDefinitionModel.findBySlug(advisor.slug);
+    await seedBuiltinAgents([advisor]);
+    const updated = await AgentDefinitionModel.findBySlug(advisor.slug);
+    expect(updated?.prompt_content).toMatch(/^You are \*\*Advisor\*\*/);
+    expect(updated?.prompt_content.endsWith('\nCustom review guidance.')).toBe(true);
+    expect(updated?.prompt_files['prompt.md']).toBe(updated?.prompt_content);
+    expect(updated?.builtin_hash).toBe(original?.builtin_hash);
+    const writes = db.table.updates.length;
+    await seedBuiltinAgents([advisor]);
+    expect(db.table.updates.length).toBe(writes);
   });
 
   it('keeps a human prompt edit through an upgrade', async() => {

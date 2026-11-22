@@ -801,7 +801,7 @@ class SullaFiles(pyfuse3.Operations):
         self.invalidation_timed_out_at = time.monotonic()
         emit("invalidation-timeout", logging.WARNING, timeoutSeconds=INVALIDATION_TIMEOUT_SECONDS)
         if self._invalidation_thread_busy() and not self.invalidation_stuck_logged:
-            # With cancellable=True an abandoned thread stuck in the kernel keeps the dedicated
+            # An abandoned thread stuck in the kernel keeps the dedicated
             # CapacityLimiter(1) token until it returns, so later invalidations queue and time out.
             # Caching stays off (safe degrade); the event loop is never blocked.
             self.invalidation_stuck_logged = True
@@ -836,11 +836,21 @@ class SullaFiles(pyfuse3.Operations):
             self.invalidation_limiter = trio.CapacityLimiter(1)
         limiter = self.invalidation_limiter
         call = functools.partial(function, *args, **kwargs)
-        with trio.move_on_after(INVALIDATION_TIMEOUT_SECONDS) as timeout_scope:
-            await trio.to_thread.run_sync(call, cancellable=True,
-                                          limiter=limiter)
+        try:
+            with trio.move_on_after(INVALIDATION_TIMEOUT_SECONDS) as timeout_scope:
+                await trio.to_thread.run_sync(call, abandon_on_cancel=True, limiter=limiter)
+        except FileNotFoundError:
+            # The kernel has already dropped this cache entry.
+            return True
+        except Exception as error:
+            self.invalidation_healthy = False
+            self.invalidation_timed_out_at = time.monotonic()
+            emit("invalidation-failed", logging.WARNING, error=str(error))
+            return False
         if timeout_scope.cancelled_caught:
             self._record_invalidation_timeout()
+            return False
+        return True
 
     def _finish_invalidation_pass(self, timeouts_before):
         """Restore caching only when a whole pass completed with no timeouts."""
@@ -857,25 +867,25 @@ class SullaFiles(pyfuse3.Operations):
     async def invalidate_path(self, path, membership_changed=True, node_fresh=False):
         """Invalidate a path from the background task, never from a FUSE request handler."""
         timeouts_before = self.invalidation_timeouts
-        inode = self.path_inode.get(path)
-        if inode is not None:
-            try: await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
-            except Exception: pass
         parent, name = os.path.split(path)
-        parent_inode = self.path_inode.get(parent)
-        if membership_changed and parent_inode is not None and name:
-            try: await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name))
-            except Exception: pass
-        self._finish_invalidation_pass(timeouts_before)
         if membership_changed:
             self.directory_complete.discard(parent)
             self.directory_etags.pop(parent, None)
-        # The kernel will look the name up again. Keep the inode stable for in-flight FUSE ops;
-        # _resolve refreshes this row from Files before returning it.
-        for cached, cached_inode in tuple(self.path_inode.items()):
-            if cached == path or cached.startswith(path + "/"):
-                node = self.nodes.get(cached_inode)
-                if node is not None and not node_fresh: node["stale"] = True
+        # GETATTR or LOOKUP can arrive as soon as the kernel is notified. They
+        # must see stale rows and refresh them before repopulating the cache.
+        if not node_fresh:
+            for cached, cached_inode in self.path_inode.items():
+                if cached == path or cached.startswith(path + "/"):
+                    self.nodes[cached_inode]["stale"] = True
+        inode = self.path_inode.get(path)
+        notified = True
+        if inode is not None:
+            notified = await self._run_invalidation(pyfuse3.invalidate_inode, inode, attr_only=False)
+        parent_inode = self.path_inode.get(parent)
+        if membership_changed and parent_inode is not None and name:
+            notified = await self._run_invalidation(pyfuse3.invalidate_entry, parent_inode, os.fsencode(name)) and notified
+        if notified:
+            self._finish_invalidation_pass(timeouts_before)
 
     def consume_change_page(self, result):
         """Queue path events, reserving whole-tree invalidation for an explicit cursor reset."""
@@ -1042,21 +1052,25 @@ class SullaFiles(pyfuse3.Operations):
         cached_node = self.nodes.get(inode) if inode is not None else None
         if inode is not None and cached_node is not None and not cached_node.get("stale") and (parent_inode != pyfuse3.ROOT_INODE or cached_node.get("collectionId")):
             return inode
-        collection_id = parent.get("collectionId")
+        inode = await self._refresh_node(path, parent.get("collectionId"))
+        if parent_inode == pyfuse3.ROOT_INODE:
+            parent["collectionId"] = self.nodes[inode]["collectionId"]
+        return inode
+
+    async def _refresh_node(self, path, collection_id):
         try:
             row = await self.api.entry(collection_id, self._files_path(path, collection_id) if collection_id else path)
-            collection_id = collection_id or row.get("collection_id") or row.get("collectionId")
-            if collection_id and parent_inode == pyfuse3.ROOT_INODE:
-                parent["collectionId"] = collection_id
-                self.nodes[pyfuse3.ROOT_INODE]["collectionId"] = collection_id
         except OSError as error:
             if getattr(error, "status", None) == 404 or error.errno == errno.ENOENT:
-                if inode is not None: self._forget_subtree(path)
+                if path in self.path_inode: self._forget_subtree(path)
                 raise pyfuse3.FUSEError(errno.ENOENT) from error
             raise
+        collection_id = collection_id or row.get("collection_id") or row.get("collectionId")
         if not collection_id:
             raise pyfuse3.FUSEError(errno.ENOENT)
-        if inode is None or cached_node is None:
+        inode = self.path_inode.get(path)
+        cached_node = self.nodes.get(inode)
+        if cached_node is None:
             inode = self._node(path, row.get("kind") == "directory")
         elif cached_node.get("versionId") != row.get("versionId"):
             cached_node.pop("sourceHash", None)
@@ -1159,8 +1173,12 @@ class SullaFiles(pyfuse3.Operations):
     async def getattr(self, inode, ctx=None):
         if inode == pyfuse3.ROOT_INODE:
             await self._ensure_initial_tree()
-        if inode not in self.nodes:
+        node = self.nodes.get(inode)
+        if node is None:
             raise pyfuse3.FUSEError(errno.ENOENT)
+        path = node["path"]
+        if node.get("stale") and not (node.get("collectionRoot") or node.get("virtualMetadata")) and self.path_inode.get(path) == inode:
+            await self._refresh_node(path, node.get("collectionId"))
         return self._attrs(inode)
 
     @traced("lookup", lambda s, a: s._child_info(a[0], a[1], a[-1]))

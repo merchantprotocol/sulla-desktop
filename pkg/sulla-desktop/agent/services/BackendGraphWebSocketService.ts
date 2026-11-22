@@ -306,8 +306,9 @@ export class BackendGraphWebSocketService {
     const definition = routedAgentId ? await agentDefinitionService.findBySlug(routedAgentId).catch(() => null) : null;
     const { effectiveModelChoice } = await import('../languagemodels/threadModelChoice');
     const workerRoute = !(state.metadata as any).workerModelChatOverride && (state.metadata as any).workerModelRoute;
-    const choice = workerRoute ? undefined : effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, effort: state.metadata.agent?.effort, metadata: state.metadata, agentChoice: definition?.model_choice });
-    const routed = (workerRoute ? await workerModelRouting.resolveRoute(workerRoute, signal) : await modelRouter.resolve('agents', choice))[0];
+    const inherited = !(state.metadata as any).workerModelChatOverride && state.metadata.inheritedResumeModel;
+    const choice = workerRoute || inherited ? undefined : effectiveModelChoice({ provider: state.metadata.agent?.provider, model: state.metadata.agent?.model, effort: state.metadata.agent?.effort, metadata: state.metadata, agentChoice: definition?.model_choice });
+    const routed = (workerRoute ? await workerModelRouting.resolveRoute(workerRoute, signal) : inherited ? [await modelRouter.checkInheritedResume(inherited)] : await modelRouter.resolve('agents', choice))[0];
     assertOwner();
     const provider = String(routed?.provider || state.metadata.agent?.provider || '').trim();
     return executeWithContainerLifecycleRecovery(
@@ -1550,13 +1551,18 @@ export class BackendGraphWebSocketService {
 
       const startNode = shouldResumeFromCurrentNode ? resumeNodeId : 'input_handler';
       const newHumanSelection = !parkedIdentity && metadata?.workerMappingNewHumanTurn && !wasActiveForWorkerMapping && !shouldResumeFromCurrentNode;
-      if (newHumanSelection && (state.metadata as any).workerModelRoute && (state.metadata as any).delegatedJobId) {
+      if (newHumanSelection && ((state.metadata as any).workerModelRoute || state.metadata.inheritedResumeModel || (state.metadata as any).savedInheritedModel) && (state.metadata as any).delegatedJobId) {
         const terminal = await parkedAgentRehydrator.isTerminalDelegatedThread(threadId);
         assertDecisionOwner();
         if (terminal) detachTerminalWorkerChat(state);
       }
       if (newHumanSelection && !(state.metadata as any).delegatedJobId) {
-        const route = (state.metadata as any).workerModelChatOverride ? undefined : await workerModelRouting.newRoute(agentId);
+        let route;
+        if (!(state.metadata as any).workerModelChatOverride) {
+          const leadRoute = agentId === 'account-manager' && channelId === SULLA_DESKTOP_CHANNEL_ID && !decisionTurn
+            ? await (await import('./ProductOwnerWorkflow')).productOwnerWorkflow.productOwnerLeadRoute(threadId) : undefined;
+          route = leadRoute ?? await workerModelRouting.newRoute(agentId);
+        }
         assertDecisionOwner();
         installWorkerRoute(state, route);
       }

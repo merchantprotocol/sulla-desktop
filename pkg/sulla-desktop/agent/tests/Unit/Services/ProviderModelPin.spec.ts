@@ -17,6 +17,18 @@ describe('a provider bridge pinned to a model', () => {
     expect(ProviderModelPin.allows('claude-haiku-5-5', ['haiku'])).toBe(true);
   });
 
+  // risk: the validated catalog exposes aliases and long-context selectors,
+  // while Claude Code resolves them to full model ids before calling the bridge.
+  it('normalizes refreshed Claude Code family aliases, including future families', () => {
+    expect(ProviderModelPin.allows('claude-sonnet-5-5', ['sonnet[1m]'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-opus-5-5', ['opus[1m]'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-haiku-5-5', ['haiku[200k]'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-fable-5-1', ['fable'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-new-family-1', ['new-family'])).toBe(true);
+    expect(ProviderModelPin.allows('claude-opus-5-5', ['sonnet[1m]'])).toBe(false);
+    expect(ProviderModelPin.allows('claude-sonnet-5-5', ['custom[1m]'])).toBe(false);
+  });
+
   it('still refuses any other model, which is what the pin is for', () => {
     expect(ProviderModelPin.allows('claude-sonnet-5-5', ['opus'])).toBe(false);
     expect(ProviderModelPin.allows('claude-opus-5-5', ['claude-sonnet-5-5'])).toBe(false);

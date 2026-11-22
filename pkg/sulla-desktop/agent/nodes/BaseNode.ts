@@ -568,6 +568,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
     const resolved = await turnProviderResolver.resolve(state);
     this.routingCandidates = resolved.candidates;
+    if ((state.metadata as any).delegatedJobId) {
+      const service = resolved.provider;
+      const provider = service.getProviderId?.();
+      const model = service.getModel();
+      const effort = service.getEffort?.();
+      const selected = resolved.candidates[0] ?? (provider && model ? { provider, model, ...(effort ? { effort } : {}) } : undefined);
+      if (selected) await workerModelRouting.recordInheritedSelection(state, selected);
+    }
     return resolved.provider;
   }
 
@@ -696,6 +704,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         if (agentData.genericPrompt) {
           agentConfig = { ...agentConfig, prompt: agentData.genericPrompt };
         }
+    }
+
+    // This labels existing handoffs. The agent keeps its own prompt, tools, and decisions.
+    const workflowGuidance = agentId === 'account-manager' && !state.metadata.isSubAgent
+      ? 'For feature handoffs, set workflowStep on agents/spawn_agent: mockup for UI design, build for the coding lead, and acceptance for UI acceptance. Omit it for other assignments.'
+      : state.metadata.productOwnerWorkflowStep === 'build'
+        ? 'For this build, set workflowStep to implementation on coding handoffs and review on independent code review. For review, pass the exact implementation result as followUpOf. Omit the field for other assignments.'
+        : '';
+    if (workflowGuidance) {
+      agentConfig = { ...agentConfig, prompt: [agentConfig?.prompt, workflowGuidance].filter(Boolean).join('\n\n') };
     }
 
     // Refresh template variables from the effective loaded config. The graph
@@ -1365,6 +1383,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       let lastRecovery = classifyLLMFailure(err);
       const recoveryPolicy = new ModelRecoveryPolicy();
       const failedFirst = candidates[0];
+      const firstFailureKind = lastRecovery.kind;
       firstRunTrace('chat', 'provider call failed', { provider: failedFirst.provider, model: failedFirst.model, recoveryKind: lastRecovery.kind, error: redactLLMFailureMessage(err) });
       if (!recoveryPolicy.canAdvance(lastRecovery) && !lastRecovery.retryPrimary) throw err;
 
@@ -1406,12 +1425,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                 ? this.buildReducedRetryMessages(messages)
                 : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
             await workerModelRouting.persistSelection(state, candidate);
+            if ((state.metadata as any).delegatedJobId && !(state.metadata as any).workerModelRoute) await workerModelRouting.recordInheritedSelection(state, candidate);
             this.recordModelStatus(state, service);
             const reply = await this.callLLMStreaming(state, retryMessages, {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
               signal: abortSignal, tools: llmTools, conversationId, nodeName, routingOwnedRetry: true,
               profileId: (state.metadata as any).profileId,
-            }, nodeRunContext, service);
+            }, nodeRunContext, service, index > 0 ? { provider: failedFirst.provider, model: failedFirst.model, reason: firstFailureKind } : undefined);
             if (reply?.metadata.reusedAssistantMessage) return reply;
             if (!reply || (!reply.content?.trim() && !reply.metadata.tool_calls?.length)) throw new Error(`LLM returned empty response (provider=${ candidate.provider }, model=${ candidate.model })`);
             if (index > 0) {
@@ -1645,6 +1665,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     options: any,
     nodeRunContext: any,
     provider: BaseLanguageModel = this.llm!,
+    fallbackFrom?: NonNullable<import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue['fallbackFrom']>,
   ): Promise<NormalizedResponse | null> {
     const actionable = DeferredStallInput.actionableMessages(state, messages);
     const controller = this.getChatController();
@@ -1903,6 +1924,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     if (!reply) {
       return null;
+    }
+
+    if (reply.content?.trim() || reply.metadata.tool_calls?.length) {
+      const used = { model: reply.metadata.reportedModel || provider.getModel(), modelEvidence: reply.metadata.reportedModel ? 'provider' as const : 'unconfirmed' as const, provider: provider.getProviderId?.() || provider.getProviderName(), effort: provider.getEffort?.() ?? null, source: 'resolved' as const };
+      const prior = state.metadata.workflowResponseModels ?? [];
+      const sameModel = (model: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue) => model.provider === used.provider && model.model === used.model && model.effort === used.effort && model.modelEvidence === used.modelEvidence;
+      const fallback = fallbackFrom ?? prior.find(sameModel)?.fallbackFrom;
+      const models = [...prior.filter(model => !sameModel(model)), { ...used, ...(fallback ? { fallbackFrom: fallback } : {}) }];
+      state.metadata.workflowResponseModels = models;
+      AgentModelStatusRegistry.recordResponse(state.metadata.threadId, models);
     }
 
     if (streamingWsSent) {

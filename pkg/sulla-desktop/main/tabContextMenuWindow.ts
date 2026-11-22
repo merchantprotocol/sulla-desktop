@@ -47,6 +47,7 @@ let pendingTabData: Record<string, unknown> | null = null;
 
 /** The agent window that opened this popup; the selected action goes back to it. */
 let openerWindow: BrowserWindow | null = null;
+let openerContents: Electron.WebContents | null = null;
 
 const MENU_WIDTH = 260;
 const MENU_ITEM_HEIGHT = 31;   // 7px padding top+bottom + ~17px content
@@ -70,11 +71,16 @@ async function onShow(
 ): Promise<void> {
   const { screenX, screenY, items, tabData } = payload;
 
+  const owner = agentWindowFromSender(_event.sender);
+  if (!owner) return;
+
   pendingTabData = tabData;
-  openerWindow = agentWindowFromSender(_event.sender);
+  openerWindow = owner;
+  openerContents = _event.sender;
 
   // Detect theme for proper styling
   const themeId = await getTheme();
+  if (pendingTabData !== tabData) return;
   const theme = themeId.includes('-light') ? 'light' : 'dark';
 
   // Estimate height from item count
@@ -87,13 +93,7 @@ async function onShow(
       x: screenX, y: screenY, width: MENU_WIDTH, height: estimatedHeight,
     });
     win.webContents.send('tab-context-menu:data', { items, theme, themeId });
-    win.showInactive();
-    // Focus after a tick so the window can receive keyboard events
-    setTimeout(() => {
-      if (win && !win.isDestroyed()) {
-        win.focus();
-      }
-    }, 50);
+    showPopup(win);
     return;
   }
 
@@ -128,12 +128,7 @@ async function onShow(
   win.once('ready-to-show', () => {
     if (!win || win.isDestroyed()) return;
     win.webContents.send('tab-context-menu:data', { items, theme, themeId });
-    win.showInactive();
-    setTimeout(() => {
-      if (win && !win.isDestroyed()) {
-        win.focus();
-      }
-    }, 50);
+    showPopup(win);
   });
 
   // Dismiss when the window loses focus (user clicked elsewhere)
@@ -152,16 +147,40 @@ async function onShow(
   console.log('[TabContextMenu] Opened popup');
 }
 
+function showPopup(popup: BrowserWindow): void {
+  popup.showInactive();
+  // A quick selection can close the popup before its deferred focus runs.
+  setTimeout(() => {
+    if (!popup.isDestroyed() && popup.isVisible()) popup.focus();
+  }, 50);
+}
+
 /** Window the popup should reply to: its opener if still alive, else the active agent window. */
 function openerTarget(): BrowserWindow | null {
   if (openerWindow && !openerWindow.isDestroyed()) return openerWindow;
   return getActiveAgentWindow();
 }
 
-function onAction(_event: Electron.IpcMainEvent, action: string): void {
+function onAction(event: Electron.IpcMainEvent, action: string): void {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) return;
   console.log(`[TabContextMenu] Action: ${ action }`);
 
-  // Forward the selected action + original tab data back to the renderer
+  if (action === 'rename') {
+    const owner = openerWindow;
+    const editor = openerContents;
+    const tabData = pendingTabData;
+
+    _close();
+    // Hiding the popup can restore keyboard focus to the chat's native view.
+    // Focus the renderer that owns the tab strip before it opens the editor.
+    if (owner && !owner.isDestroyed() && editor && !editor.isDestroyed() && tabData) {
+      owner.focus();
+      editor.focus();
+      editor.send('tab-context-menu:selected', action, tabData);
+    }
+    return;
+  }
+
   const mainWindow = openerTarget();
 
   if (mainWindow && !mainWindow.isDestroyed() && pendingTabData) {
@@ -183,4 +202,5 @@ function _close(): void {
   }
   pendingTabData = null;
   openerWindow = null;
+  openerContents = null;
 }
