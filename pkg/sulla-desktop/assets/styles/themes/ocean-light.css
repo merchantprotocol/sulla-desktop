@@ -807,6 +807,15 @@
 .theme-ocean-light .dt-divider { background: rgba(14, 165, 233, 0.2) !important; }
 .theme-ocean-light .dt-empty { color: #38bdf8 !important; }
 
+.theme-ocean-light .header-backdrop {
+  background: linear-gradient(
+    to bottom,
+    rgba(224, 242, 254, 0.95) 0%,
+    rgba(224, 242, 254, 0.85) 55%,
+    rgba(224, 242, 254, 0) 100%
+  ) !important;
+}
+
 /* Model Switcher Modal — Light Mode */
 .theme-ocean-light .modal-veil {
   background: rgba(12, 74, 110, 0.35) !important;
