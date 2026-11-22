@@ -89,12 +89,17 @@ export class DesktopRelayRequestHandlers {
     if (!msg.relayRequest || !msg.viewerId || !msg.viewerKey || !this.validId(msg.workspaceId)
         || msg.accountId !== await this.chat.currentRelayAccount?.()
         || !msg.targetDeviceId || msg.targetDeviceId !== await this.resolveDeviceId()) return;
+    if (!msg.accountId) return;
+    const scope = { accountId: msg.accountId, workspaceId: msg.workspaceId, hostDeviceId: msg.targetDeviceId };
     const allowed = await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey) === true;
     const models = allowed ? await this.chat.modelCapabilities?.().catch(() => []) ?? [] : [];
+    const consent = allowed && await this.chat.allowScopedHistory?.() === true;
+    const threads = consent ? await this.chat.discoverThreads?.(scope).catch(() => []) ?? [] : [];
+    const currentConsent = threads.length > 0 && await this.chat.allowScopedHistory?.() === true;
     const current = allowed && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey) === true
       && msg.accountId === await this.chat.currentRelayAccount?.();
     this.outbox.send({ type: 'relay_inventory_result', relayScope: 'v1', relayRequest: msg.relayRequest,
-      allowed: current, models: current ? models : [] });
+      allowed: current, models: current ? models : [], threads: current && currentConsent ? threads : [] });
   }
 
   async handleScopedCommand(msg: RelayIncomingFrame): Promise<void> {

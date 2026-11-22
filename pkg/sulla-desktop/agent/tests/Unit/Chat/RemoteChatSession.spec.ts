@@ -76,6 +76,34 @@ describe('Remote Desktop chat', () => {
     }
   });
 
+  // risk: new viewers cannot invent a thread or carry discoveries across scopes.
+  it('exposes discovery only for the current proof request and discards it on disconnect', async() => {
+    const transport = new FixtureTransport();
+    const chat = new ChatController();
+    const viewer = new RemoteChatSession(chat, transport, () => {}, () => true);
+    viewer.mount();
+    try {
+      await viewer.refresh();
+      const requestId = transport.sent[0].requestId;
+      const device = { id: 'host-a', name: 'Mac', models: [],
+        threads: [{ id: 'remote_canonical_123456', updatedAt: 1000 }] };
+      transport.emit({ type: 'relay_inventory_device', requestId: 'old-proof', device });
+      transport.emit({ type: 'relay_inventory_complete', requestId: 'old-proof' });
+      expect(chat.remoteDiscoveries.value).toEqual([]);
+      transport.emit({ type: 'relay_inventory_device', requestId, device });
+      transport.emit({ type: 'relay_inventory_complete', requestId });
+      expect(chat.remoteDiscoveries.value).toEqual([{ updatedAt: 1000, binding: {
+        accountId: 'account-a', workspaceId: 'team-a', threadId: 'remote_canonical_123456', deviceId: 'host-a', name: 'Mac',
+      } }]);
+      expect(transport.sent.some(frame => frame.type === 'chat')).toBe(false);
+      transport.emit({ type: 'viewer_disconnected' });
+      expect(chat.remoteDiscoveries.value).toEqual([]);
+    } finally {
+      viewer.dispose();
+      chat.dispose();
+    }
+  });
+
   // risk: local chat availability; Cloud is not a dependency when using This device.
   it('preserves the original local send path without an enrolled remote viewer', () => {
     const local: string[] = [];

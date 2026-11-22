@@ -79,6 +79,11 @@ export interface RemoteThreadBinding {
   pending?: { id: string; text: string };
 }
 
+export interface RemoteDiscoveredThread {
+  binding: RemoteThreadBinding;
+  updatedAt: number;
+}
+
 export interface Thread {
   id:               ThreadId;
   title:            string;

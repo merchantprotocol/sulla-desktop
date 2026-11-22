@@ -106,6 +106,19 @@ export class DesktopRelayRuntimePorts {
           );
           return receipt.rows.length === 1;
         },
+        discoverThreads: async({ accountId, workspaceId, hostDeviceId }) => {
+          const records = await postgresClient.query<{ id: string; updatedAt: Date | string }>(`
+            SELECT c.id, c.updated_at AS "updatedAt" FROM claude_conversations c
+            WHERE c.contractor_id=$1 AND c.relay_workspace_id=$2 AND c.relay_host_device_id=$3
+              AND left(c.id,7)='remote_' AND c.deleted_at IS NULL
+              AND EXISTS (SELECT 1 FROM claude_messages m WHERE m.conversation_id=c.id AND m.contractor_id=$1
+                AND m.role='user' AND m.status='sent' AND m.routed_to='desktop' AND m.deleted_at IS NULL)
+              AND NOT EXISTS (SELECT 1 FROM conversation_history h WHERE (h.thread_id=c.id OR h.id=c.id)
+                AND h.channel_id IS DISTINCT FROM 'mobile-relay')
+            ORDER BY c.updated_at DESC, c.id LIMIT 32`, [accountId, workspaceId, hostDeviceId]);
+          return records.map(row => ({ id: row.id,
+            updatedAt: new Date(row.updatedAt instanceof Date ? row.updatedAt.getTime() : row.updatedAt).getTime() }));
+        },
         modelCapabilities: async() => {
           const { getModelProviderService } = await import('@pkg/agent/services/ModelProviderService');
           const service = getModelProviderService();

@@ -228,6 +228,8 @@ export class ChatController {
   }
 
   // ─── Send / queue ────────────────────────────────────────────────
+  readonly remoteDiscoveries = ref<import('../models/Thread').RemoteDiscoveredThread[]>([]);
+  openRemoteDiscovery?: (threadId: string) => void;
   remoteDraftSelected = false;
   remoteStop?: () => void;
 

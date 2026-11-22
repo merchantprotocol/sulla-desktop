@@ -20,7 +20,7 @@ export interface RemoteChatTransport {
   history: ConstructorParameters<typeof RemoteChatHistory>[0];
 }
 export type RemoteModel = { providerId: string; modelId: string };
-export type RemoteDevice = { id: string; name: string; models: RemoteModel[] };
+export type RemoteDevice = { id: string; name: string; models: RemoteModel[]; threads?: { id: string; updatedAt: number }[] };
 type State = 'Connecting…' | 'Connected' | 'Connected · Catching up…' | 'Connected · History unavailable' | 'Offline' | 'Access unavailable';
 
 export class RemoteChatSession {
@@ -75,6 +75,7 @@ export class RemoteChatSession {
       this.inventory = '';
       this.chat.remoteStop = undefined;
       this.chat.remoteDraftSelected = false;
+      this.chat.remoteDiscoveries.value = [];
       stopListening();
       unwatch();
     };
@@ -136,6 +137,10 @@ export class RemoteChatSession {
 
   private applyInventory(): void {
     this.devices.value = this.inventoryRows;
+    const scope = this.scope;
+    this.chat.remoteDiscoveries.value = scope ? this.devices.value.flatMap(device =>
+      (device.threads ?? []).map(thread => ({ updatedAt: thread.updatedAt,
+        binding: { ...scope, threadId: thread.id, deviceId: device.id, name: device.name } }))) : [];
     const b = this.bound.value;
     if (b && this.subscribed && !this.devices.value.some(device => device.id === b.deviceId)) {
       this.unsubscribe();
@@ -177,6 +182,7 @@ export class RemoteChatSession {
   private offline(): void {
     this.unsubscribe(false);
     this.devices.value = [];
+    this.chat.remoteDiscoveries.value = [];
     this.inventory = '';
     clearTimeout(this.inventoryTimer);
     this.scope = undefined;
