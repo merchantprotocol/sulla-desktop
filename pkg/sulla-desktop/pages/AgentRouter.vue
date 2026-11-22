@@ -105,63 +105,6 @@
 
     <!-- A locked or not-yet-configured vault blocks every tab and route. -->
     <VaultUnlockScreen v-if="vaultUnlockVisible" />
-
-    <!-- Status Bar Footer -->
-    <footer class="agent-footer">
-      <div class="agent-footer-left">
-        <span
-          v-if="appVersion"
-          class="footer-item footer-version"
-          :title="`Sulla Desktop v${appVersion}`"
-        >
-          v{{ appVersion }}
-        </span>
-        <span
-          class="footer-item"
-          :title="`${formatBytes(footerStats.availableBytes)} free on disk`"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          ><rect
-            x="2"
-            y="2"
-            width="20"
-            height="20"
-            rx="2"
-          /><path d="M16 2v20" /><path d="M2 12h14" /></svg>
-          {{ formatBytes(footerStats.availableBytes) }} free
-        </span>
-      </div>
-      <div class="agent-footer-right">
-        <span
-          v-if="backendProgressDesc"
-          class="footer-item footer-progress-text"
-        >
-          {{ backendProgressDesc }}
-        </span>
-        <span
-          v-if="backendProgressActive"
-          class="footer-progress-bar-wrapper"
-        >
-          <span
-            class="footer-progress-bar-fill"
-            :class="{ indeterminate: backendProgressPct < 0 }"
-            :style="backendProgressPct >= 0 ? { width: backendProgressPct + '%' } : {}"
-          />
-        </span>
-        <span
-          class="footer-item footer-state"
-          :class="backendStateClass"
-        >{{ backendStateLabel }}</span>
-      </div>
-    </footer>
   </div>
 </template>
 
@@ -524,90 +467,6 @@ function onModeRailSelect(mode: string, subTab?: string) {
   router.push(`/Browser/${ tab.id }`);
 }
 
-// ── App version ──
-const appVersion = ref('');
-
-// ── Footer state ──
-const footerStats = reactive({ availableBytes: 0 });
-let footerStatsTimer: ReturnType<typeof setInterval> | undefined;
-
-const backendState = ref('STOPPED');
-const backendProgressDesc = ref('');
-const backendProgressCurrent = ref(0);
-const backendProgressMax = ref(0);
-
-const STATE_LABELS: Record<string, string> = {
-  STOPPED:  'Stopped',
-  STARTING: 'Starting…',
-  STARTED:  'Running',
-  STOPPING: 'Shutting down…',
-  ERROR:    'Error',
-  DISABLED: 'Connected',
-};
-
-const backendStateLabel = computed(() => STATE_LABELS[backendState.value] || backendState.value);
-const backendStateClass = computed(() => {
-  const s = backendState.value;
-
-  if (s === 'STARTED' || s === 'DISABLED') return 'state-ok';
-  if (s === 'ERROR') return 'state-error';
-  if (s === 'STARTING' || s === 'STOPPING') return 'state-busy';
-
-  return 'state-stopped';
-});
-
-const backendProgressActive = computed(() => {
-  if (backendProgressMax.value <= 0) {
-    return !!backendProgressDesc.value;
-  }
-
-  return backendProgressCurrent.value < backendProgressMax.value;
-});
-
-const backendProgressPct = computed(() => {
-  if (backendProgressMax.value <= 0) return -1;
-
-  return Math.round((backendProgressCurrent.value / backendProgressMax.value) * 100);
-});
-
-function onK8sCheckState(_event: any, state: any) {
-  backendState.value = String(state);
-}
-
-function onK8sProgress(_event: any, progress: any) {
-  if (progress?.description) {
-    backendProgressDesc.value = progress.description;
-  }
-  if (typeof progress?.current === 'number') {
-    backendProgressCurrent.value = progress.current;
-  }
-  if (typeof progress?.max === 'number') {
-    backendProgressMax.value = progress.max;
-  }
-  if (progress?.current >= progress?.max && progress?.max > 0) {
-    backendProgressDesc.value = '';
-    backendProgressCurrent.value = 0;
-    backendProgressMax.value = 0;
-  }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  const val = bytes / (1024 ** i);
-
-  return `${ val < 10 ? val.toFixed(1) : Math.round(val) } ${ units[i] }`;
-}
-
-async function refreshFooterStats() {
-  try {
-    const stats = await ipcRenderer.invoke('editor-footer-stats');
-
-    footerStats.availableBytes = stats.availableBytes;
-  } catch { /* ignore */ }
-}
-
 function onRoute(_event: any, args: any) {
   if (args?.path) {
     router.push(args.path);
@@ -945,31 +804,13 @@ onMounted(async() => {
   presenceTracker.setActiveChannel('sulla-desktop');
   presenceTracker.start();
 
-  ipcRenderer.on('get-app-version', (_event: any, version: string) => {
-    appVersion.value = version;
-  });
-  ipcRenderer.send('get-app-version');
-
-  refreshFooterStats();
-  footerStatsTimer = setInterval(refreshFooterStats, 30_000);
-
   ipcRenderer.on('route' as any, onRoute);
   ipcRenderer.on('agent-command' as any, onAgentCommand);
   ipcRenderer.on('internal-tab-view:open-workspace-tab', onWorkspaceTabRequested);
-  ipcRenderer.on('k8s-check-state' as any, onK8sCheckState);
-  ipcRenderer.on('k8s-progress' as any, onK8sProgress);
   ipcRenderer.on('conversation-history:show-all' as any, onHistoryShowAll);
   ipcRenderer.on('conversation-history:restore-last-closed' as any, onHistoryRestoreLastClosed);
   ipcRenderer.on('conversation-history:navigate' as any, onHistoryNavigate);
   // vault:logged-in / vault:logged-out are handled globally in useVaultUnlock composable
-  // Fetch initial state and progress
-  try {
-    const initialState = ipcRenderer.sendSync('k8s-state' as any) as string | undefined;
-    if (initialState) backendState.value = initialState;
-  } catch { /* ignore */ }
-  ipcRenderer.invoke('k8s-progress').then((p: any) => {
-    if (p?.description) backendProgressDesc.value = p.description;
-  }).catch(() => {});
 });
 
 onUnmounted(() => {
@@ -984,9 +825,6 @@ onUnmounted(() => {
   ipcRenderer.removeListener('database:available', onDatabaseAvailable);
   ipcRenderer.removeListener('recipe-rail-apps-changed' as any, setRailApps);
   presenceTracker.stop();
-  if (footerStatsTimer) {
-    clearInterval(footerStatsTimer);
-  }
   window.removeEventListener('sulla:navigate-tab', onNavigateTab as EventListener);
   window.removeEventListener('sulla:open-mode', onOpenMode as EventListener);
   window.removeEventListener('sulla:conversations-exit', onConversationsExit);
@@ -997,8 +835,6 @@ onUnmounted(() => {
   ipcRenderer.removeListener('route' as any, onRoute);
   ipcRenderer.removeListener('agent-command' as any, onAgentCommand);
   ipcRenderer.removeListener('internal-tab-view:open-workspace-tab', onWorkspaceTabRequested);
-  ipcRenderer.removeListener('k8s-check-state' as any, onK8sCheckState);
-  ipcRenderer.removeListener('k8s-progress' as any, onK8sProgress);
   ipcRenderer.removeListener('conversation-history:show-all' as any, onHistoryShowAll);
   ipcRenderer.removeListener('conversation-history:restore-last-closed' as any, onHistoryRestoreLastClosed);
   ipcRenderer.removeListener('conversation-history:navigate' as any, onHistoryNavigate);
@@ -1018,8 +854,8 @@ onUnmounted(() => {
 
 /*
  * Body = horizontal row: global rail on the left, content area on the
- * right. The rail spans from just below the vault/startup overlays down
- * to the footer, beside the tab strip (VS Code activity-bar style).
+ * right. The body fills the window height, with the rail starting below
+ * the native titlebar when present.
  */
 .agent-router-body {
   --rail-width: 64px;
@@ -1122,103 +958,6 @@ onUnmounted(() => {
 .browser-tab-hidden :deep(*::before),
 .browser-tab-hidden :deep(*::after) {
   animation-play-state: paused !important;
-}
-
-/* Status Bar Footer */
-.agent-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 22px;
-  min-height: 22px;
-  max-height: 22px;
-  padding: 0 10px;
-  font-size: var(--fs-body-sm);
-  background: var(--bg-surface-alt);
-  border-top: 1px solid var(--border-default);
-  color: var(--text-secondary);
-  flex-shrink: 0;
-  user-select: none;
-}
-
-.agent-footer-left,
-.agent-footer-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.footer-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.footer-version {
-  font-weight: var(--weight-semibold);
-  opacity: 0.7;
-}
-
-.footer-item svg {
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-
-.footer-progress-text {
-  font-size: var(--fs-caption);
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-}
-
-.footer-state {
-  padding: 0 6px;
-  border-radius: 3px;
-  font-weight: var(--weight-semibold);
-  font-size: var(--fs-caption);
-}
-.footer-state.state-ok {
-  color: var(--status-success);
-}
-.footer-state.state-error {
-  color: var(--status-error);
-}
-.footer-state.state-busy {
-  color: var(--status-warning);
-}
-.footer-state.state-stopped {
-  color: var(--text-muted);
-}
-
-.footer-progress-bar-wrapper {
-  display: inline-flex;
-  align-items: center;
-  width: 80px;
-  height: 6px;
-  background: var(--bg-hover);
-  border-radius: 3px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.footer-progress-bar-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-.footer-progress-bar-fill.indeterminate {
-  width: 40% !important;
-  animation: footer-progress-slide 1.2s ease-in-out infinite;
-}
-@keyframes footer-progress-slide {
-  0%   { margin-left: 0; }
-  50%  { margin-left: 60%; }
-  100% { margin-left: 0; }
 }
 </style>
 
