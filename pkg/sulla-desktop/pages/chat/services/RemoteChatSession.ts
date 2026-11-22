@@ -12,19 +12,24 @@ import { asMessageId } from '../types/chat';
 import { RemoteChatHistory } from './RemoteChatHistory';
 
 type Frame = Record<string, unknown>;
-type Scope = { accountId: string; workspaceId: string };
+type Scope = { accountId: string; workspaceId: string; deviceId?: string; historyOnly?: boolean };
 export interface RemoteChatTransport {
-  connect(): Promise<Scope | null>;
+  connect(bound?: boolean): Promise<Scope | null>;
   send(frame: Frame): Promise<boolean>;
   listen(receive: (frame: Frame) => void): () => void;
   history: ConstructorParameters<typeof RemoteChatHistory>[0];
 }
 export type RemoteModel = { providerId: string; modelId: string };
-export type RemoteDevice = { id: string; name: string; models: RemoteModel[]; threads?: { id: string; updatedAt: number }[] };
+export type RemoteDevice = { id: string; name: string; models: RemoteModel[]; keyTag?: string; threads?: { id: string; updatedAt: number }[] };
 type State = 'Connecting…' | 'Connected' | 'Connected · Catching up…' | 'Connected · History unavailable' | 'Offline' | 'Access unavailable';
 
 export class RemoteChatSession {
   readonly devices = ref<RemoteDevice[]>([]);
+  readonly offlineDevices = ref<RemoteDevice[]>([]);
+  readonly pickerDevices = computed(() => [
+    ...this.devices.value.map(device => ({ ...device, online: true })),
+    ...this.offlineDevices.value.map(device => ({ ...device, online: false })),
+  ]);
   readonly selected = ref<RemoteDevice>();
   readonly model = ref<RemoteModel>();
   readonly status = ref<State>('Offline');
@@ -36,6 +41,7 @@ export class RemoteChatSession {
   readonly remote = computed(() => Boolean(this.bound.value || this.selected.value));
   readonly models = computed(() => this.chosen.value?.models ?? []);
   private scope?: Scope;
+  private inventoryScope?: Scope;
   private inventory = '';
   private inventoryRows: RemoteDevice[] = [];
   private inventoryTimer?: ReturnType<typeof setTimeout>;
@@ -73,6 +79,7 @@ export class RemoteChatSession {
       this.unsubscribe();
       clearTimeout(this.inventoryTimer);
       this.inventory = '';
+      this.offline(true);
       this.chat.remoteStop = undefined;
       this.chat.remoteDraftSelected = false;
       this.chat.remoteDiscoveries.value = [];
@@ -100,7 +107,7 @@ export class RemoteChatSession {
 
   async refresh(catchUp = false): Promise<void> {
     try {
-      const scope = await this.transport.connect();
+      const scope = await this.transport.connect(Boolean(this.bound.value && !this.bound.value.pending));
       if (this.disposed || !scope) return;
       this.ready(scope);
       const binding = this.bound.value;
@@ -111,14 +118,17 @@ export class RemoteChatSession {
   }
 
   private ready(scope: Scope): void {
-    if (this.scope && (this.scope.accountId !== scope.accountId || this.scope.workspaceId !== scope.workspaceId)) this.offline();
-    this.scope = scope;
-    this.available.value = true;
-    if (this.active() && !this.inventory) {
+    const previous = this.inventoryScope;
+    if (previous && (previous.accountId !== scope.accountId || previous.workspaceId !== scope.workspaceId
+        || previous.deviceId !== scope.deviceId || !!previous.historyOnly !== !!scope.historyOnly)) this.offline(true);
+    this.inventoryScope = this.scope = scope;
+    this.available.value = !scope.historyOnly;
+    if (!scope.historyOnly && this.active() && !this.inventory) {
       this.inventory = crypto.randomUUID();
       const requestId = this.inventory;
       this.inventoryRows = [];
-      void this.send({ type: 'relay_inventory', requestId });
+      const cached = this.pickerDevices.value.slice(0, 24).map(({ id, keyTag }) => ({ id, keyTag }));
+      void this.send({ type: 'relay_inventory', requestId, cached });
       this.inventoryTimer = setTimeout(() => {
         if (this.inventory !== requestId) return;
         this.inventory = '';
@@ -131,16 +141,21 @@ export class RemoteChatSession {
       this.status.value = 'Access unavailable';
       return;
     }
-    if (binding.pending) this.checkReceipt();
+    if (binding.pending) { if (!scope.historyOnly) this.checkReceipt() }
     else this.subscribe(binding);
   }
 
-  private applyInventory(): void {
+  private applyInventory(offline: unknown = []): void {
+    const current = new Set(this.inventoryRows.map(device => device.id));
+    const previous = this.pickerDevices.value;
+    this.offlineDevices.value = Array.isArray(offline) ? previous.filter(device => !current.has(device.id) && offline.includes(device.id))
+      .map(({ id, name, keyTag }) => ({ id, name, keyTag, models: [] })) : [];
     this.devices.value = this.inventoryRows;
+    this.redactUnavailableSelection();
     const scope = this.scope;
     this.chat.remoteDiscoveries.value = scope ? this.devices.value.flatMap(device =>
       (device.threads ?? []).map(thread => ({ updatedAt: thread.updatedAt,
-        binding: { ...scope, threadId: thread.id, deviceId: device.id, name: device.name } }))) : [];
+        binding: { accountId: scope.accountId, workspaceId: scope.workspaceId, threadId: thread.id, deviceId: device.id, name: device.name } }))) : [];
     const b = this.bound.value;
     if (b && this.subscribed && !this.devices.value.some(device => device.id === b.deviceId)) {
       this.unsubscribe();
@@ -179,9 +194,24 @@ export class RemoteChatSession {
     }, 8000);
   }
 
-  private offline(): void {
+  private redactUnavailableSelection(): void {
+    const selected = this.selected.value;
+    if (selected && !this.pickerDevices.value.some(device => device.id === selected.id)) {
+      // Keep the draft in remote mode; never silently route it to This device.
+      this.selected.value = { id: selected.id, name: 'Device', models: [] };
+      this.model.value = undefined;
+    }
+  }
+
+  private offline(invalidate = false): void {
     this.unsubscribe(false);
+    this.offlineDevices.value = invalidate ? [] : this.pickerDevices.value.map(({ id, name, keyTag }) => ({ id, name, keyTag, models: [] }));
     this.devices.value = [];
+    if (invalidate) {
+      this.inventoryScope = undefined;
+      this.available.value = false;
+      this.redactUnavailableSelection();
+    }
     this.chat.remoteDiscoveries.value = [];
     this.inventory = '';
     clearTimeout(this.inventoryTimer);
@@ -207,7 +237,7 @@ export class RemoteChatSession {
     const status = this.status.value;
     const b = this.bound.value;
     const model = this.model.value;
-    return !!this.scope && !!model && !b?.pending && !this.routing && !this.running.value && (!b || (!!this.subscribed && status.startsWith('Connected')))
+    return !!this.scope && !this.scope.historyOnly && !!model && !b?.pending && !this.routing && !this.running.value && (!b || (!!this.subscribed && status.startsWith('Connected')))
       && this.models.value.some(candidate => candidate.providerId === model.providerId && candidate.modelId === model.modelId);
   }
 
@@ -224,7 +254,7 @@ export class RemoteChatSession {
     const selectedThread = this.chat.thread.value.id;
     const previous = this.bound.value;
     const pending = { id: crypto.randomUUID(), text };
-    const binding = { ...(previous ?? { ...this.scope, threadId: `remote_${ crypto.randomUUID() }`, deviceId: device.id, name: device.name }), pending };
+    const binding = { ...(previous ?? { accountId: this.scope.accountId, workspaceId: this.scope.workspaceId, threadId: `remote_${ crypto.randomUUID() }`, deviceId: device.id, name: device.name }), pending };
     this.updateBinding(binding);
     this.routing = true;
     this.status.value = 'Connecting…';
@@ -297,16 +327,17 @@ export class RemoteChatSession {
 
   private async receive(frame: Frame): Promise<void> {
     if (this.disposed) return;
+    if (frame.type === 'viewer_invalidated') { this.offline(true); return }
     if (frame.type === 'viewer_disconnected') { this.offline(); return }
     if (frame.type === 'relay_device_ready' && typeof frame.accountId === 'string' && typeof frame.workspaceId === 'string') {
-      this.ready({ accountId: frame.accountId, workspaceId: frame.workspaceId });
+      this.ready({ accountId: frame.accountId, workspaceId: frame.workspaceId, deviceId: typeof frame.deviceId === 'string' ? frame.deviceId : undefined, historyOnly: frame.historyOnly === true });
       return;
     }
     if (this.inventory && frame.requestId === this.inventory) {
       if (frame.type === 'relay_inventory_device' && frame.device) this.inventoryRows.push(frame.device as RemoteDevice);
       if (frame.type === 'relay_inventory_complete') {
         clearTimeout(this.inventoryTimer);
-        this.applyInventory();
+        this.applyInventory(frame.offline);
         this.inventory = '';
       }
       return;
@@ -357,7 +388,18 @@ export class RemoteChatSession {
       this.routing = false;
       if (frame.type === 'relay_subscribed') {
         this.subscribed = b.threadId;
-        this.liveRun = typeof frame.clientRunId === 'string' ? frame.clientRunId : '';
+        if (frame.historyOnly === true && !this.scope.historyOnly) {
+          this.scope.historyOnly = true;
+          this.available.value = false;
+          this.inventory = '';
+          clearTimeout(this.inventoryTimer);
+          this.inventoryRows = [];
+          this.offlineDevices.value = [];
+          this.devices.value = [];
+          this.chat.remoteDiscoveries.value = [];
+          this.redactUnavailableSelection();
+        }
+        this.liveRun = frame.historyOnly !== true && typeof frame.clientRunId === 'string' ? frame.clientRunId : '';
         this.running.value = !!this.liveRun;
         await this.catchUp(b);
       } else if (frame.type === 'error') {

@@ -127,8 +127,9 @@ export class DesktopRelayRequestHandlers {
     }
     if (msg.type === 'relay_history_check') {
       const allowed = await this.chat.admitRelayThread?.(thread, true, scope)
+        && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)
         && await this.chat.allowScopedHistory?.()
-        && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey);
+        && accountId === await this.chat.currentRelayAccount?.();
       respond({ type: allowed ? 'relay_history_allowed' : 'error', reason: allowed ? undefined : 'thread_not_authorized' });
     }
     if (msg.type === 'relay_receipt' && this.validId(msg.userMessageId)) {

@@ -331,7 +331,7 @@ const draft        = ref('');
 const { createTab } = useBrowserTabs();
 const activityContext = inject<{ tabId?: string }>('chat:activity-context', {});
 const remoteTransport: RemoteChatTransport = {
-  connect: () => ipcRenderer.invoke('remote-chat:connect'),
+  connect: bound => ipcRenderer.invoke('remote-chat:connect', bound),
   send: frame => ipcRenderer.invoke('remote-chat:send', frame),
   listen: receive => {
     const listener = (_event: unknown, frame: Record<string, unknown>) => receive(frame);
@@ -345,13 +345,11 @@ const remoteChat = new RemoteChatSession(controller, remoteTransport, text => {
 }, () => tabActive?.value !== false);
 const modelKey = (model: RemoteModel) => JSON.stringify([model.providerId, model.modelId]);
 const remoteModelKey = computed(() => remoteChat.model.value ? modelKey(remoteChat.model.value) : '');
-const remoteSelected = computed<RemoteDevice | undefined>(() => remoteChat.chosen.value ?? remoteChat.selected.value
-  ?? (remoteChat.bound.value ? { id: remoteChat.bound.value.deviceId, name: remoteChat.bound.value.name, models: [] } : undefined));
-const remoteDevices = computed(() => {
-  const online = remoteChat.devices.value.map(device => ({ ...device, online: true }));
-  const known = remoteSelected.value;
-  if (known && !online.some(device => device.id === known.id)) online.push({ ...known, online: false });
-  return online;
+const remoteDevices = remoteChat.pickerDevices;
+const remoteSelected = computed<RemoteDevice | undefined>(() => {
+  const id = remoteChat.bound.value?.deviceId ?? remoteChat.selected.value?.id;
+  if (!id) return undefined;
+  return remoteDevices.value.find(device => device.id === id) ?? { id, name: 'Device', models: [] };
 });
 const remoteWarning = computed(() => {
   if (!remoteChat.remote.value) return '';
@@ -812,7 +810,7 @@ function stopVoice(commit: boolean): void {
   void voiceAdapter.stop(commit);
 }
 
-const refreshRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh() };
+const refreshRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh(); else void ipcRenderer.invoke('remote-chat:check-identity').catch(() => undefined) };
 const resumeRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh(true) };
 let remoteRefreshTimer: ReturnType<typeof setInterval>;
 watch(() => tabActive?.value, resumeRemote);

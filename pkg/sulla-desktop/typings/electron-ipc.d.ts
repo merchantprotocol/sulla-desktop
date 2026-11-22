@@ -260,7 +260,8 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
-  'remote-chat:connect': () => { accountId: string; workspaceId: string } | null;
+  'remote-chat:connect': (bound?: boolean) => { accountId: string; workspaceId: string; deviceId: string; historyOnly: boolean } | null;
+  'remote-chat:check-identity': () => void;
   'remote-chat:send': (frame: unknown) => boolean;
   'remote-chat:history': (thread: string, cursor: string, ids: string[], reconcileOnly: boolean) => unknown;
   'chat:run-state': (channelId: string, threadId: string) => boolean;

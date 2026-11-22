@@ -20,7 +20,7 @@
       <button v-for="device in devices" :key="device.id" type="button" :disabled="!device.online"
         :aria-pressed="device.id === selected?.id" @click="choose(device)">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path :d="remoteIcon" /></svg>{{ device.name }}
-        <small>{{ selected?.id === device.id ? '✓　' : '' }}{{ device.online ? 'Online' : 'Offline' }}</small>
+        <small>{{ selected?.id === device.id ? '✓　' : '' }}{{ device.online ? 'Online' : 'Offline · Last seen' }}</small>
       </button>
       <p>{{ bound ? 'Choosing another device opens a new chat. This thread stays here.' : 'Choose where this draft will run when you send it.' }}</p>
     </div>

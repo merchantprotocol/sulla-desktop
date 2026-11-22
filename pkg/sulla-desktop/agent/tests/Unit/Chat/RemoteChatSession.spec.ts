@@ -12,7 +12,9 @@ type Frame = Record<string, unknown>;
 class FixtureTransport implements RemoteChatTransport {
   readonly sent: Frame[] = [];
   private listener?: (frame: Frame) => void;
-  async connect() { return { accountId: 'account-a', workspaceId: 'team-a' } }
+  scope = { accountId: 'account-a', workspaceId: 'team-a', deviceId: 'viewer-a', historyOnly: false };
+  readonly opened: (boolean | undefined)[] = [];
+  async connect(bound?: boolean) { this.opened.push(bound); return this.scope }
   async send(frame: Frame) { this.sent.push(frame); return true }
   listen(listener: (frame: Frame) => void) {
     this.listener = listener;
@@ -118,4 +120,63 @@ describe('Remote Desktop chat', () => {
       chat.dispose();
     }
   });
+});
+
+
+// risk: inventory leakage between accounts, workspaces and viewing devices.
+it.each([{ accountId: 'account-b' }, { workspaceId: 'team-b' }, { deviceId: 'viewer-b' }])(
+  'keeps the paired set disabled offline and clears it on context change (%j)', async (change) => {
+    const transport = new FixtureTransport();
+    const chat = new ChatController();
+    const viewer = new RemoteChatSession(chat, transport, () => {}, () => true);
+    viewer.mount();
+    try {
+      await viewer.refresh();
+      const requestId = transport.sent.at(-1)?.requestId;
+      for (const id of ['host-a', 'host-b']) {
+        transport.emit({ type: 'relay_inventory_device', requestId, device: { id, name: id, models: [{ providerId: 'p', modelId: 'm' }] } });
+      }
+      transport.emit({ type: 'relay_inventory_complete', requestId });
+      transport.emit({ type: 'viewer_disconnected' });
+      expect(viewer.pickerDevices.value).toEqual(['host-a', 'host-b'].map(id =>
+        expect.objectContaining({ id, online: false, models: [] })));
+      expect(chat.remoteDiscoveries.value).toEqual([]);
+      await viewer.refresh();
+      transport.emit({ type: 'relay_inventory_complete', requestId: transport.sent.at(-1)?.requestId, offline: ['host-a'] });
+      expect(viewer.pickerDevices.value.map(device => device.id)).toEqual(['host-a']);
+      transport.emit({ type: 'viewer_disconnected' });
+      transport.scope = { ...transport.scope, ...change };
+      await viewer.refresh();
+      expect(viewer.pickerDevices.value).toEqual([]);
+    } finally {
+      viewer.dispose();
+      chat.dispose();
+    }
+  });
+
+// risk: rollback may reopen existing history but must not start or stop execution.
+it('subscribes a cold bound thread for history only with no starting inventory', async () => {
+  const transport = new FixtureTransport();
+  transport.scope.historyOnly = true;
+  const chat = new ChatController();
+  const binding = { accountId: 'account-a', workspaceId: 'team-a', threadId: 'remote_canonical_123456', deviceId: 'host-a', name: 'Mac' };
+  chat.thread.value = { ...chat.thread.value, remote: binding };
+  const viewer = new RemoteChatSession(chat, transport, () => {}, () => true);
+  viewer.mount();
+  try {
+    const history = vi.spyOn(transport, 'history');
+    await viewer.refresh();
+    expect(transport.opened).toEqual([true]);
+    expect(transport.sent.map(frame => frame.type)).toEqual(['relay_subscribe']);
+    transport.emit({ type: 'relay_subscribed', historyOnly: true, conversationId: binding.threadId,
+      deviceId: binding.deviceId, subscriptionId: transport.sent[0].subscriptionId });
+    await vi.waitFor(() => expect(history).toHaveBeenCalled());
+    expect(viewer.canSend()).toBe(false);
+    await viewer.sendDraft('do not execute');
+    viewer.stop();
+    expect(transport.sent.map(frame => frame.type)).toEqual(['relay_subscribe']);
+  } finally {
+    viewer.dispose();
+    chat.dispose();
+  }
 });

@@ -8,7 +8,7 @@ import { CLOUD_API_BASE, CLOUD_RELAY_BASE } from '../cloudEndpoints';
 import { signDeviceMessageExact } from '../deviceKey';
 
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
-import { getCurrentAccessToken, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
+import { getActiveContractorId, getCurrentAccessToken, getCurrentUserId } from '@pkg/main/sullaCloudAuth';
 
 type Frame = Record<string, unknown>;
 
@@ -19,6 +19,8 @@ export class RemoteChatViewer {
   private account = '';
   private workspace = '';
   private device = '';
+  private localIdentity = '';
+  private historyOnly = false;
   private readonly subscriptions = new Map<string, string>();
   private readonly pendingSubscriptions = new Map<string, { host: string; id: string }>();
   private heartbeat?: ReturnType<typeof setInterval>;
@@ -26,25 +28,37 @@ export class RemoteChatViewer {
 
   constructor(private readonly emit: (message: Frame) => void) {}
 
-  async connect(): Promise<void> {
+  async connect(bound = false): Promise<void> {
     if (this.connecting) return this.connecting;
-    const task = this.open().finally(() => { if (this.connecting === task) this.connecting = undefined });
+    const task = this.open(bound).finally(() => { if (this.connecting === task) this.connecting = undefined });
     this.connecting = task;
     return task;
   }
 
-  private async open(): Promise<void> {
-    if (process.env.SULLA_SHARED_LIVE_RELAY !== 'on') return;
-    const account = await getCurrentUserId();
+  async checkIdentity(): Promise<{ account: string; device: string }> {
+    const [account, device, contractor] = await Promise.all([getCurrentUserId(), getDesktopDeviceId(), getActiveContractorId()]);
+    const identity = account && device ? JSON.stringify([account, device, contractor]) : '';
+    if (identity !== this.localIdentity) {
+      this.localIdentity = identity;
+      this.reset(true);
+    }
+    return { account, device };
+  }
+
+  private async open(bound: boolean): Promise<void> {
+    const { account, device } = await this.checkIdentity();
+    const historyOnly = process.env.SULLA_SHARED_LIVE_RELAY !== 'on';
+    if (historyOnly && !bound) return;
     if (this.socket && this.account === account) return;
     this.reset();
     const generation = this.generation;
-    const [token, device] = await Promise.all([getCurrentAccessToken(), getDesktopDeviceId()]);
+    const token = await getCurrentAccessToken();
     if (!account || !token || !device || generation !== this.generation || account !== await getCurrentUserId()) return;
     this.account = account;
     this.device = device;
+    this.historyOnly = historyOnly;
     const url = new URL(`/relay/${ encodeURIComponent(account) }`, CLOUD_RELAY_BASE);
-    url.search = new URLSearchParams({ role: 'viewer', deviceId: device, token }).toString();
+    url.search = new URLSearchParams({ role: 'viewer', deviceId: device, token, ...(historyOnly ? { historyOnly: '1' } : {}) }).toString();
     const socket = new WebSocket(url);
     this.socket = socket;
     const active = () => this.socket === socket;
@@ -62,10 +76,15 @@ export class RemoteChatViewer {
         } catch { if (active()) this.reset() }
         return;
       }
+      if (frame.type === 'error' && !this.workspace && frame.reason === 'thread_not_authorized') {
+        this.reset(true);
+        return;
+      }
       if (frame.type === 'pong') { this.lastPong = Date.now(); return }
       if (frame.type === 'relay_device_ready' && typeof frame.workspaceId === 'string') {
         clearTimeout(timeout);
         this.workspace = frame.workspaceId;
+        this.historyOnly ||= frame.historyOnly === true;
         clearInterval(this.heartbeat);
         this.lastPong = Date.now();
         this.heartbeat = setInterval(() => {
@@ -80,21 +99,24 @@ export class RemoteChatViewer {
         const request = this.pendingSubscriptions.get(frame.conversationId);
         if (request && request.host === frame.deviceId && ((frame.type === 'ack' && frame.userMessageId === request.id)
             || (frame.type === 'relay_subscribed' && frame.subscriptionId === request.id))) {
+          if (frame.historyOnly === true) this.historyOnly = true;
           this.subscriptions.set(frame.conversationId, request.host);
           this.pendingSubscriptions.delete(frame.conversationId);
         }
       }
-      this.emit(frame.type === 'relay_device_ready' ? { ...frame, accountId: account } : frame);
+      this.emit(frame.type === 'relay_device_ready' ? { ...frame, ...this.context() } : frame);
     };
     socket.addEventListener('message', event => {
       inbound = inbound.then(() => receive(event)).catch(() => { if (active()) this.reset() });
     });
-    const disconnected = () => { clearTimeout(timeout); if (active()) this.reset() };
-    socket.addEventListener('close', disconnected);
-    socket.addEventListener('error', disconnected);
+    socket.addEventListener('close', event => {
+      clearTimeout(timeout);
+      if (active()) this.reset(event.code === 4403);
+    });
+    // Close carries the authorization rejection code; the opening timeout covers failed handshakes.
   }
 
-  reset(): void {
+  reset(invalidate = false): void {
     this.generation++;
     const old = this.socket;
     this.socket = undefined;
@@ -103,13 +125,13 @@ export class RemoteChatViewer {
     this.pendingSubscriptions.clear();
     clearInterval(this.heartbeat);
     old?.close();
-    this.emit({ type: 'viewer_disconnected' });
+    this.emit({ type: invalidate ? 'viewer_invalidated' : 'viewer_disconnected' });
   }
 
   ready(): boolean { return this.socket?.readyState === WebSocket.OPEN && !!this.workspace }
 
-  context(): { accountId: string; workspaceId: string } | null {
-    return this.ready() ? { accountId: this.account, workspaceId: this.workspace } : null;
+  context(): { accountId: string; workspaceId: string; deviceId: string; historyOnly: boolean } | null {
+    return this.ready() ? { accountId: this.account, workspaceId: this.workspace, deviceId: this.device, historyOnly: this.historyOnly } : null;
   }
 
   async send(value: unknown): Promise<boolean> {
@@ -119,9 +141,13 @@ export class RemoteChatViewer {
         || !value || typeof value !== 'object') return false;
     const frame = value as Frame;
     const id = (v: unknown) => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(v);
+    if ((this.historyOnly || process.env.SULLA_SHARED_LIVE_RELAY !== 'on')
+        && frame.type !== 'relay_subscribe' && frame.type !== 'relay_unsubscribe') return false;
     let command: Frame;
     if (frame.type === 'relay_inventory' && id(frame.requestId)) {
-      command = { type: frame.type, requestId: frame.requestId };
+      const cached = Array.isArray(frame.cached) ? frame.cached.slice(0, 24).flatMap(item =>
+        item && id(item.id) && /^[a-f0-9]{64}$/.test(item.keyTag) ? [{ id: item.id, keyTag: item.keyTag }] : []) : [];
+      command = { type: frame.type, requestId: frame.requestId, cached };
     } else {
       if (typeof frame.conversationId !== 'string' || !/^remote_[A-Za-z0-9_-]{12,180}$/.test(frame.conversationId)
           || typeof frame.targetDeviceId !== 'string' || !id(frame.targetDeviceId)) return false;

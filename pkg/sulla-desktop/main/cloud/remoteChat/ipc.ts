@@ -16,24 +16,25 @@ export function initRemoteChatViewerIpc(): void {
       if (!window.isDestroyed() && /^(file:|app:)/.test(window.getURL())) window.send('remote-chat:frame', frame);
     }
   });
-  ipcMain.handle('remote-chat:connect', async event => {
-    if (process.env.SULLA_SHARED_LIVE_RELAY !== 'on') return null;
+  ipcMain.handle('remote-chat:connect', async (event, bound: unknown) => {
     if (!trusted(event)) return null;
     if (!windows.has(event.sender)) {
       const sender = event.sender;
       windows.add(sender);
       sender.once('destroyed', () => {
         windows.delete(sender);
-        if (!windows.size) viewer.reset();
+        if (!windows.size) viewer.reset(true);
       });
     }
-    await viewer.connect();
+    await viewer.connect(bound === true);
     return viewer.context();
   });
   ipcMain.handle('remote-chat:send', (event, command: unknown) =>
     trusted(event) && windows.has(event.sender) ? viewer.send(command) : false);
   ipcMain.handle('remote-chat:history', (event, thread: unknown, cursor: unknown, ids: unknown, reconcileOnly: unknown) =>
     trusted(event) && windows.has(event.sender) ? viewer.history(thread, cursor, ids, reconcileOnly) : { status: 403 });
+  ipcMain.handle('remote-chat:check-identity', event =>
+    trusted(event) && windows.has(event.sender) ? viewer.checkIdentity().then(() => undefined) : undefined);
   powerMonitor.on('suspend', () => viewer.reset());
   powerMonitor.on('resume', () => { if (windows.size) void viewer.connect().catch(() => undefined) });
 }
