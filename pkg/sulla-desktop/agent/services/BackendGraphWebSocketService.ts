@@ -1212,19 +1212,14 @@ export class BackendGraphWebSocketService {
   }
 
   private async applySupportSessionCapability(state: AgentGraphState, metadata?: Record<string, unknown>): Promise<void> {
-    const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
-      ? metadata.supportSessionId : '';
+    const policy = new SupportSessionPolicy();
+    const supportSessionId = policy.sessionForTurn(state.metadata.supportSessionId, metadata?.supportSessionId);
     if (supportSessionId) {
-      const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
+      const supportTabTools = policy.remoteToolNames(SUPPORT_TOOL_NAMES);
       state.metadata.supportSessionId = supportSessionId;
       state.metadata.allowedToolNames = supportTabTools;
-      state.metadata.supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
+      state.metadata.supportContext = policy.remoteContext();
       (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
-    } else if (state.metadata.supportSessionId && new SupportSessionPolicy().shouldClearCapability(metadata)) {
-      delete state.metadata.supportSessionId;
-      delete state.metadata.allowedToolNames;
-      delete state.metadata.supportContext;
-      delete (state as any).llmTools;
     }
   }
 

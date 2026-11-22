@@ -639,6 +639,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState; diagnosticRunId?: string },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
+    if (options.state?.metadata?.supportSessionId) {
+      throw new Error('Codex native tools are unavailable in remote support chat. Select a provider with scoped support tools.');
+    }
     TurnHopTiming.mark(options.state, 'onActivity.Preparing your turn');
     TurnHopTiming.emitProviderStart(options.state, 'codex', messages.length);
     const runPhaseStart = Date.now();

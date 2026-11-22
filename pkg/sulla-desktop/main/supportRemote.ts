@@ -122,8 +122,8 @@ function broadcast() {
   windowApi().send('support:remote-state' as any, state.remote);
   windowApi().getWindow('support-center')?.webContents.send('support:remote-state', state.remote);
 }
-async function jsonCloud(method: string, pathname: string, body?: unknown, headers?: Record<string, string>): Promise<any> {
-  const response = await supportCloudRequest(method, pathname, { headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+async function jsonCloud(method: string, pathname: string, body?: unknown, headers?: Record<string, string>, exactDeviceId?: string): Promise<any> {
+  const response = await supportCloudRequest(method, pathname, { headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }, exactDeviceId);
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(value?.message || value?.error || `Support request failed (${ response.status })`) as Error & { code?: string; status?: number };
@@ -208,16 +208,18 @@ export class RemoteSupportService {
   async request(message: string): Promise<SupportState> {
     const clean = message.trim();
     if (!clean || clean.length > 4000) throw new Error('Describe the problem in 1 to 4,000 characters.');
-    const deviceId = supportDeviceIdentity.getOrCreate(); const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
+    const deviceId = supportDeviceIdentity.readEnrolled();
+    if (!deviceId) throw new Error('This Desktop is not enrolled for remote support.');
+    const metadata = { name: require('node:os').hostname() || 'Sulla Desktop' };
     const token = crypto.randomBytes(32).toString('base64url');
     const result = await jsonCloud('POST', '/support/sessions', {
       deviceId, message: clean, appVersion: app.getVersion(), platform: `${ process.platform }-${ process.arch }`,
       deviceName: metadata.name, updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), token,
-    });
+    }, undefined, deviceId);
     const session = result.session;
     const expiresAt = result.grant?.expiresAt;
-    if (!session?.id) throw new Error('Cloud did not return a support session.');
-    if (session.status !== 'active' || typeof expiresAt !== 'string') {
+    if (!session?.id || session.deviceId !== deviceId) throw new Error('Cloud did not return a support session.');
+    if (session.status !== 'active' || typeof expiresAt !== 'string' || !(Date.parse(expiresAt) > Date.now())) {
       stateStore().update((state) => { state.remote = { status: 'waiting', sessionId: session.id, message: clean, requestedAt: session.createdAt || now(), activity: [] } });
       broadcast(); this.syncKeepAwake();
       return this.state();
@@ -233,10 +235,14 @@ export class RemoteSupportService {
     const current = this.state().remote;
     if (current.status !== 'approval' || !current.sessionId) throw new Error('This support request is not ready for approval.');
     const token = crypto.randomBytes(32).toString('base64url');
-    const deviceId = supportDeviceIdentity.getOrCreate();
-    const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token, deviceId });
-    const expiresAt = result.grant?.expiresAt || result.session?.expiresAt;
-    if (typeof expiresAt !== 'string') throw new Error('Cloud did not return a support expiry.');
+    const deviceId = supportDeviceIdentity.readEnrolled();
+    if (!deviceId) throw new Error('This Desktop is not enrolled for remote support.');
+    const result = await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(current.sessionId) }/approve`, { token, deviceId }, undefined, deviceId);
+    if (result.session?.id !== current.sessionId || result.session?.deviceId !== deviceId || this.state().remote.sessionId !== current.sessionId || this.state().remote.status !== 'approval') {
+      throw new Error('Support approval no longer matches this device and session.');
+    }
+    const expiresAt = result.grant?.expiresAt;
+    if (result.session.status !== 'active' || typeof expiresAt !== 'string' || !(Date.parse(expiresAt) > Date.now())) throw new Error('Cloud did not return a support expiry.');
     stateStore().update((state) => {
       state.remote.status = 'connected'; state.remote.approvedAt = result.session?.approvedAt || now(); state.remote.expiresAt = expiresAt;
       state.remote.grant = { sessionId: current.sessionId!, token, deviceId, expiresAt };
@@ -260,13 +266,18 @@ export class RemoteSupportService {
   private async restore() {
     const grant = this.state().remote.grant;
     if (!grant) return;
-    if (Date.parse(grant.expiresAt) <= Date.now()) { stateStore().clearGrant('expired'); broadcast(); return }
+    if (!(Date.parse(grant.expiresAt) > Date.now())) { stateStore().clearGrant('expired'); broadcast(); return }
     try {
-      const result = await jsonCloud('GET', `/support/sessions/${ encodeURIComponent(grant.sessionId) }/grant`, undefined, { 'X-Sulla-Support-Token': grant.token });
-      if (!result.active) throw new Error('The support grant is no longer active.');
+      const result = await jsonCloud('GET', `/support/sessions/${ encodeURIComponent(grant.sessionId) }/grant`, undefined, { 'X-Sulla-Support-Token': grant.token }, grant.deviceId);
+      if (!this.isCurrentGrant(grant)) return;
+      if (result.active !== true || result.deviceId !== grant.deviceId || result.sessionId !== grant.sessionId
+        || typeof result.expiresAt !== 'string' || !(Date.parse(result.expiresAt) > Date.now())) {
+        stateStore().clearGrant('grant_invalid'); broadcast(); this.socket?.close(); this.syncKeepAwake(); return;
+      }
       stateStore().update((state) => { state.remote.status = 'connected'; state.remote.expiresAt = result.expiresAt; state.remote.offeredBy = result.acceptedByName || state.remote.offeredBy; if (state.remote.grant) state.remote.grant.expiresAt = result.expiresAt });
       broadcast(); this.syncKeepAwake(); await this.ensureHost(); await this.reportDeviceStatus();
     } catch (error: any) {
+      if (!this.isCurrentGrant(grant)) return;
       if (error?.status === 403) { stateStore().clearGrant(error.code === 'support_grant_invalid' ? 'revoked_or_expired' : 'grant_invalid'); broadcast() }
       else this.scheduleReconnect();
     }
@@ -277,7 +288,12 @@ export class RemoteSupportService {
     if (remote.pendingCloudEnd) { await this.flushPendingEnd(); return }
     if (!remote.sessionId || !['waiting', 'approval', 'connected'].includes(remote.status)) return;
     try {
-      const { session } = await jsonCloud('GET', `/support/sessions/${ encodeURIComponent(remote.sessionId) }`);
+      const deviceId = remote.grant?.deviceId ?? supportDeviceIdentity.readEnrolled();
+      if (!deviceId) return;
+      const { session } = await jsonCloud('GET', `/support/sessions/${ encodeURIComponent(remote.sessionId) }`, undefined, undefined, deviceId);
+      const current = this.state().remote;
+      if (current.sessionId !== remote.sessionId || current.status !== remote.status || current.grant?.token !== remote.grant?.token
+        || session?.id !== remote.sessionId || session.deviceId !== deviceId) return;
       if (session.status === 'awaiting_user_approval' && remote.status === 'waiting') {
         stateStore().update((state) => { state.remote.status = 'approval'; state.remote.offeredAt = session.acceptedAt; state.remote.offeredBy = session.acceptedByName || session.acceptedBy || 'Sulla support'; state.remote.expiresAt = session.expiresAt });
         broadcast();
@@ -300,22 +316,34 @@ export class RemoteSupportService {
     } catch (error) { console.debug('[RemoteSupport] Cloud end is pending until connectivity returns:', error) }
   }
 
+  private isCurrentGrant(grant: NonNullable<SupportState['remote']['grant']>): boolean {
+    const remote = this.state().remote;
+    const current = remote.grant;
+    return remote.sessionId === grant.sessionId && current?.sessionId === grant.sessionId
+      && current.deviceId === grant.deviceId && current.token === grant.token
+      && Date.parse(current.expiresAt) > Date.now();
+  }
+
   private async ensureHost() {
     if (this.starting || this.socket?.readyState === WebSocket.OPEN || !this.state().remote.grant) return;
     this.starting = true;
     try {
-      const deviceId = supportDeviceIdentity.getOrCreate();
       const grant = this.state().remote.grant!;
+      if (!this.isCurrentGrant(grant)) return;
+      const deviceId = grant.deviceId;
       console.info('[RemoteSupport] requesting host ticket');
-      const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId });
+      const ticket = await jsonCloud('POST', '/device-tools/tickets', { deviceId, role: 'host', sessionId: grant.sessionId }, undefined, deviceId);
+      if (!this.isCurrentGrant(grant)) return;
       console.info('[RemoteSupport] host ticket received');
       await new Promise<void>((resolve, reject) => {
         const socket = new WebSocket(ticket.url);
         const timeout = setTimeout(() => { socket.terminate(); reject(new Error('Support channel connection timed out.')) }, 15_000);
         socket.once('open', () => {
-          clearTimeout(timeout); this.reconnectAttempt = 0; this.socket = socket; this.lastPongAt = Date.now();
+          clearTimeout(timeout);
+          if (!this.isCurrentGrant(grant)) { socket.close(); resolve(); return; }
+          this.reconnectAttempt = 0; this.socket = socket; this.lastPongAt = Date.now();
           console.info('[RemoteSupport] socket open');
-          this.attachSocket(socket); this.startHeartbeat(socket); resolve();
+          this.attachSocket(socket, grant); this.startHeartbeat(socket); resolve();
         });
         socket.once('error', (error) => { clearTimeout(timeout); reject(error) });
       });
@@ -346,8 +374,12 @@ export class RemoteSupportService {
     this.pingTimer = undefined; this.pongTimeout = undefined;
   }
 
-  private attachSocket(socket: WebSocket) {
-    socket.on('message', data => void this.onSocketFrame(String(data)));
+  private attachSocket(socket: WebSocket, grant: NonNullable<SupportState['remote']['grant']>) {
+    socket.on('message', data => {
+      if (this.socket !== socket) return;
+      if (!this.isCurrentGrant(grant)) { socket.close(); return; }
+      void this.onSocketFrame(String(data), socket, grant);
+    });
     socket.on('close', (code, reason) => {
       if (this.socket !== socket) return;
       console.info(`[RemoteSupport] socket closed code=${ code } reason=${ reason?.toString().slice(0, 200) || '' }`);
@@ -377,7 +409,7 @@ export class RemoteSupportService {
     void this.restore();
   }
 
-  private async onSocketFrame(raw: string) {
+  private async onSocketFrame(raw: string, socket: WebSocket, grant: NonNullable<SupportState['remote']['grant']>) {
     let frame: any;
     try { frame = JSON.parse(raw) } catch { return }
     if (frame.type === 'pong') { this.lastPongAt = Date.now(); if (this.pongTimeout) { clearTimeout(this.pongTimeout); this.pongTimeout = undefined } return }
@@ -392,16 +424,15 @@ export class RemoteSupportService {
     if (body?.method === 'ping') { this.reply(frame.id, {}); return }
     if (body?.method === 'tools/list') { this.reply(frame.id, { tools: TOOLS.map(({ mutates: _mutates, ...tool }) => tool) }); return }
     if (body?.method !== 'tools/call' || !body.params?.name) { this.replyError(frame.id, -32601, 'Method not found'); return }
-    const grant = this.state().remote.grant;
-    if (!grant || this.state().remote.status !== 'connected' || Date.parse(grant.expiresAt) <= Date.now()) { this.replyError(frame.id, -32003, 'No active local support grant'); return }
+    if (this.state().remote.status !== 'connected' || !this.isCurrentGrant(grant)) { this.replyError(frame.id, -32003, 'No active local support grant'); return }
     if (!rpc.support || rpc.support.sessionId !== grant.sessionId || rpc.support.tool !== body.params.name) { this.replyError(frame.id, -32003, 'Support authorization metadata does not match the local grant'); return }
     const started = Date.now(); persistActivity(rpc.support.eventId, body.params.name, body.params.arguments);
     try {
       const result = await this.callTool(body.params.name, body.params.arguments);
-      finishActivity(rpc.support.eventId, result.isError ? 'tool_error' : 'succeeded', started, result.content.map(part => part.text).join('\n')); this.reply(frame.id, result);
+      finishActivity(rpc.support.eventId, result.isError ? 'tool_error' : 'succeeded', started, result.content.map(part => part.text).join('\n')); if (this.socket === socket && this.isCurrentGrant(grant)) this.reply(frame.id, result);
     } catch (error) {
       const message = redacted(error instanceof Error ? error.message : String(error));
-      finishActivity(rpc.support.eventId, 'tool_error', started, message); this.reply(frame.id, textResult({ error: message }, true));
+      finishActivity(rpc.support.eventId, 'tool_error', started, message); if (this.socket === socket && this.isCurrentGrant(grant)) this.reply(frame.id, textResult({ error: message }, true));
     }
   }
 
@@ -539,9 +570,9 @@ export class RemoteSupportService {
   }
 
   private async reportDeviceStatus() {
-    const remote = this.state().remote; if (!remote.sessionId || !remote.grant) return;
-    const deviceId=supportDeviceIdentity.getOrCreate(); const deviceName=require('node:os').hostname() || 'Sulla Desktop';
-    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, appVersion: app.getVersion(), updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), deviceName });
+    const remote = this.state().remote; if (!remote.sessionId || !remote.grant || !this.isCurrentGrant(remote.grant)) return;
+    const deviceId=remote.grant.deviceId; const deviceName=require('node:os').hostname() || 'Sulla Desktop';
+    await jsonCloud('POST', `/support/sessions/${ encodeURIComponent(remote.sessionId) }/device-status`, { deviceId, appVersion: app.getVersion(), updateChannel: updateApi().status().channel, runtimeHealth: this.runtimeHealth(), deviceName }, undefined, deviceId);
   }
 }
 

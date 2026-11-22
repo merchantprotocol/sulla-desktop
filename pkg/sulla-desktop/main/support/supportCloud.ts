@@ -17,18 +17,18 @@ const ORIGIN = CLOUD_API_BASE;
 let preferredIdentity: string | null = null;
 function identities(): string[] { return [...new Set([preferredIdentity, supportDeviceIdentity.readEnrolled(), stateStore().read().supportIdentity?.guestDeviceId, supportDeviceIdentity.getOrCreate()].filter((value):value is string=>!!value))] }
 
-export async function supportCloudRequest(method: string, pathname: string, init: RequestInit = {}): Promise<Response> {
+export async function supportCloudRequest(method: string, pathname: string, init: RequestInit = {}, exactDeviceId?: string): Promise<Response> {
   const url = new URL(pathname.startsWith('/support') || pathname.startsWith('/device-tools') ? pathname : `/support${ pathname }`, ORIGIN);
   const encoded = init.body === undefined || init.body === null ? null : new Response(init.body);
   const body = encoded ? new Uint8Array(await encoded.arrayBuffer()) : new Uint8Array();
   const bodyHash = crypto.createHash('sha256').update(body).digest('hex');
-  const candidates=identities();
+  const candidates=exactDeviceId === undefined ? identities() : [exactDeviceId];
   for(let index=0;index<candidates.length;index++){
     const deviceId=candidates[index],ts=Date.now(),nonce=crypto.randomBytes(18).toString('base64url');
     const signature=await signDeviceMessageExact('support-request-v1',[deviceId,method.toUpperCase(),url.pathname+url.search,ts,nonce,bodyHash]);
     const headers=new Headers(init.headers);if(encoded?.headers.get('content-type')&&!headers.has('content-type'))headers.set('content-type',encoded.headers.get('content-type')!);headers.set('accept','application/json');headers.set('X-Sulla-Device',deviceId);headers.set('X-Sulla-Ts',String(ts));headers.set('X-Sulla-Nonce',nonce);headers.set('X-Sulla-Signature',signature);
     const response=await fetch(url,{...init,method,headers,body:body.byteLength?body:undefined});
-    if(response.status!==401){preferredIdentity=deviceId;return response}
+    if(response.status!==401){if(exactDeviceId === undefined)preferredIdentity=deviceId;return response}
     const payload=await response.clone().json().catch(()=>({})) as any;
     if(!['invalid_support_signature','device_not_enrolled'].includes(payload.error)||index===candidates.length-1)return response;
   }

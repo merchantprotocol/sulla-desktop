@@ -958,7 +958,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['subagent_directory', 'subagentDirectoryContext'],
       ['brain_memory', 'brainMemoryContext'],
     ];
-    const blocks = fields.flatMap(([tag, key]) => {
+    const blocks = (metadata.supportSessionId ? fields.filter(([tag]) => tag === 'support_context') : fields).flatMap(([tag, key]) => {
       const value = metadata[key];
       return typeof value === 'string' && value.trim()
         ? [`<${ tag }>\n${ value.trim() }\n</${ tag }>`]

@@ -51,6 +51,7 @@ export interface PersonaAdapterOptions {
   agentTabContractId?: string;
   agentTabThreadId?:   string;
   supportSessionId?:    string;
+  supportSendBlocked?:  boolean;
   supportToolNames?:    string[];
 }
 
@@ -366,11 +367,12 @@ export class PersonaAdapter {
     } : {};
   }
 
-  setSupportSessionContext(supportSessionId?: string, supportToolNames: string[] = []): void {
-    this.supportOptions = { ...this.supportOptions, supportSessionId, supportToolNames: [...supportToolNames] };
+  setSupportSessionContext(supportSessionId?: string, supportToolNames: string[] = [], supportSendBlocked = false): void {
+    this.supportOptions = { ...this.supportOptions, supportSessionId, supportSendBlocked, supportToolNames: [...supportToolNames] };
   }
 
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
+    if (this.supportOptions.supportSendBlocked) return;
     // Optimistically render the user turn and thinking state before awaiting readiness IPC.
     const adapterStart = performance.now();
     const hopOrigin = this.lastSendHopKeydownAt ?? this.lastSendHopControllerAt ?? adapterStart;
@@ -428,6 +430,7 @@ export class PersonaAdapter {
     try {
       hopMarks.ipcSendIssued = performance.now() - hopOrigin;
       this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin, messageCount: this.ci.messages.value.length };
+      if (this.supportOptions.supportSendBlocked) throw new Error('Remote support readiness has expired.');
       await this.ci.send(selection, resolved.length ? resolved : undefined);
     } catch (error) {
       this.pendingSendHop = undefined;

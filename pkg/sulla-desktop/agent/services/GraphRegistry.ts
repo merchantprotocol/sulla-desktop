@@ -339,6 +339,7 @@ export const GraphRegistry = {
       const graph = createAgentGraph();
       const state = await buildAgentState(wsChannel, threadId, options);
       state.messages = [...cached.state.messages] as any;
+      state.metadata.supportSessionId = cached.state.metadata.supportSessionId;
       registry.set(threadId, { graph, state });
       return { graph, state };
     }
@@ -351,6 +352,7 @@ export const GraphRegistry = {
         const graph = createAgentGraph();
         const state = await buildAgentState(wsChannel, threadId, options);
         state.messages = [...saved.messages] as any;
+        state.metadata.supportSessionId = saved.metadata.supportSessionId;
         registry.set(threadId, { graph, state });
         return { graph, state };
       }

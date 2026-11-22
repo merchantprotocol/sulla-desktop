@@ -352,6 +352,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
      * synchronously; run_in_background cannot be denied independently by name.
      */
     disallowedTools:   string;
+    scopedSupport:     boolean;
     /**
      * Host path of this spawn's system prompt file (cliSystemPromptFile).
      * Passed as --append-system-prompt-file. The CLI runs in the VM under its
@@ -409,6 +410,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (this.model && this.model !== 'claude-code') claudeArgs.push('--model', shq(this.model));
     if (this.effort) claudeArgs.push('--effort', shq(this.effort));
     if (p.existingSession) claudeArgs.push('--resume', shq(p.existingSession));
+    if (p.scopedSupport) claudeArgs.push('--tools', shq(''), '--strict-mcp-config', '--setting-sources', shq(''));
     if (p.mcpConfigPath) claudeArgs.push('--mcp-config', shq(p.mcpConfigPath));
     if (p.systemPromptPath) claudeArgs.push('--append-system-prompt-file', shq(p.systemPromptPath));
 
@@ -428,6 +430,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     existingSession?:  string;
     mcpConfigPath:     string | null;
     disallowedTools:   string;
+    scopedSupport:     boolean;
     systemPromptPath?: string | null;
     environment?:      Readonly<Record<string, string>>;
   }): { executable: string; args: string[]; env?: NodeJS.ProcessEnv } {
@@ -443,6 +446,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
     if (this.effort) args.push('--effort', this.effort);
     if (p.existingSession) args.push('--resume', p.existingSession);
+    if (p.scopedSupport) args.push('--tools', '', '--strict-mcp-config', '--setting-sources', '');
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
 
@@ -984,6 +988,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // isSubAgent — workflow-node agents are sub-agents stamped 'primary' and
     // must keep Bash/Read to do their work. Those workers instead lose the
     // detached-work tools, since nothing they arm can reach them after return.
+    const scopedSupport = this.toolPolicy.isSupportSession(options.state?.metadata);
     const disallowedTools = this.toolPolicy.disallowedToolsFor(options.state?.metadata as any);
     // The caller-built system prompt (primary chat, observer, trainer…),
     // falling back to the full Sulla prompt for callers that bypass BaseNode.
@@ -999,11 +1004,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const systemPromptPath = systemPromptFile.path;
     markPhase('systemPromptFile');
     const pidFile = newRemotePidFile();
-    const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, disallowedTools, systemPromptPath, pidFile });
+    const args = this.buildSpawnArgs({ oauthToken, apiKey, baseUrl, existingSession, mcpConfigPath, toolSessionId: mcpSession?.id, disallowedTools, scopedSupport, systemPromptPath, pidFile });
     const providerCommand = this.buildProviderCommand({
       existingSession,
       mcpConfigPath,
       disallowedTools,
+      scopedSupport,
       systemPromptPath,
       environment: { ...providerConfig?.environment, ...toolConfig?.environment },
     });
