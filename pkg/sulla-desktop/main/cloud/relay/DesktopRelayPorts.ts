@@ -35,6 +35,18 @@ export interface ScopedRelayRunBinding extends ScopedRelayBinding {
   viewerKey: string;
 }
 
+export interface ScopedRelayText extends ScopedRelayRunBinding {
+  thread: string;
+  run: string;
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  createdAt: Date | string;
+}
+export interface ScopedRelayTextStore {
+  pendingText(account: string, host: string, after: string): Promise<ScopedRelayText[]>;
+  acknowledgeText(receipt: Pick<ScopedRelayText, 'thread' | 'run' | 'id' | 'accountId' | 'workspaceId' | 'hostDeviceId'>): Promise<void>;
+}
 export interface ScopedRelayTerminal extends ScopedRelayRunBinding {
   thread: string;
   run: string;
@@ -51,6 +63,7 @@ export interface RelayIncomingFrame {
   type:            string;
   relayScope?: 'v1';
   relayRequest?: string;
+  id?: string;
   viewerId?: string;
   viewerKey?: string;
   nonce?: string;
@@ -160,8 +173,8 @@ export interface DesktopRelayAgentChannel {
 }
 
 export interface DesktopRelayHistoryPorts {
-  scribe(turn: { conversationId: string; role: 'user' | 'assistant' | 'tool'; content: string; ts: string; id?: string }): Promise<void>;
-  acceptUserTurn(turn: { conversationId: string; role: 'user'; content: string; ts: string; id: string; scope?: ScopedRelayBinding }): Promise<'accepted' | 'duplicate' | 'conflict'>;
+  scribe(turn: { conversationId: string; role: 'user' | 'assistant' | 'tool'; content: string; ts: string; id?: string; delivery?: ScopedRelayRunBinding & { run: string } }): Promise<void>;
+  acceptUserTurn(turn: { conversationId: string; role: 'user'; content: string; ts: string; id: string; scope?: ScopedRelayBinding; delivery?: ScopedRelayRunBinding & { run: string } }): Promise<'accepted' | 'duplicate' | 'conflict'>;
   deriveMessageId(conversationId: string, role: string, content: string, ts: string): string;
 }
 
@@ -169,6 +182,9 @@ export interface DesktopRelayChatPorts {
   currentRelayAccount?(): Promise<string>;
   allowScopedHistory?(): Promise<boolean>;
   approveViewer?(id: string, key: string): Promise<boolean>;
+  hasScopedReceipt?(thread: string, message: string, scope: ScopedRelayBinding): Promise<boolean>;
+  discoverThreads?(scope: ScopedRelayBinding): Promise<{ id: string; updatedAt: number }[]>;
+  modelCapabilities?(): Promise<readonly { providerId: string; modelId: string }[]>;
   relayApprovals?(): readonly (readonly [string, string])[];
   admitRelayThread?(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean>;
   validateSelection(message: RelayIncomingFrame): Promise<ChatSelection>;
@@ -196,6 +212,7 @@ export interface DesktopRelayPortSet {
   agent:     () => DesktopRelayAgentChannel;
   history:   DesktopRelayHistoryPorts;
   terminal?: ScopedRelayTerminalStore;
+  scopedText?: ScopedRelayTextStore;
   chat:      DesktopRelayChatPorts;
   files:     DesktopRelayFilesPorts;
   signIn:    DesktopRelaySignInNotifier;

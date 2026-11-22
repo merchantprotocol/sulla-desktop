@@ -85,6 +85,23 @@ export class DesktopRelayRequestHandlers {
     }
   }
 
+  async handleInventory(msg: RelayIncomingFrame): Promise<void> {
+    if (!msg.relayRequest || !msg.viewerId || !msg.viewerKey || !this.validId(msg.workspaceId)
+        || msg.accountId !== await this.chat.currentRelayAccount?.()
+        || !msg.targetDeviceId || msg.targetDeviceId !== await this.resolveDeviceId()) return;
+    if (!msg.accountId) return;
+    const scope = { accountId: msg.accountId, workspaceId: msg.workspaceId, hostDeviceId: msg.targetDeviceId };
+    const allowed = await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey) === true;
+    const models = allowed ? await this.chat.modelCapabilities?.().catch(() => []) ?? [] : [];
+    const consent = allowed && await this.chat.allowScopedHistory?.() === true;
+    const threads = consent ? await this.chat.discoverThreads?.(scope).catch(() => []) ?? [] : [];
+    const currentConsent = threads.length > 0 && await this.chat.allowScopedHistory?.() === true;
+    const current = allowed && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey) === true
+      && msg.accountId === await this.chat.currentRelayAccount?.();
+    this.outbox.send({ type: 'relay_inventory_result', relayScope: 'v1', relayRequest: msg.relayRequest,
+      allowed: current, models: current ? models : [], threads: current && currentConsent ? threads : [] });
+  }
+
   async handleScopedCommand(msg: RelayIncomingFrame): Promise<void> {
     const thread = msg.conversationId;
     if (!thread || !/^remote_[A-Za-z0-9_-]{12,180}$/.test(thread)
@@ -110,12 +127,21 @@ export class DesktopRelayRequestHandlers {
     }
     if (msg.type === 'relay_history_check') {
       const allowed = await this.chat.admitRelayThread?.(thread, true, scope)
+        && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)
         && await this.chat.allowScopedHistory?.()
-        && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey);
+        && accountId === await this.chat.currentRelayAccount?.();
       respond({ type: allowed ? 'relay_history_allowed' : 'error', reason: allowed ? undefined : 'thread_not_authorized' });
     }
+    if (msg.type === 'relay_receipt' && this.validId(msg.userMessageId)) {
+      const accepted = await this.chat.hasScopedReceipt?.(thread, msg.userMessageId, scope) === true;
+      if (await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)) {
+        respond({ type: 'relay_receipt', accepted, userMessageId: msg.userMessageId, clientRunId: msg.userMessageId });
+      }
+    }
     if (msg.type === 'relay_subscribe') {
-      if (await this.chat.admitRelayThread?.(thread, true, scope)) respond({ type: 'relay_subscribed' });
+      if (await this.chat.admitRelayThread?.(thread, true, scope) && await this.chat.approveViewer?.(msg.viewerId, msg.viewerKey)) {
+        respond({ type: 'relay_subscribed', clientRunId: this.outbox.activeRun(thread) });
+      }
       else respond({ type: 'error', reason: 'thread_not_authorized' });
     }
   }
@@ -197,6 +223,7 @@ export class DesktopRelayRequestHandlers {
     const messages = Array.isArray(msg.messages) ? msg.messages : [];
     const turn = normalizeMobileContent([...messages].reverse().find(m => m?.role === 'user')?.content);
     if (!turn.text && !turn.files.length) return error('empty_user_message');
+    if (scope && turn.files.length) return error('unsupported_attachments');
 
     while (this.claims.has(conversationId)) {
       const claim = this.claims.get(conversationId)!;
@@ -218,8 +245,10 @@ export class DesktopRelayRequestHandlers {
       }
       const active = this.outbox.activeRun(conversationId);
       if (active && active !== id) return error('thread_busy');
+      const binding = scope && msg.viewerId && msg.viewerKey ? { ...scope, viewerId: msg.viewerId, viewerKey: msg.viewerKey } : undefined;
+      const delivery = binding && await this.chat.allowScopedHistory?.() === true ? { ...binding, run: id } : undefined;
       enteredCommit = true;
-      const acceptance = await this.scribe.acceptUserTurn(conversationId, id, transcriptText(turn), scope);
+      const acceptance = await this.scribe.acceptUserTurn(conversationId, id, transcriptText(turn), scope, delivery);
       if (acceptance === 'conflict') return error('message_identity_conflict');
       if (acceptance === 'duplicate') {
         respond({ type: 'ack', duplicate: true, ...identity });
@@ -229,8 +258,7 @@ export class DesktopRelayRequestHandlers {
       const preparation = { id, stopped: false };
       this.preparing.set(conversationId, preparation);
       this.bridge.ensureBridged();
-      this.outbox.registerRun(conversationId, id, scope && msg.viewerId && msg.viewerKey
-        ? { ...scope, viewerId: msg.viewerId, viewerKey: msg.viewerKey } : undefined);
+      this.outbox.registerRun(conversationId, id, binding);
       this.outbox.beginRun(conversationId);
       respond({ type: 'ack', ...identity });
       // Attachment writes are effects of the durable claim winner only.

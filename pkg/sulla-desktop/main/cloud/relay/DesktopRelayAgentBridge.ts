@@ -55,7 +55,7 @@ export class DesktopRelayAgentBridge {
     private readonly channel: () => DesktopRelayAgentChannel,
     private readonly outbox: DesktopRelayConversationOutbox,
     private readonly scribe: DesktopRelayTurnScribe,
-    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard'>,
+    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard' | 'allowScopedHistory'>,
     private readonly deviceId: () => Promise<string>,
     private readonly log: DesktopRelayLog,
     private readonly terminalDelivery?: Pick<DesktopRelayTerminalDelivery, 'record'>,
@@ -111,7 +111,11 @@ export class DesktopRelayAgentBridge {
   private async commitAssistantText(threadId: string, text: string, spoken = false): Promise<void> {
     const ts = new Date().toISOString();
     const id = this.scribe.deriveId(threadId, 'assistant', text, ts);
-    await this.scribe.scribe(threadId, 'assistant', text, { id, ts });
+    const run = this.outbox.activeRun(threadId);
+    const binding = run ? this.outbox.scopedBinding(threadId, run) : undefined;
+    if (threadId.startsWith('remote_') && !binding) return;
+    const delivery = binding && run && await this.cards.allowScopedHistory?.() === true ? { ...binding, run } : undefined;
+    await this.scribe.scribe(threadId, 'assistant', text, { id, ts, ...(delivery ? { delivery } : {}) });
     this.lastActivityByThread.delete(threadId);
     this.finalTextByThread.set(threadId, text);
     this.streamedByThread.delete(threadId);
@@ -138,7 +142,7 @@ export class DesktopRelayAgentBridge {
   private async handleToolProgress(raw: unknown): Promise<void> {
     const data = (raw || {}) as any;
     const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
-    if (!threadId || !['tool_call', 'tool_result'].includes(data.phase)) return;
+    if (!threadId || threadId.startsWith('remote_') || !['tool_call', 'tool_result'].includes(data.phase)) return;
     await this.sendCard(threadId, { version: 1, kind: 'tool', deviceId: await this.deviceId(), toolCard: {
       toolName: data.toolName || 'Tool', status: data.phase === 'tool_call' ? 'running' : data.success === false ? 'failed' : 'success',
       args: data.args, result: data.result, error: data.error,
@@ -150,6 +154,7 @@ export class DesktopRelayAgentBridge {
     const kind = typeof data.kind === 'string' ? data.kind : '';
     const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
     if (threadId && RICH_CARD_KINDS.includes(kind)) {
+      if (threadId.startsWith('remote_')) return;
       await this.cards.registerMobileCard(threadId, kind, data);
       // Persist a versioned envelope through the existing durable history path.
       // Never serialize arbitrary event metadata, tokens or execution context.
@@ -178,6 +183,7 @@ export class DesktopRelayAgentBridge {
     if (!stripped) return;
 
     if (kind === 'thinking') {
+      if (threadId.startsWith('remote_')) return;
       // Tool-use / reasoning indicator. De-dup consecutive duplicates, and
       // scribe it so history shows what the agent did, not just what it said.
       if (stripped === this.lastActivityByThread.get(threadId)) return;

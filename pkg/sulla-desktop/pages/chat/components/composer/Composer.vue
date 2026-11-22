@@ -71,6 +71,12 @@
           </ThreadStatusLine>
         </div>
         <div class="composer-top">
+          <div v-if="remoteChat.bound.value" class="remote-chat-status" role="status">
+            <strong>{{ remoteChat.bound.value.name }}</strong> ·
+            <span class="remote-chat-dot" :class="{ live: remoteChat.status.value.startsWith('Connected') }" aria-hidden="true" />
+            {{ remoteChat.status.value }}
+          </div>
+          <div v-if="remoteChat.note.value || remoteWarning" class="remote-chat-status" role="status">{{ remoteChat.note.value || remoteWarning }}</div>
           <div
             v-if="replyTo"
             class="reply-chip"
@@ -176,15 +182,25 @@
             @stop="stopVoice(true)"
           />
 
-          <div class="composer-tools">
+          <div class="composer-tools" :class="{ 'remote-enabled': remoteChat.available.value || remoteChat.remote.value }">
             <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
             <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
-            <button class="model-btn" type="button" :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle" :style="{ '--usage': `${usagePercent}%` }" @click="controller.openModal('model')">
+            <button v-if="!remoteChat.remote.value" class="model-btn" type="button" :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle" :style="{ '--usage': `${usagePercent}%` }" @click="controller.openModal('model')">
               <span class="model-avatar">{{ modelInitial }}</span>
               <span class="model-name">{{ selectionLabel }}</span>
               <span class="model-caret">▾</span>
             </button>
+            <select v-else class="model-btn remote-model" aria-label="Model" :value="remoteModelKey" @change="onRemoteModel">
+              <option value="">Choose model</option>
+              <option v-for="model in remoteChat.models.value" :key="modelKey(model)" :value="modelKey(model)">
+                {{ model.modelId }} · {{ model.providerId }}
+              </option>
+            </select>
+            <EnvironmentPicker v-if="remoteChat.available.value || remoteChat.remote.value"
+              :selected="remoteSelected" :devices="remoteDevices"
+              :bound="Boolean(remoteChat.bound.value || controller.messages.value.length)"
+              @choose="chooseEnvironment" />
             <span class="tool-spacer" />
             <button
               class="usage-meter" type="button" title="Context usage"
@@ -195,7 +211,7 @@
             </button>
             <ComposerMic :live="isRecording" @toggle="toggleVoice" />
             <ComposerSend
-              :running="controller.isRunning.value"
+              :running="remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value"
               :can-send="canSendDraft"
               @send="onSend(draft)"
             />
@@ -264,6 +280,7 @@ import ComposerInput      from './ComposerInput.vue';
 import ComposerMic        from './ComposerMic.vue';
 import ComposerSend       from './ComposerSend.vue';
 import ComposerVoicePanel from './ComposerVoicePanel.vue';
+import EnvironmentPicker from './EnvironmentPicker.vue';
 import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import QueueStrip         from './QueueStrip.vue';
@@ -277,12 +294,17 @@ import { useCommandPopover } from '../../composables/useCommandPopover';
 import { DockPositions } from '../../composables/useDockPosition';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
 import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
+import { ChatController } from '../../controller/ChatController';
+import { LocalStoragePersister } from '../../services/LocalStoragePersister';
+import { asThreadId } from '../../types/chat';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
+import { RemoteChatSession, type RemoteChatTransport, type RemoteDevice, type RemoteModel } from '../../services/RemoteChatSession';
+import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -306,6 +328,89 @@ function looksLikeUrl(input: string): boolean {
 }
 
 const draft        = ref('');
+const { createTab } = useBrowserTabs();
+const activityContext = inject<{ tabId?: string }>('chat:activity-context', {});
+const remoteTransport: RemoteChatTransport = {
+  connect: bound => ipcRenderer.invoke('remote-chat:connect', bound),
+  send: frame => ipcRenderer.invoke('remote-chat:send', frame),
+  listen: receive => {
+    const listener = (_event: unknown, frame: Record<string, unknown>) => receive(frame);
+    ipcRenderer.on('remote-chat:frame', listener);
+    return () => ipcRenderer.removeListener('remote-chat:frame', listener);
+  },
+  history: (...args) => ipcRenderer.invoke('remote-chat:history', ...args) as ReturnType<RemoteChatTransport['history']>,
+};
+const remoteChat = new RemoteChatSession(controller, remoteTransport, text => {
+  if (draft.value.trim() === text) draft.value = '';
+}, () => tabActive?.value !== false);
+const modelKey = (model: RemoteModel) => JSON.stringify([model.providerId, model.modelId]);
+const remoteModelKey = computed(() => remoteChat.model.value ? modelKey(remoteChat.model.value) : '');
+const remoteDevices = remoteChat.pickerDevices;
+const remoteSelected = computed<RemoteDevice | undefined>(() => {
+  const id = remoteChat.bound.value?.deviceId ?? remoteChat.selected.value?.id;
+  if (!id) return undefined;
+  return remoteDevices.value.find(device => device.id === id) ?? { id, name: 'Device', models: [] };
+});
+const remoteWarning = computed(() => {
+  if (!remoteChat.remote.value) return '';
+  if (!remoteChat.chosen.value) return `${ remoteSelected.value?.name ?? 'Device' } is unavailable. Your draft stays here.`;
+  if (!remoteChat.model.value || !remoteChat.models.value.some(model => modelKey(model) === remoteModelKey.value)) {
+    return 'Choose a model available on this device.';
+  }
+  return '';
+});
+function onRemoteModel(event: Event): void {
+  const key = (event.target as HTMLSelectElement).value;
+  remoteChat.model.value = remoteChat.models.value.find(model => modelKey(model) === key);
+  remoteChat.note.value = '';
+}
+async function openDiscoveredThread(canonicalId: string): Promise<void> {
+  const discovery = controller.remoteDiscoveries.value.find(item => item.binding.threadId === canonicalId);
+  if (!discovery) return;
+  const persister = new LocalStoragePersister();
+  const existing = persister.list().find(state => state.thread.remote?.threadId === canonicalId
+    && state.thread.remote.accountId === discovery.binding.accountId
+    && state.thread.remote.workspaceId === discovery.binding.workspaceId);
+  const id = existing?.thread.id ?? asThreadId(`t_view_${canonicalId}`);
+  let state = existing ?? await persister.loadAsync(id).catch(() => undefined);
+  if (state === undefined) return; // A DB error is not a cache miss.
+  if (!controller.remoteDiscoveries.value.some(item => item.binding.threadId === canonicalId
+      && item.binding.accountId === discovery.binding.accountId && item.binding.workspaceId === discovery.binding.workspaceId)) return;
+  if (!state) {
+    const blank = new ChatController();
+    try {
+      state = blank.serialize();
+      state.thread = { ...state.thread, id, title: `Remote chat · ${ discovery.binding.name }`,
+        updatedAt: discovery.updatedAt, remote: discovery.binding };
+      persister.save(state);
+    } finally { blank.dispose() }
+  } else if (!state.thread.remote || state.thread.remote.accountId !== discovery.binding.accountId
+      || state.thread.remote.workspaceId !== discovery.binding.workspaceId
+      || state.thread.remote.threadId !== canonicalId || state.thread.remote.deviceId !== discovery.binding.deviceId) {
+    return;
+  }
+  const tab = createTab('about:blank', { mode: 'chat', title: state.thread.title });
+  persister.setTabThread(tab.id, id);
+  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+}
+
+function chooseEnvironment(device?: RemoteDevice): void {
+  const bound = remoteChat.bound.value;
+  if ((bound?.deviceId ?? remoteChat.selected.value?.id) === device?.id) return;
+  if (bound || controller.messages.value.length || controller.isRunning.value) {
+    const tab = createTab('about:blank', { mode: 'chat' });
+    // Only hand off the environment identity. Never put a draft or a model choice on an auto-send path.
+    if (device) sessionStorage.setItem(`remote-chat-environment:${ tab.id }`, JSON.stringify({ id: device.id, name: device.name }));
+    window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
+    return;
+  }
+  remoteChat.select(device);
+  if (device) {
+    remoteChat.model.value = device.models.find(model =>
+      model.providerId === controller.thread.value.providerId && model.modelId === controller.model.value.id);
+  }
+  nextTick(() => inputRef.value?.focus());
+}
 // Excerpt the next message replies to; empty when not replying.
 const replyTo = ref('');
 const inputRef     = ref<InstanceType<typeof ComposerInput> | null>(null);
@@ -326,7 +431,9 @@ const placeholder = computed(() => {
     : 'Ask Sulla anything…';
 });
 
-const canSendDraft = computed(() => !filesImporting.value && (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value));
+const canSendDraft = computed(() => !filesImporting.value && (remoteChat.remote.value
+  ? !!draft.value.trim() && !controller.staged.value.length && !useCases.intent.value && !replyTo.value && remoteChat.canSend()
+  : (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value)));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
 const contextLimit = computed(() => {
@@ -506,6 +613,14 @@ function onSend(text: string): void {
   // Holding send here prevents a draft from racing ahead without the file.
   if (filesImporting.value) return;
   const trimmed = text.trim();
+  if (remoteChat.remote.value) {
+    if (controller.staged.value.length || useCases.intent.value || replyTo.value) {
+      remoteChat.note.value = 'Remove attachments, replies, and use-case actions before sending to this device.';
+      return;
+    }
+    void remoteChat.sendDraft(trimmed);
+    return;
+  }
 
   // Only navigate on the very first message (empty history) — no surrounding words.
   if (navigateUrl && looksLikeUrl(trimmed) && !trimmed.includes(' ') && !controller.staged.value.length && controller.messages.value.length === 0) {
@@ -687,6 +802,7 @@ watch(() => tabActive?.value, (active) => {
 });
 
 function toggleVoice(): void {
+  if (remoteChat.remote.value) return;
   void voiceAdapter.toggle();
 }
 
@@ -694,7 +810,16 @@ function stopVoice(commit: boolean): void {
   void voiceAdapter.stop(commit);
 }
 
+const refreshRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh(); else void ipcRenderer.invoke('remote-chat:check-identity').catch(() => undefined) };
+const resumeRemote = () => { if (tabActive?.value !== false) void remoteChat.refresh(true) };
+let remoteRefreshTimer: ReturnType<typeof setInterval>;
+watch(() => tabActive?.value, resumeRemote);
 onBeforeUnmount(() => {
+  remoteChat.dispose();
+  controller.openRemoteDiscovery = undefined;
+  clearInterval(remoteRefreshTimer);
+  window.removeEventListener('online', resumeRemote);
+  window.removeEventListener('focus', resumeRemote);
   voiceAdapter.dispose();
   window.removeEventListener('chat:reply', onReplyFromTurn as EventListener);
   window.removeEventListener('chat:draft', onDraftFromCard as EventListener);
@@ -755,6 +880,20 @@ async function prefillFirstRunStarter(): Promise<void> {
 }
 
 onMounted(() => {
+  remoteChat.mount();
+  controller.openRemoteDiscovery = id => { void openDiscoveredThread(id) };
+  if (activityContext.tabId) {
+    const key = `remote-chat-environment:${ activityContext.tabId }`;
+    const handoff = sessionStorage.getItem(key);
+    if (handoff) {
+      sessionStorage.removeItem(key);
+      try { remoteChat.select({ ...JSON.parse(handoff), models: [] }) } catch { /* Ignore a malformed local handoff. */ }
+    }
+  }
+  refreshRemote();
+  remoteRefreshTimer = setInterval(refreshRemote, 12000);
+  window.addEventListener('online', resumeRemote);
+  window.addEventListener('focus', resumeRemote);
   ipcRenderer.on('capture-studio:recording-state', onScreenRecordingState);
   window.addEventListener('chat:reply', onReplyFromTurn as EventListener);
   window.addEventListener('chat:draft', onDraftFromCard as EventListener);
@@ -905,6 +1044,11 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   font: 500 12.5px var(--font-body);
   cursor: pointer;
 }
+.remote-enabled .model-btn { display: inline-flex; }
+.remote-chat-dot { display: inline-block; width: 6px; height: 6px; background: var(--text-muted); border-radius: 50%; }
+.remote-chat-dot.live { background: var(--status-success, var(--accent)); }
+.remote-model { padding: 0 9px; }
+.remote-chat-status { padding: 4px 8px; font-size: 12px; color: var(--text-secondary); }
 .model-btn:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .model-avatar {
   display: grid;
