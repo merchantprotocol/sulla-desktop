@@ -20,7 +20,7 @@ vi.hoisted(() => {
 vi.mock('electron', () => ({ app: { getPath: () => '/user-data', getVersion: () => '1.0.0' }, ipcMain: {}, powerSaveBlocker: { start: () => 1, isStarted: () => true, stop: vi.fn() } }));
 vi.mock('ws', () => ({ default: class WebSocket {} }));
 vi.mock('@pkg/main/support/supportCloud', () => ({ supportCloudRequest: mocks.cloudRequest }));
-vi.mock('@pkg/main/support/supportIdentity', () => ({ supportDeviceIdentity: { getOrCreate: () => 'device-1' } }));
+vi.mock('@pkg/main/support/supportIdentity', () => ({ supportDeviceIdentity: { readEnrolled: () => 'device-1', getOrCreate: () => 'fallback-device' } }));
 vi.mock('@pkg/main/supportState', () => ({ SupportStateStore: class {
   read() { return mocks.state }
   update(mutator: (state: any) => void) { mutator(mocks.state); return mocks.state }
@@ -33,12 +33,12 @@ vi.mock('@pkg/main/update/UpdateManager', () => ({ supportUpdateApi: { status: (
 
 import { RemoteSupportService } from './supportRemote';
 
-const expiry = '2026-11-22T00:00:00.000Z';
+const expiry = new Date(Date.now() + 60_000).toISOString();
 function cloudResult(body: unknown) {
   mocks.cloudRequest.mockResolvedValue({ ok: true, json: async () => body });
 }
 function session(status: string, extras: Record<string, unknown> = {}) {
-  return { session: { id: 'session-1', status, createdAt: '2026-11-19T00:00:00.000Z', ...extras } };
+  return { session: { id: 'session-1', deviceId: 'device-1', status, createdAt: '2026-11-19T00:00:00.000Z', ...extras } };
 }
 
 beforeEach(() => {
@@ -60,6 +60,16 @@ describe('RemoteSupportService.request', () => {
     expect(result.remote.grant?.token).toEqual(expect.any(String));
     expect(mocks.state.remote).toEqual(result.remote);
     expect(ensureHost).toHaveBeenCalledOnce();
+    expect(mocks.cloudRequest).toHaveBeenCalledWith('POST', '/support/sessions', expect.objectContaining({
+      body: expect.stringContaining('"deviceId":"device-1"'),
+    }), 'device-1');
+  });
+
+  // risk: permissions — a mismatched device must never acquire a local grant.
+  it('rejects a grant returned for another device', async () => {
+    cloudResult({ ...session('active', { deviceId: 'other-device' }), grant: { expiresAt: expiry } });
+    await expect(new RemoteSupportService().request('Please help')).rejects.toThrow();
+    expect(mocks.state.remote.grant).toBeUndefined();
   });
 
   // risk: permissions — legacy Cloud's requested/no-expiry response must preserve the tokenless waiting/approve path.

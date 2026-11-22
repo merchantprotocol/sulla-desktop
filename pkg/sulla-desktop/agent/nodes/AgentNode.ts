@@ -308,7 +308,7 @@ export class AgentNode extends BaseNode {
     // CLI providers (Claude Code, Codex) run their tools inside the CLI, so
     // their turns routinely take that path — gating on the wrapper alone
     // silently skipped every post-turn writer.
-    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
+    if (!state.metadata.supportSessionId && isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
         runSubconsciousObservationWriters(state, { includeObservations });

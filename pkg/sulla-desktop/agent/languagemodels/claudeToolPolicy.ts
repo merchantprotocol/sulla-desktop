@@ -56,8 +56,8 @@ export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop Sched
  */
 export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
 
-/** Support chats keep Bash only as the transport for the Sulla support RPC CLI. */
-export const SUPPORT_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
+/** Support chats use only the graph-scoped MCP transport. */
+export const SUPPORT_NATIVE_TOOL_DENYLIST = 'Bash Read Write Edit MultiEdit NotebookEdit BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
 
 /**
  * Full `--disallowedTools` value for a spawn. Every acting agent — primary
@@ -72,7 +72,7 @@ export class ClaudeToolPolicy {
     return this.isDelegatedSpawn(metadata) ? `${ acting } ${ DELEGATED_NATIVE_TOOL_DENYLIST }` : acting;
   }
 
-  /** Support turns use Bash only to invoke the gated support RPC CLI. */
+  /** Support turns use only the gated support RPC MCP tool. */
   public isSupportSession(metadata: Record<string, unknown> | null | undefined): boolean {
     return typeof metadata?.supportSessionId === 'string' && metadata.supportSessionId.length > 0;
   }

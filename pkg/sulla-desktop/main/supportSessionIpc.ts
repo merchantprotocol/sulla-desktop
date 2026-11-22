@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { randomUUID } from 'node:crypto';
+
 import type { IpcController, IpcRegistrar } from './ipc/IpcController';
 
 /** Sends one authenticated request to Sulla Cloud. */
@@ -15,6 +17,17 @@ export class SupportSessionCloudClient {
 
   pathFor(id: string, suffix = ''): string {
     return `/super-admin/support/sessions/${ encodeURIComponent(id) }${ suffix }`;
+  }
+
+  /** Explicit, audited, read-only proof through the same RPC path as support calls. */
+  async verifyRpc(id: string): Promise<{ ready: boolean }> {
+    const requestId = randomUUID();
+    const payload = await this.request('POST', this.pathFor(id, '/rpc'), {
+      jsonrpc: '2.0', id: requestId, method: 'tools/call',
+      params: { name: 'support.update.status', arguments: {} },
+    });
+    return { ready: payload?.jsonrpc === '2.0' && payload.id === requestId
+      && !payload.error && payload.result?.isError === false && Array.isArray(payload.result.content) };
   }
 
   async request(method: string, path: string, body?: unknown): Promise<any> {
@@ -59,6 +72,7 @@ export class SupportSessionIpcController implements IpcController {
     handle('support-session:events', (id: string) => cloud.request('GET', cloud.pathFor(id, '/events?limit=100')));
     handle('support-session:end', (id: string, reason = 'resolved') => cloud.request('POST', cloud.pathFor(id, '/end'), { reason }));
     handle('support-session:extend', (id: string, hours: number) => cloud.request('POST', cloud.pathFor(id, '/extend'), { hours }));
+    handle('support-session:verify-rpc', (id: string) => cloud.verifyRpc(id));
     handle('support-session:presence', (id: string) => cloud.request('GET', cloud.pathFor(id, '/presence')));
   }
 }

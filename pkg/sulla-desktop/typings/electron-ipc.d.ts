@@ -352,6 +352,7 @@ export interface IpcMainInvokeEvents {
   'support-session:events':   (id: string) => any;
   'support-session:end':      (id: string, reason?: string) => any;
   'support-session:extend':   (id: string, hours: number) => any;
+  'support-session:verify-rpc': (id: string) => { ready: boolean };
   'support-session:presence': (id: string) => { online: boolean; lastSeenAt: string | null };
   'updater:install':   () => void;
   // #endregion

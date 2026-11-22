@@ -56,7 +56,7 @@
           @pick="onSuggestion"
         />
         <Transcript v-else :reporting-level="reportingLevel" />
-        <Composer />
+        <Composer v-if="!props.supportSendBlocked" />
       </main>
 
       <template v-if="!dockSide">
@@ -198,6 +198,8 @@ const props = defineProps<{
   isActive?: boolean;
   supportSessionId?: string;
   supportToolNames?: string[];
+  supportSendBlocked?: boolean;
+  supportLocalChat?: boolean;
 }>();
 
 // ─── Emits (to BrowserTab for URL opening) ─────────────────────────
@@ -419,13 +421,14 @@ const adapter = new PersonaAdapter(controller, {
   agentTabThreadId:   props.agentTabThreadId,
   supportSessionId:    props.supportSessionId,
   supportToolNames:    props.supportToolNames,
+  supportSendBlocked:  props.supportSendBlocked,
 });
-watch(() => [props.supportSessionId, props.supportToolNames] as const, ([sessionId, names]) => {
-  adapter.setSupportSessionContext(sessionId, names || []);
-}, { immediate: true });
+watch(() => [props.supportSessionId, props.supportToolNames, props.supportSendBlocked] as const, ([sessionId, names, blocked]) => {
+  adapter.setSupportSessionContext(sessionId, names || [], blocked);
+}, { immediate: true, flush: 'sync' });
 const onSupportPrompt = (event:Event) => {
   const detail = (event as CustomEvent<{tabId?:string;text?:string}>).detail;
-  if (!props.supportSessionId || detail?.tabId !== props.tabId || !detail.text) return;
+  if ((!props.supportSessionId && !props.supportLocalChat) || detail?.tabId !== props.tabId || !detail.text || props.supportSendBlocked) return;
   void adapter.send(detail.text, []);
 };
 window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);

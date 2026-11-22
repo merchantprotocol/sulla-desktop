@@ -4,12 +4,19 @@ import { SupportSessionPolicy } from '../../../services/SupportSessionPolicy';
 describe('SupportSessionPolicy', () => {
   const policy = new SupportSessionPolicy();
 
-  it('preserves an active support capability across internal follow-ups but clears it for an ordinary chat turn', () => {
-    // risk: permissions — internal completion/orchestrator messages must not revoke the live support turn, while normal chats must not inherit support access.
-    expect(policy.shouldClearCapability({ source: 'sub_agent_completion' })).toBe(false);
-    expect(policy.shouldClearCapability({ source: 'orchestrator_job_message' })).toBe(false);
-    expect(policy.shouldClearCapability({ source: 'inject' })).toBe(true);
-    expect(policy.shouldClearCapability({})).toBe(true);
+  // risk: permissions — changing agents or reopening scoped history must not grant local tools.
+  it('keeps a scoped transcript bound and leaves a fresh local turn unscoped', () => {
+    expect(policy.sessionForTurn(undefined, undefined)).toBe('');
+    expect(policy.sessionForTurn(undefined, '../../local')).toBe('');
+    expect(policy.sessionForTurn(undefined, 'session-123')).toBe('session-123');
+    expect(policy.sessionForTurn('session-123', undefined)).toBe('session-123');
+    expect(policy.sessionForTurn('session-123', 'other-session')).toBe('session-123');
+  });
+
+  // risk: permissions — a remote tool result must not be able to drive local tools.
+  it('exposes only the narrow remote tool surface', () => {
+    expect(policy.remoteToolNames(['support.update.status', 'support.runtime.exec', 'github_trigger_workflow_run', 'exec']))
+      .toEqual(['support.update.status']);
   });
 
   it('adds support restrictions to the provider system prompt only when a session context exists', () => {
