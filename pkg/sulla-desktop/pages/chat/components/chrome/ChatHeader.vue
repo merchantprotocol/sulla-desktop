@@ -78,23 +78,19 @@ function cancelTitle(): void {
 <style scoped>
 .chat-header {
   position: absolute; top: 0; left: 0; right: 0; z-index: 21;
-  /* Equal outer columns keep the title truly centred whatever the sides hold. */
-  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px;
-  height: 52px; padding: 0 20px;
-  /* Same treatment as the browser tab's toolbar (BrowserTab.vue .browser-toolbar). */
-  border-bottom: 1px solid var(--border-default);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-  background: var(--bg-chrome-active);
-  backdrop-filter: blur(12px);
+  display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto; align-items: center;
+  /* Keep the previous 52px outer height and content alignment without the 1px border. */
+  box-sizing: border-box; height: 52px; padding: 0 20px 1px;
+  background: transparent;
   font-family: var(--font-body);
 }
 .ch-left { display: flex; align-items: center; gap: 10px; min-width: 0; justify-self: start; }
-.ch-center { display: flex; justify-content: center; min-width: 0; }
+.ch-center { display: flex; min-width: 0; }
 .ch-title {
-  min-width: 2ch; max-width: 36vw; padding: 3px 8px; text-align: center;
+  min-width: 0; padding: 3px 8px; text-align: left;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   border-radius: 6px; outline: none; cursor: text;
-  color: var(--text-primary); font-size: 15px; font-weight: 600; letter-spacing: 0;
+  color: var(--text-primary); font-size: 15px; font-weight: normal; letter-spacing: 0;
 }
 .ch-title:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
 .ch-title:focus { text-overflow: clip; background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -107,7 +103,7 @@ function cancelTitle(): void {
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-reporting {
-  justify-self: end; max-width: 100%; height: 28px; padding: 0 6px;
+  justify-self: end; margin-left: 8px; max-width: 100%; height: 28px; padding: 0 6px;
   color: var(--text-primary); background: var(--bg-surface);
   border: 1px solid var(--border-default); border-radius: 6px; font: inherit; font-size: 12px;
 }
