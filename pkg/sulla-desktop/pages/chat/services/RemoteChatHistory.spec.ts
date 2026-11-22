@@ -50,4 +50,23 @@ describe('RemoteChatHistory', () => {
     expect(await history.catchUp(binding, cached, () => false)).toBeUndefined();
     expect(cached).toHaveLength(1);
   });
+  // risk: a slower Cloud writer must not delete locally committed/live text; only allowlisted cards render.
+  it('does not reconcile live-only IDs as removals and projects approved run outcomes only', async() => {
+    const cached: Message[] = [{ id: asMessageId('live'), kind: 'user', createdAt: 1000, text: 'accepted' }];
+    const requested: string[] = [];
+    const run = { id: `relay_outcome_${'a'.repeat(64)}`, role: 'tool', created_at: new Date(1001).toISOString(),
+      content: JSON.stringify({ sullaCard: { version: 1, kind: 'run_outcome', runId: 'live', outcome: 'completed' } }) };
+    const history = new RemoteChatHistory(async(_thread, _cursor, ids, only) => {
+      requested.push(...ids);
+      return { status: 200, page: { messages: only ? [] : [run, { ...run, id: 'not-allowed', content: 'raw tool output' }],
+        nextCursor: 'end', hasMore: false } };
+    });
+    const result = await history.catchUp({ ...binding, unconfirmedMessageIds: ['live'] }, cached, () => true);
+    expect(requested).not.toContain('live');
+    expect(result?.messages).toEqual([
+      expect.objectContaining({ id: 'live', text: 'accepted' }),
+      expect.objectContaining({ id: run.id, kind: 'notice' }),
+    ]);
+  });
+
 });

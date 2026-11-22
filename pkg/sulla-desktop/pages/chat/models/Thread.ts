@@ -76,6 +76,8 @@ export interface RemoteThreadBinding {
   name: string;
   cursor?: string;
   removedFromCache?: string[];
+  /** Committed on the host but not yet observed in the Cloud cursor. */
+  unconfirmedMessageIds?: string[];
   pending?: { id: string; text: string };
 }
 
