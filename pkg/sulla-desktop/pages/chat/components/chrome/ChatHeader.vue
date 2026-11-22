@@ -5,14 +5,13 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  Chat header: the editable chat title centred, with the agent-origin chip on
-  the left when an agent launched this tab. Sub-agents, files and history live
+  Chat header: the left-aligned editable title, preceded by the agent-origin
+  chip when an agent launched this tab. Sub-agents, files and history live
   in the side panel, the left rail, and the header ⋯ menu; Find chat is in the
   menu bar (⌘P).
 -->
 <template>
   <header class="chat-header">
-    <!-- Empty left column keeps the title centred. -->
     <div class="ch-left">
       <button
         v-if="origin"
@@ -87,13 +86,19 @@ function cancelTitle(): void {
 .ch-left { display: flex; align-items: center; gap: 10px; min-width: 0; justify-self: start; }
 .ch-center { display: flex; min-width: 0; }
 .ch-title {
-  min-width: 0; padding: 3px 8px; text-align: left;
+  /* Fit the title and its padding, then shrink to the available grid space. */
+  flex: 0 1 auto; min-width: 0; padding: 3px 8px; text-align: left;
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--text-primary) 7%, transparent),
+    color-mix(in srgb, var(--text-primary) 2%, transparent)
+  );
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   border-radius: 6px; outline: none; cursor: text;
   color: var(--text-primary); font-size: 15px; font-weight: normal; letter-spacing: 0;
 }
-.ch-title:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
-.ch-title:focus { text-overflow: clip; background: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--accent); }
+.ch-title:hover { background-color: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.ch-title:focus { text-overflow: clip; background-color: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--accent); }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
