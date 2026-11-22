@@ -41,14 +41,7 @@
 
       <main ref="mainRef" class="main">
         <!--
-          Header backdrop: blurred, dimmed bar behind StatusBadges +
-          SessionMark so transcript content scrolling up doesn't collide
-          with the header chrome. Sits below the badges (z-index) but
-          above the transcript.
-        -->
-        <div class="header-backdrop" aria-hidden="true" />
-        <!--
-          Composer backdrop: same fade trick at the bottom so transcript
+          Composer backdrop: bottom fade so transcript
           content scrolling up doesn't fight the composer. Masked on the
           right (left over from the removed Canvas glow; kept so the
           bottom edge looks the same).
@@ -908,41 +901,7 @@ onBeforeUnmount(() => {
 }
 
 /*
- * Header backdrop — blurred, dimmed gradient behind SessionMark
- * (z-12) and StatusBadges (z-21). Sits above the transcript so
- * scrolled content fades out under the header chrome instead of
- * colliding with it.
- */
-.header-backdrop {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 78px;
-  z-index: 10;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    var(--bg-surface) 0%,
-    color-mix(in srgb, var(--bg-surface) 78%, transparent) 55%,
-    transparent 100%
-  );
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  mask-image: linear-gradient(
-    to bottom,
-    var(--bg-page) 0%,
-    var(--bg-page) 65%,
-    var(--bg-hover) 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    var(--bg-page) 0%,
-    var(--bg-page) 65%,
-    var(--bg-hover) 100%
-  );
-}
-
-/*
- * Composer backdrop — mirror of the header fade at the bottom of .main.
+ * Composer backdrop — fades the transcript at the bottom of .main.
  * Sits below the Composer (z-15) and above the Transcript so messages
  * scrolling up fade out under the input row. Masked horizontally on
  * the right: left over from the removed Canvas glow, kept so the bottom
