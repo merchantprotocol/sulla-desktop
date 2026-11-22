@@ -83,6 +83,7 @@ export class FilesBrowserNavigation {
     if (state.busy.value || state.loading.value) return;
     this.browser.gestures.stopPointerGesture?.(); this.browser.rename.cancelRename();
     if (entry.folder) { this.openPath(entry.path); return }
+    state.detailVersionId.value = undefined;
     state.selected.value = entry; state.detailTab.value = this.browser.presenter.entrySync(entry) === 'conflict' ? 'versions' : 'details';
   };
 
@@ -114,21 +115,30 @@ export class FilesBrowserNavigation {
     const state = this.state; const browser = this.browser;
 
     state.collectionsRoot.value = false;
+    state.operationError.value = '';
     if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) { await this.selectCollection(detail.collectionId) }
     if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return }
-    let file = state.snapshot.value?.files.find(item => item.id === detail.fileId) ?? state.snapshot.value?.files.find(item => item.path === detail.path);
+    let file = state.snapshot.value?.files.find(item => detail.fileId ? item.id === detail.fileId : item.path === detail.path);
 
-    // A linked file outside the open folder is resolved by id; it must not be mistaken for a folder path.
-    if (!file && detail.fileId && state.props.dataSource.filesByIds) file = (await state.props.dataSource.filesByIds([detail.fileId]).catch(() => []))[0];
+    // Resolve saved references by identity, even if a different file now occupies the old path.
+    if (!file && detail.fileId && state.props.dataSource.filesByIds) {
+      try {
+        file = (await state.props.dataSource.filesByIds([detail.fileId])).find(item => item.id === detail.fileId);
+      } catch (cause) {
+        state.operationError.value = FilesBrowserState.messageOf(cause);
+        return;
+      }
+    }
     // A path without a fileId is a folder ("" = My Files root), e.g. Paper's back button.
-    if (!file && (detail.path || (!detail.fileId && detail.path !== undefined))) {
+    if (!file && !detail.fileId && detail.path !== undefined) {
       this.openPath(detail.path ?? '');
       if (detail.section === 'share-review') browser.sharing.shareCurrentFolder();
       return;
     }
-    if (!file) { state.error.value = 'That file is no longer available in this collection.'; return }
+    if (!file) { state.operationError.value = 'That file is no longer available in this collection.'; return }
     if (!detail.section && supportsDocumentEditor(file.path)) { state.emit('open-editor', browser.factory.toDisplay(file), state.snapshot.value?.collection.id); return }
     this.selectEntry(browser.factory.toDisplay(file));
+    state.detailVersionId.value = detail.versionId || undefined;
     if (detail.section === 'versions') state.detailTab.value = 'versions';
     if (detail.section === 'share-review') browser.sharing.shareEntry(browser.factory.toDisplay(file));
   }

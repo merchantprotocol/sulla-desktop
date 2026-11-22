@@ -79,8 +79,18 @@ export class AgentResultCardBuilder {
     return { items: ('items' in outcome ? outcome.items : items).map(item => this.grounding.ground(item)) };
   }
 
+  /** Projects an existing receipt without rerunning its classifier or its agent. */
+  recorded(job: AgentJob, index: number): AgentResultItem | undefined {
+    const task = job.tasks[index];
+    if (!task) return undefined;
+    const result = task.completion ?? (task.threadId ? job.results.find(entry => entry?.threadId === task.threadId) : undefined)
+      ?? (job.tasks.length === 1 ? job.results[0] : undefined);
+    if (typeof result?.output !== 'string' || !result.output.trim()) return undefined;
+    return this.grounding.ground({ ...this.base(job, result, { task, index }), report: result.output });
+  }
+
   private task(job: AgentJob, result: AgentJobResult, index: number, count: number, taskIndex: number): { task?: AgentJobTask; index: number } {
-    const byThread = result.threadId ? job.tasks.findIndex(task => task.threadId === result.threadId) : -1;
+    const byThread = result.threadId ? job.tasks.findIndex(task => task?.threadId === result.threadId) : -1;
     if (byThread >= 0) return { task: job.tasks[byThread], index: byThread };
     const position = count === 1 && taskIndex >= 0 ? taskIndex : index;
     return { task: job.tasks[position], index: position };

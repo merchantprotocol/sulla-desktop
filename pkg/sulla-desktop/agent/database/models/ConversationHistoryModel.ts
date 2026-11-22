@@ -66,10 +66,11 @@ export interface RecordConversationInput {
  * Internal machinery channels that must never surface in user-facing
  * history: the `subconscious:<agent>` namespace (memory-recall, observation
  * writer/recall, summarizer, dreaming loops) plus the named worker/dispatch
- * channels agents are spawned on. Mirrors migration 0058's backfill
- * predicate — keep the two in sync if this set changes.
+ * channels agents are spawned on. Migration 0058 backfilled the rows that
+ * existed under the names of its time. `advisor` is the current name of
+ * `opus-worker` (migration 0167); new rows use it, old rows keep the alias.
  */
-const HIDDEN_WORKER_CHANNELS = new Set(['codex-test', 'thinker-worker', 'opus-worker', 'fable-planner']);
+const HIDDEN_WORKER_CHANNELS = new Set(['codex-test', 'thinker-worker', 'opus-worker', 'advisor', 'fable-planner']);
 
 function isHiddenChannel(channelId?: string | null): boolean {
   if (!channelId) return false;

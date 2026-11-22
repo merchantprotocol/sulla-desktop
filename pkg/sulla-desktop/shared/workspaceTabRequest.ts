@@ -6,7 +6,9 @@ interface WorkspaceFile {
   collectionId?: string;
 }
 
+export type WorkspaceFileSection = 'detail' | 'versions' | 'share-review';
+
 export type WorkspaceTabRequest =
   | { mode: 'paper'; documentFile: WorkspaceFile }
-  | { mode: 'files'; title: string; filesNavigation: WorkspaceFile & { section: 'detail' } }
+  | { mode: 'files'; title: string; filesNavigation?: WorkspaceFile & { section: WorkspaceFileSection; versionId?: string } }
   | { mode: 'chat'; title: string; initialAgentId: string };

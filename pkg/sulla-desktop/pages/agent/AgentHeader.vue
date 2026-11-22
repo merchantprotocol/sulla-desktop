@@ -98,7 +98,7 @@
           </svg>
           <span class="tab-icon">
             <span
-              v-if="tab.activity === 'working'"
+              v-if="tab.working"
               class="tab-status tab-status-working tab-icon-meter"
               role="img"
               :aria-label="ACTIVITY_LABEL.working"
@@ -157,8 +157,8 @@
             @pointerdown.stop
             @click.stop.prevent
             @dblclick.stop
-            @keydown.enter.prevent="commitRename"
-            @keydown.esc.prevent="cancelRename"
+            @keydown.enter.stop.prevent="commitRename"
+            @keydown.esc.stop.prevent="cancelRename"
             @blur="onRenameBlur"
           >
           <span
@@ -459,6 +459,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
   working: 'Sulla is working',
   waiting: 'Waiting on agents or a schedule',
+  quiet:   'Agent activity is quiet',
   you:     'Needs you',
   stalled: 'No progress: an agent has gone quiet',
   idle:    'Idle',
@@ -971,8 +972,9 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
-    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) ?? (working ? 'working' : undefined) : undefined;
+    const chatStatus = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
+    const working = chatStatus?.active ?? (bt.mode === 'chat' && workingTabIds.value.has(bt.id));
+    const activity = chatStatus?.state ?? (working ? 'working' : undefined);
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
@@ -2039,7 +2041,18 @@ function handleTabContextMenuAction(
 }
 .app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
-.app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
+.app-titlebar .tab-activity-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  z-index: 2;
+  background: var(--text-muted);
+}
+.app-titlebar .tab-activity-you { background: var(--status-warning); }
+.app-titlebar .tab-activity-stalled { background: var(--status-error); }
 .app-titlebar .tab-active .tab-activity-dot,
 .app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-chrome-active); }
 .app-titlebar .tab-inactive .tab-activity-dot { box-shadow: none; }

@@ -6,7 +6,7 @@
 /**
  * Agent-specific instructions for Codex runs.
  *
- * A spawned agent (codex-sol-worker, codex-luna-worker, …) needs its database
+ * A spawned agent (builder, quick-fixer, …) needs its database
  * role prompt in addition to the per-spawn guest instruction file, so it rides
  * along in the <sulla_context> stable tier of the user message.
  */

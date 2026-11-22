@@ -15,6 +15,10 @@ COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
+# Model discovery imports the shared Sulla Cloud host contract while the image
+# validates its real catalog entrypoint. Keep that dependency explicit instead
+# of copying the rest of the Vault service into the Tools image.
+COPY services/sulla-vault/src/sullaCloudRelay.ts ./services/sulla-vault/src/sullaCloudRelay.ts
 # Dependency-free modules the Files read tools import (FilesListingPager ships with agent/ above). Copy exact files only;
 # the rest of shared/ and main/ stay out of the container.
 COPY pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts ./pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts
