@@ -138,6 +138,18 @@ describe('FilesBrowserController', () => {
     else expect(loadFolder).toHaveBeenCalledWith(parent);
   });
 
+  // risk: file routing. Legacy fileId-only references must keep the document-editor route.
+  it('preserves the editor route for legacy fileId-only navigation', async() => {
+    const file = (await source.detail('synthetic-notes')).item!;
+
+    const opened = await browser.navigation.navigateTo({ fileId: file.id, path: file.path });
+
+    expect(opened).toBe(true);
+    expect(emit).toHaveBeenCalledWith('open-editor', expect.objectContaining({ id: file.id, path: file.path }), undefined);
+    expect(browser.state.selected.value).toBeNull();
+    expect(browser.state.currentPath.value).toBe('');
+  });
+
   // risk: an immutable URL opens the current file instead, or Link publishes on click.
   it('opens the exact older version, defaults a bare reference, and only reviews sharing', async() => {
     const fileId = 'synthetic-video';

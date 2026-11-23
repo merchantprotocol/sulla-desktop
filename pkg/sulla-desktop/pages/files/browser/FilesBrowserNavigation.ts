@@ -170,8 +170,7 @@ export class FilesBrowserNavigation {
     browser.sharing.closeShare();
 
     if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return true }
-    const isFileOpen = detail.openKind === 'file'
-      || (detail.openKind !== 'folder' && detail.fileId !== undefined && detail.versionId === undefined && detail.section === undefined);
+    const isFileOpen = detail.openKind === 'file';
     if (isFileOpen) {
       if (detail.fileId !== undefined && !DURABLE_FILE_ID_PATTERN.test(detail.fileId)) return fail('This Files reference is invalid. Ask for a fresh reference.');
       if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) {
@@ -184,11 +183,6 @@ export class FilesBrowserNavigation {
       const file = await this.resolveOpenFile(detail.fileId, detail.path);
       if (!isCurrent()) return false;
       if (!file) return fail('This file is no longer available at that path. Check your Files access and try again.');
-
-      if (detail.openKind !== 'file' && supportsDocumentEditor(file.path)) {
-        state.emit('open-editor', browser.factory.toDisplay(file), state.snapshot.value?.collection.id);
-        return true;
-      }
 
       const slash = file.path.lastIndexOf('/');
       const parent = slash < 0 ? '' : file.path.slice(0, slash);
