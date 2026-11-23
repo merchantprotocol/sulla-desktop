@@ -69,6 +69,44 @@ class ReportingFixture {
   }
 }
 
+// risk: text integrity — a completed segment must retain its stream identity so
+// the next text segment gets a paragraph break without crossing reply/card boundaries.
+it('keeps same-stream paragraph breaks after a completed segment and not across other replies', () => {
+  const finishFirstSegment = (live: ReportingFixture) => {
+    live.ctx.graphRunning.value = true;
+    live.emit('assistant_message', { kind: 'streaming', content: 'First paragraph', replyStreamId: 'reply-1' });
+    live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'reply-1' });
+    expect(live.chat.messages.value[0]).toMatchObject({ kind: 'sulla', text: 'First paragraph', replyStreamId: 'reply-1' });
+  };
+  const continuationFor = (live: ReportingFixture) => {
+    const next = live.chat.messages.value.find(message => message.kind === 'streaming' && message.text === 'Second paragraph');
+    expect(next).toBeDefined();
+    const entries = live.entries('info');
+    return live.reporting.isStreamingContinuation(entries, entries.findIndex(entry => entry.id === next!.id));
+  };
+
+  const sameStream = new ReportingFixture();
+  finishFirstSegment(sameStream);
+  sameStream.emit('progress', { phase: 'tool_call', toolRunId: 'reply-tool', toolName: 'exec', args: { command: 'fixture' } });
+  sameStream.emit('progress', { phase: 'tool_result', toolRunId: 'reply-tool', success: true, result: 'done' });
+  sameStream.emit('assistant_message', { kind: 'streaming', content: 'Second paragraph', replyStreamId: 'reply-1' });
+  expect(sameStream.entries('info').some(entry => entry.kind === 'activity')).toBe(true);
+  expect(continuationFor(sameStream)).toBe(true);
+
+  const differentStream = new ReportingFixture();
+  finishFirstSegment(differentStream);
+  differentStream.emit('assistant_message', { kind: 'streaming', content: 'Second paragraph', replyStreamId: 'reply-2' });
+  expect(continuationFor(differentStream)).toBe(false);
+
+  const interveningCard = new ReportingFixture();
+  finishFirstSegment(interveningCard);
+  interveningCard.emit('assistant_message', {
+    kind: 'citation', citations: [{ num: 1, title: 'Evidence', origin: 'fixture' }],
+  });
+  interveningCard.emit('assistant_message', { kind: 'streaming', content: 'Second paragraph', replyStreamId: 'reply-1' });
+  expect(continuationFor(interveningCard)).toBe(false);
+});
+
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
 it('projects safe individual events in source order before and after tool settlement and reload', () => {
@@ -283,16 +321,17 @@ it('keeps recorded reply attribution and its actions together across levels and 
   expect(actionRows()).toHaveLength(3);
   const [legacy, recorded, followUp] = actionRows();
   expect(legacy.text()).toContain('Agent not recorded');
-  expect(legacy.text()).toContain('Model not recorded');
+  expect(legacy.text()).not.toContain('Model not recorded');
   expect(legacy.get('time').attributes('datetime')).toBe(new Date(legacyAt).toISOString());
   expect(recorded.text()).toContain('Research Agent');
-  expect(recorded.text()).toContain('reported-model');
+  expect(recorded.text()).not.toContain('reported-model');
   expect(wrapper.text()).not.toMatch(/picker label|picker agent|selected-model|wrong-model/);
   expect(wrapper.findAll('.chat-turn.sulla .chat-role, .chat-turn.sulla .noir-avatar')).toHaveLength(0);
   expect(recorded.classes()).not.toContain('tact-latest');
-  expect(followUp.classes()).toContain('tact-latest');
+  expect(followUp.classes()).not.toContain('tact-latest');
 
   await wrapper.setProps({ reportingLevel: 'fatal' });
+  expect(recorded.text()).toContain('reported-model');
   const newestVisible = wrapper.get('.tact-sulla.tact-latest');
   expect(newestVisible.text()).toContain('Research Agent');
   expect(newestVisible.findAll('button')).toHaveLength(5);

@@ -778,7 +778,8 @@ export class PersonaAdapter {
    * Must cover every backend field MessageDispatcher mutates in place after
    * a message's first push (verified against MessageDispatcher.ts): content,
    * `_completed`, toolCard.status/output/error, subAgentActivity.*, and
-   * workflowNode.status/output/error/nodeIndex/totalNodes. Graph-running
+   * workflowNode.status/output/error/nodeIndex/totalNodes. replyStreamId is
+   * included because the completed reply projection also depends on it. Graph-running
    * transitions invalidate only streaming/thinking messages explicitly.
    * Other kinds (patch, citation, tool_approval, tool_question, channel,
    * proactive, html, workflow_document) are pushed once and never mutated,
@@ -797,7 +798,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ b.chatToolActivity ?? '' }|${ b.agentReporting ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ b.chatToolActivity ?? '' }|${ b.agentReporting ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }|${ b.replyStreamId ?? '' }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -1160,6 +1161,7 @@ export class PersonaAdapter {
           text:  raw,
           decisionFollowUpId: b.decisionFollowUpId,
           agentReporting: b.agentReporting,
+          ...(typeof b.replyStreamId === 'string' ? { replyStreamId: b.replyStreamId } : {}),
           ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
           fileReferencesInferred: fileReferences.length && !b.fileReferences?.length ? true : undefined,
           fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
@@ -1171,6 +1173,7 @@ export class PersonaAdapter {
         createdAt,
         text:      b.content ?? '',
         startedAt: createdAt,
+        ...(typeof b.replyStreamId === 'string' ? { replyStreamId: b.replyStreamId } : {}),
         decisionFollowUpId: b.decisionFollowUpId,
         agentReporting: b.agentReporting,
       } satisfies StreamingMessage;

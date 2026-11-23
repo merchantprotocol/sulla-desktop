@@ -59,9 +59,9 @@ export function useScrollAnchor(
   function onScroll() {
     const el = scrollerRef.value; if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    showPill.value = dist > 220;
     if (dist <= PIN_THRESHOLD_PX) pinned = true;
     else if (performance.now() - lastGestureAt < USER_GESTURE_MS) pinned = false;
+    showPill.value = !pinned && dist > 220;
   }
 
   /** Streaming text grows an existing message without changing the count, so follow height instead. */

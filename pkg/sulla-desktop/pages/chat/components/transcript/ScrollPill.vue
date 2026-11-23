@@ -6,13 +6,13 @@
 -->
 <!-- Floating "jump to newest" pill that appears when scrolled up. -->
 <template>
-  <button v-if="visible" class="scroll-pill" type="button" @click="$emit('jump')">
+  <button v-if="visible" :class="['scroll-pill', { 'scroll-pill-standard': standard }]" type="button" @click="$emit('jump')">
     New messages
   </button>
 </template>
 
 <script setup lang="ts">
-defineProps<{ visible: boolean }>();
+defineProps<{ visible: boolean; standard?: boolean }>();
 defineEmits<{ (e: 'jump'): void }>();
 </script>
 
@@ -34,5 +34,18 @@ defineEmits<{ (e: 'jump'): void }>();
   transition: all 0.2s ease;
 }
 .scroll-pill:hover { background: var(--accent); color: var(--text-on-accent); }
+.scroll-pill.scroll-pill-standard {
+  height: 34px; min-height: 34px; padding-inline: 15px;
+  border: 1px solid var(--accent-hover);
+  color: var(--text-on-accent); background: var(--accent);
+  font: 600 12px/1 var(--font-body); letter-spacing: .02em; text-transform: none;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-page) 52%, transparent);
+}
+.scroll-pill.scroll-pill-standard:hover {
+  color: var(--text-on-accent); background: var(--accent-hover);
+}
+.scroll-pill.scroll-pill-standard:focus-visible {
+  outline: 2px solid var(--text-primary); outline-offset: 3px;
+}
 .scroll-pill::before { content: "↓"; font-size: 13px; }
 </style>

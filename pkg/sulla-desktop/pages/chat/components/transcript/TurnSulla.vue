@@ -48,18 +48,18 @@
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
-      :latest="latest"
+      :latest="reportingLevel !== 'info' && latest"
       @copy="copy"
       @regenerate="onRegenerate"
       @quote="onQuote"
       @pin="onPin"
       @fork="onFork"
     >
-      <span class="reply-metadata">
+      <span :class="['reply-metadata', { 'reply-metadata-standard': reportingLevel === 'info' }]">
         <time v-if="replyTime" :datetime="replyTime.iso">{{ replyTime.label }}</time>
         <span v-else>Time not recorded</span>
         <span>{{ msg.replyAttribution?.agent || 'Agent not recorded' }}</span>
-        <span>{{ msg.replyAttribution?.model || 'Model not recorded' }}</span>
+        <span v-if="reportingLevel !== 'info'">{{ msg.replyAttribution?.model || 'Model not recorded' }}</span>
       </span>
     </TurnActions>
 
@@ -81,8 +81,11 @@ import { useChatController } from '../../controller/useChatController';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { SullaMessage } from '../../models/Message';
+import type { ReportingLevel } from '../../models/ReportingLevel';
 
-const props = defineProps<{ msg: SullaMessage; latest?: boolean }>();
+const props = withDefaults(defineProps<{ msg: SullaMessage; latest?: boolean; reportingLevel?: ReportingLevel }>(), {
+  reportingLevel: 'debug',
+});
 // Kept for back-compat with any parents that still listen.
 defineEmits<{
   (e: 'regenerate'): void; (e: 'quote'): void; (e: 'pin'): void; (e: 'fork'): void;
@@ -209,4 +212,7 @@ function onNewChat(): void {
   overflow-wrap: anywhere;
 }
 .reply-metadata > :not(:first-child)::before { content: '· '; }
+.reply-metadata-standard { opacity: 0; visibility: hidden; transition: opacity .15s ease; }
+.chat-turn.sulla:hover .reply-metadata-standard,
+.chat-turn.sulla:focus-within .reply-metadata-standard { opacity: 1; visibility: visible; }
 </style>
