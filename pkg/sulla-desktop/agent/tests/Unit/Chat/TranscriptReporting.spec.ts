@@ -283,7 +283,7 @@ it('keeps recorded reply attribution and its actions together across levels and 
   expect(actionRows()).toHaveLength(3);
   const [legacy, recorded, followUp] = actionRows();
   expect(legacy.text()).toContain('Agent not recorded');
-  expect(legacy.text()).toContain('Model not recorded');
+  expect(legacy.text()).not.toContain('Model not recorded');
   expect(legacy.get('time').attributes('datetime')).toBe(new Date(legacyAt).toISOString());
   expect(recorded.text()).toContain('Research Agent');
   expect(recorded.text()).toContain('reported-model');
