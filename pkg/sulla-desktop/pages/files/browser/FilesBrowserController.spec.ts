@@ -71,7 +71,7 @@ describe('FilesBrowserController', () => {
     expect(browser.state.navigationError.value).toBe('');
     await firstLoad;
     browser.navigation.consumeNavigation();
-    expect(browser.state.navigationError.value).toContain('Try again');
+    expect(browser.state.navigationError.value).toContain('try again');
     expect(browser.state.navigationError.value).not.toContain('private listing');
     expect(lookup).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
