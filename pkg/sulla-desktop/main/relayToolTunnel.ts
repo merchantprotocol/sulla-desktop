@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { toolRegistry } from '@pkg/agent/tools';
+import { ToolInputValidationError } from '@pkg/agent/tools/base';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getCurrentUserId } from '@pkg/main/sullaCloudAuth';
@@ -54,19 +55,25 @@ async function executeThroughRegistry(
   };
   const containerRuntime = containerRuntimeForExecution(ctx, executionTarget);
   const state = containerRuntime ? isolatedState : (registered ?? isolatedState);
-  const result = containerRuntime
-    ? await withAgentContainerRuntime(containerRuntime, () => tool.invoke(args, state))
-    : await tool.invoke(args, state);
-
-  return result.success
-    ? { success: true, result: result.result }
-    : {
-      success: false,
-      error:   {
-        code:    'desktop_tool_failed',
-        message: result.error ?? (typeof result.result === 'string' ? result.result : 'Desktop tool failed'),
-      },
-    };
+  try {
+    const result = containerRuntime
+      ? await withAgentContainerRuntime(containerRuntime, () => tool.invoke(args, state))
+      : await tool.invoke(args, state);
+    return result.success
+      ? { success: true, result: result.result }
+      : {
+        success: false,
+        error:   {
+          code:    result.errorCode ?? 'desktop_tool_failed',
+          message: result.error ?? (typeof result.result === 'string' ? result.result : 'Desktop tool failed'),
+        },
+      };
+  } catch (error) {
+    if (error instanceof ToolInputValidationError) {
+      return { success: false, error: { code: 'invalid_tool_input', message: error.message } };
+    }
+    throw error;
+  }
 }
 
 let cloudTunnel: RelayToolTunnel | null = null;

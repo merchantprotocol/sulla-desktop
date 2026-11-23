@@ -19,8 +19,8 @@ import { RedisHealthProbe } from './RedisHealthProbe.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
-import { HttpDesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relayDesktopExecutor.js';
+import { HttpDesktopExecutor, toolRequestRejectionStatus } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 
 import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
 import type { DesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
@@ -163,7 +163,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
       : await desktop.execute(ctx, category, requested, args, { deadlineMs, operationTypes: tool.operationTypes });
     if (tool.executionTarget !== 'catalog') {
       const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
-      if (!forwarded.success) status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
+      if (!forwarded.success) status = toolRequestRejectionStatus(forwarded.error?.code) ?? (forwarded.error?.code === 'deadline_exceeded' ? 504 : 503);
       return response.status(status).json({ ...forwarded, request_id: requestId });
     }
     response.json({ success: true, result, request_id: requestId });

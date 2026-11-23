@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
 import { Service } from '@sulla/foundation';
 import type { BaseThreadState } from '../../nodes/Graph';
@@ -32,6 +34,8 @@ export interface ThreadStateLogger {
   error(message: string, ...details: unknown[]): void;
 }
 
+const MAX_REDIS_CHECKPOINT_BYTES = 1024 * 1024;
+
 export class MemoryThreadStateRepository extends Service implements ThreadStateRepository {
   private readonly states = new Map<string, BaseThreadState>();
   async save(state: BaseThreadState): Promise<void> { this.states.set(state.metadata.threadId, structuredClone(state)); }
@@ -56,8 +60,14 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
     }
   }
   async save(state: BaseThreadState): Promise<void> {
+    await this.saveSerialized(state.metadata.threadId, JSON.stringify(structuredClone(state)));
+  }
+  async saveSerialized(threadId: string, json: string): Promise<void> {
+    if (Buffer.byteLength(json) > MAX_REDIS_CHECKPOINT_BYTES) {
+      throw new Error('Thread checkpoint exceeds the Redis size limit');
+    }
     await this.clientSource.getClient().setex(
-      this.key(state.metadata.threadId), this.ttlSeconds, JSON.stringify(structuredClone(state)),
+      this.key(threadId), this.ttlSeconds, json,
     );
   }
   async load(threadId: string): Promise<BaseThreadState | null> {
@@ -68,6 +78,51 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
     await this.clientSource.getClient().del(this.key(threadId));
   }
   private key(threadId: string): string { return RedisThreadStateRepository.KEY_PREFIX + threadId; }
+}
+
+/** Stores the full checkpoint when a thread outgrows its Redis cache entry. */
+export class FileThreadCheckpointRepository {
+  constructor(private readonly directory: () => string) {}
+
+  async exists(threadId: string): Promise<boolean> {
+    try {
+      await fs.promises.stat(this.filename(threadId));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
+  async save(threadId: string, json: string): Promise<void> {
+    const filename = this.filename(threadId);
+    await fs.promises.mkdir(path.dirname(filename), { recursive: true, mode: 0o700 });
+    const temporary = `${ filename }.${ randomUUID() }.tmp`;
+    try {
+      await fs.promises.writeFile(temporary, json, { flag: 'wx', mode: 0o600, flush: true });
+      await fs.promises.rename(temporary, filename);
+    } finally {
+      await fs.promises.rm(temporary, { force: true });
+    }
+  }
+
+  async load(threadId: string): Promise<BaseThreadState | null> {
+    try {
+      return JSON.parse(await fs.promises.readFile(this.filename(threadId), 'utf8')) as BaseThreadState;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  async delete(threadId: string): Promise<void> {
+    await fs.promises.rm(this.filename(threadId), { force: true });
+  }
+
+  private filename(threadId: string): string {
+    const hash = createHash('sha256').update(threadId).digest('hex');
+    return path.join(this.directory(), `${ hash }.json`);
+  }
 }
 
 export class LogRecoveryThreadStateRepository extends Service implements ThreadStateRepository {
@@ -128,31 +183,57 @@ export class LogRecoveryThreadStateRepository extends Service implements ThreadS
 }
 
 export class FallbackThreadStateRepository extends Service implements ThreadStateRepository {
+  private readonly operations = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly redis: RedisThreadStateRepository,
     private readonly memory: ThreadStateRepository,
     private readonly recovery: ThreadStateRepository,
     private readonly logger: ThreadStateLogger,
+    private readonly checkpoints?: FileThreadCheckpointRepository,
   ) { super(); }
   async save(state: BaseThreadState): Promise<void> {
+    const snapshot = structuredClone(state);
+    const json = JSON.stringify(snapshot);
+    return await this.sequence(snapshot.metadata.threadId, () => this.saveSnapshot(snapshot, json));
+  }
+  private async saveSnapshot(state: BaseThreadState, json: string): Promise<void> {
+    const threadId = state.metadata.threadId;
+    const hasCheckpoint = await this.checkpoints?.exists(threadId);
+    if (this.checkpoints && (hasCheckpoint || Buffer.byteLength(json) > MAX_REDIS_CHECKPOINT_BYTES)) {
+      // Keep later, smaller saves on disk too so a stale copy cannot win after restart.
+      await this.checkpoints.save(threadId, json);
+      await this.memory.delete(threadId);
+      if (!hasCheckpoint) await this.deleteCachedState(threadId);
+      return;
+    }
     if (await this.redis.available()) {
       try {
-        await this.redis.save(state);
-        this.logger.log(`[ThreadStateStore] Saved thread ${ state.metadata.threadId } to Redis`);
+        await this.redis.saveSerialized(threadId, json);
+        await this.memory.delete(threadId);
+        this.logger.log(`[ThreadStateStore] Saved thread ${ threadId } to Redis`);
         return;
-      } catch (error) { this.logger.error('[ThreadStateStore] Redis save failed, using memory fallback:', error); }
+      } catch (error) {
+        // Redis reply errors may include the full checkpoint in their command arguments.
+        this.logger.error('[ThreadStateStore] Redis save failed, using memory fallback:', (error as Error).message);
+      }
     }
     await this.memory.save(state);
   }
   async load(threadId: string): Promise<BaseThreadState | null> {
+    return await this.sequence(threadId, () => this.loadSnapshot(threadId));
+  }
+  private async loadSnapshot(threadId: string): Promise<BaseThreadState | null> {
+    const checkpoint = await this.checkpoints?.load(threadId);
+    if (checkpoint) return checkpoint;
+    const fallback = await this.memory.load(threadId);
+    if (fallback) return fallback;
     if (await this.redis.available()) {
       try {
         const state = await this.redis.load(threadId);
         if (state) { this.logger.log(`[ThreadStateStore] Loaded thread ${ threadId } from Redis`); return state; }
       } catch (error) { this.logger.error('[ThreadStateStore] Redis load failed, checking memory fallback:', error); }
     }
-    const fallback = await this.memory.load(threadId);
-    if (fallback) return fallback;
     try {
       const recovered = await this.recovery.load(threadId);
       if (recovered) this.logger.log(`[ThreadStateStore] Restored thread ${ threadId } from disk JSONL, messages=${ recovered.messages.length }`);
@@ -163,12 +244,28 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
     }
   }
   async delete(threadId: string): Promise<void> {
+    return await this.sequence(threadId, async() => {
+      await this.deleteCachedState(threadId);
+      await this.checkpoints?.delete(threadId);
+      await this.memory.delete(threadId);
+    });
+  }
+  private async deleteCachedState(threadId: string): Promise<void> {
     if (await this.redis.available()) {
       try {
         await this.redis.delete(threadId);
         this.logger.log(`[ThreadStateStore] Deleted thread ${ threadId } from Redis`);
       } catch (error) { this.logger.error('[ThreadStateStore] Redis delete failed:', error); }
     }
-    await this.memory.delete(threadId);
+  }
+  private async sequence<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
+    const pending = this.operations.get(threadId);
+    const current = pending ? pending.then(operation, operation) : operation();
+    this.operations.set(threadId, current);
+    try {
+      return await current;
+    } finally {
+      if (this.operations.get(threadId) === current) this.operations.delete(threadId);
+    }
   }
 }

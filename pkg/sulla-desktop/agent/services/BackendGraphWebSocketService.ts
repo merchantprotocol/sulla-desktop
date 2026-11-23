@@ -1266,6 +1266,12 @@ export class BackendGraphWebSocketService {
     const answerInputs = decisionInputs ?? [];
     const decisionTurn = answerInputs.length > 0;
     if (decisionTurn && threadIdFromMsg && this.decisionThreadOwned(channelId, threadIdFromMsg)) return 'deferred';
+    const automatedMessage = metadata?.source === 'orchestrator_job_message' ||
+      (metadata?.source === 'agent_inbox' && inputSource === 'system');
+    if (automatedMessage && threadIdFromMsg && await parkedAgentRehydrator.isTerminalDelegatedThread(threadIdFromMsg)) {
+      console.info(`[BackendGraphWS] Message undeliverable to inactive job thread ${ threadIdFromMsg }`);
+      return 'failed';
+    }
     const wasActiveForWorkerMapping = !!threadIdFromMsg && this.hasActiveRun(channelId, threadIdFromMsg);
     const completionConsumption = new CompletionConsumptionRecorder();
     const { getModelProviderService } = await import('./ModelProviderService');
@@ -1723,12 +1729,13 @@ export class BackendGraphWebSocketService {
               ...(allCompletions.length ? { source: 'sub_agent_completion', completionEntries: allCompletions, renderCompletionEntries: true } : {}),
             })
               .catch(err => console.error('[BackendGraphWS] Failed to dispatch follow-up steer:', err));
-          } else if (!runAbort?.signal.aborted) {
+          } else if (!runAbort?.signal.aborted && (turnConsumedInput || metadata?.source !== 'orchestrator_job_message')) {
           // An orchestrator message that arrived while this thread was busy
           // (wakeParkedAgent or dispatchToAgent's own busy-guard declined to
           // dispatch for it) is not a steer and would otherwise be stranded
           // once this run ends with activeAborts clear. Redeliver anything
-          // still pending now that the thread is idle again.
+          // still pending now that the thread is idle again. A failed delivery
+          // keeps its messages pending without immediately retrying itself.
             const pendingJobMessages = await AgentJobMessagingModel.pendingMessagesForThread(threadId).catch(err => {
               console.warn('[BackendGraphWS] Failed to check for stranded orchestrator messages:', (err as Error).message);
               return [];
