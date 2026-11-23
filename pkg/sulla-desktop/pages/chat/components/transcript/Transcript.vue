@@ -9,10 +9,11 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript">
+  <div class="transcript" :class="{ 'transcript-standard': reportingLevel === 'info' }">
     <div
       ref="scroller"
       class="scroller"
+      :class="{ 'has-scroll-pill': showPill }"
     >
       <div class="chat-dialogue">
         <!-- Time marker for today (phase-0 scaffold) -->
@@ -22,16 +23,27 @@
         />
 
         <div
-          v-for="entry in transcriptEntries"
+          v-for="(entry, index) in transcriptEntries"
           :key="entry.id"
           :ref="el => jumper.register(entry.id, el)"
           class="report-entry"
+          :class="{
+            'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
+            'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
+          }"
         >
           <span
+            v-if="reportLabelVisible(entry)"
             class="report-label"
             :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
           >{{ entry.label }}</span>
-          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" />
+          <MessageRouter
+            v-if="entry.kind === 'card'"
+            :msg="entry.message"
+            :latest-reply="entry.id === latestReplyId"
+            :reporting-level="reportingLevel"
+            :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
+          />
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
             <template v-if="reportingLevel === 'debug'">
@@ -60,6 +72,7 @@
     -->
     <ScrollPill
       :visible="showPill"
+      :standard="reportingLevel === 'info'"
       @jump="scrollToBottom"
     />
   </div>
@@ -73,7 +86,7 @@ import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
-import { TranscriptReporting } from './toolGroups';
+import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
@@ -87,6 +100,23 @@ const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+function reportLabelVisible(entry: TranscriptEntry): boolean {
+  if (props.reportingLevel !== 'info' || entry.kind !== 'card') return true;
+  if (entry.message.kind === 'proactive' && entry.message.result) return false;
+  return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
+}
+function isStandardEvidenceAfterReply(index: number): boolean {
+  if (props.reportingLevel !== 'info') return false;
+  const entry = transcriptEntries.value[index];
+  if (entry?.kind !== 'card' || entry.message.kind !== 'citation') return false;
+  for (let i = index - 1; i >= 0; i--) {
+    const prior = transcriptEntries.value[i];
+    if (!prior || prior.kind === 'activity') continue;
+    return prior.kind === 'card' && (prior.message.kind === 'sulla' ||
+      prior.message.kind === 'streaming' || prior.message.kind === 'html');
+  }
+  return false;
+}
 const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
   entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
@@ -193,7 +223,31 @@ defineExpose({ scroller, scrollToBottom });
   --tr-fade-end: calc(var(--composer-h, 140px) - 4px);
   mask-image: linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
 }
+.scroller.has-scroll-pill {
+  /* Reserve a lane between the transcript and composer for the jump control. */
+  bottom: calc(var(--composer-h, 140px) + 72px);
+  mask-image: none;
+}
+.transcript-standard .scroller {
+  padding-top: 112px;
+  /* Keep the floating title legible while older replies scroll under it. */
+  mask-image:
+    linear-gradient(to bottom, transparent 0, #000 112px),
+    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent 0, #000 112px),
+    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
+  -webkit-mask-composite: source-in;
+}
+.transcript-standard .scroller.has-scroll-pill {
+  /* The reserved pill lane replaces the bottom fade but retains title protection. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
+}
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
+.report-entry-standard-evidence-after-reply { margin-top: -12px; }
+.report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
 .report-label {
   color: var(--text-muted); margin-bottom: 4px;
   font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em;
@@ -202,6 +256,12 @@ defineExpose({ scroller, scrollToBottom });
 .report-label-user { align-self: flex-end; }
 .report-activity { color: var(--text-secondary); font-size: 13px; }
 .report-activity-time { margin-inline-start: 8px; color: var(--text-muted); }
+.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-section),
+.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-labeled),
+.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-flag) {
+  background: transparent;
+  box-shadow: none;
+}
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
 .scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }

@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <ul class="supporting-reports" aria-label="Sources and reports">
+  <ul :class="['supporting-reports', { standard: props.reportingLevel === 'info' }]" aria-label="Sources and reports">
     <li
       v-for="(source, index) in msg.sources"
       :key="index"
@@ -21,8 +21,8 @@
       ><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6" /></svg>
       <div class="report-copy">
         <b>{{ source.title }}</b>
-        <small>{{ resolver.webUrl(source) ? 'Web source' : 'Saved report reference' }}</small>
-        <details class="report-location">
+        <small v-if="props.reportingLevel !== 'info'">{{ resolver.webUrl(source) ? 'Web source' : 'Saved report reference' }}</small>
+        <details v-if="props.reportingLevel !== 'info'" class="report-location">
           <summary>Location</summary><p>{{ source.origin }}</p>
         </details>
         <p
@@ -61,8 +61,11 @@ import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { CitationMessage } from '../../models/Message';
+import type { ReportingLevel } from '../../models/ReportingLevel';
 
-defineProps<{ msg: CitationMessage }>();
+const props = withDefaults(defineProps<{ msg: CitationMessage; reportingLevel?: ReportingLevel }>(), {
+  reportingLevel: 'debug',
+});
 const resolver = new SupportingReportResolver(ipcRenderer);
 const busy = reactive(new Set<number>());
 const errors = reactive<Record<number, string>>({});
@@ -85,6 +88,7 @@ async function open(source: CitationMessage['sources'][number], index: number): 
   color: var(--text-secondary); font: 12px var(--font-body);
 }
 .report-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border-default); }
+.supporting-reports.standard .report-row { padding-block: 7px; }
 .report-icon { width: 18px; height: 20px; flex: none; margin-top: 1px; color: var(--text-muted); }
 .report-copy { min-width: 0; flex: 1; }
 .report-copy b { display: block; color: var(--text-primary); font-size: 13px; font-weight: 550; overflow-wrap: anywhere; }

@@ -82,6 +82,8 @@ export interface AttachedFile {
 // ─── Sulla (complete) + Streaming (in-flight) ────────────────────
 export interface SullaMessage extends MessageBase {
   decisionFollowUpId?: string;
+  /** Stable identifier shared by completed text segments from one assistant turn. */
+  replyStreamId?: string;
   kind:            'sulla';
   text:            string;        // markdown-ish; rendered by prose component
   /** Legacy snapshots may contain a selector value, not the model that ran. */
@@ -98,6 +100,8 @@ export interface SullaMessage extends MessageBase {
 
 export interface StreamingMessage extends MessageBase {
   decisionFollowUpId?: string;
+  /** Stable identifier shared by streamed text segments from one assistant turn. */
+  replyStreamId?: string;
   kind:      'streaming';
   text:      string;        // grows over time
   startedAt: number;
