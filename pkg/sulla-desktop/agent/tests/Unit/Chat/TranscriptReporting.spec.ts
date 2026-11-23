@@ -290,7 +290,7 @@ it('keeps recorded reply attribution and its actions together across levels and 
   expect(wrapper.text()).not.toMatch(/picker label|picker agent|selected-model|wrong-model/);
   expect(wrapper.findAll('.chat-turn.sulla .chat-role, .chat-turn.sulla .noir-avatar')).toHaveLength(0);
   expect(recorded.classes()).not.toContain('tact-latest');
-  expect(followUp.classes()).toContain('tact-latest');
+  expect(followUp.classes()).not.toContain('tact-latest');
 
   await wrapper.setProps({ reportingLevel: 'fatal' });
   expect(recorded.text()).toContain('reported-model');
