@@ -9,7 +9,7 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript">
+  <div class="transcript" :class="{ 'transcript-standard': reportingLevel === 'info' }">
     <div
       ref="scroller"
       class="scroller"
@@ -23,11 +23,15 @@
         />
 
         <div
-          v-for="entry in transcriptEntries"
+          v-for="(entry, index) in transcriptEntries"
           :key="entry.id"
           :ref="el => jumper.register(entry.id, el)"
           class="report-entry"
-          :class="{ 'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId }"
+          :class="{
+            'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
+            'report-entry-streaming-continuation': isStreamingContinuation(index),
+            'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
+          }"
         >
           <span
             v-if="reportLabelVisible(entry)"
@@ -63,6 +67,7 @@
     -->
     <ScrollPill
       :visible="showPill"
+      :standard="reportingLevel === 'info'"
       @jump="scrollToBottom"
     />
   </div>
@@ -91,8 +96,33 @@ const reporting = new TranscriptReporting();
 
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
-  return props.reportingLevel !== 'info' || entry.kind !== 'card' ||
-    !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
+  if (props.reportingLevel !== 'info' || entry.kind !== 'card') return true;
+  if (entry.message.kind === 'proactive' && entry.message.result) return false;
+  return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
+}
+function isStreamingContinuation(index: number): boolean {
+  const entry = transcriptEntries.value[index];
+  if (entry?.kind !== 'card' || entry.message.kind !== 'streaming' || !entry.message.replyStreamId) return false;
+  for (let i = index - 1; i >= 0; i--) {
+    const prior = transcriptEntries.value[i];
+    if (!prior) continue;
+    if (prior.kind === 'activity') continue;
+    return prior.kind === 'card' && prior.message.kind === 'streaming' &&
+      prior.message.replyStreamId === entry.message.replyStreamId;
+  }
+  return false;
+}
+function isStandardEvidenceAfterReply(index: number): boolean {
+  if (props.reportingLevel !== 'info') return false;
+  const entry = transcriptEntries.value[index];
+  if (entry?.kind !== 'card' || entry.message.kind !== 'citation') return false;
+  for (let i = index - 1; i >= 0; i--) {
+    const prior = transcriptEntries.value[i];
+    if (!prior || prior.kind === 'activity') continue;
+    return prior.kind === 'card' && (prior.message.kind === 'sulla' ||
+      prior.message.kind === 'streaming' || prior.message.kind === 'html');
+  }
+  return false;
 }
 const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
   entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
@@ -205,7 +235,26 @@ defineExpose({ scroller, scrollToBottom });
   bottom: calc(var(--composer-h, 140px) + 72px);
   mask-image: none;
 }
+.transcript-standard .scroller {
+  padding-top: 112px;
+  /* Keep the floating title legible while older replies scroll under it. */
+  mask-image:
+    linear-gradient(to bottom, transparent 0, #000 112px),
+    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
+  mask-composite: intersect;
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent 0, #000 112px),
+    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
+  -webkit-mask-composite: source-in;
+}
+.transcript-standard .scroller.has-scroll-pill {
+  /* The reserved pill lane replaces the bottom fade but retains title protection. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
+}
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
+.report-entry-streaming-continuation { margin-top: 10px; }
+.report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
 .report-label {
   color: var(--text-muted); margin-bottom: 4px;
   font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em;

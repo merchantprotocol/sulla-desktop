@@ -1171,6 +1171,7 @@ export class PersonaAdapter {
         createdAt,
         text:      b.content ?? '',
         startedAt: createdAt,
+        ...(typeof b.replyStreamId === 'string' ? { replyStreamId: b.replyStreamId } : {}),
         decisionFollowUpId: b.decisionFollowUpId,
         agentReporting: b.agentReporting,
       } satisfies StreamingMessage;

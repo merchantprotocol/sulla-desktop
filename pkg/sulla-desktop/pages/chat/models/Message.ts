@@ -98,6 +98,8 @@ export interface SullaMessage extends MessageBase {
 
 export interface StreamingMessage extends MessageBase {
   decisionFollowUpId?: string;
+  /** Stable identifier shared by streamed text segments from one assistant turn. */
+  replyStreamId?: string;
   kind:      'streaming';
   text:      string;        // grows over time
   startedAt: number;
