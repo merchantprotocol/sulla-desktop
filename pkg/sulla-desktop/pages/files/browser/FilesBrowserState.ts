@@ -6,7 +6,7 @@
 import { ref } from 'vue';
 
 import type { FilesBrowserEmit, FilesBrowserProps, FilesBrowserSection, DisplayEntry, FilesNativeSource, FilesShareTarget } from './FilesBrowserTypes';
-import type { FilesIndexCoverage, FilesItem, FilesSnapshot } from '../types';
+import type { FilesIndexCoverage, FilesItem, FilesSnapshot, FilesVersion } from '../types';
 
 /**
  * The shared reactive state of one FilesBrowser instance: what is loaded, where the user is,
@@ -26,6 +26,8 @@ export class FilesBrowserState {
   readonly selectedKeys = ref(new Set<string>());
   readonly selectionAnchor = ref<string | null>(null);
   readonly operationError = ref('');
+  readonly navigationError = ref('');
+  readonly detailVersion = ref<FilesVersion>();
   readonly operationNotice = ref('');
   readonly selected = ref<DisplayEntry | null>(null);
   readonly detailTab = ref<'details' | 'versions'>('details');

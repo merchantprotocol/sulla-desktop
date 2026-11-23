@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Electron, { WebContentsView } from 'electron';
+import { DURABLE_FILE_ID_PATTERN } from '../shared/filesReferences';
+
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { agentWindowUrl } from './agentWindowUrl';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
@@ -117,8 +119,14 @@ export class InternalTabViewManager {
         return;
       }
       if (request.mode === 'files' && typeof request.title === 'string') {
+        const { section, versionId } = request.filesNavigation;
+        if (!DURABLE_FILE_ID_PATTERN.test(fileId)
+            || !['detail', 'versions', 'share-review'].includes(section)
+            || (versionId !== undefined && (typeof versionId !== 'string' || !DURABLE_FILE_ID_PATTERN.test(versionId)))) {
+          throw new Error('Invalid Files reference');
+        }
         owner.webContents.send('internal-tab-view:open-workspace-tab', {
-          mode: 'files', title: request.title, filesNavigation: { ...identity, section: 'detail' },
+          mode: 'files', title: request.title, filesNavigation: { ...identity, section, ...(versionId === undefined ? {} : { versionId }) },
         });
         return;
       }

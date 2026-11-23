@@ -68,6 +68,7 @@ export class FilesOpenWorker extends FilesTool {
         clearTimeout(timer);
         if (event.sender !== agentWindow.webContents) return reject(new Error('Rejected an untrusted file open acknowledgement'));
         if (reply?.error) return reject(new Error(reply.error));
+        if (reply?.opened !== true) return reject(new Error('Sulla Desktop did not select the requested Files item'));
         resolve(reply);
       });
       const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind, mode: input.mode ?? 'edit', focus: input.focus !== false });

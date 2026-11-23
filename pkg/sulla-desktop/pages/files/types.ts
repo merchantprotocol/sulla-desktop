@@ -16,6 +16,7 @@ export * from './filesSharingTypes';
 export interface RecordingSegment { start:number; end:number; text:string }
 export interface RecordingChapter { start:number; end:number; title:string }
 export interface FilesDetail {
+  collectionId?: string;
   item?: FilesItem;
   capabilities?: FilesItemCapabilities;
   provenance: { type:string; id:string };
@@ -50,6 +51,7 @@ export interface FilesDataSource {
   openLive?(fileId:string,onEvent:(event:import('./liveTypes').FilesLiveEvent)=>void):Promise<import('./liveTypes').FilesLiveConnection>;
 
   capabilities: FilesCapabilities;
+  publicLinksAvailable?():Promise<boolean>;
   syntheticPreview?:boolean;
   nativeSourceReady?:boolean;
   submitOperation?(request:FilesOperationRequest):Promise<FilesOperationReceipt>;

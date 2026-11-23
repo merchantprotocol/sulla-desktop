@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+import type { FilesNavigationPayload, FilesNavigationResult } from '@pkg/composables/useBrowserTabs';
 import type { FilesBookmarkCreator } from './FilesFileBookmarker';
 
 import type { ExplorerTarget } from '../composables/useFilesExplorerInteractions';
@@ -15,6 +15,7 @@ export interface FilesBrowserProps { dataSource: FilesDataSource; tabId: string;
 /** The public emits of FilesBrowser.vue, as the typed emit function the component receives. */
 export interface FilesBrowserEmit {
   (event:'navigation-consumed'):void;
+  (event:'navigation-result', result:FilesNavigationResult):void;
   (event:'open-editor', item:FilesItem, collectionId?:string):void;
 }
 

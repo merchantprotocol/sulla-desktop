@@ -8,10 +8,10 @@
   <main class="file-detail-main">
     <div class="detail-top">
       <div class="crumbs"><button type="button" @click="emit('close')">My Files</button><template v-for="crumb in pathCrumbs" :key="crumb"><span>›</span><span>{{ crumb }}</span></template></div>
-      <div class="title"><span class="file-glyph" v-html="fileIcon(item.mime)" /><b>{{ name }}</b></div>
+      <div class="title"><span class="file-glyph" v-html="fileIcon(item.mime)" /><b>{{ name }}</b><span v-if="viewVersion" class="pill idle" :title="viewVersion.id">{{ viewVersionLabel }}</span></div>
       <div class="top-actions">
         <button class="btn ghost ico" type="button" title="Back to files" @click="emit('close')"><span class="bi" v-html="icons.previous" /></button>
-        <button v-if="supportsDocumentEditor(item.path)" class="btn" type="button" @click="emit('open')">Open</button>
+        <button v-if="viewVersion || supportsDocumentEditor(item.path)" class="btn" type="button" @click="emit('open')">Open</button>
         <button class="btn" type="button" :disabled="busy" @click="download"><span class="bi" v-html="icons.download" /> Download</button>
         <button v-if="activeLink" class="btn" type="button" @click="copyLink"><span class="bi" v-html="icons.link" /> {{ copied ? 'Copied' : 'Copy link' }}</button>
         <button v-if="trashItem" class="btn" type="button" :disabled="busy" @click="restoreTrash">Restore from Trash</button><button v-if="canCheckout && !item.checkout" class="btn" type="button" :disabled="busy" @click="checkout">Check out</button><button v-if="canPublish && hasPendingDraft" class="btn" type="button" :disabled="busy" @click="publishCurrent">Publish current</button><button class="btn primary" type="button" :disabled="!dataSource.capabilities.publicLinks" @click="emit('share')"><span class="bi" v-html="icons.share" /> Share</button>
@@ -19,13 +19,13 @@
     </div>
 
     <div class="detail-content">
-      <div v-if="error" class="error">{{ error }}</div>
+      <div v-if="error" class="error" role="alert">{{ error }}</div>
       <div class="detail-grid">
         <section class="card preview-card">
           <div class="player">
-            <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" />
-            <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" />
-            <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name">
+            <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
+            <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
+            <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name" @error="onMediaError">
             <iframe v-else-if="mediaUrl && item.mime === 'application/pdf'" :src="mediaUrl" :title="name" sandbox="" />
             <div v-else-if="dataSource.syntheticPreview" class="synthetic-frame" aria-label="Synthetic media preview"><div class="window"><i /><i /><i /><div class="sidebar" /><div class="lines" /></div><span class="play" v-html="icons.play" /></div>
             <div v-else class="preview-unavailable"><span class="unavailable-icon" v-html="fileIcon(item.mime)" /><b>Preview unavailable</b><small>{{ previewStatus }}</small></div>
@@ -116,14 +116,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { filesItemHasActiveProtection } from './types';
 import { supportsDocumentEditor } from './editor/editorTypes';
 
 import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesTrashFile, FilesVersion, ShareActivity, ShareLink } from './types';
 
-const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
+const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions'; viewVersion?:FilesVersion }>();
 const emit = defineEmits<{ close:[]; open:[]; share:[]; restored:[]; 'trash-outcome':[message:string]; 'open-linked':[fileId:string, path:string] }>();
 const item = reactive<FilesItem>({ ...props.item });
 const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
@@ -131,6 +131,9 @@ const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); con
 const previewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
 const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs = ['Details', 'Versions', 'Access', 'Activity'] as const;
+const viewVersionId = computed(() => props.viewVersion?.id ?? item.currentVersionId);
+const viewVersionLabel = computed(() => props.viewVersion?.versionNumber || (props.viewVersion?.current ? 'Current version' : 'Referenced version'));
+watch(() => props.initialTab, tab => { if (tab) sideTab.value = tab });
 const name = computed(() => item.path.split('/').at(-1) || item.path); const isUseCase = computed(() => item.path.startsWith('Sulla/Use Cases/')); const activeVersionId = computed(() => item.publishedVersionId || null); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
 const transcript = computed(() => detail.value?.recording?.transcript || []); const chapters = computed(() => detail.value?.recording?.chapters || []);
 const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => item.ownerDisplayName || props.collection.accountName || item.createdById || 'Unknown owner');
@@ -145,7 +148,7 @@ const itemDisposalApproved = computed(() => item.disposal?.status === 'approved'
 const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item));
 const canPurge = computed(() => Boolean(trashItem.value && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
 const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
-const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(item.size) } · ${ item.mime }`);
+const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(props.viewVersion?.size ?? item.size) } · ${ item.mime }`);
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
 const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
@@ -155,7 +158,8 @@ onMounted(async() => {
   const [metadata] = await Promise.allSettled([props.dataSource.detail(item.id)]);
 
   if (metadata.status === 'fulfilled') {
-    detail.value = metadata.value;
+    detail.value = metadata.value.recording?.version_id === viewVersionId.value || !props.viewVersion
+      ? metadata.value : { ...metadata.value, recording: undefined };
     if (metadata.value.item) Object.assign(item, metadata.value.item);
   }
   else error.value = metadata.reason instanceof Error ? metadata.reason.message : String(metadata.reason);
@@ -165,15 +169,16 @@ onMounted(async() => {
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
   const [publicLinks, source] = await Promise.allSettled([
     props.dataSource.listPublicLinks?.() || Promise.resolve([]),
-    supportsMedia.value ? props.dataSource.mediaUrl(item.id, item.currentVersionId) : Promise.resolve(''),
+    supportsMedia.value ? props.dataSource.mediaUrl(item.id, viewVersionId.value) : Promise.resolve(''),
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
-  else previewError.value = source.reason instanceof Error ? source.reason.message : String(source.reason);
+  else onMediaError();
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
-async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+function onMediaError() { mediaUrl.value = ''; previewError.value = 'Couldn’t load this preview. Check your Files connection or try opening the file.' }
+async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, viewVersionId.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
 type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
 const lifecycleForm = reactive({ enabled: item.versioning?.enabled ?? false, majorMinor: item.versioning?.majorMinor ?? false, requireApproval: item.versioning?.requireApproval ?? false, requireCheckout: item.versioning?.requireCheckout ?? false });

@@ -11,12 +11,13 @@
     :tab-id="props.tabId"
     :navigation="props.navigation"
     @navigation-consumed="emit('navigation-consumed')"
+    @navigation-result="emit('navigation-result', $event)"
     @open-editor="openEditor"
   />
 </template>
 
 <script setup lang="ts">
-import { openDocumentTab, type FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+import { openDocumentTab, type FilesNavigationPayload, type FilesNavigationResult } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { DesktopFilesDataSource } from './files/DesktopFilesDataSource';
@@ -24,7 +25,7 @@ import FilesBrowser from './files/FilesBrowser.vue';
 import type { FilesItem } from './files/types';
 
 const props = defineProps<{ tabId: string; navigation?: FilesNavigationPayload }>();
-const emit = defineEmits<{ 'navigation-consumed': [] }>();
+const emit = defineEmits<{ 'navigation-consumed': []; 'navigation-result': [result:FilesNavigationResult] }>();
 const dataSource = new DesktopFilesDataSource();
 const bookmarkCreator = { create: (input: { kind: 'bookmark'; title: string; url: string }) => ipcRenderer.invoke('bookmarks:create', input) };
 

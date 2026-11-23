@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { DURABLE_FILE_ID_PATTERN } from '@pkg/shared/filesReferences';
+
 import { supportsDocumentEditor } from '../editor/editorTypes';
 import { FilesBrowserState } from './FilesBrowserState';
 
@@ -10,9 +12,13 @@ import type { FilesBrowserController } from './FilesBrowserController';
 import type { DisplayEntry, FilesBrowserSection } from './FilesBrowserTypes';
 import type { ExplorerLocation } from '../composables/useFilesExplorerInteractions';
 import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+import type { FilesItem } from '../types';
 
 /** Moving between collections, sections and folders, back/forward history and opening an entry. */
 export class FilesBrowserNavigation {
+  private requestGeneration = 0;
+  private consumedNavigation?:FilesNavigationPayload;
+
   constructor(private readonly browser:FilesBrowserController) {}
 
   private get state():FilesBrowserState { return this.browser.state }
@@ -83,6 +89,7 @@ export class FilesBrowserNavigation {
     if (state.busy.value || state.loading.value) return;
     this.browser.gestures.stopPointerGesture?.(); this.browser.rename.cancelRename();
     if (entry.folder) { this.openPath(entry.path); return }
+    state.detailVersion.value = undefined;
     state.selected.value = entry; state.detailTab.value = this.browser.presenter.entrySync(entry) === 'conflict' ? 'versions' : 'details';
   };
 
@@ -95,7 +102,17 @@ export class FilesBrowserNavigation {
   readonly onDetailRestored = ():void => { this.state.selected.value = null; void this.browser.refresher.refresh(true) };
 
   /** FileDetail's "Open" button. */
-  readonly openDetail = ():void => { if (this.state.selected.value) this.openDisplayEntry(this.state.selected.value) };
+  readonly openDetail = async():Promise<void> => {
+    const { selected, detailVersion, navigationError } = this.state;
+    if (!selected.value) return;
+    if (!detailVersion.value) { this.openDisplayEntry(selected.value); return }
+    navigationError.value = '';
+    try {
+      await this.state.props.dataSource.openFile(selected.value.id, detailVersion.value.id);
+    } catch {
+      navigationError.value = 'Couldn’t open that file version. Check your Files access and try again.';
+    }
+  };
 
   readonly openLinked = async(fileId:string, path:string):Promise<void> => {
     const state = this.state; const source = state.props.dataSource;
@@ -109,29 +126,174 @@ export class FilesBrowserNavigation {
     else state.operationError.value = `The linked file ${ path.split('/').at(-1) || path } is no longer available.`;
   };
 
-  /** Apply a navigation request handed in through the `navigation` prop. */
-  async navigateTo(detail:FilesNavigationPayload):Promise<void> {
-    const state = this.state; const browser = this.browser;
+  /** Resolve a viewer open by identity first, then through the authorized listing of its parent folder. */
+  private async resolveOpenFile(fileId?:string, path?:string):Promise<FilesItem | null> {
+    const state = this.state; const source = state.props.dataSource;
+    const cached = state.snapshot.value?.files.find(item => !item.deletedAt
+      && (fileId ? item.id === fileId : item.path === path));
+    if (cached) return cached;
 
-    state.collectionsRoot.value = false;
-    if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) { await this.selectCollection(detail.collectionId) }
-    if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return }
-    let file = state.snapshot.value?.files.find(item => item.id === detail.fileId) ?? state.snapshot.value?.files.find(item => item.path === detail.path);
-
-    // A linked file outside the open folder is resolved by id; it must not be mistaken for a folder path.
-    if (!file && detail.fileId && state.props.dataSource.filesByIds) file = (await state.props.dataSource.filesByIds([detail.fileId]).catch(() => []))[0];
-    // A path without a fileId is a folder ("" = My Files root), e.g. Paper's back button.
-    if (!file && (detail.path || (!detail.fileId && detail.path !== undefined))) {
-      this.openPath(detail.path ?? '');
-      if (detail.section === 'share-review') browser.sharing.shareCurrentFolder();
-      return;
+    if (fileId && source.filesByIds) {
+      try {
+        const file = (await source.filesByIds([fileId])).find(item => item.id === fileId && !item.deletedAt);
+        if (file) return file;
+      } catch { /* A failed ID lookup can still be resolved by the authorized folder listing below. */ }
     }
-    if (!file) { state.error.value = 'That file is no longer available in this collection.'; return }
-    if (!detail.section && supportsDocumentEditor(file.path)) { state.emit('open-editor', browser.factory.toDisplay(file), state.snapshot.value?.collection.id); return }
-    this.selectEntry(browser.factory.toDisplay(file));
-    if (detail.section === 'versions') state.detailTab.value = 'versions';
-    if (detail.section === 'share-review') browser.sharing.shareEntry(browser.factory.toDisplay(file));
+    if (!path) return null;
+
+    const slash = path.lastIndexOf('/');
+    const parent = slash < 0 ? '' : path.slice(0, slash);
+    if (source.loadFolder) {
+      try {
+        const file = (await source.loadFolder(parent)).find(item => item.path === path && !item.deletedAt);
+        if (file) return file;
+      } catch { /* Try the complete child listing when the first folder page fails. */ }
+    }
+    if (source.listFolderChildren) {
+      try {
+        const file = (await source.listFolderChildren(parent)).find(item => item.path === path && !item.deletedAt);
+        if (file) return file;
+      } catch { /* The caller reports an actionable error if resolution remains unavailable. */ }
+    }
+    return null;
   }
 
-  readonly consumeNavigation = ():void => { const state = this.state; if (!state.mounted || state.busy.value || state.loading.value || !state.props.navigation || !state.snapshot.value) return; void this.navigateTo(state.props.navigation); state.emit('navigation-consumed') };
+  /** Apply a navigation request handed in through the `navigation` prop. */
+  async navigateTo(detail:FilesNavigationPayload):Promise<boolean> {
+    const state = this.state; const browser = this.browser;
+
+    const generation = ++this.requestGeneration;
+    const source = state.props.dataSource;
+    const isCurrent = () => state.mounted && generation === this.requestGeneration && source === state.props.dataSource;
+    const fail = (message:string):false => { if (isCurrent()) state.navigationError.value = message; return false };
+    state.navigationError.value = '';
+    browser.sharing.closeShare();
+
+    if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return true }
+    const isFileOpen = detail.openKind === 'file';
+    if (isFileOpen) {
+      if (detail.fileId !== undefined && !DURABLE_FILE_ID_PATTERN.test(detail.fileId)) return fail('This Files reference is invalid. Ask for a fresh reference.');
+      if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) {
+        await this.selectCollection(detail.collectionId);
+        if (!isCurrent()) return false;
+        if (detail.collectionId !== state.snapshot.value?.collection.id) return fail('This Files collection could not be opened. Check your access and try again.');
+      }
+      if (state.busy.value || state.loading.value) return fail('Files is busy. Wait for it to finish, then try the reference again.');
+
+      const file = await this.resolveOpenFile(detail.fileId, detail.path);
+      if (!isCurrent()) return false;
+      if (!file) return fail('This file is no longer available at that path. Check your Files access and try again.');
+
+      const slash = file.path.lastIndexOf('/');
+      const parent = slash < 0 ? '' : file.path.slice(0, slash);
+      this.openPath(parent);
+      if (state.section.value !== 'files' || state.currentPath.value !== parent || state.busy.value || state.loading.value) {
+        return fail('Files could not open the file’s folder. Wait for it to finish, then try again.');
+      }
+      this.selectEntry(browser.factory.toDisplay(file));
+      if (state.selected.value?.id !== file.id) return fail('Files could not select the requested file. Check your access and try again.');
+      return true;
+    }
+    if (detail.fileId === undefined && detail.versionId === undefined) {
+      if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) await this.selectCollection(detail.collectionId);
+      if (!isCurrent()) return false;
+      if (detail.path === undefined) return fail('This Files destination is missing. Open Files and try again.');
+      if (state.busy.value || state.loading.value) return fail('Files is busy. Wait for it to finish, then try again.');
+      this.openPath(detail.path);
+      if (state.section.value !== 'files' || state.currentPath.value !== detail.path) return fail('Files could not open that folder. Check your access and try again.');
+      if (detail.section === 'share-review') browser.sharing.shareCurrentFolder();
+      return true;
+    }
+
+    const { fileId, versionId } = detail;
+    if (!fileId || !DURABLE_FILE_ID_PATTERN.test(fileId) || (versionId !== undefined && !DURABLE_FILE_ID_PATTERN.test(versionId))) {
+      return fail('This Files reference is invalid. Ask for a fresh reference.');
+    }
+    try {
+      // Always ask the authorized metadata endpoint: path and cached folder rows
+      // aren't proof of identity or of the current user's visible version.
+      const metadata = await source.detail(fileId);
+      if (!isCurrent()) return false;
+      const file = metadata.item;
+      if (!file || file.id !== fileId || file.deletedAt || !file.currentVersionId
+          || (detail.collectionId && metadata.collectionId && detail.collectionId !== metadata.collectionId)) {
+        return fail('This file is no longer available. Ask for a fresh reference or check your Files access.');
+      }
+      const collectionId = metadata.collectionId ?? detail.collectionId;
+      if (collectionId && collectionId !== state.snapshot.value?.collection.id) {
+        await this.selectCollection(collectionId);
+        if (!isCurrent()) return false;
+        if (collectionId !== state.snapshot.value?.collection.id) {
+          return fail('This Files collection could not be opened. Check your access and try again.');
+        }
+      }
+      const version = versionId
+        ? (await source.history(fileId, file.currentVersionId)).find(entry => entry.id === versionId && !entry.deleted
+          && (entry.publicationStatus !== 'draft' || metadata.capabilities?.canViewDraft || entry.id === file.currentVersionId))
+        : undefined;
+      if (!isCurrent()) return false;
+      if (versionId && !version) {
+        return fail('This file version is no longer available or you don’t have access. Ask for a fresh reference.');
+      }
+
+      if (detail.section === 'share-review') {
+        const available = await (source.publicLinksAvailable?.() ?? source.capabilities.publicLinks);
+        if (!isCurrent()) return false;
+        if (!available || !source.createPublicLink || !state.snapshot.value) {
+          return fail('Link review is unavailable. Check your Files sharing access and Sulla Cloud connection, then try again.');
+        }
+      }
+      if (state.busy.value || state.loading.value) return fail('Files is busy. Wait for it to finish, then try the reference again.');
+
+      state.collectionsRoot.value = false;
+      const entry = browser.factory.toDisplay(file);
+      if (!detail.section && !version && supportsDocumentEditor(file.path)) { state.emit('open-editor', entry, collectionId); return true }
+      this.selectEntry(entry);
+      state.detailTab.value = detail.section === 'versions' ? 'versions' : 'details';
+      if (detail.section === 'detail' || (!detail.section && version)) state.detailVersion.value = version;
+      if (detail.section === 'share-review') browser.sharing.shareEntry(entry);
+      if (state.selected.value?.id !== file.id) return fail('Files could not select the requested file. Check your access and try again.');
+      return true;
+    } catch {
+      return fail('Couldn’t read this Files reference. Check your connection and access, then try again or ask for a fresh reference.');
+    }
+  }
+
+  private emitNavigationResult(request:FilesNavigationPayload, opened:boolean):void {
+    if (!request.openRequestId) return;
+    const kind = request.openKind ?? (request.fileId ? 'file' : 'folder');
+    const path = opened
+      ? (kind === 'file' ? this.state.selected.value?.path ?? request.path ?? '' : this.state.currentPath.value)
+      : request.path ?? '';
+    this.state.emit('navigation-result', {
+      requestId: request.openRequestId,
+      opened,
+      path,
+      kind,
+      ...(opened ? {} : { error: this.state.navigationError.value || 'The requested Files item could not be opened.' }),
+    });
+  }
+
+  readonly consumeNavigation = ():void => {
+    const state = this.state;
+    const request = state.props.navigation;
+    if (!request) { this.consumedNavigation = undefined; return }
+    if (!state.mounted || state.busy.value || state.loading.value || this.consumedNavigation === request) return;
+    if (!state.snapshot.value) {
+      if (state.error.value && (request.fileId !== undefined || request.versionId !== undefined || request.openRequestId !== undefined)) {
+        state.navigationError.value = request.openKind === 'folder'
+          ? 'Couldn’t open this Files folder because Files didn’t load. Check your connection and access, then try again.'
+          : 'Couldn’t open this file reference because Files didn’t load. Check your connection and access, then try again.';
+        if (request.openRequestId) this.emitNavigationResult(request, false);
+      }
+      // Keep the request pending so the Files retry can replay it after a successful load.
+      return;
+    }
+    this.consumedNavigation = request;
+    void this.navigateTo(request).then(opened => this.emitNavigationResult(request, opened)).catch(() => {
+      state.navigationError.value = 'Couldn’t open this Files item. Check your connection and access, then try again.';
+      this.emitNavigationResult(request, false);
+    });
+    state.emit('navigation-consumed');
+  };
 }
