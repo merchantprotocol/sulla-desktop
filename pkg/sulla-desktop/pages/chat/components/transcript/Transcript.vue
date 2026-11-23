@@ -29,7 +29,6 @@
           class="report-entry"
           :class="{
             'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
-            'report-entry-streaming-continuation': isStreamingContinuation(index),
             'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
           }"
         >
@@ -38,7 +37,13 @@
             class="report-label"
             :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
           >{{ entry.label }}</span>
-          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" :reporting-level="reportingLevel" />
+          <MessageRouter
+            v-if="entry.kind === 'card'"
+            :msg="entry.message"
+            :latest-reply="entry.id === latestReplyId"
+            :reporting-level="reportingLevel"
+            :streaming-paragraph-break="isStreamingContinuation(index)"
+          />
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
             <template v-if="reportingLevel === 'debug'">
@@ -253,7 +258,7 @@ defineExpose({ scroller, scrollToBottom });
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
 }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
-.report-entry-streaming-continuation { margin-top: 10px; }
+.report-entry-standard-evidence-after-reply { margin-top: -12px; }
 .report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
 .report-label {
   color: var(--text-muted); margin-bottom: 4px;

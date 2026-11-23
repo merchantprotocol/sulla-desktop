@@ -223,11 +223,11 @@
   font-family: var(--type-code-font, var(--font-mono));
   font-size: var(--type-code-size, 12.5px);
 }
-.chat-turn.sulla .chat-body li { margin: 3px 0; }
+.chat-turn.sulla .chat-body li { display: list-item; margin: 3px 0; }
 .chat-turn.sulla .chat-body li::marker { color: var(--accent); }
-.chat-turn.sulla .chat-body :is(ul, ol) { margin: 4px 0 8px; padding-inline-start: 20px; }
-.chat-turn.sulla .chat-body ul { list-style: disc; }
-.chat-turn.sulla .chat-body ol { list-style: decimal; }
+.chat-turn.sulla .chat-body :is(ul, ol) { margin: 4px 0 8px; padding-inline-start: 20px; list-style-position: outside; }
+.chat-turn.sulla .chat-body ul { list-style-type: disc; }
+.chat-turn.sulla .chat-body ol { list-style-type: decimal; }
 .chat-turn.sulla .chat-body pre {
   overflow-x: auto;
   margin: 10px 0;

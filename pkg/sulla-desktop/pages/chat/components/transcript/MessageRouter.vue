@@ -24,7 +24,7 @@
   <div v-else-if="msg.kind === 'html'" class="chat-turn sulla chat-fade-in">
     <InlineReplyBody class="chat-body" :text="msg.html" legacy-html />
   </div>
-  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :reporting-level="reportingLevel" />
+  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :reporting-level="reportingLevel" :paragraph-break="streamingParagraphBreak" />
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
   <div v-else-if="mainDecisionTranscript && decisionId && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
@@ -58,7 +58,7 @@
   <SubAgentExchange v-else-if="msg.kind === 'subagent_exchange'" :msg="msg" />
   <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" :reporting-level="reportingLevel" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
-  <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
+  <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" :reporting-level="reportingLevel" />
   <HeartbeatMessage v-else-if="msg.kind === 'heartbeat'" :msg="msg" />
   <TtsIndicator    v-else-if="msg.kind === 'tts'"       :msg="msg" />
   <ErrorCard       v-else-if="msg.kind === 'error'"     :msg="msg" @action="onErrorAction" />
@@ -99,7 +99,8 @@ import type { CardMessage } from './toolGroups';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CardMessage; latestReply?: boolean; reportingLevel: ReportingLevel }>();
+const props = defineProps<{ msg: CardMessage; latestReply?: boolean; reportingLevel: ReportingLevel; streamingParagraphBreak?: boolean }>();
+const streamingParagraphBreak = computed(() => props.streamingParagraphBreak ?? false);
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();
 const mainDecisionTranscript = inject('chat:main-decision-transcript', ref(false));

@@ -44,5 +44,8 @@ defineEmits<{ (e: 'jump'): void }>();
 .scroll-pill.scroll-pill-standard:hover {
   color: var(--text-on-accent); background: var(--accent-hover);
 }
+.scroll-pill.scroll-pill-standard:focus-visible {
+  outline: 2px solid var(--text-primary); outline-offset: 3px;
+}
 .scroll-pill::before { content: "↓"; font-size: 13px; }
 </style>

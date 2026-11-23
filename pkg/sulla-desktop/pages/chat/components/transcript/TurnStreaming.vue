@@ -15,6 +15,7 @@
       aria-hidden="true"
     >S</span>Sulla · {{ timeLabel }} · responding</span>
     <div class="chat-body">
+      <div v-if="paragraphBreak" class="streaming-paragraph-break" aria-hidden="true" />
       <InlineReplyBody :text="msg.text" agent-cards />
       <span
         class="chat-cursor"
@@ -34,7 +35,7 @@ import InlineReplyBody from './InlineReplyBody.vue';
 import type { StreamingMessage } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
-const props = withDefaults(defineProps<{ msg: StreamingMessage; reportingLevel?: ReportingLevel }>(), {
+const props = withDefaults(defineProps<{ msg: StreamingMessage; reportingLevel?: ReportingLevel; paragraphBreak?: boolean }>(), {
   reportingLevel: 'debug',
 });
 
@@ -50,4 +51,5 @@ const timeLabel = computed(() => {
 .noir-avatar {
   display: none;
 }
+.streaming-paragraph-break { height: 1em; }
 </style>

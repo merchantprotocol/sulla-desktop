@@ -12,7 +12,7 @@
 <template>
   <article
     class="ar"
-    :class="{ 'ar-group': items.length > 1 }"
+    :class="{ 'ar-group': items.length > 1, 'ar-standard': standard }"
     aria-label="Background agent result"
   >
     <header
@@ -45,12 +45,13 @@
       <div
         v-else
         class="ar-head"
-        :role="items.length > 1 ? 'button' : undefined"
-        :tabindex="items.length > 1 ? 0 : undefined"
-        :aria-expanded="items.length > 1 ? isOpen(index) : undefined"
-        @click="items.length > 1 && toggle(index)"
-        @keydown.enter.prevent="items.length > 1 && toggle(index)"
-        @keydown.space.prevent="items.length > 1 && toggle(index)"
+        :role="isExpandable ? 'button' : undefined"
+        :tabindex="isExpandable ? 0 : undefined"
+        :aria-expanded="isExpandable ? isOpen(index) : undefined"
+        :aria-label="isExpandable ? `${isOpen(index) ? 'Collapse' : 'Expand'} result details for ${item.label}` : undefined"
+        @click="isExpandable && toggle(index)"
+        @keydown.enter.prevent="isExpandable && toggle(index)"
+        @keydown.space.prevent="isExpandable && toggle(index)"
       >
         <span
           class="ar-chip"
@@ -216,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 import AgentResultBody from './AgentResultBody.vue';
 import { AgentResultActions } from '../../composables/useAgentResultActions';
@@ -229,7 +230,7 @@ import { PURPOSE_LABEL, findProblem, isSystemNote } from '@pkg/shared/agentResul
 import type { AgentResultCardData, AgentResultItem, AgentResultTone } from '@pkg/shared/agentResults/AgentResultCard';
 import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 
-const props = defineProps<{ data: AgentResultCardData; messageId?: string }>();
+const props = withDefaults(defineProps<{ data: AgentResultCardData; messageId?: string; standard?: boolean }>(), { standard: false });
 const lineTime = LineTimes.useLineTime();
 const when = computed(() => (props.messageId ? lineTime(props.messageId) : undefined));
 /** "Finished" would contradict a Blocked or Failed chip, so it shows only for completed work. */
@@ -244,7 +245,7 @@ try { controller = useChatController() } catch { /* outside a chat page */ }
 const ATTENTION: AgentResultTone[] = ['bad', 'warn'];
 
 const items = computed(() => props.data.items ?? []);
-const open = reactive(new Set<number>(firstOpen()));
+const open = reactive(new Set<number>(props.standard ? [] : firstOpen()));
 const more = reactive(new Set<string>());
 const notice = reactive<Record<string, string>>({});
 const copied = ref('');
@@ -255,15 +256,20 @@ const groupSummary = computed(() => {
   return [fine && `${ fine } done`, attention && `${ attention } reported issue${ attention === 1 ? '' : 's' }`].filter(Boolean).join(' · ');
 });
 
-/** One agent: always open. Several: open the first that needs attention, else the first. */
+/** Detailed mode opens a single item or the first item needing attention; Standard starts compact. */
 function firstOpen(): number[] {
   const list = props.data.items ?? [];
   if (list.length <= 1) return [0];
   const attention = list.findIndex(item => ATTENTION.includes(item.tone));
   return [attention >= 0 ? attention : 0];
 }
-function isOpen(index: number): boolean { return items.value.length === 1 || open.has(index) }
+const isExpandable = computed(() => props.standard || items.value.length > 1);
+function isOpen(index: number): boolean { return props.standard ? open.has(index) : items.value.length === 1 || open.has(index) }
 function toggle(index: number): void { if (open.has(index)) open.delete(index); else open.add(index); }
+watch(() => props.standard, standard => {
+  if (standard) open.clear();
+  else if (!open.size) firstOpen().forEach(index => open.add(index));
+});
 function itemKey(item: AgentResultItem): string { return `${ item.jobId }:${ item.taskIndex }` }
 
 /** The lists ("merges", "findings") shown in full for the item at `index`; kept while the item is closed. */
@@ -273,7 +279,8 @@ function expandedKinds(index: number): string[] {
 function expand(index: number, kind: string): void { more.add(`${ index }:${ kind }`) }
 
 function byline(item: AgentResultItem): string {
-  return [item.agentId, AgentModelStatus.label(item.modelStatus ?? (item.model ? { model: item.model, effort: null, source: 'requested' } : undefined)), item.durationMs ? duration(item.durationMs) : ''].filter(Boolean).join(' · ');
+  const model = props.standard ? '' : AgentModelStatus.label(item.modelStatus ?? (item.model ? { model: item.model, effort: null, source: 'requested' } : undefined));
+  return [item.agentId, model, item.durationMs ? duration(item.durationMs) : ''].filter(Boolean).join(' · ');
 }
 function duration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
@@ -341,8 +348,9 @@ function setHandled(item: AgentResultItem, value: boolean): void {
 interface Fact { label: string; value: string; copy?: string }
 function factsOf(item: AgentResultItem): Fact[] {
   const facts: Fact[] = [{ label: 'Job', value: `${ item.jobId } · task ${ item.taskIndex }`, copy: item.jobId }];
-  const agent = [item.agentId, AgentModelStatus.label(item.modelStatus ?? (item.model ? { model: item.model, effort: null, source: 'requested' } : undefined))].filter(Boolean).join(' · ');
-  if (agent) facts.push({ label: 'Agent · model', value: agent });
+  const model = props.standard ? '' : AgentModelStatus.label(item.modelStatus ?? (item.model ? { model: item.model, effort: null, source: 'requested' } : undefined));
+  const agent = [item.agentId, model].filter(Boolean).join(' · ');
+  if (agent) facts.push({ label: props.standard ? 'Agent' : 'Agent · model', value: agent });
   const ran = [item.startedAt && item.endedAt ? `${ clockTime(item.startedAt) } → ${ clockTime(item.endedAt) }` : '', item.durationMs ? `(${ duration(item.durationMs) })` : '', item.runLocation === 'container' ? '· container' : item.runLocation === 'vm' ? '· host' : ''].filter(Boolean).join(' ');
   if (ran) facts.push({ label: 'Ran', value: ran });
   if (item.threadId) facts.push({ label: 'Thread', value: item.threadId, copy: item.threadId });
