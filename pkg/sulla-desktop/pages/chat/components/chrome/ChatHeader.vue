@@ -148,7 +148,7 @@ function cancelTitle(): void {
   display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto auto; align-items: center;
   /* Match the approved thread-title row; workerChart.css anchors to this 48px height. */
   box-sizing: border-box; height: 48px; padding: 10px 16px;
-  background: transparent;
+  background: var(--bg-surface);
   font-family: var(--font-body);
 }
 .ch-left { display: flex; align-items: center; gap: 10px; min-width: 0; justify-self: start; }
