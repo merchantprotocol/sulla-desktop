@@ -80,7 +80,7 @@ function cancelTitle(): void {
   display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto; align-items: center;
   /* Keep the previous 52px outer height and content alignment without the 1px border. */
   box-sizing: border-box; height: 52px; padding: 0 20px 1px;
-  background: transparent;
+  background: var(--bg-surface);
   font-family: var(--font-body);
 }
 .ch-left { display: flex; align-items: center; gap: 10px; min-width: 0; justify-self: start; }
