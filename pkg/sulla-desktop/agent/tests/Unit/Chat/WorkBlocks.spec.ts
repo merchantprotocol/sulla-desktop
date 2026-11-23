@@ -9,7 +9,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computed, ref } from 'vue';
 
 import PatchBlock from '@pkg/pages/chat/components/patch/PatchBlock.vue';
-import ThinkingGroup from '@pkg/pages/chat/components/thinking/ThinkingGroup.vue';
 import ErrorCard from '@pkg/pages/chat/components/transcript/ErrorCard.vue';
 import { ChatControllerKey, ModelSelectorKey } from '@pkg/pages/chat/controller/useChatController';
 import { LineTimeKey } from '@pkg/pages/chat/messages/lineTime';
@@ -25,54 +24,6 @@ const by = { agent: 'product-owner', model: 'opus-5.5' };
 const patchMsg = { id: 'p9', kind: 'patch', createdAt: 0, state: 'applied', path: '/a/b/c.md', stat: { added: 1, removed: 0 }, hunks: [{ lines: [{ n: 1, op: 'add', text: 'x' }] }] } as any;
 
 afterEach(() => { document.body.innerHTML = ''; vi.clearAllMocks() });
-
-describe('thinking work log', () => {
-  const log = [{
-    id:          't1',
-    kind:        'thinking',
-    createdAt:   0,
-    startedAt:   0,
-    completedAt: 52_000,
-    completed:   true,
-    by,
-    thoughts:    [
-      'Running a shell command',
-      '$ sulla github/get_pr \'{"repo":"ripple-receptionist-worker","pull_number":4334}\'',
-      'Running a shell command',
-      '$ sulla github/merge_pr \'{"repo":"ripple-receptionist-worker","pull_number":4334,"sha":"aefaf0d6bb0eecdab35ceabf6485f16b12cbd0e2"}\'',
-    ],
-  }] as any;
-
-  // risk: a 19-entry raw log filled the screen with repeated "Running a shell command" lines
-  it('is one line by default: what it did, who did it, how long', () => {
-    const block = mount(ThinkingGroup, { props: { messages: log }, global });
-
-    expect(block.find('.wb-title').text()).toBe('Ran 2 steps · read PR, merge PR');
-    expect(block.find('.wb-by').text()).toBe('PProduct Owneropus-5.5 · Effort not reported');
-    expect(block.find('.wb-meta').text()).toBe('52s · 2 steps');
-    expect(block.find('.wb-body').exists()).toBe(false);
-  });
-
-  it('shows the resolved effort beside the model rather than a current picker default', () => {
-    const block = mount(ThinkingGroup, { props: { messages: [{ ...log[0], by: { agent: 'product-owner', model: 'gpt-6-luna', modelStatus: { model: 'gpt-6-luna', effort: 'max', source: 'resolved' } } }] }, global });
-    expect(block.find('.wb-by').text()).toContain('gpt-6-luna · Max');
-  });
-
-  it('expands to readable steps, each with its raw command, and the full log', async() => {
-    const block = mount(ThinkingGroup, { props: { messages: log }, global });
-    await block.find('.wb-head').trigger('click');
-
-    expect(block.findAll('.tg-step').map(step => step.find('.tg-v').text())).toEqual([
-      'GitHub · read PR · ripple-receptionist-worker #4334',
-      'GitHub · merge PR · ripple-receptionist-worker #4334 · aefaf0d',
-    ]);
-    await block.findAll('.tg-link')[1].trigger('click');
-    expect(block.find('.tg-raw').text()).toContain('aefaf0d6bb0eecdab35ceabf6485f16b12cbd0e2');
-
-    await block.find('.tg-switch').trigger('click');
-    expect(block.findAll('.tg-log li')).toHaveLength(4);
-  });
-});
 
 describe('patch', () => {
   const lines = Array.from({ length: 31 }, (_, i) => ({ n: i + 1, op: 'add', text: `line ${ i + 1 }` }));

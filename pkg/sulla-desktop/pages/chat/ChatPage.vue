@@ -41,20 +41,13 @@
 
       <main ref="mainRef" class="main">
         <!--
-          Header backdrop: blurred, dimmed bar behind StatusBadges +
-          SessionMark so transcript content scrolling up doesn't collide
-          with the header chrome. Sits below the badges (z-index) but
-          above the transcript.
-        -->
-        <div class="header-backdrop" aria-hidden="true" />
-        <!--
-          Composer backdrop: same fade trick at the bottom so transcript
+          Composer backdrop: bottom fade so transcript
           content scrolling up doesn't fight the composer. Masked on the
           right (left over from the removed Canvas glow; kept so the
           bottom edge looks the same).
         -->
         <div class="composer-backdrop" aria-hidden="true" />
-        <ChatHeader />
+        <ChatHeader v-model:reporting-level="reportingLevel" />
         <SearchBar />
 
         <EmptyState
@@ -62,8 +55,8 @@
           :suggestions="suggestions"
           @pick="onSuggestion"
         />
-        <Transcript v-else />
-        <Composer />
+        <Transcript v-else :reporting-level="reportingLevel" />
+        <Composer v-if="!props.supportSendBlocked" />
       </main>
 
       <template v-if="!dockSide">
@@ -162,6 +155,7 @@ import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
 import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
+import type { ReportingLevel } from './models/ReportingLevel';
 import type { Thread }   from './models/Thread';
 import { asThreadId, type ThreadId } from './types/chat';
 
@@ -204,6 +198,8 @@ const props = defineProps<{
   isActive?: boolean;
   supportSessionId?: string;
   supportToolNames?: string[];
+  supportSendBlocked?: boolean;
+  supportLocalChat?: boolean;
 }>();
 
 // ─── Emits (to BrowserTab for URL opening) ─────────────────────────
@@ -404,6 +400,7 @@ watch(
 );
 
 // Provide so every descendant can call `useChatController()`.
+const reportingLevel = ref<ReportingLevel>('info');
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
@@ -424,13 +421,14 @@ const adapter = new PersonaAdapter(controller, {
   agentTabThreadId:   props.agentTabThreadId,
   supportSessionId:    props.supportSessionId,
   supportToolNames:    props.supportToolNames,
+  supportSendBlocked:  props.supportSendBlocked,
 });
-watch(() => [props.supportSessionId, props.supportToolNames] as const, ([sessionId, names]) => {
-  adapter.setSupportSessionContext(sessionId, names || []);
-}, { immediate: true });
+watch(() => [props.supportSessionId, props.supportToolNames, props.supportSendBlocked] as const, ([sessionId, names, blocked]) => {
+  adapter.setSupportSessionContext(sessionId, names || [], blocked);
+}, { immediate: true, flush: 'sync' });
 const onSupportPrompt = (event:Event) => {
   const detail = (event as CustomEvent<{tabId?:string;text?:string}>).detail;
-  if (!props.supportSessionId || detail?.tabId !== props.tabId || !detail.text) return;
+  if ((!props.supportSessionId && !props.supportLocalChat) || detail?.tabId !== props.tabId || !detail.text || props.supportSendBlocked) return;
   void adapter.send(detail.text, []);
 };
 window.addEventListener('sulla:support-chat-prompt', onSupportPrompt);
@@ -906,41 +904,7 @@ onBeforeUnmount(() => {
 }
 
 /*
- * Header backdrop — blurred, dimmed gradient behind SessionMark
- * (z-12) and StatusBadges (z-21). Sits above the transcript so
- * scrolled content fades out under the header chrome instead of
- * colliding with it.
- */
-.header-backdrop {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 78px;
-  z-index: 10;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    var(--bg-surface) 0%,
-    color-mix(in srgb, var(--bg-surface) 78%, transparent) 55%,
-    transparent 100%
-  );
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  mask-image: linear-gradient(
-    to bottom,
-    var(--bg-page) 0%,
-    var(--bg-page) 65%,
-    var(--bg-hover) 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    var(--bg-page) 0%,
-    var(--bg-page) 65%,
-    var(--bg-hover) 100%
-  );
-}
-
-/*
- * Composer backdrop — mirror of the header fade at the bottom of .main.
+ * Composer backdrop — fades the transcript at the bottom of .main.
  * Sits below the Composer (z-15) and above the Transcript so messages
  * scrolling up fade out under the input row. Masked horizontally on
  * the right: left over from the removed Canvas glow, kept so the bottom

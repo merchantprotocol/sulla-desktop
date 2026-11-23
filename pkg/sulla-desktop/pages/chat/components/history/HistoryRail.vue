@@ -66,7 +66,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, inject } from 'vue';
+import { ChatControllerKey } from '../../controller/useChatController';
+import { asThreadId } from '../../types/chat';
 import type { Thread }    from '../../models/Thread';
 import type { ThreadId, MessageId }  from '../../types/chat';
 
@@ -98,15 +100,27 @@ const emit = defineEmits<{
 }>();
 
 // Defaulted locally because readonly array defaults aren't friendly in props.
+const controller = inject(ChatControllerKey, null);
+const discovered = computed(() => {
+  const existing = new Set(props.threads.map(thread => thread.remote?.threadId));
+  return (controller?.remoteDiscoveries.value ?? [])
+    .filter(item => !existing.has(item.binding.threadId))
+    .map(item => ({ id: asThreadId(item.binding.threadId), remote: item.binding,
+      title: `Remote chat · ${ item.binding.name }`, createdAt: item.updatedAt, updatedAt: item.updatedAt, messages: [] }));
+});
 const pinned = computed<readonly PinnedEntry[]>(() => props.pinned ?? []);
 
 function isRehydratable(id: ThreadId): boolean {
   // When the parent didn't pass a set, assume everything is rehydratable
   // so we don't regress existing behavior.
-  return !props.rehydratableIds || props.rehydratableIds.has(id);
+  return discovered.value.some(item => item.id === id) || !props.rehydratableIds || props.rehydratableIds.has(id);
 }
 
 function onRowClick(id: ThreadId): void {
+  if (discovered.value.some(item => item.id === id)) {
+    controller?.openRemoteDiscovery?.(id);
+    return;
+  }
   // Always attempt activation. The parent's onActivate() walks the full
   // hydration chain — in-memory registry → localStorage → conversations DB —
   // so a thread that's only in the Postgres backup (localStorage evicted or a
@@ -136,7 +150,7 @@ function formatTime(t: number): string {
 
 const grouped = computed(() => {
   const groups = new Map<string, Thread[]>();
-  for (const t of props.threads) {
+  for (const t of [...props.threads, ...discovered.value]) {
     const k = dayKey(t.updatedAt);
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k)!.push(t);

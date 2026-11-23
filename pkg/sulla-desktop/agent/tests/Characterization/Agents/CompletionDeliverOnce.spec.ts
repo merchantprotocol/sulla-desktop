@@ -57,6 +57,8 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     const instance = Object.create(BackendGraphWebSocketService.prototype);
     (instance as any).activeAborts = new Map();
     (instance as any).resumeContexts = new Map();
+    (instance as any).readinessWaits = new Map();
+    (instance as any).dispatchedRuns = new Set();
     (instance as any).wsService = { send: () => undefined, connect: () => undefined, onMessage: () => undefined };
     return instance;
   }
@@ -154,4 +156,33 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     expect(liveAbort.aborted).toBe(false);
     expect(inbox.takeAgentCompletions(channelId, threadId)).toEqual([expect.objectContaining({ jobId: entry.jobId, taskIndex: 0 })]);
   });
+  it('d) the busy drain drops a stale stall but preserves a same-task return', async() => {
+    // risk: job/task-only dedupe can discard a terminal return in favor of its obsolete advisory.
+    const threadId = 'deliver-once-stall-and-return';
+    const { jobId, entry } = await finishedChild(threadId, 'real child return');
+    const instance = bareInstance();
+    const batches: { text: string; entries: unknown[] }[] = [];
+    fakeGraph(threadId, async(state) => {
+      const message = state.messages.at(-1);
+      if (!batches.length) {
+        batches.push({ text: message.content, entries: [] });
+        inbox.enqueueAgentCompletion(channelId, threadId, {
+          jobId, taskIndex: 0, results: [], notice: 'obsolete-stall', noticeKind: 'stall',
+          stall: { childThread: 'settled-child', baseline: 'old' }, dedupeKey: `stall-test:${ jobId }`,
+        });
+        inbox.enqueueAgentCompletion(channelId, threadId, entry);
+        return;
+      }
+      batches.push({ text: message.content, entries: message.metadata.completionEntries });
+    });
+    inbox.completionInboxStore.registerStallValidator(async() => false);
+    await (instance as any).executeReadyTurn(channelId, 'sulla-desktop', 'current parent turn', threadId,
+      undefined, 'coding-manager-sol', 'system');
+    await vi.waitFor(() => expect(batches).toHaveLength(2));
+    expect(batches[1].text).toContain('real child return');
+    expect(batches[1].text).not.toContain('obsolete-stall');
+    expect(batches[1].entries).toEqual([entry]);
+    expect((await registry.getJob(jobId))?.tasks[0].completionDeliveredAt).toBeTruthy();
+  });
+
 });

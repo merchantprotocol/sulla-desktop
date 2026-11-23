@@ -7,6 +7,7 @@ import { AgentCompletionInboxService } from '../app/Services/AgentCompletionInbo
 import { AgentCompletionRecoveryService } from '../app/Services/AgentCompletionRecoveryService';
 import { CompletionAcknowledgementService } from '../app/Services/CompletionAcknowledgementService';
 import { CompletionFormatter } from '../app/Services/CompletionFormatter';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { CompletionIdleDispatcher } from '../app/Services/CompletionIdleDispatcher';
 
 const result = (label: string) => ({ label, status: 'completed' as const, output: label, threadId: `thread-${ label }` });
@@ -65,7 +66,7 @@ describe('AgentCompletionRecoveryService', () => {
 
   it('does not replay a completion after its injection acknowledgment survives a simulated restart', async() => {
     // risk: restart after injection must not create a duplicate parent wake.
-    const task: any = { completion: result('persisted'), returnedAt: 10 };
+    const task: any = { completion: result('persisted'), returnedAt: 10, completionFirstDeliveredAt: 50 };
     const job: any = {
       jobId: 'job-persisted', status: 'completed', createdAt: 1, finishedAt: 10, taskCount: 1,
       tasks: [task], results: [task.completion], parentChannel: 'parent', parentThreadId: 'thread',
@@ -79,6 +80,20 @@ describe('AgentCompletionRecoveryService', () => {
       markTaskCompletionDelivered: async() => { task.completionDeliveredAt = 100; },
       releaseTaskCompletion: async() => { task.completionDeliveredAt = undefined; },
     }, { markDelivered: async() => {} } as any, firstInbox);
+    expect(injected.notice).toContain('[re-delivery:');
+    firstInbox.requeue('parent', 'thread', injected);
+    const firstDeliveries: string[] = [];
+    const state = { messages: [] as any[] };
+    const handoff = new DelegatedCompletionHandoff(firstInbox, { hasLiveWaiter: () => true, wake: () => true }, {
+      firstDelivered: async entry => { firstDeliveries.push(entry.jobId) },
+      acknowledge: entry => acknowledgements.acknowledge(entry),
+    }, (target, message) => { target.messages.push(message) }, () => 'wake');
+    await handoff.deliver('parent', 'thread', state);
+    expect(firstDeliveries).toEqual(['job-persisted']);
+    expect(task.completionDeliveredAt).toBe(100);
+    expect(state.messages[0].content).toContain('[re-delivery:');
+    await acknowledgements.release(injected);
+    expect(task.completionDeliveredAt).toBeUndefined();
     await acknowledgements.acknowledge(injected);
 
     const restartedInbox = new AgentCompletionInboxService(new CompletionIdleDispatcher(), new CompletionFormatter(8_000));

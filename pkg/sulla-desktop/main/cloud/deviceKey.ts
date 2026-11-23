@@ -26,6 +26,7 @@ export class LocalDeviceMessage {
   static readonly PURPOSE_TAGS = {
     'slack-inbound-v1':   'sulla-slack-inbound-v1',
     'slack-workspace-v1': 'sulla-slack-workspace-v1',
+    'shared-live-relay-v1': 'sulla-shared-live-relay-v1',
     'org-files-key-v1':   'sulla-org-files-key-v1',
   } as const;
 

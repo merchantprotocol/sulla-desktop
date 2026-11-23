@@ -20,6 +20,7 @@
  * Anything still pending when a turn finishes was never seen, so AgentNode
  * loops the graph once more instead of ending the run on top of it.
  */
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 
 /** Return true when the listener took ownership of delivering the steer. */
@@ -61,18 +62,28 @@ export function markSteerPending(message: ChatMessage): void {
  * Append a steer to the running state and offer it to the live CLI turn, if
  * one is listening. Stays pending when no listener takes it.
  */
-export function injectSteer(state: { messages: ChatMessage[] }, message: ChatMessage): boolean {
+export function injectSteer(state: {
+  messages: ChatMessage[];
+  metadata?: { reportingDecisionFollowUp?: { id: string; threadId: string }; reportingSteerRevision?: number };
+}, message: ChatMessage): boolean {
+  if (state.metadata) {
+    delete state.metadata.reportingDecisionFollowUp;
+    state.metadata.reportingSteerRevision = (state.metadata.reportingSteerRevision ?? 0) + 1;
+  }
   (message as any).metadata = { ...((message as any).metadata || {}), steerPending: true };
-  state.messages.push(message);
+  DeferredStallInput.appendActionable(state, message);
   return offerSteer(state, message);
 }
 
 function offerSteer(state: object, message: ChatMessage): boolean {
+  // A synchronous CLI steer cannot validate a process-local stall episode.
+  if (DeferredStallInput.read(message)) return false;
   for (const listener of listeners.get(state) ?? []) {
     let taken = false;
     try { taken = listener(message) } catch { /* a broken listener must not drop the steer */ }
     if (taken) {
       markSteerDelivered(message);
+      DeferredStallInput.settledInputs(state as { messages: ChatMessage[] }, [message]);
       return true;
     }
   }

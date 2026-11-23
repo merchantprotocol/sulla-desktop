@@ -251,11 +251,22 @@ async function refreshHeader(db: Queryable, headerId: string): Promise<void> {
 export async function saveThreadStateWith(db: Queryable, threadId: string, state: ChatThreadState): Promise<string> {
   if (!threadId) throw new Error('saveThreadState: threadId is required');
   await lockThread(db, threadId);
+  const remote = state?.thread?.remote;
   const title = typeof state?.thread?.title === 'string' ? state.thread.title : null;
   const headerId = await resolveOrCreateHeader(db, threadId, title);
   // A tab row linked after the placeholder was written: fold the placeholder in.
   if (headerId !== threadId) await adoptThreadMessagesWith(db, headerId, threadId);
-  const rows = threadStateToRows(threadId, state);
+  const rows = threadStateToRows(threadId, state).filter(row => !remote || row.kind !== 'streaming');
+  if (remote && Array.isArray(remote.removedFromCache)) {
+    const removals = (remote.removedFromCache as unknown[]).flatMap(id =>
+      typeof id === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(id) ? [`${threadId}:${id}`] : []);
+    const retained = new Set(rows.map(row => row.id));
+    const ids = removals.filter(id => !retained.has(id));
+    if (ids.length) await db.query(
+      'UPDATE conversation_messages SET deleted_at = now(), updated_at = now() WHERE conversation_id = $1 AND payload IS NOT NULL AND id = ANY($2::text[])',
+      [headerId, ids],
+    );
+  }
   // The renderer intentionally saves only a bounded window. Preserve the
   // durable transcript: existing rows keep their sequence position and new
   // ids are appended after the current tail instead of replacing old rows.
@@ -326,6 +337,7 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
         kind            = EXCLUDED.kind,
         turn_id         = EXCLUDED.turn_id,
         position        = EXCLUDED.position,
+        created_at      = CASE WHEN $3 THEN EXCLUDED.created_at ELSE conversation_messages.created_at END,
         payload         = EXCLUDED.payload,
         deleted_at      = NULL,
         updated_at      = now()
@@ -333,11 +345,18 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
          OR conversation_messages.position IS DISTINCT FROM EXCLUDED.position
          OR conversation_messages.conversation_id IS DISTINCT FROM EXCLUDED.conversation_id
          OR conversation_messages.deleted_at IS NOT NULL
-    `, [JSON.stringify(rows), headerId]);
+    `, [JSON.stringify(rows), headerId, Boolean(remote)]);
   }
 
   // Missing ids are not deletions: a bounded renderer save omits older
   // history by design. Explicit thread deletion uses deleteThreadStateWith.
+
+  // Reconciliation instructions are one-shot, not stored as replayable state.
+  const stored = stripMessages(state);
+  if (remote) {
+    const { removedFromCache: _removed, ...binding } = remote;
+    stored.thread = { ...stored.thread, remote: binding };
+  }
 
   // Title only fills a placeholder header; a real tab row's title/status/pinned/hidden are never touched.
   await db.query(`
@@ -345,7 +364,7 @@ export async function saveThreadStateWith(db: Queryable, threadId: string, state
     SET thread_state = $2::jsonb,
         title = CASE WHEN source = 'thread-placeholder' THEN COALESCE($3, title) ELSE title END
     WHERE id = $1
-  `, [headerId, JSON.stringify(stripMessages(state)), title]);
+  `, [headerId, JSON.stringify(stored), title]);
   await refreshHeader(db, headerId);
   return headerId;
 }
@@ -357,7 +376,10 @@ export async function loadThreadStateWith(db: Queryable, idOrThreadId: string): 
   const r = await db.query(`
     SELECT h.id, h.thread_id, h.title, h.thread_state,
            COALESCE((
-             SELECT jsonb_agg(m.payload ORDER BY m.position, m.seq)
+             SELECT jsonb_agg(m.payload ORDER BY
+               CASE WHEN h.thread_state->'thread'->'remote'->>'threadId' IS NOT NULL THEN m.created_at END,
+               CASE WHEN h.thread_state->'thread'->'remote'->>'threadId' IS NOT NULL THEN m.id END,
+               m.position, m.seq)
              FROM conversation_messages m
              WHERE m.conversation_id = h.id AND m.deleted_at IS NULL AND m.payload IS NOT NULL
            ), '[]'::jsonb) AS messages

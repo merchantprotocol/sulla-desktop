@@ -16,6 +16,7 @@
  * BaseNode delegates to this via `processPendingToolCalls()` and `executeToolCalls()`.
  */
 
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { createHash } from 'node:crypto';
 
 import { extensionHooks } from '../extensions/HookRegistry';
@@ -882,8 +883,9 @@ export class ToolExecutor {
 
     if (lastIsToolResult && prevAssistantHasOurToolUse) {
       (lastMsg.content as unknown as any[]).push(newToolResultBlock);
+      DeferredStallInput.markActionable(state, lastMsg);
     } else {
-      state.messages.push({
+      DeferredStallInput.appendActionable(state, {
         role:     'user',
         content:  [newToolResultBlock],
         metadata: {

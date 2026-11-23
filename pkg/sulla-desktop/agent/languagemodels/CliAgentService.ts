@@ -266,6 +266,9 @@ export class CliAgentService extends BaseLanguageModel {
     options: { signal?: AbortSignal; conversationId?: string; state?: BaseThreadState },
     retryWithoutSession = false,
   ): Promise<{ text: string; usage?: any }> {
+    if (options.state?.metadata?.supportSessionId) {
+      throw new Error('This provider’s native tools are unavailable in remote support chat. Select a provider with scoped support tools.');
+    }
     if (process.platform === 'win32') {
       throw new Error(`${ this.spec.name } requires the Sulla VM, which is not available on Windows yet.`);
     }

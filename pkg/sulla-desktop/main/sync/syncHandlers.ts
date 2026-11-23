@@ -42,7 +42,7 @@ export interface SyncHandler {
 const claudeConversationHandler: SyncHandler = {
   async readLocal(key) {
     const id = key.id as string;
-    if (!id) return null;
+    if (!id || id.startsWith('remote_')) return null;
     const rows = await postgresClient.query<any>(
       'SELECT * FROM claude_conversations WHERE id = $1',
       [id],
@@ -61,7 +61,7 @@ const claudeConversationHandler: SyncHandler = {
   async applyRemote(item, contractorId) {
     let data: any;
     try { data = JSON.parse(item.payload) } catch { return }
-    if (!data?.id) return;
+    if (!data?.id || String(data.id).startsWith('remote_')) return;
 
     if (item.deleted || data.deleted_at) {
       const applied = await postgresClient.query<{ id: string }>(
@@ -155,7 +155,7 @@ const claudeMessageHandler: SyncHandler = {
       [id],
     );
     const row = rows[0];
-    if (!row) return null;
+    if (!row || String(row.conversation_id).startsWith('remote_')) return null;
     return {
       dataType:  'claude_message',
       entityId:  row.id,
@@ -168,7 +168,7 @@ const claudeMessageHandler: SyncHandler = {
   async applyRemote(item, contractorId) {
     let data: any;
     try { data = JSON.parse(item.payload) } catch { return }
-    if (!data?.id) return;
+    if (!data?.id || String(data.conversation_id).startsWith('remote_')) return;
 
     if (item.deleted || data.deleted_at) {
       await postgresClient.query(

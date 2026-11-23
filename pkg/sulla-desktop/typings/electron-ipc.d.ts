@@ -260,6 +260,10 @@ export interface IpcMainEvents {
  * invoke on the main process, i.e. ipcRenderer.invoke() -> ipcMain.handle()
  */
 export interface IpcMainInvokeEvents {
+  'remote-chat:connect': (bound?: boolean) => { accountId: string; workspaceId: string; deviceId: string; historyOnly: boolean } | null;
+  'remote-chat:check-identity': () => void;
+  'remote-chat:send': (frame: unknown) => boolean;
+  'remote-chat:history': (thread: string, cursor: string, ids: string[], reconcileOnly: boolean) => unknown;
   'chat:run-state': (channelId: string, threadId: string) => boolean;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
@@ -348,6 +352,7 @@ export interface IpcMainInvokeEvents {
   'support-session:events':   (id: string) => any;
   'support-session:end':      (id: string, reason?: string) => any;
   'support-session:extend':   (id: string, hours: number) => any;
+  'support-session:verify-rpc': (id: string) => { ready: boolean };
   'support-session:presence': (id: string) => { online: boolean; lastSeenAt: string | null };
   'updater:install':   () => void;
   // #endregion
@@ -1353,6 +1358,7 @@ export interface IpcMainInvokeEvents {
  * process, i.e. webContents.send() -> ipcRenderer.on().
  */
 export interface IpcRendererEvents {
+  'remote-chat:frame': (frame: Record<string, unknown>) => void;
   'sulla:theme-changed': (theme: string) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;

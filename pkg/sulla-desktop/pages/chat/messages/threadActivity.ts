@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AgentStallClassification } from '@pkg/shared/agentState/AgentStallClassification';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 import type { Message } from '../models/Message';
@@ -112,7 +113,7 @@ function agentItem(row: AgentStateRow): ThreadActivityItem | null {
     return parked.state === 'waiting' ? { state: 'waiting', title: row.label, detail: parked.detail, at, ref } : null;
   }
   case 'quiet':
-    return { state: row.runtimeAlive ? 'quiet' : 'stalled', title: row.label, detail: quietDetail(row, Date.now()), at, ref };
+    return { state: AgentStallClassification.isStalled(row.state, row.runtimeAlive) ? 'stalled' : 'quiet', title: row.label, detail: quietDetail(row, Date.now()), at, ref };
   case 'blocked':
     return { state: 'waiting', title: row.label, detail: blockedDetail(row), at, ref };
   default:

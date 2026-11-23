@@ -51,6 +51,7 @@ export interface PersonaAdapterOptions {
   agentTabContractId?: string;
   agentTabThreadId?:   string;
   supportSessionId?:    string;
+  supportSendBlocked?:  boolean;
   supportToolNames?:    string[];
 }
 
@@ -237,7 +238,11 @@ export class PersonaAdapter {
             resolutionError: undefined,
           });
         } else if (message.kind === 'tool_question' && message.questionId === record.id) {
-          this.controller.updateMessage<ToolQuestionMessage>(message.id, { status: record.status === 'answered' ? 'answered' : 'timed_out', resolutionError: undefined });
+          this.controller.updateMessage<ToolQuestionMessage>(message.id, {
+            status: record.status === 'answered' ? 'answered' : 'timed_out',
+            ...(record.answers?.length ? { answers: record.answers } : {}),
+            resolutionError: undefined,
+          });
         }
       }
     };
@@ -362,11 +367,12 @@ export class PersonaAdapter {
     } : {};
   }
 
-  setSupportSessionContext(supportSessionId?: string, supportToolNames: string[] = []): void {
-    this.supportOptions = { ...this.supportOptions, supportSessionId, supportToolNames: [...supportToolNames] };
+  setSupportSessionContext(supportSessionId?: string, supportToolNames: string[] = [], supportSendBlocked = false): void {
+    this.supportOptions = { ...this.supportOptions, supportSessionId, supportSendBlocked, supportToolNames: [...supportToolNames] };
   }
 
   async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
+    if (this.supportOptions.supportSendBlocked) return;
     // Optimistically render the user turn and thinking state before awaiting readiness IPC.
     const adapterStart = performance.now();
     const hopOrigin = this.lastSendHopKeydownAt ?? this.lastSendHopControllerAt ?? adapterStart;
@@ -424,6 +430,7 @@ export class PersonaAdapter {
     try {
       hopMarks.ipcSendIssued = performance.now() - hopOrigin;
       this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin, messageCount: this.ci.messages.value.length };
+      if (this.supportOptions.supportSendBlocked) throw new Error('Remote support readiness has expired.');
       await this.ci.send(selection, resolved.length ? resolved : undefined);
     } catch (error) {
       this.pendingSendHop = undefined;
@@ -614,7 +621,6 @@ export class PersonaAdapter {
   /** Known outcome of each decision by id, so re-mapped cards keep their resolved state. */
   private readonly decisionStatus = new Map<string, import('@pkg/shared/decisions').DecisionRecord['status']>();
   private readonly decisionExpiry = new Map<string, number>();
-
   private settleKnownDecisions(): void {
     this.controller.removeDuplicateMessages();
     for (const message of this.controller.thread.value.messages) {
@@ -689,7 +695,7 @@ export class PersonaAdapter {
       this.lastRawSignature.set(b.id, rawSig);
 
       const mapped = this.mapBackendMessage(b);
-      if (mapped && b.modelStatus) mapped.by = { agent: this.controller.thread.value.agentId ?? undefined, model: b.modelStatus.model, modelStatus: b.modelStatus };
+      if (mapped && mapped.kind !== 'sulla' && mapped.kind !== 'streaming' && b.modelStatus) mapped.by = { agent: this.controller.thread.value.agentId ?? undefined, model: b.modelStatus.model, modelStatus: b.modelStatus };
       // A null mapping means the message is represented elsewhere (e.g. in the
       // artifact sidebar) and should not produce a transcript entry.
       if (!mapped) {
@@ -754,7 +760,6 @@ export class PersonaAdapter {
             kind,
             text,
             createdAt,
-            model: this.controller.model.value.name,
           } satisfies SullaMessage);
         }
         appended = true;
@@ -792,7 +797,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ b.chatToolActivity ?? '' }|${ b.agentReporting ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -882,6 +887,8 @@ export class PersonaAdapter {
         kind:      'thinking',
         createdAt,
         thoughts,
+        ...(b.reportingActivity ? { reportingActivity: b.reportingActivity } : {}),
+        ...(b.chatToolActivity ? { chatToolActivity: b.chatToolActivity } : {}),
         startedAt: createdAt,
         completed,
         ...(completedAt !== undefined ? { completedAt } : {}),
@@ -979,7 +986,8 @@ export class PersonaAdapter {
     }
 
     // Tool card
-    if (b.kind === 'tool' && b.toolCard) {
+    if (b.kind === 'tool') {
+      if (!b.toolCard || !['running', 'success', 'failed'].includes(b.toolCard.status)) return null;
       const status: ToolMessage['status'] =
         b.toolCard.status === 'success'
           ? 'ok'
@@ -990,6 +998,7 @@ export class PersonaAdapter {
         id,
         kind: 'tool',
         createdAt,
+        recordedToolName: b.toolCard.toolName,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,
@@ -1025,6 +1034,7 @@ export class PersonaAdapter {
         senderLabel: b.channelMeta?.senderLabel,
         senderThreadId: b.channelMeta?.fromThreadId,
         senderJobId: b.channelMeta?.senderJobId,
+        agentReporting: b.agentReporting,
       } satisfies ChannelMessage;
     }
 
@@ -1090,6 +1100,7 @@ export class PersonaAdapter {
         createdAt,
         headline: b.proactive.headline,
         body:     b.proactive.body,
+        agentReporting: b.agentReporting,
         ...(b.proactive.result ? { result: b.proactive.result } : {}),
       } satisfies ProactiveMessage;
     }
@@ -1147,7 +1158,10 @@ export class PersonaAdapter {
           kind:  'sulla',
           createdAt,
           text:  raw,
-          model: this.controller.model.value.name,
+          decisionFollowUpId: b.decisionFollowUpId,
+          agentReporting: b.agentReporting,
+          ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
+          fileReferencesInferred: fileReferences.length && !b.fileReferences?.length ? true : undefined,
           fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
         } satisfies SullaMessage;
       }
@@ -1157,12 +1171,14 @@ export class PersonaAdapter {
         createdAt,
         text:      b.content ?? '',
         startedAt: createdAt,
+        decisionFollowUpId: b.decisionFollowUpId,
+        agentReporting: b.agentReporting,
       } satisfies StreamingMessage;
     }
 
     // Old backend history may contain an HTML body without its original wrapper.
     if (b.kind === 'html') {
-      return { id, kind: 'html', createdAt, html: b.content ?? '' } satisfies HtmlMessage;
+      return { id, kind: 'html', createdAt, html: b.content ?? '', agentReporting: b.agentReporting } satisfies HtmlMessage;
     }
 
     // Speak messages are audio-only — skip in transcript.
@@ -1185,7 +1201,11 @@ export class PersonaAdapter {
       kind:  'sulla',
       createdAt,
       text:  b.content ?? '',
-      model: this.controller.model.value.name,
+      decisionFollowUpId: b.decisionFollowUpId,
+      agentReporting: b.agentReporting,
+      ...(b.terminalRunError === true ? { terminalRunError: true } : {}),
+      ...(b.replyAttribution ? { replyAttribution: b.replyAttribution } : {}),
+      fileReferencesInferred: fileReferences.length && !b.fileReferences?.length ? true : undefined,
       fileReferences: fileReferences.length ? fileReferences.map((item:any) => ({ id: item.attachmentId ?? newAttachmentId(), name: item.name ?? item.path, size: '', kind: kindFromName(item.name ?? item.path), fileRef: item })) : undefined,
     } satisfies SullaMessage;
   }

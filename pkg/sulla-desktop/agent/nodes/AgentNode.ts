@@ -308,7 +308,7 @@ export class AgentNode extends BaseNode {
     // CLI providers (Claude Code, Codex) run their tools inside the CLI, so
     // their turns routinely take that path — gating on the wrapper alone
     // silently skipped every post-turn writer.
-    if (isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
+    if (!state.metadata.supportSessionId && isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
         runSubconsciousObservationWriters(state, { includeObservations });
@@ -395,7 +395,10 @@ export class AgentNode extends BaseNode {
           lastAssistantText === userVisibleText.trim();
         const alreadyStreamed = !!reply.metadata.streamingEmitted;
         if (!isDuplicate && !alreadyStreamed) {
-          await this.wsChatMessage(state, userVisibleText, 'assistant');
+          await this.wsChatMessage(state, userVisibleText, 'assistant', 'text', {
+            replyAttribution: this.recordedReplyAttribution(state, reply.metadata.model),
+            agentReporting: this.replyReporting(reply.content),
+          });
         } else if (!isDuplicate) {
           // UI already has this text from streaming chunks (which are
           // excluded from conversation logging as noise) — still persist
@@ -541,6 +544,14 @@ export class AgentNode extends BaseNode {
       blockerReason:       null,
       unblockRequirements: null,
     };
+  }
+
+  protected override replyReporting(content: string): 'brief' | 'standard' | undefined {
+    // The explicit agent outcome protocol, not reply prose, determines intent.
+    const status = this.extractAgentOutcome(content).status;
+    if (status === 'done' || status === 'blocked') return 'brief';
+    if (status === 'continue') return 'standard';
+    return undefined;
   }
 
   private toUserVisibleAgentMessage(

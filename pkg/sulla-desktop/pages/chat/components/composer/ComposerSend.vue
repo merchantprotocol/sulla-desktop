@@ -67,7 +67,7 @@ onUnmounted(() => childStop.dispose());
 function activate(): void {
   const wasRunning = props.running;
   activateComposerSend(controller, props.running, props.canSend, () => emit('send'));
-  if (wasRunning) void childStop.inspect(activeThreadId());
+  if (wasRunning && !controller.thread.value.remote) void childStop.inspect(activeThreadId());
 }
 </script>
 

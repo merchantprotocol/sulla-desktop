@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /** A transcript line as the transcript lists it: one message, or a work block holding several. */
-interface JumpEntry { id: string; messages?: readonly { id: string }[] }
+interface JumpEntry { id: string; sourceId?: string; messages?: readonly { id: string }[] }
 
 /**
  * "Jump to" (side dock, status line, quick switcher): one transcript keeps each
@@ -24,7 +24,7 @@ export class TranscriptJump {
 
   /** True when this transcript showed the message. */
   jump(entries: readonly JumpEntry[], messageId: string, reduceMotion: boolean): boolean {
-    const entry = entries.find(item => item.id === messageId || item.messages?.some(message => message.id === messageId));
+    const entry = entries.find(item => item.id === messageId || item.sourceId === messageId || item.messages?.some(message => message.id === messageId));
     const el = entry && this.lines.get(entry.id);
     if (!el?.isConnected) return false;
     el.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });

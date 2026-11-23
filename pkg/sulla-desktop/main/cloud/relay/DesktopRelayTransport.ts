@@ -34,6 +34,7 @@ export interface DesktopRelayTransportEvents {
   sessionReset(): void;
   /** A frame reached an open socket. */
   frameDelivered(): void;
+  scopedReady?(): void;
 }
 
 function describeFailure(kind: RelayFailureKind): string {
@@ -86,6 +87,15 @@ export class DesktopRelayTransport {
     private readonly events: DesktopRelayTransportEvents,
   ) {
     this.heartbeat = new DesktopRelayHeartbeat(() => this.ws, reason => this.forceReconnect(reason), timers, log);
+  }
+
+  private readonly scopedProof = new WeakSet<RelaySocketLike>();
+  private readonly scopedReady = new WeakSet<RelaySocketLike>();
+
+  get isScopedReady(): boolean { return this.canAcceptScoped(this.ws ?? undefined) }
+
+  canAcceptScoped(socket?: RelaySocketLike): boolean {
+    return !!socket && socket === this.ws && this.scopedReady.has(socket);
   }
 
   get deviceId(): string { return this.currentDeviceId }
@@ -165,10 +175,11 @@ export class DesktopRelayTransport {
 
   /** Send a frame, queueing durable ones while the socket is down. */
   send(payload: RelayFrame, type: string | undefined): void {
+    if (payload.relayScope === 'v1' && !this.canAcceptScoped(this.ws ?? undefined)) return;
     const json = JSON.stringify(payload);
     if (!this.ws || this.ws.readyState !== RELAY_SOCKET_OPEN) {
       // Streaming/activity frames are ephemeral — dropping them is acceptable.
-      if (type && DURABLE_RELAY_FRAME_TYPES.includes(type)) {
+      if (payload.relayScope !== 'v1' && type && DURABLE_RELAY_FRAME_TYPES.includes(type)) {
         this.pendingFrames.push(json);
         this.log.warn(`[DesktopRelay] Queued ${ type } frame — socket not open`);
       } else {
@@ -278,6 +289,31 @@ export class DesktopRelayTransport {
     ws.addEventListener('open', () => this.handleOpen(ws, room));
     ws.addEventListener('message', (event) => {
       if (this.ws !== ws) return;
+      // Proof is bound to this socket's nonce. Never buffer it or reuse it
+      // on a replacement socket, including vault-owned transports.
+      if (typeof event.data === 'string' && this.session.proveRelayDevice) {
+        let challenge: { type?: string; nonce?: string } | undefined;
+        try { challenge = JSON.parse(event.data) } catch {}
+        if (challenge?.type === 'relay_device_ready') {
+          if (this.scopedProof.has(ws)) {
+            this.scopedReady.add(ws);
+            this.events.scopedReady?.();
+          }
+          return;
+        }
+        if (challenge?.type === 'relay_device_challenge') {
+          const nonce = challenge.nonce;
+          if (!this.scopedProof.has(ws) && typeof nonce === 'string' && /^[a-f0-9-]{36}$/.test(nonce)) {
+            void this.session.proveRelayDevice(room, this.currentDeviceId, nonce).then(signature => {
+              if (this.ws === ws && !this.scopedProof.has(ws)) {
+                this.scopedProof.add(ws);
+                ws.send(JSON.stringify({ type: 'relay_device_proof', signature }));
+              }
+            }).catch(() => this.log.warn('[DesktopRelay] Device proof unavailable'));
+          }
+          return;
+        }
+      }
       this.heartbeat.noteInbound();
       this.events.message(event.data as string, ws, gen);
     });
@@ -356,8 +392,8 @@ export class DesktopRelayTransport {
     if (!view) return;
     for (const frame of view.takePendingOutbound()) {
       try {
-        const type = JSON.parse(frame)?.type;
-        if (DURABLE_RELAY_FRAME_TYPES.includes(type)) {
+        const payload = JSON.parse(frame);
+        if (payload?.relayScope !== 'v1' && DURABLE_RELAY_FRAME_TYPES.includes(payload?.type)) {
           if (!this.pendingFrames.includes(frame)) this.pendingFrames.push(frame);
         }
       } catch { /* malformed frames were never durable */ }

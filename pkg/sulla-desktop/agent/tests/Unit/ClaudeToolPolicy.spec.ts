@@ -39,6 +39,6 @@ describe('delegated Claude native-tool policy', () => {
     // risk: permissions — remote support must not get the normal filesystem, network, browser, or code-editing tools.
     const denied = policy.disallowedToolsFor({ supportSessionId: 'support-session-12345678' }).split(' ');
     expect(denied).toEqual(expect.arrayContaining(SUPPORT_NATIVE_TOOL_DENYLIST.split(' ')));
-    expect(denied).not.toContain('Bash');
+    expect(denied).toContain('Bash');
   });
 });

@@ -29,6 +29,8 @@
  * is rendered from the trailing block. No JSON anywhere — pure XML.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import type { Extractor, StreamContext, ChatMessageFn } from './Extractor';
 import type { NormalizedResponse } from '../languagemodels/BaseLanguageModel';
 
@@ -114,15 +116,15 @@ export class CitationExtractor implements Extractor {
 
     if (sources.length === 0) return reply.content;
 
-    // Renumber so the emitted list is 1..N and free of gaps/dupes. The
-    // inline markers [1][2][…] the model wrote rely on the ORIGINAL nums
-    // it chose, so we keep those as the display `num` and only dedupe on
-    // url+title identity.
-    const deduped = dedupeBy(sources, s => `${ s.num }|${ s.title }|${ s.url ?? '' }`);
+    // Keep the original numbers, order and distinct local report paths.
+    const deduped = dedupeBy(sources, s => JSON.stringify([s.num, s.title, s.origin, s.url]));
 
     // Dispatch a citation chat message. Empty content is intentional —
     // the renderer ignores text and draws cards from `citations`.
-    this.sendChatMessage(ctx.state, '', 'assistant', 'citation', { citations: deduped });
+    this.sendChatMessage(ctx.state, '', 'assistant', 'citation', {
+      citationId: `${ Date.now() }_ws_citation_${ randomUUID() }`,
+      citations: deduped,
+    });
 
     return reply.content;
   }

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { DesktopRelayTerminalDelivery } from './DesktopRelayTerminalDelivery';
 import { stripProtocolTags } from '@pkg/agent/utils/stripProtocolTags';
 import { logVoiceSpan } from '@pkg/agent/utils/voiceTurn';
 
@@ -46,15 +47,18 @@ export class DesktopRelayAgentBridge {
   // Id of the most recent committed assistant turn, so `done` can reuse it
   // instead of making mobile persist the same text under a second id.
   private readonly lastCommittedIdByThread = new Map<string, string>();
+  private readonly graphOutcome = new Map<string, string>();
+  private readonly commitFailed = new Set<string>();
   private readonly queues = new Map<string, Promise<void>>();
 
   constructor(
     private readonly channel: () => DesktopRelayAgentChannel,
     private readonly outbox: DesktopRelayConversationOutbox,
     private readonly scribe: DesktopRelayTurnScribe,
-    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard'>,
+    private readonly cards: Pick<DesktopRelayChatPorts, 'registerMobileCard' | 'allowScopedHistory'>,
     private readonly deviceId: () => Promise<string>,
     private readonly log: DesktopRelayLog,
+    private readonly terminalDelivery?: Pick<DesktopRelayTerminalDelivery, 'record'>,
   ) {}
 
   /** Install the one-time subscription to the mobile-relay channel. Idempotent. */
@@ -70,6 +74,7 @@ export class DesktopRelayAgentBridge {
     const threadId = typeof (msg.data as any)?.thread_id === 'string' ? (msg.data as any).thread_id : '';
     const next = (this.queues.get(threadId) ?? Promise.resolve()).then(() => this.handle(msg));
     const settled = next.catch((error) => {
+      if (threadId && this.outbox.activeRun(threadId)) this.commitFailed.add(threadId);
       this.log.warn('[DesktopRelay] Mobile bridge frame failed:', error);
     });
     this.queues.set(threadId, settled);
@@ -78,6 +83,19 @@ export class DesktopRelayAgentBridge {
   }
 
   private async handle(msg: AgentChannelMessage): Promise<void> {
+    const threadId = (msg.data as any)?.thread_id;
+    if (typeof threadId !== 'string' || !this.outbox.activeRun(threadId)) return;
+    if (msg.type === 'relay_dispatch_complete') {
+      const data = msg.data as { relayRunId?: string; outcome?: string };
+      if (data.relayRunId !== this.outbox.activeRun(threadId)) return;
+      if (!threadId.startsWith('remote_')) {
+        return this.finish(threadId, data.outcome === 'accepted' ? this.graphOutcome.get(threadId) || 'completed' : data.outcome || 'failed');
+      }
+      const observed = data.outcome === 'accepted' ? this.graphOutcome.get(threadId) : data.outcome;
+      const outcome = observed === 'stopped' || observed === 'completed' ? observed
+        : ['error', 'failed', 'max_loops', 'max_iterations'].includes(observed ?? '') ? 'failed' : 'unknown';
+      return this.finish(threadId, outcome);
+    }
     if (msg.type === 'speak_dispatch') return this.handleSpeak(msg.data);
     if (msg.type === 'progress') return this.handleToolProgress(msg.data);
     if (msg.type === 'assistant_message') return this.handleAssistantMessage(msg.data);
@@ -91,13 +109,17 @@ export class DesktopRelayAgentBridge {
    * `spoken` marks a <speak> sentence mobile reads aloud on arrival.
    */
   private async commitAssistantText(threadId: string, text: string, spoken = false): Promise<void> {
+    const ts = new Date().toISOString();
+    const id = this.scribe.deriveId(threadId, 'assistant', text, ts);
+    const run = this.outbox.activeRun(threadId);
+    const binding = run ? this.outbox.scopedBinding(threadId, run) : undefined;
+    if (threadId.startsWith('remote_') && !binding) return;
+    const delivery = binding && run && await this.cards.allowScopedHistory?.() === true ? { ...binding, run } : undefined;
+    await this.scribe.scribe(threadId, 'assistant', text, { id, ts, ...(delivery ? { delivery } : {}) });
     this.lastActivityByThread.delete(threadId);
     this.finalTextByThread.set(threadId, text);
     this.streamedByThread.delete(threadId);
-    const ts = new Date().toISOString();
-    const id = this.scribe.deriveId(threadId, 'assistant', text, ts);
     this.lastCommittedIdByThread.set(threadId, id);
-    await this.scribe.scribe(threadId, 'assistant', text, { id, ts });
     this.outbox.sendChatFrame(threadId, { type: 'message', content: text, id, ...(spoken ? { spoken: true } : {}) });
   }
 
@@ -120,7 +142,7 @@ export class DesktopRelayAgentBridge {
   private async handleToolProgress(raw: unknown): Promise<void> {
     const data = (raw || {}) as any;
     const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
-    if (!threadId || !['tool_call', 'tool_result'].includes(data.phase)) return;
+    if (!threadId || threadId.startsWith('remote_') || !['tool_call', 'tool_result'].includes(data.phase)) return;
     await this.sendCard(threadId, { version: 1, kind: 'tool', deviceId: await this.deviceId(), toolCard: {
       toolName: data.toolName || 'Tool', status: data.phase === 'tool_call' ? 'running' : data.success === false ? 'failed' : 'success',
       args: data.args, result: data.result, error: data.error,
@@ -132,6 +154,7 @@ export class DesktopRelayAgentBridge {
     const kind = typeof data.kind === 'string' ? data.kind : '';
     const threadId = typeof data.thread_id === 'string' ? data.thread_id : '';
     if (threadId && RICH_CARD_KINDS.includes(kind)) {
+      if (threadId.startsWith('remote_')) return;
       await this.cards.registerMobileCard(threadId, kind, data);
       // Persist a versioned envelope through the existing durable history path.
       // Never serialize arbitrary event metadata, tokens or execution context.
@@ -160,6 +183,7 @@ export class DesktopRelayAgentBridge {
     if (!stripped) return;
 
     if (kind === 'thinking') {
+      if (threadId.startsWith('remote_')) return;
       // Tool-use / reasoning indicator. De-dup consecutive duplicates, and
       // scribe it so history shows what the agent did, not just what it said.
       if (stripped === this.lastActivityByThread.get(threadId)) return;
@@ -197,20 +221,45 @@ export class DesktopRelayAgentBridge {
       this.log.warn('[DesktopRelay] Dropping done frame without thread_id/conversationId');
       return;
     }
-    // A trailing segment that never saw its streaming_complete boundary is
-    // still a separate turn when earlier ones were committed.
-    const trailing = this.streamedByThread.get(threadId);
-    if (trailing && this.finalTextByThread.has(threadId)) await this.commitAssistantText(threadId, trailing);
-    const committed = this.finalTextByThread.get(threadId);
-    const finalText = committed ?? this.streamedByThread.get(threadId) ?? '';
-    // Streaming-only runs were never scribed; committed text was, and `done`
-    // reuses its id so mobile dedups instead of duplicating.
-    let doneId = committed ? this.lastCommittedIdByThread.get(threadId) : undefined;
-    if (!committed && finalText) doneId = await this.scribe.scribeDerived(threadId, 'assistant', finalText);
+    const reason = typeof data.stopReason === 'string' ? data.stopReason : threadId.startsWith('remote_') ? 'unknown' : 'completed';
+    this.graphOutcome.set(threadId, threadId.startsWith('remote_') && data.waitingForUser && reason === 'completed' ? 'unknown' : reason);
+  }
+
+  private async finish(threadId: string, outcome: string): Promise<void> {
+    const runId = this.outbox.activeRun(threadId);
+    if (!runId) return;
+    const binding = this.outbox.scopedBinding(threadId, runId);
+    let terminal: Record<string, unknown>;
+    // A graph outcome is independent of transcript persistence. Retry only
+    // this status, never assistant text or another execution.
+    const statusCommitted = binding && (outcome === 'completed' || outcome === 'failed' || outcome === 'stopped')
+      ? await this.terminalDelivery?.record({ ...binding, thread: threadId, run: runId, outcome })
+      : undefined;
+    try {
+      // A failed turn write is not completed live. The existing history
+      // store remains the only source for recovery.
+      if (this.commitFailed.has(threadId)) throw new Error('relay_history_unavailable');
+      const trailing = this.streamedByThread.get(threadId);
+      if (outcome !== 'stopped' && trailing) await this.commitAssistantText(threadId, trailing);
+      const finalText = this.finalTextByThread.get(threadId) ?? '';
+      const id = this.lastCommittedIdByThread.get(threadId);
+      if (threadId.startsWith('remote_') && outcome !== 'unknown' && !statusCommitted) throw new Error('relay_history_unavailable');
+      const eventId = threadId.startsWith('remote_') ? undefined
+        : await this.scribe.scribeDerived(threadId, 'tool', JSON.stringify({
+          sullaCard: { version: 1, kind: 'run_outcome', runId, outcome },
+        }));
+      terminal = outcome === 'stopped'
+        ? { type: 'stopped', outcome, eventId }
+        : { type: 'done', content: finalText, id, outcome, eventId };
+    } catch {
+      terminal = { type: 'error', reason: 'relay_history_unavailable' };
+    }
     this.streamedByThread.delete(threadId);
     this.finalTextByThread.delete(threadId);
     this.lastActivityByThread.delete(threadId);
     this.lastCommittedIdByThread.delete(threadId);
-    this.outbox.completeRun(threadId, { type: 'done', content: finalText, id: doneId });
+    this.graphOutcome.delete(threadId);
+    this.commitFailed.delete(threadId);
+    this.outbox.completeRun(threadId, terminal);
   }
 }

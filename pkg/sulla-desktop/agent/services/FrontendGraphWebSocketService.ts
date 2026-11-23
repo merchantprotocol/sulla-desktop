@@ -150,19 +150,14 @@ export class FrontendGraphWebSocketService {
     // Get or create persistent AgentGraph for this thread using the default agent
     const { graph, state } = await GraphRegistry.getOrCreateAgentGraph(agentId, threadId) as { graph: any; state: AgentGraphState };
 
-    const supportSessionId = typeof metadata?.supportSessionId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(metadata.supportSessionId)
-      ? metadata.supportSessionId : '';
+    const policy = new SupportSessionPolicy();
+    const supportSessionId = policy.sessionForTurn(state.metadata.supportSessionId, metadata?.supportSessionId);
     if (supportSessionId) {
-      (state.metadata as any).supportSessionId = supportSessionId;
-      const supportTabTools = [...SUPPORT_TOOL_NAMES, 'github_trigger_workflow_run'];
-      (state.metadata as any).allowedToolNames = supportTabTools;
-      (state.metadata as any).supportContext = typeof metadata?.supportContext === 'string' ? metadata.supportContext : '';
+      const supportTabTools = policy.remoteToolNames(SUPPORT_TOOL_NAMES);
+      state.metadata.supportSessionId = supportSessionId;
+      state.metadata.allowedToolNames = supportTabTools;
+      state.metadata.supportContext = policy.remoteContext();
       (state as any).llmTools = await Promise.all(supportTabTools.map(name => toolRegistry.convertToolToLLM(name)));
-    } else if ((state.metadata as any).supportSessionId && new SupportSessionPolicy().shouldClearCapability(metadata)) {
-      delete (state.metadata as any).supportSessionId;
-      delete (state.metadata as any).allowedToolNames;
-      delete (state.metadata as any).supportContext;
-      delete (state as any).llmTools;
     }
 
     // If this thread was restored from persistence and has prior messages,

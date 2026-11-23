@@ -7,14 +7,18 @@ import { Service } from '@sulla/foundation';
 import type { AgentJobMessagingRepository } from '../app/Repositories/AgentJobMessagingRepository';
 import type { AgentJobCheckinReceipt } from '../database/models/AgentJobMessagingModel';
 
+import type { PendingCompletion } from '../app/Services/AgentCompletionInboxService';
+
 export interface ParentNoticeInbox {
   enqueue(channel: string, threadId: string, notice: {
     jobId: string;
     taskIndex: number;
     results: [];
-    notice: string;
     dedupeKey: string;
-  }): boolean;
+  } & (
+    | { notice: string; noticeKind?: never; stall?: never }
+    | Required<Pick<PendingCompletion, 'noticeKind' | 'stall'>> & { notice?: never }
+  )): boolean;
 }
 
 /** Records worker telemetry and routes new blockers through the parent's turn-safe inbox. */

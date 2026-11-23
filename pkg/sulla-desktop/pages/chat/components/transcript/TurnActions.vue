@@ -76,6 +76,7 @@
     >
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="12" cy="19" r="2" /><path d="M6 7v2a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7M12 12v5" /></svg>
     </button>
+    <slot />
   </div>
 </template>
 
@@ -135,11 +136,14 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
   transition-delay: 0s, 0s;
 }
 
-/* The newest reply: its own row under the text, always there. */
-.tact-sulla { min-height: 30px; margin: 6px 0 0 -8px; }
-/* Older replies reserve no space: the actions appear at the right of the reply's own
-   "SULLA · time" line, which is otherwise empty, so they never cover the next message. */
-.tact-sulla:not(.tact-latest) { position: absolute; top: -4px; right: 0; min-height: 0; margin: 0; }
+/* Every reply reserves its own row. Keep older buttons in the tab order:
+   visibility:hidden would prevent keyboard focus from revealing them. */
+.tact-sulla {
+  flex-wrap: wrap; justify-content: flex-start; min-height: 30px; margin: 6px 0 0 -8px;
+  visibility: inherit; transition-property: opacity;
+}
+.tact-sulla:not(.tact-latest):not(:focus-within) { pointer-events: none; }
+.chat-turn:hover > .tact-sulla:not(.tact-latest) { pointer-events: auto; }
 /* Under a user bubble: just below it, with an invisible bridge so the pointer can cross the gap. */
 .tact-you { position: absolute; top: 100%; right: 0; padding-top: 4px; }
 .tact-you::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 10px; }

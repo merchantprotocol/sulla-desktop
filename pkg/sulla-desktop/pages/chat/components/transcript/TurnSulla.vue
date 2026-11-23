@@ -26,10 +26,6 @@
     @mousemove="onHoverBlock"
     @mouseleave="releaseBlock"
   >
-    <span class="chat-role"><span
-      class="noir-avatar"
-      aria-hidden="true"
-    >S</span>Sulla · {{ timeLabel }}</span>
     <InlineReplyBody class="chat-body" :text="msg.text" agent-cards structured />
     <button
       v-if="hoverBlock"
@@ -52,13 +48,20 @@
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
-      :latest="isLatest"
+      :latest="latest"
       @copy="copy"
       @regenerate="onRegenerate"
       @quote="onQuote"
       @pin="onPin"
       @fork="onFork"
-    />
+    >
+      <span class="reply-metadata">
+        <time v-if="replyTime" :datetime="replyTime.iso">{{ replyTime.label }}</time>
+        <span v-else>Time not recorded</span>
+        <span>{{ msg.replyAttribution?.agent || 'Agent not recorded' }}</span>
+        <span>{{ msg.replyAttribution?.model || 'Model not recorded' }}</span>
+      </span>
+    </TurnActions>
 
     <ChatContextMenu
       ref="ctxMenu"
@@ -79,20 +82,19 @@ import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { SullaMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: SullaMessage }>();
+const props = defineProps<{ msg: SullaMessage; latest?: boolean }>();
 // Kept for back-compat with any parents that still listen.
 defineEmits<{
   (e: 'regenerate'): void; (e: 'quote'): void; (e: 'pin'): void; (e: 'fork'): void;
 }>();
 
 const controller = useChatController();
-/** The newest Sulla reply keeps its actions in view without hovering. */
-const isLatest = computed(() => controller.messages.value.findLast(message => message.kind === 'sulla')?.id === props.msg.id);
 const ctxMenu = ref<InstanceType<typeof ChatContextMenu> | null>(null);
 
-const timeLabel = computed(() => {
-  const d = new Date(props.msg.createdAt);
-  return `${ d.getHours() % 12 || 12 }:${ String(d.getMinutes()).padStart(2, '0') }`;
+const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+const replyTime = computed(() => {
+  const date = new Date(props.msg.createdAt);
+  return Number.isFinite(date.getTime()) ? { iso: date.toISOString(), label: dateFormat.format(date) } : undefined;
 });
 
 const fileReferences = computed(() => {
@@ -201,7 +203,10 @@ function onNewChat(): void {
 }
 .block-reply:hover { color: var(--text-primary); border-color: var(--accent); }
 .block-reply svg { width: 13px; height: 13px; fill: currentColor; }
-.noir-avatar {
-  display: none;
+.reply-metadata {
+  display: flex; flex-wrap: wrap; gap: 2px 8px; min-width: 0;
+  margin-inline-start: 8px; color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
+.reply-metadata > :not(:first-child)::before { content: '· '; }
 </style>
