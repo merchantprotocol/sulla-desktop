@@ -293,7 +293,7 @@ it('keeps recorded reply attribution and its actions together across levels and 
   expect(followUp.classes()).toContain('tact-latest');
 
   await wrapper.setProps({ reportingLevel: 'fatal' });
-  expect(wrapper.text()).toContain('reported-model');
+  expect(recorded.text()).toContain('reported-model');
   const newestVisible = wrapper.get('.tact-sulla.tact-latest');
   expect(newestVisible.text()).toContain('Research Agent');
   expect(newestVisible.findAll('button')).toHaveLength(5);
