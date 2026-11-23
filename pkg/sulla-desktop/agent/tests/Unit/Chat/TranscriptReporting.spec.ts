@@ -69,6 +69,44 @@ class ReportingFixture {
   }
 }
 
+// risk: text integrity — a completed segment must retain its stream identity so
+// the next text segment gets a paragraph break without crossing reply/card boundaries.
+it('keeps same-stream paragraph breaks after a completed segment and not across other replies', () => {
+  const finishFirstSegment = (live: ReportingFixture) => {
+    live.ctx.graphRunning.value = true;
+    live.emit('assistant_message', { kind: 'streaming', content: 'First paragraph', replyStreamId: 'reply-1' });
+    live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'reply-1' });
+    expect(live.chat.messages.value[0]).toMatchObject({ kind: 'sulla', text: 'First paragraph', replyStreamId: 'reply-1' });
+  };
+  const continuationFor = (live: ReportingFixture) => {
+    const next = live.chat.messages.value.find(message => message.kind === 'streaming' && message.text === 'Second paragraph');
+    expect(next).toBeDefined();
+    const entries = live.entries('info');
+    return live.reporting.isStreamingContinuation(entries, entries.findIndex(entry => entry.id === next!.id));
+  };
+
+  const sameStream = new ReportingFixture();
+  finishFirstSegment(sameStream);
+  sameStream.emit('progress', { phase: 'tool_call', toolRunId: 'reply-tool', toolName: 'exec', args: { command: 'fixture' } });
+  sameStream.emit('progress', { phase: 'tool_result', toolRunId: 'reply-tool', success: true, result: 'done' });
+  sameStream.emit('assistant_message', { kind: 'streaming', content: 'Second paragraph', replyStreamId: 'reply-1' });
+  expect(sameStream.entries('info').some(entry => entry.kind === 'activity')).toBe(true);
+  expect(continuationFor(sameStream)).toBe(true);
+
+  const differentStream = new ReportingFixture();
+  finishFirstSegment(differentStream);
+  differentStream.emit('assistant_message', { kind: 'streaming', content: 'Second paragraph', replyStreamId: 'reply-2' });
+  expect(continuationFor(differentStream)).toBe(false);
+
+  const interveningCard = new ReportingFixture();
+  finishFirstSegment(interveningCard);
+  interveningCard.emit('assistant_message', {
+    kind: 'citation', citations: [{ num: 1, title: 'Evidence', origin: 'fixture' }],
+  });
+  interveningCard.emit('assistant_message', { kind: 'streaming', content: 'Second paragraph', replyStreamId: 'reply-1' });
+  expect(continuationFor(interveningCard)).toBe(false);
+});
+
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
 it('projects safe individual events in source order before and after tool settlement and reload', () => {

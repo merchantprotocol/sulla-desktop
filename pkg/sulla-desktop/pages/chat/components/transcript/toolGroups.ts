@@ -107,6 +107,24 @@ export class TranscriptReporting {
     return entries;
   }
 
+  /** Insert a paragraph gap before streamed text only when its nearest text
+   * segment belongs to the same reply stream. Activity rows are transparent;
+   * other cards are a substantive boundary and must stop the continuation. */
+  isStreamingContinuation(entries: readonly TranscriptEntry[], index: number): boolean {
+    const entry = entries[index];
+    if (entry?.kind !== 'card' || entry.message.kind !== 'streaming' || !entry.message.replyStreamId) return false;
+    for (let i = index - 1; i >= 0; i--) {
+      const prior = entries[i];
+      if (!prior || prior.kind === 'activity') continue;
+      if (prior.kind !== 'card') return false;
+      const priorStreamId = prior.message.kind === 'streaming' || prior.message.kind === 'sulla'
+        ? prior.message.replyStreamId
+        : undefined;
+      return !!priorStreamId && priorStreamId === entry.message.replyStreamId;
+    }
+    return false;
+  }
+
   private *project(message: Message, messages: readonly Message[], level: ReportingLevel): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {

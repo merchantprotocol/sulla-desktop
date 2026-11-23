@@ -42,7 +42,7 @@
             :msg="entry.message"
             :latest-reply="entry.id === latestReplyId"
             :reporting-level="reportingLevel"
-            :streaming-paragraph-break="isStreamingContinuation(index)"
+            :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
           />
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
@@ -104,18 +104,6 @@ function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (props.reportingLevel !== 'info' || entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
   return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
-}
-function isStreamingContinuation(index: number): boolean {
-  const entry = transcriptEntries.value[index];
-  if (entry?.kind !== 'card' || entry.message.kind !== 'streaming' || !entry.message.replyStreamId) return false;
-  for (let i = index - 1; i >= 0; i--) {
-    const prior = transcriptEntries.value[i];
-    if (!prior) continue;
-    if (prior.kind === 'activity') continue;
-    return prior.kind === 'card' && prior.message.kind === 'streaming' &&
-      prior.message.replyStreamId === entry.message.replyStreamId;
-  }
-  return false;
 }
 function isStandardEvidenceAfterReply(index: number): boolean {
   if (props.reportingLevel !== 'info') return false;
