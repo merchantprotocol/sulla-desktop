@@ -24,13 +24,23 @@
 
 .ar-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 16px 0; }
 .ar-group .ar-head { grid-template-columns: auto minmax(0, 1fr) auto auto; padding: 10px 16px; cursor: pointer; }
-.ar-standard .ar-head { padding: 10px 16px; cursor: pointer; }
-.ar-standard .ar-head:hover, .ar-standard .ar-open > .ar-head { background: var(--ar-raised); }
 .ar-group .ar-head:hover, .ar-group .ar-open > .ar-head { background: var(--ar-raised); }
 .ar-group .ar-open { background: var(--ar-raised); }
-.ar-head:focus-visible, .ar-btn:focus-visible, .ar-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ar-head:focus-visible, .ar-btn:focus-visible, .ar-more:focus-visible, .ar-standard-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ar-chev { color: var(--ar-ink-3); transition: transform .18s cubic-bezier(.22,1,.36,1); }
 .ar-open .ar-chev { transform: rotate(180deg); }
+
+.ar-standard-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 16px; }
+.ar-standard .ar-standard-row:hover, .ar-standard .ar-open > .ar-standard-row { background: var(--ar-raised); }
+.ar-standard-toggle { display: flex; align-items: center; gap: 10px; min-width: 0; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.ar-standard-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }
+.ar-standard-status-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; }
+.ar-standard-status-dot.ar-ok { background: var(--status-success); }
+.ar-standard-status-dot.ar-warn { background: var(--status-warning); }
+.ar-standard-status-dot.ar-bad { background: var(--status-error); }
+.ar-standard-status-dot.ar-info { background: var(--accent); }
+.ar-standard-status-dot.ar-dim { background: var(--ar-ink-3); }
+.ar-standard-open { justify-self: end; }
 
 .ar-chip {
   display: inline-flex; align-items: center; gap: 6px; justify-self: start; height: 22px; padding: 0 8px; border-radius: 6px;

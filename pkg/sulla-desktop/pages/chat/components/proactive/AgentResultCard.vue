@@ -42,36 +42,66 @@
           Undo
         </button>
       </div>
-      <div
-        v-else
-        class="ar-head"
-        :role="isExpandable ? 'button' : undefined"
-        :tabindex="isExpandable ? 0 : undefined"
-        :aria-expanded="isExpandable ? isOpen(index) : undefined"
-        :aria-label="isExpandable ? `${isOpen(index) ? 'Collapse' : 'Expand'} result details for ${item.label}` : undefined"
-        @click="isExpandable && toggle(index)"
-        @keydown.enter.prevent="isExpandable && toggle(index)"
-        @keydown.space.prevent="isExpandable && toggle(index)"
-      >
-        <span
-          class="ar-chip"
-          :class="`ar-${showCurrent(item) ? activityTone(item) : item.tone}`"
-        ><span class="ar-dot" />{{ activity(item).kind === 'unknown' && needsAttention(item) ? 'Earlier report' : showCurrent(item) ? activity(item).label : item.verdict }}</span>
-        <span class="ar-title">
-          <b>{{ item.label }}</b>
-          <span>{{ byline(item) }}</span>
-        </span>
-        <span
-          v-if="kindOf(item) || when?.label"
-          class="ar-kind"
-          :title="when?.full"
-        >{{ [kindOf(item), when?.label].filter(Boolean).join(' ') }}</span>
-        <span
-          v-if="items.length > 1"
-          class="ar-chev"
-          aria-hidden="true"
-        >⌄</span>
-      </div>
+      <template v-else>
+        <div
+          v-if="standard"
+          class="ar-standard-row"
+        >
+          <button
+            type="button"
+            class="ar-standard-toggle"
+            :aria-expanded="isOpen(index)"
+            :aria-label="`${resultStatus(item)}. ${isOpen(index) ? 'Collapse' : 'Expand'} details for ${item.label}`"
+            @click="toggle(index)"
+          >
+            <span
+              class="ar-standard-status-dot"
+              :class="`ar-${resultTone(item)}`"
+              aria-hidden="true"
+            />
+            <span class="ar-standard-title">{{ item.label }}</span>
+          </button>
+          <button
+            v-if="item.threadId"
+            type="button"
+            class="ar-btn ar-standard-open"
+            :aria-label="`Open agent conversation for ${item.label}`"
+            @click.stop="openAgent(item)"
+          >
+            Open agent
+          </button>
+        </div>
+        <div
+          v-else
+          class="ar-head"
+          :role="isExpandable ? 'button' : undefined"
+          :tabindex="isExpandable ? 0 : undefined"
+          :aria-expanded="isExpandable ? isOpen(index) : undefined"
+          :aria-label="isExpandable ? `${isOpen(index) ? 'Collapse' : 'Expand'} result details for ${item.label}` : undefined"
+          @click="isExpandable && toggle(index)"
+          @keydown.enter.prevent="isExpandable && toggle(index)"
+          @keydown.space.prevent="isExpandable && toggle(index)"
+        >
+          <span
+            class="ar-chip"
+            :class="`ar-${resultTone(item)}`"
+          ><span class="ar-dot" />{{ activity(item).kind === 'unknown' && needsAttention(item) ? 'Earlier report' : resultStatus(item) }}</span>
+          <span class="ar-title">
+            <b>{{ item.label }}</b>
+            <span>{{ byline(item) }}</span>
+          </span>
+          <span
+            v-if="kindOf(item) || when?.label"
+            class="ar-kind"
+            :title="when?.full"
+          >{{ [kindOf(item), when?.label].filter(Boolean).join(' ') }}</span>
+          <span
+            v-if="items.length > 1"
+            class="ar-chev"
+            aria-hidden="true"
+          >⌄</span>
+        </div>
+      </template>
 
       <template v-if="isOpen(index) && !isHandled(item)">
         <p
@@ -122,7 +152,7 @@
             {{ link.label }}
           </button>
           <button
-            v-if="item.threadId"
+            v-if="item.threadId && !standard"
             type="button"
             class="ar-btn"
             @click="openAgent(item)"
@@ -306,6 +336,8 @@ function activityTone(item: AgentResultItem): AgentResultTone {
   return kind === 'needsYou' || kind === 'blocked' ? 'warn' : kind === 'unknown' ? 'dim' : 'info';
 }
 function showCurrent(item: AgentResultItem): boolean { return needsAttention(item) || activity(item).kind !== 'unknown' }
+function resultTone(item: AgentResultItem): AgentResultTone { return showCurrent(item) ? activityTone(item) : item.tone }
+function resultStatus(item: AgentResultItem): string { return showCurrent(item) ? activity(item).label : item.verdict }
 function openDecision(item: AgentResultItem): void {
   const record = activity(item).decision;
   if (!record) return;
@@ -348,9 +380,9 @@ function setHandled(item: AgentResultItem, value: boolean): void {
 interface Fact { label: string; value: string; copy?: string }
 function factsOf(item: AgentResultItem): Fact[] {
   const facts: Fact[] = [{ label: 'Job', value: `${ item.jobId } · task ${ item.taskIndex }`, copy: item.jobId }];
-  const model = props.standard ? '' : AgentModelStatus.label(item.modelStatus ?? (item.model ? { model: item.model, effort: null, source: 'requested' } : undefined));
+  const model = AgentModelStatus.label(item.modelStatus ?? (item.model ? { model: item.model, effort: null, source: 'requested' } : undefined));
   const agent = [item.agentId, model].filter(Boolean).join(' · ');
-  if (agent) facts.push({ label: props.standard ? 'Agent' : 'Agent · model', value: agent });
+  if (agent) facts.push({ label: 'Agent · model', value: agent });
   const ran = [item.startedAt && item.endedAt ? `${ clockTime(item.startedAt) } → ${ clockTime(item.endedAt) }` : '', item.durationMs ? `(${ duration(item.durationMs) })` : '', item.runLocation === 'container' ? '· container' : item.runLocation === 'vm' ? '· host' : ''].filter(Boolean).join(' ');
   if (ran) facts.push({ label: 'Ran', value: ran });
   if (item.threadId) facts.push({ label: 'Thread', value: item.threadId, copy: item.threadId });
