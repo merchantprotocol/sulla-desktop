@@ -17,7 +17,8 @@
         v-if="origin"
         class="ch-origin"
         type="button"
-        :title="`Return to ${origin.name}`"
+        :title="`Launched by ${origin.name} — return to launcher`"
+        :aria-label="`Launched by ${origin.name} — return to launcher`"
         @click="origin.back()"
       >
         <span aria-hidden="true">↩</span>
@@ -77,16 +78,19 @@ function cancelTitle(): void {
 <style scoped>
 .chat-header {
   position: absolute; top: 0; left: 0; right: 0; z-index: 21;
-  display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto; align-items: center;
+  display: flex; align-items: center;
   /* Keep the previous 52px outer height and content alignment without the 1px border. */
-  box-sizing: border-box; height: 52px; padding: 0 20px 1px;
+  box-sizing: border-box; height: 52px; padding-block: 0 1px;
+  /* Recover space when a wide dock leaves a narrow chat pane. */
+  padding-inline: clamp(6px, calc(10% - 15px), 20px);
   background: var(--bg-surface);
   font-family: var(--font-body);
 }
-.ch-left { display: flex; align-items: center; gap: 10px; min-width: 0; justify-self: start; }
-.ch-center { display: flex; min-width: 0; }
+.ch-left { display: flex; flex: 0 1 auto; min-width: 0; max-width: 32%; }
+/* Let the title fill the remainder, but make the chip give up space at this floor. */
+.ch-center { display: flex; flex: 1 1 0; min-width: 4rem; }
 .ch-title {
-  /* Fit the title and its padding, then shrink to the available grid space. */
+  /* Fit the title and its padding, then shrink to the available space. */
   flex: 0 1 auto; min-width: 0; padding: 3px 8px; text-align: left;
   background: #fff;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
@@ -100,15 +104,16 @@ function cancelTitle(): void {
 :global(.dark) .ch-title:hover,
 :global(.dark) .ch-title:focus { background: var(--bg-surface); }
 .ch-origin {
-  display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
   color: color-mix(in srgb, var(--text-primary) 72%, var(--bg-surface)); font: 11px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em; cursor: pointer;
 }
 .ch-origin:hover { color: var(--accent); border-color: var(--accent); }
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ch-origin > [aria-hidden] { flex: none; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-reporting {
-  justify-self: end; margin-left: 8px; max-width: 100%; height: 28px; padding: 0 6px;
+  flex: none; margin-left: 8px; height: 28px; padding: 0 6px;
   color: var(--text-primary); background: var(--bg-surface);
   border: 1px solid var(--border-default); border-radius: 6px; font: inherit; font-size: 12px;
 }
