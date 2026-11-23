@@ -88,17 +88,17 @@ function cancelTitle(): void {
 .ch-title {
   /* Fit the title and its padding, then shrink to the available grid space. */
   flex: 0 1 auto; min-width: 0; padding: 3px 8px; text-align: left;
-  background-image: linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--text-primary) 7%, transparent),
-    color-mix(in srgb, var(--text-primary) 2%, transparent)
-  );
+  background: #fff;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   border-radius: 6px; outline: none; cursor: text;
   color: var(--text-primary); font-size: 15px; font-weight: normal; letter-spacing: 0;
 }
-.ch-title:hover { background-color: color-mix(in srgb, var(--text-primary) 6%, transparent); }
-.ch-title:focus { text-overflow: clip; background-color: var(--bg-surface); box-shadow: inset 0 0 0 1px var(--accent); }
+.ch-title:hover { background-color: #fff; }
+.ch-title:focus { text-overflow: clip; background-color: #fff; box-shadow: inset 0 0 0 1px var(--accent); }
+/* Every dark Desktop theme (html.dark: default, ocean, nord, protocol, noir) gets a solid surface in all states. */
+:global(.dark) .ch-title,
+:global(.dark) .ch-title:hover,
+:global(.dark) .ch-title:focus { background: var(--bg-surface); }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
