@@ -13,6 +13,7 @@
     <div
       ref="scroller"
       class="scroller"
+      :class="{ 'has-scroll-pill': showPill }"
     >
       <div class="chat-dialogue">
         <!-- Time marker for today (phase-0 scaffold) -->
@@ -26,12 +27,14 @@
           :key="entry.id"
           :ref="el => jumper.register(entry.id, el)"
           class="report-entry"
+          :class="{ 'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId }"
         >
           <span
+            v-if="reportLabelVisible(entry)"
             class="report-label"
             :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
           >{{ entry.label }}</span>
-          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" />
+          <MessageRouter v-if="entry.kind === 'card'" :msg="entry.message" :latest-reply="entry.id === latestReplyId" :reporting-level="reportingLevel" />
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
             <template v-if="reportingLevel === 'debug'">
@@ -73,7 +76,7 @@ import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
-import { TranscriptReporting } from './toolGroups';
+import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
@@ -87,6 +90,10 @@ const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+function reportLabelVisible(entry: TranscriptEntry): boolean {
+  return props.reportingLevel !== 'info' || entry.kind !== 'card' ||
+    !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
+}
 const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
   entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
@@ -193,6 +200,11 @@ defineExpose({ scroller, scrollToBottom });
   --tr-fade-end: calc(var(--composer-h, 140px) - 4px);
   mask-image: linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
 }
+.scroller.has-scroll-pill {
+  /* Reserve a lane between the transcript and composer for the jump control. */
+  bottom: calc(var(--composer-h, 140px) + 72px);
+  mask-image: none;
+}
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
 .report-label {
   color: var(--text-muted); margin-bottom: 4px;
@@ -202,6 +214,12 @@ defineExpose({ scroller, scrollToBottom });
 .report-label-user { align-self: flex-end; }
 .report-activity { color: var(--text-secondary); font-size: 13px; }
 .report-activity-time { margin-inline-start: 8px; color: var(--text-muted); }
+.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-section),
+.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-labeled),
+.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-flag) {
+  background: transparent;
+  box-shadow: none;
+}
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
 .scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }

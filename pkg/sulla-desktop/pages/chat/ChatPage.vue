@@ -56,7 +56,7 @@
           @pick="onSuggestion"
         />
         <Transcript v-else :reporting-level="reportingLevel" />
-        <Composer v-if="!props.supportSendBlocked" />
+        <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
       </main>
 
       <template v-if="!dockSide">

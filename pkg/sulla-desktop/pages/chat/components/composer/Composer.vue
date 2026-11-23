@@ -217,6 +217,7 @@
       </div>
 
       <div
+        v-if="reportingLevel !== 'info'"
         class="hints"
         :class="{ 'hints-contextual': contextualHints }"
       >
@@ -304,6 +305,10 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import type { ReportingLevel } from '../../models/ReportingLevel';
+
+const props = defineProps<{ reportingLevel: ReportingLevel }>();
+const reportingLevel = computed(() => props.reportingLevel);
 
 const controller = useChatController();
 

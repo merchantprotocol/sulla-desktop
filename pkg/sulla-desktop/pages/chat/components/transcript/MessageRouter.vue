@@ -17,7 +17,7 @@
 -->
 <template>
   <TurnUser        v-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
-  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="latestReply"
+  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="latestReply" :reporting-level="reportingLevel"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
   />
@@ -56,7 +56,7 @@
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
   <SubAgentBubble  v-else-if="msg.kind === 'subagent'"  :msg="msg" />
   <SubAgentExchange v-else-if="msg.kind === 'subagent_exchange'" :msg="msg" />
-  <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" />
+  <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" :reporting-level="reportingLevel" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
   <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
   <HeartbeatMessage v-else-if="msg.kind === 'heartbeat'" :msg="msg" />
@@ -96,9 +96,10 @@ import ToolApproval    from '../tool/ToolApproval.vue';
 import ToolQuestion    from '../tool/ToolQuestion.vue';
 import ToolTask        from '../tool/ToolTask.vue';
 import type { CardMessage } from './toolGroups';
+import type { ReportingLevel } from '../../models/ReportingLevel';
 import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CardMessage; latestReply?: boolean }>();
+const props = defineProps<{ msg: CardMessage; latestReply?: boolean; reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();
 const mainDecisionTranscript = inject('chat:main-decision-transcript', ref(false));
