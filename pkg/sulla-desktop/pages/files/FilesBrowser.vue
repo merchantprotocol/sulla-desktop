@@ -127,12 +127,12 @@ import FilesBrowserToolbar from './browser/components/FilesBrowserToolbar.vue';
 import FilesBrowserTopBar from './browser/components/FilesBrowserTopBar.vue';
 import { useFilesBrowser } from './browser/useFilesBrowser';
 
-import type { FilesNavigationPayload } from '@pkg/composables/useBrowserTabs';
+import type { FilesNavigationPayload, FilesNavigationResult } from '@pkg/composables/useBrowserTabs';
 
 import type { FilesDataSource, FilesItem } from './types';
 
 const props = defineProps<{ dataSource: FilesDataSource; tabId: string; navigation?: FilesNavigationPayload }>();
-const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:FilesItem, collectionId?:string] }>();
+const emit = defineEmits<{ 'navigation-consumed': []; 'navigation-result': [result:FilesNavigationResult]; 'open-editor': [item:FilesItem, collectionId?:string] }>();
 const browser = useFilesBrowser(props, emit);
 const { icons } = browser;
 const dataSource = computed(() => props.dataSource);

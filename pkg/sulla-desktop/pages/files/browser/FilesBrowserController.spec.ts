@@ -89,6 +89,55 @@ describe('FilesBrowserController', () => {
     expect(emit).toHaveBeenCalledExactlyOnceWith('navigation-consumed');
   });
 
+  // risk: data integrity. A nested file reference must select its file row, never navigate into a path as if it were a folder.
+  it.each([
+    ['ID hit', 'hit'],
+    ['ID miss', 'miss'],
+    ['ID rejection', 'reject'],
+    ['path only', 'path'],
+    ['unavailable path', 'unavailable'],
+  ] as const)('opens a nested file in the viewer after an %s lookup', async(_label, lookupResult) => {
+    const fileId = 'synthetic-video';
+    const file = (await source.detail(fileId)).item!;
+    const parent = file.path.slice(0, file.path.lastIndexOf('/'));
+    expect(file.path).toContain('/');
+    browser.state.snapshot.value = { ...browser.state.snapshot.value!, files: browser.state.snapshot.value!.files.filter(item => item.id !== fileId) };
+
+    let lookup:(ids:string[])=>Promise<Array<typeof file>> = async() => [];
+    if (lookupResult === 'hit') lookup = async() => [file];
+    if (lookupResult === 'reject') lookup = async() => { throw new Error('metadata lookup failed'); };
+    const dataSource = source as unknown as FilesDataSource & {
+      filesByIds: (ids:string[])=>Promise<Array<typeof file>>;
+      loadFolder: (path:string)=>Promise<Array<typeof file>>;
+    };
+    const filesByIds = vi.fn((ids:string[]) => lookup(ids));
+    const loadFolder = vi.fn(async(path:string):Promise<Array<typeof file>> => path === parent && lookupResult !== 'unavailable' ? [file] : []);
+    dataSource.filesByIds = filesByIds;
+    dataSource.loadFolder = loadFolder;
+    if (lookupResult !== 'hit') vi.spyOn(source, 'detail').mockRejectedValue(new Error('metadata detail failed'));
+
+    const request = lookupResult === 'path'
+      ? { path: file.path, openKind: 'file' as const }
+      : { fileId, path: file.path, openKind: 'file' as const };
+    const opened = await browser.navigation.navigateTo(request);
+
+    if (lookupResult === 'unavailable') {
+      expect(opened).toBe(false);
+      expect(browser.state.selected.value).toBeNull();
+      expect(browser.state.navigationError.value).toContain('no longer available');
+    } else {
+      expect(opened).toBe(true);
+      expect(browser.state.currentPath.value).toBe(parent);
+      expect(browser.state.currentPath.value).not.toBe(file.path);
+      expect(browser.state.selected.value).toMatchObject({ id: fileId, path: file.path });
+      expect(browser.state.navigationError.value).toBe('');
+    }
+    if (lookupResult === 'path') expect(filesByIds).not.toHaveBeenCalled();
+    else expect(filesByIds).toHaveBeenCalledExactlyOnceWith([fileId]);
+    if (lookupResult === 'hit') expect(loadFolder).not.toHaveBeenCalled();
+    else expect(loadFolder).toHaveBeenCalledWith(parent);
+  });
+
   // risk: an immutable URL opens the current file instead, or Link publishes on click.
   it('opens the exact older version, defaults a bare reference, and only reviews sharing', async() => {
     const fileId = 'synthetic-video';

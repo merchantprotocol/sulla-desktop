@@ -27,6 +27,18 @@ export interface FilesNavigationPayload {
   path?:    string;
   section?: string;
   collectionId?: string;
+  /** Correlates a files/open request with the viewer selection result. */
+  openRequestId?: string;
+  /** Keeps file paths distinct from folder-navigation paths. */
+  openKind?: 'file' | 'folder';
+}
+
+export interface FilesNavigationResult {
+  requestId: string;
+  opened: boolean;
+  path: string;
+  kind: 'file' | 'folder';
+  error?: string;
 }
 
 export interface BrowserTab {

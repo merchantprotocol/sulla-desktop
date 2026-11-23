@@ -617,13 +617,12 @@ function onAgentCommand(_event: any, args: any) {
     // normal navigation input reaches the same navigateTo -> selectEntry/openPath
     // path used by a click and keeps viewer behavior in one place.
     const filesNavigation = args.kind === 'folder'
-      ? { path: args.path, collectionId: args.collectionId }
-      : { fileId: args.fileId, path: args.path, collectionId: args.collectionId };
+      ? { path: args.path, collectionId: args.collectionId, openRequestId: args.requestId, openKind: 'folder' as const }
+      : { fileId: args.fileId, path: args.path, collectionId: args.collectionId, openRequestId: args.requestId, openKind: 'file' as const };
     const existing = browserTabs.find(tab => tab.mode === 'files');
     const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
     if (existing) updateTab(existing.id, { filesNavigation });
     if (args.focus !== false) router.push(`/Browser/${ tab.id }`);
-    reply({ opened: true, tabId: tab.id, path: args.path, how: args.kind === 'folder' ? 'file-manager-folder' : 'file-manager-viewer' });
     break;
   }
   case 'open-url': {

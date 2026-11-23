@@ -313,6 +313,7 @@
           :tab-id="props.tabId"
           :navigation="getTab(props.tabId)?.filesNavigation"
           @navigation-consumed="updateTab(props.tabId, { filesNavigation: undefined })"
+          @navigation-result="onFilesNavigationResult"
         />
       </div>
     </template>
@@ -418,7 +419,7 @@ import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import HtmlMessageRenderer from '@pkg/components/HtmlMessageRenderer.vue';
 import { isStudioSection, type StudioSection } from '@pkg/components/routines/studioSections';
 import { useBookmarks } from '@pkg/composables/useBookmarks';
-import { isBrowserTabTransferPending, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { isBrowserTabTransferPending, useBrowserTabs, type BrowserTabMode, type FilesNavigationResult } from '@pkg/composables/useBrowserTabs';
 import { useFocusGuard } from '@pkg/composables/useFocusGuard';
 import { useTheme } from '@pkg/composables/useTheme';
 import { useVaultUnlock } from '@pkg/composables/useVaultUnlock';
@@ -484,6 +485,13 @@ const { isDark, toggleTheme } = useTheme();
 const { updateTab, getTab, createTab, promoteTab } = useBrowserTabs();
 const { findByUrl, addBookmark } = useBookmarks();
 const { showOverlay } = useStartupProgress();
+
+function onFilesNavigationResult(result:FilesNavigationResult):void {
+  const reply = result.opened
+    ? { opened: true, tabId: props.tabId, path: result.path, how: result.kind === 'folder' ? 'file-manager-folder' : 'file-manager-viewer' }
+    : { error: result.error || 'The File Manager could not select the requested item.' };
+  ipcRenderer.send(`agent-command-result:${ result.requestId }` as any, reply);
+}
 
 const tabMode = computed<BrowserTabMode>(() => getTab(props.tabId)?.mode || 'welcome');
 const tabContent = computed(() => getTab(props.tabId)?.content || '');
