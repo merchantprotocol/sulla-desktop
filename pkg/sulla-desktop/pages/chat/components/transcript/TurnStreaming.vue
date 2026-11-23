@@ -10,7 +10,7 @@
 -->
 <template>
   <div class="chat-turn sulla chat-fade-in">
-    <span class="chat-role"><span
+    <span v-if="reportingLevel !== 'info'" class="chat-role"><span
       class="noir-avatar"
       aria-hidden="true"
     >S</span>Sulla · {{ timeLabel }} · responding</span>
@@ -32,8 +32,11 @@ import { computed } from 'vue';
 
 import InlineReplyBody from './InlineReplyBody.vue';
 import type { StreamingMessage } from '../../models/Message';
+import type { ReportingLevel } from '../../models/ReportingLevel';
 
-const props = defineProps<{ msg: StreamingMessage }>();
+const props = withDefaults(defineProps<{ msg: StreamingMessage; reportingLevel?: ReportingLevel }>(), {
+  reportingLevel: 'debug',
+});
 
 const timeLabel = computed(() => {
   const d = new Date(props.msg.createdAt);

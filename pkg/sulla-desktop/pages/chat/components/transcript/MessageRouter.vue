@@ -24,7 +24,7 @@
   <div v-else-if="msg.kind === 'html'" class="chat-turn sulla chat-fade-in">
     <InlineReplyBody class="chat-body" :text="msg.html" legacy-html />
   </div>
-  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" />
+  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :reporting-level="reportingLevel" />
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
   <div v-else-if="mainDecisionTranscript && decisionId && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
