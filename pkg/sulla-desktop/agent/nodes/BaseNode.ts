@@ -2102,7 +2102,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'chat_tool_activity' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
+    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'chat_tool_activity' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch' || kind === 'inline_file_reference';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }
