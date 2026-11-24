@@ -52,7 +52,9 @@ import {
   getRetiredBuiltinSlugs,
   hashManagedContent,
   readGitIdentity,
+  RETIRED_CODING_MANAGER_SLUGS,
   renderBuiltinAgent,
+  isRetiredCodingManagerSlug,
   type BuiltinAgentSpec,
   type BuiltinManagedContent,
 } from './index';
@@ -213,6 +215,7 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
 
   for (const spec of specs) {
     try {
+      if (isRetiredCodingManagerSlug(spec.slug)) continue;
       const content = renderBuiltinAgent(spec, home, git);
       const bundleHash = hashManagedContent(content);
       const row = await AgentDefinitionModel.findBySlug(spec.slug);
@@ -268,6 +271,11 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
     }
   }
 
+  // These manager rows were not bundle built-ins. Archive by exact slug regardless of source
+  // and remove any matching worker binding; registration paths independently refuse the slugs.
+  const retiredManagers = await retireLongTailCodingManagers();
+  summary.errors.push(...retiredManagers.errors);
+
   return summary;
 }
 
@@ -290,6 +298,45 @@ export function shouldRetireBuiltin(row: AgentDefinition | null, handledBefore: 
 export interface BuiltinRetireSummary {
   disabled: number;
   errors:   string[];
+}
+
+export interface RetiredCodingManagerSummary {
+  archived: number;
+  errors:   string[];
+}
+
+/**
+ * Permanently retire the legacy Coding Manager variants across all row origins. Existing rows
+ * and history stay in place; repeated startup checks both enforce archive/disabled state and
+ * retry worker-binding cleanup if a previous call failed.
+ */
+export async function retireLongTailCodingManagers(
+  slugs: readonly string[] = RETIRED_CODING_MANAGER_SLUGS,
+): Promise<RetiredCodingManagerSummary> {
+  const summary: RetiredCodingManagerSummary = { archived: 0, errors: [] };
+  for (const slug of slugs) {
+    let row: AgentDefinition | null;
+    try {
+      row = await AgentDefinitionModel.findBySlug(slug);
+      if (!row) continue;
+      if (row.enabled || row.status !== 'archive') {
+        const archived = await AgentDefinitionModel.update(row.id, { enabled: false, status: 'archive' });
+        if (!archived) throw new Error(`Could not archive retired agent ${ slug }.`);
+        summary.archived++;
+      }
+    } catch (error) {
+      summary.errors.push(`${ slug }: ${ error instanceof Error ? error.message : String(error) }`);
+      continue;
+    }
+
+    try {
+      const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+      await workerModelRouting.removeBindingForDefinition(slug, row.id);
+    } catch (error) {
+      summary.errors.push(`${ slug } worker binding: ${ error instanceof Error ? error.message : String(error) }`);
+    }
+  }
+  return summary;
 }
 
 /**

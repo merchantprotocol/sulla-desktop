@@ -75,7 +75,7 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
 
   function fakeGraph(threadId: string, execute: (state: any) => Promise<void>) {
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (slug === 'coding-manager-sol' ? { slug, run_location: 'vm' } as any : null));
+      (slug === 'coding-manager' ? { slug, run_location: 'vm' } as any : null));
     vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation(async() => {
       const state = { metadata: { threadId, wsChannel: channelId, options: {}, agent: {} }, messages: [] as any[] };
       return { graph: { execute: vi.fn(async() => execute(state)) }, state } as any;
@@ -94,7 +94,7 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
 
     const instance = bareInstance();
     const dispatchSpy = vi.spyOn(instance as any, 'dispatchToAgent');
-    await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch([entry]), threadId, undefined, 'coding-manager-sol', 'system', {
+    await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch([entry]), threadId, undefined, 'coding-manager', 'system', {
       source: 'sub_agent_completion', completionEntries: [entry],
     });
 
@@ -119,11 +119,11 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     // Stand-in for handleCompletionWake: the backed-off retry re-enters through the idle dispatcher.
     inbox.registerCompletionIdleDispatcher((channel, thread) => {
       const entries = inbox.takeAgentCompletions(channel, thread);
-      if (entries.length) void (instance as any).dispatchToAgent(channel, 'sulla-desktop', inbox.formatCompletionBatch(entries), thread, undefined, 'coding-manager-sol', 'system', {
+      if (entries.length) void (instance as any).dispatchToAgent(channel, 'sulla-desktop', inbox.formatCompletionBatch(entries), thread, undefined, 'coding-manager', 'system', {
         source: 'sub_agent_completion', completionEntries: entries,
       });
     });
-    await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch([entry]), threadId, undefined, 'coding-manager-sol', 'system', {
+    await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch([entry]), threadId, undefined, 'coding-manager', 'system', {
       source: 'sub_agent_completion', completionEntries: [entry],
     });
     expect(calls).toBe(1); // no immediate re-run of the failing turn
@@ -148,7 +148,7 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     const instance = bareInstance();
     const liveAbort = new AbortService();
     (instance as any).activeAborts.set(`${ channelId }|${ threadId }`, liveAbort);
-    const receipt = await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch(claimed), threadId, undefined, 'coding-manager-sol', 'system', {
+    const receipt = await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', inbox.formatCompletionBatch(claimed), threadId, undefined, 'coding-manager', 'system', {
       source: 'sub_agent_completion', completionEntries: claimed,
     });
 
@@ -177,7 +177,7 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
     });
     inbox.completionInboxStore.registerStallValidator(async() => false);
     await (instance as any).executeReadyTurn(channelId, 'sulla-desktop', 'current parent turn', threadId,
-      undefined, 'coding-manager-sol', 'system');
+      undefined, 'coding-manager', 'system');
     await vi.waitFor(() => expect(batches).toHaveLength(2));
     expect(batches[1].text).toContain('real child return');
     expect(batches[1].text).not.toContain('obsolete-stall');
