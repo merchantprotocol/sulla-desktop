@@ -129,7 +129,7 @@ const syncInput = (): void => {
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
   queue.observe(props.checkIns, props.threadId, now, visible);
   historyItems.value = queue.history;
-  if (mounted) refresh();
+  if (mounted.value) refresh();
 };
 
 const togglePinned = (): void => {
@@ -159,7 +159,7 @@ watch(
 );
 
 onMounted(() => {
-  mounted = true;
+  mounted.value = true;
   documentVisible.value = !document.hidden;
   document.addEventListener('visibilitychange', syncVisibility);
   if (typeof window.matchMedia === 'function') {
@@ -172,7 +172,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  mounted = false;
+  mounted.value = false;
   if (timer !== undefined) window.clearInterval(timer);
   document.removeEventListener('visibilitychange', syncVisibility);
   motionQuery?.removeEventListener('change', syncReducedMotion);
