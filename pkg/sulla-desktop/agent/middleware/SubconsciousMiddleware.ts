@@ -359,7 +359,7 @@ export async function runSubconsciousMiddleware(
     const reset = Boolean(meta.cliCompactedAt && meta.v7LedgerCompactedAt !== meta.cliCompactedAt) || Boolean(meta.v7LedgerSummarizedAt && meta.v7LedgerSummarizedAt !== meta.lastV7LedgerSummaryReset);
     const observations = String(recallMeta.observationalMemoryContext || '');
     const observationCost = measureInjectedMemoryBlocks(observations, '');
-    const brainBudget = MEMORY_CHAR_BUDGET - observationCost;
+    const brainBudget = MEMORY_CHAR_BUDGET - observationCost - 500;
     const measureBrain = (brain: string) => measureInjectedMemoryBlocks(observations, brain) - observationCost;
     awaitedTasks.push(timed('v7-subject-memory', 'Recalling subject memory', recallV7SubjectMemory(
       recentUserTexts(recallState, 3), threadId, reset, { budget: brainBudget, measureBrain }
