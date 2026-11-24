@@ -23,6 +23,8 @@ import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import InlineFileCard from './InlineFileCard.vue';
 import InlineTextPreview from './inline/InlineTextPreview.vue';
 import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
+import type { FilesSaveSuccess } from '@pkg/pages/files/types';
+import type { MarkdownSaveOutcome } from './inline/MarkdownEditSession';
 
 type Reference = { fileId: string; collectionId: string; toolCallId: string; threadId: string };
 
@@ -42,7 +44,7 @@ const content = ref('');
 const versionId = ref('');
 const truncated = ref(false);
 const textKind = ref<'markdown' | 'code' | 'csv' | undefined>();
-const saveOutcome = ref<any>(null);
+const saveOutcome = ref<MarkdownSaveOutcome | null>(null);
 
 function bytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
@@ -76,8 +78,20 @@ async function openInTab(reference: InlineFileActionReference): Promise<void> { 
 async function showInFiles(reference: InlineFileActionReference): Promise<void> { await openWorkspaceTab({ mode: 'files', title: 'File Manager', filesNavigation: { fileId: reference.fileId, path: reference.path, section: 'detail', collectionId: props.reference.collectionId, ...(versionId.value ? { versionId: versionId.value } : {}) } }); }
 async function download(reference: InlineFileActionReference): Promise<void> { await ipcRenderer.invoke('files-ui:download-file', { fileId: reference.fileId, name: reference.name }); }
 async function saveMarkdown(request: { requestId: number; content: string; baseVersionId: string }): Promise<void> {
-  try { const result = await ipcRenderer.invoke('sulla-files:save-content', { fileId: props.reference.fileId, baseVersionId: request.baseVersionId || versionId.value, content: request.content }) as any; if (result?.versionId) { versionId.value = result.versionId; saveOutcome.value = { requestId: request.requestId, status: 'saved', content: request.content, versionToken: result.versionId }; } }
-  catch (error) { const cause = error as any; saveOutcome.value = { requestId: request.requestId, status: cause?.code === 'VERSION_CONFLICT' || cause?.status === 409 ? 'conflict' : 'error', message: cause?.message || 'Unable to save this file.', currentVersionToken: cause?.currentVersionId }; }
+  try {
+    const result = await ipcRenderer.invoke('sulla-files:save-content', {
+      fileId: props.reference.fileId, baseVersionId: request.baseVersionId || versionId.value, content: request.content,
+    }) as FilesSaveSuccess | { conflict: { error: string; currentVersionId: string } };
+    if ('conflict' in result && result.conflict) {
+      saveOutcome.value = { requestId: request.requestId, status: 'conflict', message: result.conflict.error, currentVersionToken: result.conflict.currentVersionId };
+      return;
+    }
+    versionId.value = result.versionId;
+    saveOutcome.value = { requestId: request.requestId, status: result.status, content: result.content, versionToken: result.versionId };
+  } catch (error) {
+    const cause = error as any;
+    saveOutcome.value = { requestId: request.requestId, status: 'error', message: cause?.message || 'Unable to save this file.' };
+  }
 }
 onMounted(load);
 </script>
