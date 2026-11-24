@@ -230,20 +230,6 @@ defineExpose({ scroller, scrollToBottom });
 }
 .transcript-standard .scroller {
   padding-top: 112px;
-  /* Keep the floating title legible while older replies scroll under it. */
-  mask-image:
-    linear-gradient(to bottom, transparent 0, #000 112px),
-    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
-  mask-composite: intersect;
-  -webkit-mask-image:
-    linear-gradient(to bottom, transparent 0, #000 112px),
-    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
-  -webkit-mask-composite: source-in;
-}
-.transcript-standard .scroller.has-scroll-pill {
-  /* The reserved pill lane replaces the bottom fade but retains title protection. */
-  mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
 }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
 .report-entry-standard-evidence-after-reply { margin-top: -12px; }

@@ -117,6 +117,10 @@ export interface DreamCursorStore {
   getIntervalMinutes(): Promise<number>;
 }
 
+export interface DuplicateSweepRunner {
+  sweep(): Promise<void>;
+}
+
 export interface DreamModel {
   /** Exactly one model call. Returns the raw text response, or null when the model produced none. */
   dream(systemPrompt: string, userMessage: string): Promise<string | null>;
@@ -230,6 +234,7 @@ export interface V7DreamerDeps {
   policy?:    DreamWindowPolicy;
   validator?: DreamOutputValidator;
   prompts?:   DreamPromptBuilder;
+  sweeper?:   DuplicateSweepRunner;
 }
 
 export class V7Dreamer {
@@ -279,6 +284,14 @@ export class V7Dreamer {
       const intervalMs = DreamWindowPolicy.intervalMs(intervalMinutes);
       if (!options.force && !this.policy.isDue(startedAt, lastWindowEnd, intervalMs)) {
         return this.finish(options, startedAt, { outcome: 'skipped_not_due', window: null, reason: `next dream due ${ new Date((lastWindowEnd ?? 0) + intervalMs).toISOString() }` });
+      }
+
+      if (this.deps.sweeper) {
+        try {
+          await this.deps.sweeper.sweep();
+        } catch (err) {
+          this.log(`[DreamDuplicateSweeper] failed: ${ err instanceof Error ? err.message : String(err) }`);
+        }
       }
 
       window = this.policy.select(startedAt, lastWindowEnd, intervalMs);

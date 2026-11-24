@@ -32,3 +32,12 @@ export const CODEX_NATIVE_SPAWN_FEATURE_PINS = [
   'features.plugins=false',
   'features.remote_plugin=false',
 ];
+
+/** Disable Codex-native memories, including their agent-callable tool surface. */
+export const CODEX_MEMORY_CONFIG_OVERRIDES = [
+  'features.memories=false',
+  'features.external_agent_memory_import=false',
+  'memories.generate_memories=false',
+  'memories.use_memories=false',
+  'memories.dedicated_tools=false',
+];

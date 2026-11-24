@@ -9,6 +9,14 @@ import { POTION_MODEL_NAME } from './MemoryRecallService';
 import { PotionEmbedder } from './potionEmbedder';
 import { resolveBundledModelDir } from '../utils/sullaPaths';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
+import { CheckinIdentity } from './CheckinIdentity';
+import {
+  MEMORY_CHAR_BUDGET,
+  MemoryBudgetPacker,
+  measureInjectedMemoryBlocks,
+  type MemoryBudgetResult,
+  type MemoryCandidate,
+} from './MemoryBudget';
 
 interface Subject {
   slug: string;
@@ -17,11 +25,14 @@ interface Subject {
   parent: string | null;
   aliases: string[];
 }
-interface Episode {
+export interface Episode {
   id: string;
   ts: number;
+  conversationId?: string | null;
+  source: string;
   text: string;
   keys: string[];
+  sentiment?: string | null;
 }
 interface Item {
   id: string;
@@ -46,10 +57,11 @@ interface Skill {
   body: string;
   strength: number;
 }
-interface Cache {
+export interface V7SubjectMemoryCache {
   signature: string;
   subjects: Map<string, Subject>;
   episodes: Episode[];
+  checkinIdentities: Map<string, string | null>;
   items: Item[];
   evidence: Map<string, string[]>;
   overviews: Map<string, { ts: number; text: string }[]>;
@@ -59,6 +71,8 @@ interface Cache {
   skillVectors: Map<string, Float32Array>;
   subjectVectors: Map<string, Float32Array>;
 }
+
+type Cache = V7SubjectMemoryCache;
 
 let model: PotionEmbedder | null | undefined;
 let cache: Cache | null = null;
@@ -122,7 +136,7 @@ function embedder(): PotionEmbedder | null {
 
 async function signature(): Promise<string> {
   const r = await postgresClient.query<{ sig: string }>(
-    `SELECT concat_ws('|',(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.episodes),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.items),(SELECT count(*)||':'||coalesce(max(version_ts),0) FROM subject_memory.skills),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.overviews),(SELECT count(*)||':'||coalesce(max(updated_ts),0) FROM subject_memory.subjects)) sig`
+    `SELECT concat_ws('|',(SELECT count(*)||':'||coalesce(max(ts),0)||':'||count(*) FILTER (WHERE superseded_by IS NOT NULL) FROM subject_memory.episodes),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.items),(SELECT count(*)||':'||coalesce(max(version_ts),0) FROM subject_memory.skills),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.overviews),(SELECT count(*)||':'||coalesce(max(updated_ts),0) FROM subject_memory.subjects)) sig`
   );
   return r[0]?.sig || '';
 }
@@ -138,7 +152,7 @@ async function load(): Promise<Cache> {
           'SELECT slug,kind,name,parent,aliases FROM subject_memory.subjects'
         ),
         postgresClient.query<Episode>(
-          'SELECT id,ts,text,keys FROM subject_memory.episodes ORDER BY id'
+          'SELECT id,ts,conversation_id AS "conversationId",source,text,keys,sentiment FROM subject_memory.episodes WHERE superseded_by IS NULL ORDER BY id'
         ),
         postgresClient.query<Item>(
           'SELECT * FROM subject_memory.current_items()'
@@ -159,6 +173,17 @@ async function load(): Promise<Cache> {
       signature: sig,
       subjects: new Map(subjects.map((x) => [x.slug, x])),
       episodes,
+      checkinIdentities: new Map(episodes.map((episode) => [
+        episode.id,
+        CheckinIdentity.keyFor({
+          id: episode.id,
+          text: episode.text,
+          source: episode.source,
+          keys: episode.keys,
+          conversationId: episode.conversationId,
+          sentiment: episode.sentiment,
+        }),
+      ] as const)),
       items,
       evidence: new Map(),
       overviews: new Map(),
@@ -221,23 +246,43 @@ function itemLine(i: Item, sent: Set<string>, origin?: Episode) {
   }${i.confirmed ? '' : ' (tentative)'} [${day(Number(i.ts))}]`;
   if (i.supersedes && sent.has(`i:${i.supersedes}`))
     s += ' _(replaces the earlier version you were given; follow this one)_';
-  if (origin && !sent.has(`e:${origin.id}`))
-    s += `\n  - Came from: ${origin.text}`;
+  if (origin && !sent.has(`e:${origin.id}`)) {
+    const originLine = `  - Came from: [${day(origin.ts)}] ${origin.text}`;
+    s += `\n${ originLine.length > 400 ? MemoryBudgetPacker.shortenTimelineEntry(originLine) : originLine }`;
+  }
   return s;
 }
 
-/** Mechanical v7 recall. Documents are intentionally not squeezed into the old 10k budget. */
+export interface V7SubjectMemoryDependencies {
+  load?: () => Promise<V7SubjectMemoryCache>;
+  embedder?: () => PotionEmbedder | null;
+  packer?: MemoryBudgetPacker;
+  sentLedger?: Pick<SubjectMemorySentModel, 'clearThread' | 'deleteExpiredBatch' | 'activeKeys' | 'record'>;
+  getPrimaryUserName?: () => Promise<string>;
+}
+
+export interface V7SubjectMemoryOptions {
+  budget?: number;
+  measureBrain?: (brain: string) => number;
+  dependencies?: V7SubjectMemoryDependencies;
+}
+
+/** Mechanical v7 recall packed as whole entries under the injected-memory cap. */
 export async function recallV7SubjectMemory(
   context: string[],
   threadId: string,
-  reset = false
-): Promise<string | null> {
-  const c = await load(),
-    e = embedder();
+  reset = false,
+  options: V7SubjectMemoryOptions = {},
+): Promise<MemoryBudgetResult | null> {
+  const dependencies = options.dependencies || {};
+  const c = await (dependencies.load || load)();
+  const e = (dependencies.embedder || embedder)();
   if (!e) return null;
+  const measureBrain = options.measureBrain || ((brain: string) => measureInjectedMemoryBlocks('', brain));
+  const packer = dependencies.packer || new MemoryBudgetPacker(options.budget ?? MEMORY_CHAR_BUDGET, measureBrain);
   const cue = context.join('\n');
   const q = e.embed(cue);
-  const sentLedger = new SubjectMemorySentModel();
+  const sentLedger = dependencies.sentLedger || new SubjectMemorySentModel();
   if (reset) await sentLedger.clearThread(threadId);
   await sentLedger.deleteExpiredBatch();
   const sent = await sentLedger.activeKeys(threadId);
@@ -252,7 +297,12 @@ export async function recallV7SubjectMemory(
       .toLowerCase()
       .split(/\W+/)
       .reduce((n, x) => n + (lexical.has(x) ? 1 : 0), 0);
-  const hits = c.episodes
+  const episodes = packer.collapseCheckinGroups(
+    c.episodes,
+    (episode) => c.checkinIdentities.get(episode.id),
+    sent,
+  );
+  const hits = episodes.entries
     .map((x) => ({
       x,
       s: c.epVectors.get(x.id)
@@ -267,7 +317,7 @@ export async function recallV7SubjectMemory(
       if (!['global', 'major'].includes(c.subjects.get(k)?.kind || ''))
         episodeSubjectScore.set(k, (episodeSubjectScore.get(k) || 0) + h.s / (1 + rank / 10));
   const loweredCue = cue.toLowerCase();
-  const candidates = [...c.subjects.values()]
+  const subjectCandidates = [...c.subjects.values()]
     .filter(s => !['global', 'major'].includes(s.kind))
     .map(s => {
       const literal = [s.name, ...(s.aliases || [])].some(n => n.length > 3 && loweredCue.includes(n.toLowerCase()));
@@ -278,7 +328,7 @@ export async function recallV7SubjectMemory(
     .sort((a,b) => b.score-a.score);
   const chosen: string[] = [];
   let vectorOnly = 0;
-  for (const candidate of candidates) {
+  for (const candidate of subjectCandidates) {
     const only = !candidate.literal && candidate.episode <= 0;
     if (only && vectorOnly >= 2) continue;
     if (only) vectorOnly++;
@@ -307,20 +357,63 @@ export async function recallV7SubjectMemory(
       .filter((i) => !used.has(i.id) && f(i))
       .slice(0, n)
       .map((i) => (used.add(i.id), i));
-  const sullaSeed = take((i) => i.origin === 'seeded' && i.scope.some(scope => scope === 'sulla' || scope === 'global'), 100),
-    always = take((i) => i.always_on && i.origin !== 'seeded', 50),
-    global = take((i) => i.origin !== 'seeded' && i.kind === 'policy' && i.scope.includes('global'), 60),
-    facts = take(
-      (i) => i.origin !== 'seeded' && i.kind === 'conclusion' && i.scope.includes('global'),
-      25
-    );
-  const docs: string[] = [];
-  const section = (title: string, rows: Item[]) =>
-    rows.length
-      ? `\n### ${title}\n${rows
-          .map((i) => itemLine(i, sent, origin.get(i.id)))
-          .join('\n')}`
-      : '';
+  const always = take((i) => i.always_on && i.origin !== 'seeded', 50);
+  const global = take((i) => i.origin !== 'seeded' && i.kind === 'policy' && i.scope.includes('global'), 60);
+  const facts = take(
+    (i) => i.origin !== 'seeded' && i.kind === 'conclusion' && i.scope.includes('global'),
+    25
+  );
+  const sullaSeed = take((i) => i.origin === 'seeded' && i.scope.some(scope => scope === 'sulla' || scope === 'global'), 100);
+  const projectRows = chosen.map((slug) => {
+    const subject = c.subjects.get(slug)!;
+    const line = lineage(c, slug);
+    const major = line.filter((x) => c.subjects.get(x)?.kind === 'major');
+    const majorRules = take((i) => i.kind === 'policy' && i.scope.some((x) => major.includes(x)), 25);
+    const rules = take((i) => i.kind === 'policy' && i.scope.some((x) => line.includes(x)), 40);
+    const conclusions = take((i) => i.kind === 'conclusion' && i.scope.some((x) => line.includes(x)), 25);
+    return {
+      slug,
+      subject,
+      line,
+      majorRules,
+      rules,
+      conclusions,
+      overview: (c.overviews.get(slug) || []).at(-1),
+    };
+  });
+  const chosenSubjects = chosen.map((slug, rank) => ({ slug, depth: lineage(c, slug).length, rank }));
+  const assignedEpisodes = packer.assignMostSpecificSubject(episodes.entries, chosenSubjects);
+  const hitsById = new Map(hits.map((hit) => [hit.x.id, hit.s]));
+  const projectRecentBySlug = new Map<string, Episode[]>();
+  const standaloneEpisodeIds = new Set<string>();
+  for (const row of projectRows) {
+    const recent = (assignedEpisodes.get(row.slug) || [])
+      .filter((episode) => episode.keys?.includes(row.slug))
+      .sort((a, b) => b.ts - a.ts || (hitsById.get(b.id) || 0) - (hitsById.get(a.id) || 0))
+      .slice(0, 25)
+      .reverse();
+    projectRecentBySlug.set(row.slug, recent);
+    recent.forEach((episode) => standaloneEpisodeIds.add(episode.id));
+  }
+  const history = hits
+    .filter((hit) => !standaloneEpisodeIds.has(hit.x.id))
+    .sort((a, b) => b.x.ts - a.x.ts || b.s - a.s)
+    .slice(0, 20)
+    .reverse()
+    .map((hit) => hit.x);
+  history.forEach((episode) => standaloneEpisodeIds.add(episode.id));
+  const projectRuleItems: Array<{ slug: string; item: Item }> = [];
+  for (let index = 0; projectRows.some((row) => index < Math.max(row.majorRules.length, row.rules.length)); index++) {
+    for (const row of projectRows) {
+      if (row.majorRules[index]) projectRuleItems.push({ slug: row.slug, item: row.majorRules[index] });
+      if (row.rules[index]) projectRuleItems.push({ slug: row.slug, item: row.rules[index] });
+    }
+  }
+  const priority = new Map<string, number>();
+  let nextPriority = 0;
+  for (const item of [...always, ...global]) priority.set(item.id, nextPriority++);
+  for (const row of projectRuleItems) priority.set(row.item.id, nextPriority++);
+  for (const item of sullaSeed) priority.set(item.id, nextPriority++);
   const skills = c.skills
     .map((s) => ({
       s,
@@ -340,90 +433,84 @@ export async function recallV7SubjectMemory(
     .slice(0, 4)
     .filter((x) => !sent.has(`s:${x.s.slug}@${x.s.version_ts}`))
     .map((x) => x.s);
-  if (skills.length)
-    docs.push(
-      `## skills.md — your own habits that apply now\n\n${skills
-        .map((s) => `### ${s.label}\n_Trigger: ${s.trigger_when}_\n\n${s.body}`)
-        .join('\n\n')}`
-    );
-  if (sullaSeed.length)
-    docs.push(`## sulla.md — how Sulla works\n${ section('Shipped rules and facts', sullaSeed) }`);
+  for (const skill of skills) priority.set(`skill:${skill.slug}@${skill.version_ts}`, nextPriority++);
+
   let primaryUserName = 'your human';
   try {
-    primaryUserName = String(await SullaSettingsModel.get('primaryUserName', '') || '').trim() || primaryUserName;
+    primaryUserName = String(await (dependencies.getPrimaryUserName || (() => SullaSettingsModel.get('primaryUserName', '')))() || '').trim() || primaryUserName;
   } catch { /* Settings may not be bootstrapped in an isolated evaluator. */ }
-  docs.push(
-    `## human.md — how ${ primaryUserName } wants Sulla to work everywhere\n${section(
-      'Always',
-      always
-    )}${section('Standing rules and preferences', global)}${section(
-      'Known facts',
-      facts
-    )}`
-  );
-  const shownEpisodes = new Set<string>();
-  const shownOverviews: string[] = [];
-  for (const slug of chosen) {
-    const s = c.subjects.get(slug)!;
-    const line = lineage(c, slug),
-      major = line.filter((x) => c.subjects.get(x)?.kind === 'major');
-    const majorRules = take(
-        (i) => i.kind === 'policy' && i.scope.some((x) => major.includes(x)),
-        25
-      ),
-      rules = take(
-        (i) => i.kind === 'policy' && i.scope.some((x) => line.includes(x)),
-        40
-      ),
-      conclusions = take(
-        (i) => i.kind === 'conclusion' && i.scope.some((x) => line.includes(x)),
-        25
-      );
-    let d = `## project-${s.slug}.md — ${s.name}\n_${line
-      .slice()
-      .reverse()
-      .map((x) => c.subjects.get(x)!.name)
-      .join(' > ')}_\n`;
-    const ov = (c.overviews.get(slug) || []).at(-1);
-    if (ov && !sent.has(`o:${slug}@${ov.ts}`)) {
-      d += `\n${ov.text}\n`;
-      shownOverviews.push(`o:${slug}@${ov.ts}`);
+
+  const candidates: MemoryCandidate[] = [];
+  let displayOrder = 0;
+  const add = (candidate: Omit<MemoryCandidate, 'order'>) => candidates.push({ ...candidate, order: displayOrder++ });
+  const humanHeader = `## human.md — how ${ primaryUserName } wants Sulla to work everywhere`;
+  const includedOriginIds = new Set<string>();
+  const addItems = (rows: Item[], page: string, pageHeader: string, section: string, sectionHeader: string, tier: number, priorityFor: (item: Item) => number | undefined) => {
+    for (const item of rows) {
+      const sourceEpisode = origin.get(item.id);
+      const episodeOrigin = sourceEpisode && !standaloneEpisodeIds.has(sourceEpisode.id) && !includedOriginIds.has(sourceEpisode.id)
+        ? sourceEpisode
+        : undefined;
+      const hasOrigin = Boolean(episodeOrigin && !sent.has(`e:${episodeOrigin.id}`));
+      if (hasOrigin) includedOriginIds.add(episodeOrigin!.id);
+      add({
+        page, pageHeader, section, sectionHeader,
+        keys: [`i:${item.id}`, ...(hasOrigin ? [`e:${episodeOrigin!.id}`] : [])],
+        tier, priorityOrder: priorityFor(item), score: itemScore(item), ts: item.ts,
+        text: itemLine(item, sent, episodeOrigin), entryKey: `i:${item.id}`,
+      });
     }
-    d +=
-      section('Rules for this kind of work', majorRules) +
-      section('Rules and decisions for this subject', rules) +
-      section("What's true", conclusions);
-    const recent = c.episodes
-      .filter((x) => x.keys?.includes(slug) && !sent.has(`e:${x.id}`))
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, 25);
-    if (recent.length)
-      d += `\n### Recent timeline\n${recent
-        .reverse()
-        .map((x) => `- [${day(x.ts)}] ${x.text}`)
-        .join('\n')}`;
-    recent.forEach((x) => shownEpisodes.add(x.id));
-    docs.push(d);
+  };
+  for (const skill of skills) add({
+    page: 'skills', pageHeader: '## skills.md — your own habits that apply now',
+    section: `skill:${skill.slug}@${skill.version_ts}`,
+    sectionHeader: `### ${skill.label}\n_Trigger: ${skill.trigger_when}_`,
+    keys: [`s:${skill.slug}@${skill.version_ts}`], tier: 1,
+    priorityOrder: priority.get(`skill:${skill.slug}@${skill.version_ts}`), score: 0, ts: skill.version_ts,
+    text: skill.body, entryKey: `s:${skill.slug}@${skill.version_ts}`,
+  });
+  addItems(sullaSeed, 'sulla', '## sulla.md — how Sulla works', 'Shipped rules and facts', '### Shipped rules and facts', 1, (item) => priority.get(item.id));
+  addItems(always, 'human', humanHeader, 'Always', '### Always', 1, (item) => priority.get(item.id));
+  addItems(global, 'human', humanHeader, 'Standing rules and preferences', '### Standing rules and preferences', 1, (item) => priority.get(item.id));
+  addItems(facts, 'human', humanHeader, 'Known facts', '### Known facts', 2, () => nextPriority++);
+
+  for (const row of projectRows) {
+    const subjectLine = row.line.slice().reverse().map((x) => c.subjects.get(x)!.name).join(' > ');
+    const page = `project:${row.slug}`;
+    const pageHeader = `## project-${row.slug}.md — ${row.subject.name}\n_${subjectLine}_`;
+    const overview = row.overview;
+    if (overview && !sent.has(`o:${row.slug}@${overview.ts}`)) add({
+      page, pageHeader, section: '', sectionHeader: '', keys: [`o:${row.slug}@${overview.ts}`],
+      tier: 2, priorityOrder: nextPriority++, score: 0, ts: overview.ts,
+      text: overview.text, entryKey: `o:${row.slug}@${overview.ts}`,
+    });
+    addItems(row.majorRules, page, pageHeader, 'Rules for this kind of work', '### Rules for this kind of work', 1, (item) => priority.get(item.id));
+    addItems(row.rules, page, pageHeader, 'Rules and decisions for this subject', '### Rules and decisions for this subject', 1, (item) => priority.get(item.id));
+    addItems(row.conclusions, page, pageHeader, "What's true", "### What's true", 2, () => nextPriority++);
   }
-  const history = hits
-    .map((x) => x.x)
-    .filter((x) => !sent.has(`e:${x.id}`) && !shownEpisodes.has(x.id))
-    .slice(0, 20);
-  if (history.length)
-    docs.push(
-      `## lessons.md — past moments like this one\n${history
-        .reverse()
-        .map((x) => `- [${day(x.ts)}] ${x.text}`)
-        .join('\n')}`
-    );
-  const keys = [...used].map((x) => `i:${x}`);
-  shownEpisodes.forEach((x) => keys.push(`e:${x}`));
-  skills.forEach((x) => keys.push(`s:${x.slug}@${x.version_ts}`));
-  keys.push(...shownOverviews);
-  await sentLedger.record(threadId, keys);
-  return (
-    docs.filter((d) => /^- /m.test(d) || /^### /m.test(d)).join('\n\n') || null
-  );
+
+  for (const row of projectRows) {
+    for (const episode of projectRecentBySlug.get(row.slug) || []) {
+      add({
+        page: `project:${row.slug}`,
+        pageHeader: `## project-${row.slug}.md — ${row.subject.name}\n_${row.line.slice().reverse().map((x) => c.subjects.get(x)!.name).join(' > ')}_`,
+        section: 'Recent timeline', sectionHeader: '### Recent timeline',
+        keys: [`e:${episode.id}`], tier: 3, score: hitsById.get(episode.id) || 0, ts: episode.ts,
+        text: `- [${day(episode.ts)}] ${episode.text}`, entryKey: `e:${episode.id}`, shortenable: true,
+      });
+    }
+  }
+
+  for (const episode of history) add({
+    page: 'lessons', pageHeader: '## lessons.md — past moments like this one',
+    section: '', sectionHeader: '', keys: [`e:${episode.id}`], tier: 3,
+    score: hitsById.get(episode.id) || 0, ts: episode.ts,
+    text: `- [${day(episode.ts)}] ${episode.text}`, entryKey: `e:${episode.id}`, shortenable: true,
+  });
+
+  const result = packer.pack(candidates, episodes.collapsed);
+  await sentLedger.record(threadId, result.keys);
+  return result;
 }
 
 /** Load the store and finish embedding it, so the next recall uses vectors rather than keywords. */
