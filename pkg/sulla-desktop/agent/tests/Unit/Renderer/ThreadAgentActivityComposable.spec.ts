@@ -45,6 +45,28 @@ function flatten(root: WorkerChartAgent | null): string[] {
 }
 
 describe('useThreadAgentActivity', () => {
+  it('provides only active-thread check-ins for the composer status line', () => {
+    // risk: cross-thread agent/check-in disclosure
+    const rows = new RowFactory();
+    const snapshot = ref<AgentStateSnapshot>({
+      version: 1,
+      generatedAt: '2026-11-23T17:02:00.000Z',
+      rows: [
+        rows.create('active:0', 'thread-active', 'thread-active'),
+        rows.create('other:0', 'thread-other', null),
+      ],
+    });
+    const threadId = ref<string | undefined>('thread-active');
+    const activity = useThreadAgentActivity({ snapshot, threadId, now: () => Date.parse('2026-11-23T17:02:00.000Z') });
+
+    expect(activity.checkIns.value.map(item => item.threadId)).toEqual(['thread-active']);
+    expect(activity.checkIns.value.map(item => item.agentId)).toEqual(['agent-active']);
+
+    threadId.value = undefined;
+    expect(activity.checkIns.value).toEqual([]);
+    expect(activity.rootFallback.value).toBeNull();
+  });
+
   it('keeps chart, status items, and root fallback inside the active thread', () => {
     // risk: cross-thread agent/check-in disclosure
     const rows = new RowFactory();
