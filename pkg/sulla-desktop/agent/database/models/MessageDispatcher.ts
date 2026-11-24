@@ -242,6 +242,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
   const replyStreamId = msg.type === 'assistant_message' && typeof data.replyStreamId === 'string'
     ? data.replyStreamId : undefined;
+  const replySegment = replyStreamId && Number.isInteger(data.replySegment) ? data.replySegment as number : undefined;
   const agentReporting = (msg.type === 'assistant_message' || msg.type === 'subconscious_message' || msg.type === 'chat_message') &&
     (data.role === undefined || data.role === 'assistant') &&
     (data.agentReporting === 'brief' || data.agentReporting === 'standard')
@@ -600,6 +601,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         break;
       }
     }
+    // A numbered chunk from a later segment never overwrites an open bubble
+    // from an earlier one (its close sentinel was lost or never sent): close
+    // that bubble and give the new segment its own.
+    const existingSegment = existingIdx !== -1 ? ctx.messages[existingIdx].replySegment : undefined;
+    if (existingIdx !== -1 && replySegment !== undefined && existingSegment !== undefined && existingSegment !== replySegment) {
+      (ctx.messages[existingIdx] as any)._completed = true;
+      existingIdx = -1;
+    }
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent, ...referenceUpdate };
       return;
@@ -620,11 +629,16 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (m.kind !== 'streaming' || m.threadId !== msgThreadId || !belongsToReply(m)) continue;
       const prev = (m.content || '').trim();
       if (!prev) continue;
-      // Only a chunk that extends the latest segment continues it. A shorter
-      // chunk that the old text merely starts with is a new paragraph opening
-      // with the same word ("The…"), and an older segment sits above tool
-      // cards that came after it; reopening either would overwrite it.
-      if (trimmedIncoming.startsWith(prev)) resurrectedIdx = i;
+      // Only the latest segment can continue, never an older one above tool
+      // cards that came after it. When the producer numbers its segments,
+      // identity decides: a new segment never reopens the previous bubble,
+      // even when it opens with that bubble's whole text ("Same" then
+      // "Same word…"). Unnumbered producers fall back to the text check: a
+      // chunk that extends the latest segment continues it, a shorter one is
+      // a new paragraph that merely opens with the same word.
+      if (replySegment !== undefined && m.replySegment !== undefined) {
+        if (m.replySegment === replySegment) resurrectedIdx = i;
+      } else if (trimmedIncoming.startsWith(prev)) resurrectedIdx = i;
       break;
     }
     if (resurrectedIdx !== -1) {
@@ -656,6 +670,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
       ...(replyAttribution ? { replyAttribution } : {}),
       ...(replyStreamId ? { replyStreamId } : {}),
+      ...(replySegment !== undefined ? { replySegment } : {}),
       ...referenceUpdate,
     });
     return;

@@ -1710,10 +1710,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let lastWsStreamingSendAt = 0;
     const replyStreamId = randomUUID();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
+    // Numbers the text segments of this reply. The chat reopens a closed
+    // bubble only for the same segment, never because the text matches.
+    let replySegment = 0;
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
-      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution })
+      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replySegment, replyAttribution })
         .catch(error => console.warn(`[${ this.name }] live reply send failed:`, error));
       streamingOpen = true;
     };
@@ -1750,6 +1753,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       streamingOpen = false;
       contentBuffer = '';
       displayBuffer = '';
+      replySegment++;
 
       return true;
     };
