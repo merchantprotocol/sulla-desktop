@@ -68,7 +68,7 @@ export class FilesOpenWorker extends FilesTool {
       threadId: metadata?.threadId,
       executionThreadId: this.executionContext?.thread_id,
       hasChatTransport: typeof this.sendChatMessage === 'function',
-      isHumanVisibleChatEligible: metadata?.desktopChatVisible === true,
+      isHumanVisibleChatEligible: metadata?.desktopChatVisible === true && metadata?.isSubAgent !== true,
       isChatMuted: !!metadata?._muteWsChat,
       isSubconsciousSilent: !!metadata?.subconsciousSilent,
     });

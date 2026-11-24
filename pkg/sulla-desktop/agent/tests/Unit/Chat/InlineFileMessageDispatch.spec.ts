@@ -5,9 +5,12 @@ import { ref } from 'vue';
 
 import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispatcher';
 import { PersonaAdapter } from '@pkg/pages/chat/services/PersonaAdapter';
+import { InlineFileReferenceMessageFactory } from '@pkg/agent/tools/files/InlineFileReferenceMessage';
 
 const threadId = 'thread-inline-file';
-const file = { file_id: 'file-1', collection_id: 'collection-1', tool_call_id: 'call-1', thread_id: threadId };
+const canonical = new InlineFileReferenceMessageFactory().create({ threadId, toolCallId: 'call-1', fileId: 'file-1', collectionId: 'collection-1' });
+const file = { file_id: canonical.reference.file_id, collection_id: canonical.reference.collection_id, tool_call_id: canonical.tool_call_id, thread_id: canonical.thread_id };
+const inline = canonical;
 
 function context() {
   return {
@@ -25,8 +28,8 @@ describe('inline file reference dispatch', () => {
   it('creates one record, preserves idle graph state, and skips redelivery', () => {
     // risk: idempotency — websocket redelivery must not duplicate a visible file card or alter run state.
     const ctx = context();
-    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: file });
-    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: file });
+    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: inline });
+    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: inline });
     expect(ctx.messages).toHaveLength(1);
     expect(ctx.messages[0]).toMatchObject({ id: `inline-file:agent-1:${threadId}:call-1`, kind: 'inline_file_reference' });
     expect(ctx.graphRunning.value).toBe(false);
@@ -35,8 +38,8 @@ describe('inline file reference dispatch', () => {
   it('keeps distinct tool calls as distinct records for the same file', () => {
     // risk: data accuracy — each agent open has a fresh tool call and needs its own card.
     const ctx = context();
-    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: file });
-    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: { ...file, tool_call_id: 'call-2' } });
+    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: inline });
+    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: new InlineFileReferenceMessageFactory().create({ threadId, toolCallId: 'call-2', fileId: file.file_id, collectionId: file.collection_id }) });
     expect(ctx.messages.map((message: any) => message.id)).toEqual([
       `inline-file:agent-1:${threadId}:call-1`, `inline-file:agent-1:${threadId}:call-2`,
     ]);
@@ -45,8 +48,8 @@ describe('inline file reference dispatch', () => {
   it('drops thread-mismatched and incomplete references', () => {
     // risk: tenant/thread isolation — malformed or cross-thread references must never enter the transcript.
     const ctx = context();
-    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: { ...file, thread_id: 'other-thread' } });
-    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: { ...file, file_id: '' } });
+    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: { ...inline, thread_id: 'other-thread' } });
+    dispatch(ctx, { kind: 'inline_file_reference', inlineFileReference: { ...inline, reference: { ...inline.reference, file_id: '' } } });
     dispatch(ctx, { kind: 'inline_file_reference' });
     expect(ctx.messages).toHaveLength(0);
   });
