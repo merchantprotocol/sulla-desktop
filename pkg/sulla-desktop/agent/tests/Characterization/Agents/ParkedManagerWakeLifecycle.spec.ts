@@ -81,7 +81,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
   // Known-good agent identities: resolve() refuses to rehydrate an agent it
   // cannot find a definition for, so the test double only needs to answer
   // for the two slugs these scenarios use.
-  const definitions = { findBySlug: async(slug: string) => (['coding-manager', 'codex-sol-worker'].includes(slug) ? { slug } : null) };
+  const definitions = { findBySlug: async(slug: string) => (['coding-manager', 'codex-sol-worker'].includes(slug) ? { slug, enabled: true, status: 'production' } : null) };
 
   it('a) wakes a parked manager as itself when its child\'s contract returns', async() => {
     // risk: a completion wakes the wrong agent, or rehydrates the manager under the default persona instead of its own identity

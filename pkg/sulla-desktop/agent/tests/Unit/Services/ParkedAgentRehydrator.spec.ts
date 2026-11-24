@@ -18,7 +18,7 @@ describe('ParkedAgentRehydrator', () => {
     // risk: wrong persona/model/thread after graph eviction
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => parkedJob() },
-      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' }) },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'production' }) },
       vi.fn(),
       vi.fn(),
     );
@@ -50,7 +50,7 @@ describe('ParkedAgentRehydrator', () => {
     const lost = parkedJob();
     lost.status = 'running';
     lost.tasks[0].status = 'lost';
-    const definitions = { findBySlug: vi.fn(async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' })) };
+    const definitions = { findBySlug: vi.fn(async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'production' })) };
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => lost },
       definitions,
@@ -84,7 +84,7 @@ describe('ParkedAgentRehydrator', () => {
     route.agentId = 'coding-manager-sol-id';
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => job },
-      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' }) },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'production' }) },
       vi.fn(), vi.fn(),
     );
     const identity = await service.resolve('manager-thread');
@@ -94,7 +94,7 @@ describe('ParkedAgentRehydrator', () => {
   });
 
   it.each([
-    { enabled: false, status: 'active' },
+    { enabled: false, status: 'production' },
     { enabled: true, status: 'archive' },
   ])('fails a parked job when its definition is disabled or archived: %o', async definition => {
     // risk: a removed agent wakes as another/default persona
@@ -118,7 +118,7 @@ describe('ParkedAgentRehydrator', () => {
     const fail = vi.fn(); const notify = vi.fn();
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => job },
-      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' }) },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'production' }) },
       fail, notify,
     );
     await expect(service.resolve('manager-thread')).rejects.toThrow('Agent "coding-manager-sol" has an invalid saved model override "codex/unspecified"');
