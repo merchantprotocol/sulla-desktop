@@ -163,8 +163,8 @@ export class StatusRollupQueue {
    * its hold only gates replacement, and pausing freezes replacement.
    */
   pump(now: number, paused = false): StatusRollupItem | null {
-    if (paused) return null;
     this.expireQueued(now);
+    if (paused) return null;
     if (this.visible && now < this.visible.replaceableAt) return null;
     if (this.queued.length === 0) return null;
     if (this.lastShownAt !== null && now - this.lastShownAt < StatusRollupQueue.minGapMs) return null;
