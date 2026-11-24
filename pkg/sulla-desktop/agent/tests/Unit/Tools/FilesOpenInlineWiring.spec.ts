@@ -49,8 +49,9 @@ describe('files/open inline eligibility and trust', () => {
     const worker = new InlineTestWorker();
     worker.name = 'open';
     worker.metadata.category = 'files';
-    worker.setState({ metadata: { ...visibleMetadata } } as any);
-    new ToolSessionChatTransport(async() => bus).attach(worker, worker.state as any);
+    const bound = { metadata: { ...visibleMetadata } } as any;
+    worker.setState(bound);
+    new ToolSessionChatTransport(async() => bus).attach(worker, bound);
     const response = await worker.execute({ path: 'Projects/example/file.md' });
     expect(JSON.parse(response.responseString)).toMatchObject({ opened: true, placement: 'inline', fileId: 'file-1' });
     expect(bus.send).toHaveBeenCalledWith('sulla-desktop', { type: 'assistant_message', data: expect.objectContaining({ kind: 'inline_file_reference', thread_id: 'thread-1', inlineFileReference: expect.objectContaining({ thread_id: 'thread-1', reference: { file_id: 'file-1', collection_id: 'collection-1' } }) }) });
