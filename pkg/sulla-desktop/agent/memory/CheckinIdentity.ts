@@ -16,7 +16,7 @@ export interface CheckinEpisodeIdentityInput {
 /** Builds stable identities only for explicit, non-human status check-ins. */
 export class CheckinIdentity {
   private static readonly agentJobPattern = /(?:^|[^a-z0-9])(agent-job-\d+-\d+)\b/gi;
-  private static readonly spawnAgentThreadPattern = /(?:^|[^a-z0-9])(spawn-agent-[\w-]+)\b/gi;
+  private static readonly spawnAgentThreadPattern = /(?:^|[^a-z0-9])thread_(spawn-agent-[\w-]+)\b/gi;
   private static readonly pullRequestPattern = /\b(?:pull\s+request|pr|draft(?:\s+pr)?)\s*[:#-]?\s*#?\s*(\d+)\b/gi;
   private static readonly hashNumberPattern = /#(\d+)\b/g;
   private static readonly statusPattern =

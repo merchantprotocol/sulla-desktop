@@ -27,6 +27,8 @@ describe('CheckinIdentity', () => {
     // risk: unrelated conversation threads are merged as duplicate status reports
     expect(identity('Heartbeat status update in thread_heartbeat42: resumed.', { conversationId: 'thread_main' }))
       .toBeNull();
+    expect(identity('Sub-agent result from spawn-agent-memory-cap-worker completed.'))
+      .toBeNull();
     expect(identity('Heartbeat status update: resumed.', { id: 'thread_abc' }))
       .toBeNull();
     expect(identity('Sub-agent result in thread_spawn-agent-memory-cap-worker completed.', { conversationId: 'thread_main' }))
