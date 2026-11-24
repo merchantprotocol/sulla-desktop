@@ -113,6 +113,15 @@ describe('supporting report citation formats', () => {
     }
     const deletedChild = files({ a: [{ id: 'pm', path: report, deleted_at: '2026-11-01' }], b: [{ id: 'folder-file', path: folder }] });
     expect(await deletedChild.file({ ...folderSource, title: 'a/b' })).toEqual({ fileId: 'folder-file', path: folder, collectionId: 'b' });
+    const crowded = files({ a: [{ id: 'folder-file', path: folder }], b: Array.from({ length: 101 }, (_, index) => ({ id: `c${ index }`, path: `${ folder }/c${ index }.md` })) });
+    const listing = f.invoke.getMockImplementation()!;
+    f.invoke.mockImplementation(async(channel: string, input: any) => {
+      const page = await listing(channel, input);
+      if (channel !== 'sulla-files:list-page' || input.path !== folder) return page;
+      const start = Number(input.cursor ?? 0);
+      return { files: page.files.slice(start, start + 1), hasMore: start + 1 < page.files.length, nextCursor: String(start + 1) };
+    });
+    await expect(crowded.file({ ...folderSource, title: 'missing.md' })).rejects.toThrow('More than one');
     expect(f.openTab).not.toHaveBeenCalled();
   });
 
