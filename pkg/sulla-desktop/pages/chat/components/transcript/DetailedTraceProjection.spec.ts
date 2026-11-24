@@ -26,6 +26,18 @@ describe('DetailedTraceProjection', () => {
     expect(JSON.stringify(messages)).toBe(before);
   });
 
+  it('withholds shell output and command args when the command reads secrets', () => {
+    // risk: secret disclosure — tool output must never expose env or credential files.
+    const messages = [
+      { id: 'user-secret', kind: 'user', createdAt: 1, text: 'inspect' },
+      { id: 'tool-secret', kind: 'tool', createdAt: 2, tool: 'exec', recordedToolName: 'exec', desc: 'command', status: 'ok', input: 'cat ~/.aws/credentials' },
+      { id: 'reply-secret', kind: 'sulla', createdAt: 3, text: 'done' },
+    ] satisfies Message[];
+    const [turn] = new DetailedTraceProjection().project(messages, new TranscriptReporting().entries(messages, 'info'));
+    expect(turn.rows[0]).toMatchObject({ rawPayload: 'Details withheld' });
+    expect(turn.rows[0]).not.toHaveProperty('keyArgs');
+  });
+
   it('withholds denylisted tool fields and redacts model and payload strings', () => {
     // risk: secrets in tool names, errors, args, and disclosure payloads.
     const messages = [
