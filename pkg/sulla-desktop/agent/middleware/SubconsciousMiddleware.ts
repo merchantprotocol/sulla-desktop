@@ -25,6 +25,7 @@
 import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
 import { v7MemoryScheduler } from '../memory/V7MemoryAgents';
 import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
+import { MEMORY_CHAR_BUDGET, measureInjectedMemoryBlocks } from '../memory/MemoryBudget';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { latestUserText } from '../utils/latestUserText';
@@ -254,6 +255,7 @@ export async function runSubconsciousMiddleware(
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
   meta.brainMemoryContext = '';
+  meta.brainMemoryStats = undefined;
 
   const launched: string[] = [];
   const skipped: string[] = [];
@@ -355,7 +357,13 @@ export async function runSubconsciousMiddleware(
     // A provider compaction or Sulla summary means the model no longer holds
     // the earlier injection, so clear this conversation's sent ledger.
     const reset = Boolean(meta.cliCompactedAt && meta.v7LedgerCompactedAt !== meta.cliCompactedAt) || Boolean(meta.v7LedgerSummarizedAt && meta.v7LedgerSummarizedAt !== meta.lastV7LedgerSummaryReset);
-    awaitedTasks.push(timed('v7-subject-memory', 'Recalling subject memory', recallV7SubjectMemory(recentUserTexts(recallState, 3), threadId, reset).then(block => {
+    const observations = String(recallMeta.observationalMemoryContext || '');
+    const observationCost = measureInjectedMemoryBlocks(observations, '');
+    const brainBudget = MEMORY_CHAR_BUDGET - observationCost;
+    const measureBrain = (brain: string) => measureInjectedMemoryBlocks(observations, brain) - observationCost;
+    awaitedTasks.push(timed('v7-subject-memory', 'Recalling subject memory', recallV7SubjectMemory(
+      recentUserTexts(recallState, 3), threadId, reset, { budget: brainBudget, measureBrain }
+    ).then(result => {
       recallMeta.observationContext = '';
       recallMeta.userObservationContext = '';
       recallMeta.selfObservationContext = '';
@@ -364,13 +372,15 @@ export async function runSubconsciousMiddleware(
       recallMeta.projectsObservationContext = '';
       recallMeta.worldObservationContext = '';
       recallMeta.skillsObservationContext = '';
-      recallMeta.brainMemoryContext = block || '';
+      recallMeta.brainMemoryContext = result?.text || '';
+      recallMeta.brainMemoryStats = result?.stats;
       if (reset) { recallMeta.v7LedgerCompactedAt = recallMeta.cliCompactedAt; recallMeta.lastV7LedgerSummaryReset = recallMeta.v7LedgerSummarizedAt }
     }).catch((error) => {
       // Never fall back silently to the previous turn's observation blocks.
       console.warn('[SubconsciousMiddleware] v7 subject-memory recall failed:', error instanceof Error ? error.message : error);
       recallMeta.observationContext = '';
       recallMeta.brainMemoryContext = '';
+      recallMeta.brainMemoryStats = undefined;
     })));
   }
 
@@ -410,7 +420,7 @@ export async function runSubconsciousMiddleware(
   // Recall is intentionally unbounded per Jonathon's standing rule. Wait for
   // every requested recall to finish; independent tasks still run in parallel.
   const settledResults = await Promise.allSettled(awaitedTasks);
-  const contextKeys = ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext', 'brainMemoryContext', 'teamDirectoryContext', 'skillRecallContext', 'subagentDirectoryContext', 'v7LedgerCompactedAt', 'lastV7LedgerSummaryReset'];
+  const contextKeys = ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext', 'brainMemoryContext', 'brainMemoryStats', 'teamDirectoryContext', 'skillRecallContext', 'subagentDirectoryContext', 'v7LedgerCompactedAt', 'lastV7LedgerSummaryReset'];
   for (const key of contextKeys) meta[key] = recallMeta[key];
   const failures = settledResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
   const elapsed = Date.now() - startTime;
