@@ -11,6 +11,8 @@ vi.mock('../../../database/models/SullaSettingsModel', () => ({
 
 import { RunActivity, watchForDeadRun } from '../../../services/RunActivity';
 import { runTools } from '../../../services/RunToolTracker';
+import { TurnToolActivity } from '../../../services/TurnToolActivity';
+import { LONG_TOOL_CEILING_MS } from '../../../services/RunLivenessClock';
 import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 
 describe('SpawnAgentDeadRunWatcher liveness floor', () => {
@@ -62,6 +64,63 @@ describe('SpawnAgentDeadRunWatcher liveness floor', () => {
     await vi.advanceTimersByTimeAsync(45 * 60_000);
     expect(onDead).not.toHaveBeenCalled();
     runTools.finished(metadata, 'call-1');
+    stop();
+  });
+
+  // Jonathon (2026-11-24): judge liveness by the whole agent loop, not chat messages.
+  it('keeps a job alive that sends no chat or check-in but keeps making provider tool calls', async() => {
+    // risk: orchestration liveness — busy workers were reaped because tool calls never touched the job clock
+    vi.mocked(SullaSettingsModel.get).mockResolvedValue(30 as any);
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const onDead = vi.fn();
+    const stop = watchForDeadRun('tools-only-spawn', onDead, async() => false, { createdAt: 0, hasCheckin: async() => false });
+    const turn = new TurnToolActivity({ activityKeys: ['tools-only-spawn'] });
+    for (let call = 0; call < 6; call++) {
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      turn.started(`call-${ call }`, 'command_execution');
+      await vi.advanceTimersByTimeAsync(60_000);
+      turn.finished(`call-${ call }`);
+    }
+    expect(onDead).not.toHaveBeenCalled();
+    turn.close();
+    stop();
+  });
+
+  it('keeps a job alive while a provider tool runs for 90 minutes, then reports a hung tool past the ceiling', async() => {
+    // risk: orchestration liveness — a long build is reaped as a dead agent instead of a running tool
+    vi.mocked(SullaSettingsModel.get).mockResolvedValue(30 as any);
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const onDead = vi.fn();
+    const stop = watchForDeadRun('long-tool-spawn', onDead, async() => false, { createdAt: 0, hasCheckin: async() => true });
+    const turn = new TurnToolActivity({ activityKeys: ['long-tool-spawn'] });
+    turn.started('build-1', 'yarn build');
+    await vi.advanceTimersByTimeAsync(90 * 60_000);
+    expect(onDead).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(LONG_TOOL_CEILING_MS - 90 * 60_000 + 60_000);
+    expect(onDead).toHaveBeenCalledOnce();
+    expect(onDead.mock.calls[0][1]).toBe('tool_hung');
+    expect(onDead.mock.calls[0][0]).toMatch(/^tool still running for 120m: yarn build/);
+    turn.close();
+    stop();
+  });
+
+  it('stops a job with no events of any kind for the limit', async() => {
+    // risk: orchestration liveness — a truly dead run must still be reaped
+    vi.mocked(SullaSettingsModel.get).mockResolvedValue(30 as any);
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const onDead = vi.fn();
+    const stop = watchForDeadRun('dead-spawn', onDead, async() => false, { createdAt: 0, hasCheckin: async() => true });
+    const turn = new TurnToolActivity({ activityKeys: ['dead-spawn'] });
+    turn.started('call-1', 'command_execution');
+    turn.finished('call-1');
+    await vi.advanceTimersByTimeAsync(29 * 60_000);
+    expect(onDead).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(onDead).toHaveBeenCalledOnce();
+    expect(onDead.mock.calls[0]).toEqual(['no agent activity for 30 minute(s) (limit 30)', 'idle']);
     stop();
   });
 });

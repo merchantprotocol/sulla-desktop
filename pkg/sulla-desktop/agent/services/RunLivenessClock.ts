@@ -41,7 +41,7 @@ export class RunLivenessClock {
   constructor(
     private readonly silenceLimitMs: number,
     private readonly toolCeilingMs: number = LONG_TOOL_CEILING_MS,
-    private readonly clock: () => number = Date.now,
+    private readonly clock: () => number = () => Date.now(),
     private readonly externalActivityAt: () => number = () => 0,
   ) {
     this.lastActivityAt = clock();

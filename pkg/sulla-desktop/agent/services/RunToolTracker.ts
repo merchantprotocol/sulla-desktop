@@ -14,7 +14,7 @@ export interface ToolInFlight { name: string; startedAt: number }
 export class RunToolTracker {
   private readonly calls = new Map<string, Map<string, ToolInFlight>>();
 
-  constructor(private readonly clock: () => number = Date.now) {}
+  constructor(private readonly clock: () => number = () => Date.now()) {}
 
   started(metadata: any, callId: string, name: string): void {
     if (!callId) return;

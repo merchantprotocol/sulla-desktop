@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCodexService } from '../../../languagemodels/CodexService';
 import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
 import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
+import { LONG_TOOL_CEILING_MS } from '../../../services/RunLivenessClock';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
@@ -45,13 +46,14 @@ async function launch() {
   vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
   let outcome: any;
   const activities: Array<{ message: string; reportingActivity?: string }> = [];
+  const liveness = vi.fn();
   const finished = service.runCodex([
     { role: 'system', content: 'A synthetic watchdog test.' }, { role: 'user', content: 'Test only.' },
-  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }) }, { conversationId: 'watchdog-test' })
+  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test' })
     .then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
   await vi.advanceTimersByTimeAsync(0);
   proc.emit('spawn');
-  return { proc, finished, outcome: () => outcome, activities };
+  return { proc, finished, outcome: () => outcome, activities, liveness };
 }
 
 describe('Codex quiet stream watchdog', () => {
@@ -99,6 +101,59 @@ describe('Codex quiet stream watchdog', () => {
     await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
     expect(run.proc.kill).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+  });
+
+  // Jonathon (2026-11-24): an agent is stalled only when its WHOLE loop is idle.
+  const emit = (run: Awaited<ReturnType<typeof launch>>, event: unknown) => run.proc.stdout.write(JSON.stringify(event) + '\n');
+
+  it('does not kill a run that is silent in chat but keeps making tool calls', async() => {
+    // risk: a working agent is killed as "stalled" because it sent no chat message
+    const run = await launch();
+    for (let call = 0; call < 6; call++) {
+      await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
+      emit(run, { type: 'item.started', item: { id: `cmd-${ call }`, type: 'command_execution', command: 'npm test' } });
+      await vi.advanceTimersByTimeAsync(20_000);
+      emit(run, { type: 'item.completed', item: { id: `cmd-${ call }`, type: 'command_execution', command: 'npm test', exit_code: 0 } });
+    }
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    expect(run.liveness).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+  });
+
+  it('does not kill a run blocked on a long-running tool, then reports it as a hung tool past the ceiling', async() => {
+    // risk: a 40-minute build or test run is killed as a dead agent while it is still working
+    const run = await launch();
+    emit(run, { type: 'item.started', item: { id: 'build-1', type: 'command_execution', command: 'yarn build' } });
+    await vi.advanceTimersByTimeAsync(LONG_TOOL_CEILING_MS - 60_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('tool still running for 120m: command_execution');
+    expect(run.outcome().message).not.toContain('no output for 3 minutes');
+  });
+
+  it('counts model output relayed by the provider bridge (reasoning) as activity', async() => {
+    // risk: a long reasoning turn with no JSONL lines yet is killed mid-thought
+    const run = await launch();
+    const pod = 'codex-watchdog-test-pod';
+    for (let minute = 0; minute < 8; minute++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      providerBridgeActivity.markModelOutput(pod);
+    }
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    expect(run.liveness).toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 30_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
     expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
