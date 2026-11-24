@@ -9,7 +9,7 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript transcript-standard">
+  <div class="transcript">
     <div
       ref="scroller"
       class="scroller"
@@ -29,7 +29,6 @@
             :turn="turn"
           />
         <div
-          :key="entry.id"
           :ref="el => jumper.register(entry.id, el)"
           class="report-entry"
           :class="{
@@ -52,6 +51,7 @@
           </div>
         </div>
         </template>
+        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" />
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
           <TurnWaiting
@@ -102,8 +102,9 @@ const reporting = new TranscriptReporting();
 const traceProjection = new DetailedTraceProjection();
 const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
-const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel));
+const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, 'info'));
 const traceTurns = computed(() => props.reportingLevel === 'debug' ? traceProjection.project(controller.messages.value, transcriptEntries.value) : []);
+const trailingTraceTurns = computed(() => traceTurns.value.filter(turn => !transcriptEntries.value.some(entry => entry.id === turn.anchorEntryId)));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
@@ -215,7 +216,7 @@ defineExpose({ scroller, scrollToBottom });
   bottom: calc(var(--composer-h, 140px) + 72px);
   mask-image: none;
 }
-.transcript-standard .scroller {
+.transcript .scroller {
   padding-top: 112px;
 }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
