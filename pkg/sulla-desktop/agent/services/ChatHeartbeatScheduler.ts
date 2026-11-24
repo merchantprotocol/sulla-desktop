@@ -4,7 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ChatHeartbeatExpiryService } from './ChatHeartbeatExpiryService';
+import { HeartbeatNoticeBuilder } from './HeartbeatNoticeBuilder';
 import {
+  CHAT_HEARTBEAT_MAX_DURATION_MS,
   normalizeChatHeartbeatConfig,
   type ChatHeartbeatBeat,
   type ChatHeartbeatConfig,
@@ -12,7 +14,7 @@ import {
 } from '@pkg/shared/chatHeartbeat';
 
 const BUSY_RETRY_MS = 1_000;
-export const CHAT_HEARTBEAT_MAX_DURATION_MS = 6 * 60 * 60_000;
+export { CHAT_HEARTBEAT_MAX_DURATION_MS } from '@pkg/shared/chatHeartbeat';
 // How often a paused heartbeat re-checks a renderer "busy" claim against the
 // backend, and how long the two may disagree before the claim is dropped.
 export const STALE_BUSY_CHECK_MS = 15_000;
@@ -58,6 +60,8 @@ export interface ChatHeartbeatSchedulerDeps {
   isGraphBusy: (threadId: string) => boolean;
   deliver:     (channel: string, threadId: string, message: string, intervalMinutes: number, target?: ChatHeartbeatJobTarget) => Promise<ChatHeartbeatDeliveryResult>;
   setActive?:   (threadId: string, active: boolean) => void;
+  hasPendingWait?: (target: ChatHeartbeatJobTarget) => Promise<boolean>;
+  noticeBuilder?: HeartbeatNoticeBuilder;
 }
 
 export class ChatHeartbeatScheduler {
@@ -78,6 +82,8 @@ export class ChatHeartbeatScheduler {
       clearTimers: runtime => this.clearRuntimeTimers(runtime),
       unregisterJobTask: (jobId, taskIndex) => this.unregisterJobTask(jobId, taskIndex),
       emitStatus: runtime => this.emitStatus(runtime),
+      hasPendingWait: deps.hasPendingWait,
+      noticeBuilder: deps.noticeBuilder ?? new HeartbeatNoticeBuilder(),
     });
   }
 
@@ -203,7 +209,7 @@ export class ChatHeartbeatScheduler {
   activationNotice(threadId: string): string | null {
     const runtime = this.runtimes.get(threadId);
     if (!runtime?.config.intervalMinutes || runtime.startedAt === null || runtime.expiresAt === null) return null;
-    return this.expiry.notice(runtime.config.intervalMinutes, runtime.startedAt, runtime.expiresAt);
+    return this.expiry.activationNotice(runtime);
   }
 
   // A running graph is alive — it needs no ping. Stop the countdown and
@@ -319,7 +325,7 @@ export class ChatHeartbeatScheduler {
 
     runtime.delivering = true;
     try {
-      const content = `${ runtime.config.message }\n\n${ this.expiry.notice(runtime.config.intervalMinutes, runtime.startedAt ?? this.now(), runtime.expiresAt ?? this.now()) }`;
+      const content = await this.expiry.buildBeat(runtime);
       const result = await this.deps.deliver(
         runtime.channel,
         runtime.threadId,

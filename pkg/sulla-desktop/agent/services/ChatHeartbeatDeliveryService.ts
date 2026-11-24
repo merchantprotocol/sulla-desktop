@@ -19,7 +19,6 @@ export interface HeartbeatJob {
 
 export interface ChatHeartbeatDeliveryPorts {
   getJob(jobId: string): Promise<HeartbeatJob | undefined>;
-  cancelWait(jobId: string, taskIndex: number): Promise<unknown>;
   wakeParkedAgent(channel: string, threadId: string, message: string, agentId: string, metadata: Record<string, unknown>): Promise<boolean>;
   send(channel: string, message: {
     type: 'user_message';
@@ -46,10 +45,9 @@ export class ChatHeartbeatDeliveryService {
 
     const effectiveChannel = job.parentChannel || channel;
     if (task.status === 'parked') {
-      // A heartbeat supersedes an agents/wait timer just like a manager message does.
-      await this.ports.cancelWait(target.jobId, target.taskIndex);
+      // Keep the existing agents/wait timer: the heartbeat is an additional wake, not a replacement.
       const delivered = await this.ports.wakeParkedAgent(effectiveChannel, threadId, message, task.agentId, {
-        source: 'chat_heartbeat', inputSource: 'system', intervalMinutes,
+        source: 'agent_heartbeat', inputSource: 'system', intervalMinutes,
         delegatedJobId: target.jobId, delegatedTaskIndex: target.taskIndex,
       });
       return { delivered };
@@ -65,7 +63,7 @@ export class ChatHeartbeatDeliveryService {
       data: {
         role: 'user', content: message, threadId,
         metadata: {
-          source: 'chat_heartbeat', inputSource: 'system', intervalMinutes,
+          source: 'agent_heartbeat', inputSource: 'system', intervalMinutes,
           ...(target ? { delegatedJobId: target.jobId, delegatedTaskIndex: target.taskIndex } : {}),
         },
       },

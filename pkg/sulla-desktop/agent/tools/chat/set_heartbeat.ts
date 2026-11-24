@@ -45,8 +45,8 @@ export class SetChatHeartbeatWorker extends BaseTool {
     const intervalMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : null;
     const message = typeof input.message === 'string' && input.message.trim()
       ? input.message.trim()
-      : current.message || DEFAULT_CHAT_HEARTBEAT_MESSAGE;
-    const status = service.configure(threadId, { intervalMinutes, message });
+      : current?.message || DEFAULT_CHAT_HEARTBEAT_MESSAGE;
+    const status = service.configure(threadId, { intervalMinutes, message, setBy: 'agent' });
     const notice = status?.enabled ? service.activationNotice(threadId) : null;
 
     return {

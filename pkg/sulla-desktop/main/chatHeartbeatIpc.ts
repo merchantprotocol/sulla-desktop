@@ -50,7 +50,7 @@ export class ChatHeartbeatIpcController implements IpcController {
 
     this.ipc.handle('chat-heartbeat:set', (_event, input: { threadId: string; config: ChatHeartbeatConfig }) => {
       const threadId = this.cleanThreadId(input?.threadId);
-      const status = service.configure(threadId, normalizeChatHeartbeatConfig(input?.config));
+      const status = service.configure(threadId, normalizeChatHeartbeatConfig({ ...input?.config, setBy: 'human' }));
 
       return status ? { success: true, status } : { success: false, error: 'chat heartbeat is not registered' };
     });

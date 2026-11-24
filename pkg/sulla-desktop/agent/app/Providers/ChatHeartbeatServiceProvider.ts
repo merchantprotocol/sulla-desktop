@@ -29,10 +29,6 @@ export class ChatHeartbeatServiceProvider {
         const { getJob } = await import('../../tools/agents/jobRegistry');
         return getJob(jobId);
       },
-      cancelWait: async(jobId, taskIndex) => {
-        const { agentWaitProvider } = await import('../../services/AgentWaitServices');
-        return agentWaitProvider.cancel(jobId, taskIndex);
-      },
       wakeParkedAgent: async(channel, threadId, message, agentId, metadata) => {
         const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
         return getBackendGraphWebSocketService().wakeParkedAgent(channel, threadId, message, agentId, metadata);
@@ -51,6 +47,10 @@ export class ChatHeartbeatServiceProvider {
         return !!record && record.state?.metadata?.cycleComplete !== true;
       },
       deliver: (channel, threadId, message, intervalMinutes, target) => delivery.deliver(channel, threadId, message, intervalMinutes, target),
+      hasPendingWait: async({ jobId, taskIndex }) => {
+        const { agentWaitProvider } = await import('../../services/AgentWaitServices');
+        return Boolean(await agentWaitProvider.repository.pending(jobId, taskIndex));
+      },
     });
     void this.ensureJobLifecycleSubscription().catch(error => console.warn('[ChatHeartbeat] job lifecycle subscription failed:', error));
     return this.instance;

@@ -197,7 +197,7 @@ async function register(threadId: string): Promise<boolean> {
 }
 
 async function apply(config: ChatHeartbeatConfig): Promise<void> {
-  const normalized = normalizeChatHeartbeatConfig(config);
+  const normalized = normalizeChatHeartbeatConfig({ ...config, setBy: 'human' });
   controller.setHeartbeat(normalized);
   syncForm(normalized);
   // Register on demand — the chat may not have been registered yet (thread

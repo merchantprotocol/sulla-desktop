@@ -4,12 +4,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatHeartbeatScheduler } from '../../../services/ChatHeartbeatScheduler';
+import { HeartbeatNoticeBuilder } from '../../../services/HeartbeatNoticeBuilder';
 
 const MINUTE = 60_000;
 const SIX_HOURS_MS = 6 * 60 * 60_000;
 const START = Date.UTC(2026, 10, 24, 20, 0, 0);
 
-function schedulerHarness() {
+function schedulerHarness(hasPendingWait?: (target: { jobId: string; taskIndex: number }) => Promise<boolean>) {
   const deliver = vi.fn(async() => true);
   const beats: any[] = [];
   const configs: any[] = [];
@@ -18,6 +19,8 @@ function schedulerHarness() {
     now:         () => Date.now(), // Injected clock; Vitest advances it with the timers.
     isGraphBusy: () => false,
     deliver,
+    noticeBuilder: new HeartbeatNoticeBuilder('America/Los_Angeles'),
+    hasPendingWait,
   });
   return { scheduler, deliver, beats, configs, statuses };
 }
@@ -37,12 +40,28 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
     await vi.advanceTimersByTimeAsync(2 * MINUTE);
 
     const delivered = String(deliver.mock.calls[0]?.[2]);
-    const expectedExpiry = new Date(START + SIX_HOURS_MS).toISOString();
-    expect(delivered).toContain('Check my open work.\n\nSystem: this is your heartbeat (every 2 min, set at 2026-11-24T20:00:00.000Z, switches off automatically at');
-    expect(delivered).toContain(expectedExpiry);
+    expect(delivered).toContain('Check my open work.\n\n--- HEARTBEAT NOTICE ---');
+    expect(delivered).toContain('Heartbeat notice: This message was sent automatically by your heartbeat');
+    expect(delivered).toContain('It fires every 2 minutes; it was set at Nov 24, 2026, 12:00 PM PST by the human');
+    expect(delivered).toContain('switches itself off at Nov 24, 2026, 6:00 PM PST');
     expect(delivered).toContain('sulla chat/set_heartbeat \'{"intervalMinutes":0}\'');
     expect(scheduler.status('chat-1')?.message).toBe('Check my open work.');
     expect(beats[0]?.message).toBe(delivered);
+  });
+
+  it('keeps an existing agents/wait timer and explains that it remains pending', async() => {
+    // risk: agents/wait can be silently lost or misrepresented when a heartbeat wakes a parked job.
+    const hasPendingWait = vi.fn(async() => true);
+    const { scheduler, deliver } = schedulerHarness(hasPendingWait);
+    scheduler.register({
+      threadId: 'job-wait-thread', channel: 'sulla-desktop', jobId: 'job-wait', taskIndex: 2,
+      config: { intervalMinutes: 5, message: 'Continue reviewing.' },
+    });
+
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+
+    expect(hasPendingWait).toHaveBeenCalledWith({ jobId: 'job-wait', taskIndex: 2 });
+    expect(String(deliver.mock.calls[0]?.[2])).toContain('Your agents/wait timer is still pending and will still wake you.');
   });
 
   it('turns itself off after six hours, delivers one final notice, then stops beating', async() => {
@@ -59,6 +78,8 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
     expect(configs.at(-1)).toMatchObject({ intervalMinutes: null, message: 'Review the task.' });
     const finalBeats = beats.filter(beat => beat.autoOff);
     expect(finalBeats).toHaveLength(1);
+    expect(finalBeats[0].message).toContain('--- HEARTBEAT NOTICE ---');
+    expect(finalBeats[0].message).toContain('Turn it off as soon as the work it watches is finished');
     expect(finalBeats[0].message).toContain('System: your heartbeat was switched off automatically after 6 hours.');
     expect(finalBeats[0].message).toContain('turn it back on with sulla chat/set_heartbeat');
     expect(statuses.at(-1)?.enabled).toBe(false);

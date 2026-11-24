@@ -6,9 +6,14 @@
 export const DEFAULT_CHAT_HEARTBEAT_MESSAGE =
   'Heartbeat: give me a short update on what moved since your last update, then keep working on anything unfinished. If nothing is in flight, reply in one line.';
 
+export const CHAT_HEARTBEAT_MAX_DURATION_MS = 6 * 60 * 60_000;
+
+export type ChatHeartbeatSetBy = 'agent' | 'human' | 'manager';
+
 export interface ChatHeartbeatConfig {
   intervalMinutes: number | null;
   message:         string;
+  setBy?:          ChatHeartbeatSetBy;
 }
 
 export interface ChatHeartbeatStatus extends ChatHeartbeatConfig {
@@ -34,6 +39,7 @@ export function defaultChatHeartbeatConfig(): ChatHeartbeatConfig {
   return {
     intervalMinutes: null,
     message:          DEFAULT_CHAT_HEARTBEAT_MESSAGE,
+    setBy:             'human',
   };
 }
 
@@ -46,5 +52,7 @@ export function normalizeChatHeartbeatConfig(input?: Partial<ChatHeartbeatConfig
     ? input.message.trim()
     : DEFAULT_CHAT_HEARTBEAT_MESSAGE;
 
-  return { intervalMinutes, message };
+  const setBy = input?.setBy === 'agent' || input?.setBy === 'manager' ? input.setBy : 'human';
+
+  return { intervalMinutes, message, setBy };
 }
