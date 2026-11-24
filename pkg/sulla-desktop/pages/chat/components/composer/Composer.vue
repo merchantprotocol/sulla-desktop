@@ -467,7 +467,7 @@ function onScreenRecordingState(_event:unknown, state:{ recording?:boolean }):vo
 const filesImporting = ref(false);
 const filesImportError = ref('');
 
-// ─── Placeholder ───────────────────────────────────────────────────
+// ─── Placeholder ────────────────────────────────────────────────────
 const placeholder = computed(() => {
   return controller.isRunning.value
     ? 'send while Sulla is working — queued'
