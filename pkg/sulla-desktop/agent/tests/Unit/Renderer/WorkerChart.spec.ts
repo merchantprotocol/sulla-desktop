@@ -74,7 +74,7 @@ describe('WorkerChart', () => {
     expect(wrapper.emitted('open-agent')).toEqual([[{ agentId: 'worker-1' }]]);
   });
 
-  it('closes the dialog on Escape and restores focus with accessible tooltip feedback', async () => {
+  it('closes on Escape without a tooltip, preserves intentional focus feedback, and keeps removed-node fallback quiet', async () => {
     // risk: keyboard access — closing a popover must not strand focus on a removed element
     const wrapper = mountChart();
     const trigger = wrapper.get('[data-agent-id="worker-1"]');
@@ -86,6 +86,10 @@ describe('WorkerChart', () => {
     await nextTick();
     expect(document.activeElement).toBe(trigger.element);
     expect(document.body.querySelector('.worker-chart__popover[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')).toBeNull();
+
+    await trigger.trigger('focus');
+    await nextTick();
     expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')).not.toBeNull();
 
     await trigger.trigger('click');
@@ -94,8 +98,26 @@ describe('WorkerChart', () => {
     await nextTick();
     await nextTick();
     expect(document.body.querySelector('.worker-chart__popover[role="dialog"]')).toBeNull();
-    expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')?.textContent).toContain('Sulla');
+    expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')).toBeNull();
     expect((document.activeElement as HTMLElement).dataset.agentId).toBe('root');
+  });
+
+  it('closes on an outside pointer without pulling focus away from the outside target', async () => {
+    // risk: keyboard and pointer access — outside dismissal must close the dialog without stealing focus
+    const wrapper = mountChart();
+    await wrapper.get('[data-agent-id="worker-1"]').trigger('click');
+    await nextTick();
+    expect(document.body.querySelector('.worker-chart__popover[role="dialog"]')).not.toBeNull();
+
+    const outsideButton = document.createElement('button');
+    document.body.appendChild(outsideButton);
+    outsideButton.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    outsideButton.focus();
+    await nextTick();
+
+    expect(document.body.querySelector('.worker-chart__popover[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(outsideButton);
+    expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')).toBeNull();
   });
 
   it('opens the compact rail as a full interactive overlay when the measured chat column is narrow', async () => {

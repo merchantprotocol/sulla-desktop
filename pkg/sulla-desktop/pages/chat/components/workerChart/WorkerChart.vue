@@ -102,7 +102,7 @@
                 aria-haspopup="dialog"
                 @mouseenter="showTooltip(row.agent.id)"
                 @mouseleave="scheduleTooltipClose"
-                @focus="showTooltip(row.agent.id)"
+                @focus="onNodeFocus(row.agent.id)"
                 @blur="onNodeBlur"
                 @click.stop="toggleAgentPopover(row.agent.id)"
               >
@@ -260,6 +260,7 @@ const sparklinePoints = computed(() => activitySamples.value.map(sample =>
 let nowTimer: ReturnType<typeof setInterval> | null = null;
 let tooltipCloseTimer: ReturnType<typeof setTimeout> | null = null;
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
+let suppressTooltipOnFocus = false;
 
 watch(doneIds, ids => {
   const currentIds = new Set(ids);
@@ -395,7 +396,7 @@ function toggleChartOverlay(): void {
   if (chartOverlayOpen.value) {
     void nextTick(() => {
       positionChartOverlay();
-      tree.value?.querySelector<HTMLButtonElement>('[data-agent-id]')?.focus({ preventScroll: true });
+      focusWithoutTooltip(tree.value?.querySelector<HTMLButtonElement>('[data-agent-id]') ?? null);
     });
   } else {
     dismissPopover(false);
@@ -405,12 +406,27 @@ function toggleChartOverlay(): void {
 function closeChartOverlay(restoreFocus: boolean): void {
   chartOverlayOpen.value = false;
   dismissPopover(false);
-  if (restoreFocus) void nextTick(() => railTrigger.value?.focus({ preventScroll: true }));
+  if (restoreFocus) void nextTick(() => focusWithoutTooltip(railTrigger.value));
 }
 
 function showTooltip(id: string): void {
   cancelTooltipClose();
   if (!selectedAgentId.value) hoveredAgentId.value = id;
+}
+
+function onNodeFocus(id: string): void {
+  if (suppressTooltipOnFocus) return;
+  showTooltip(id);
+}
+
+function focusWithoutTooltip(element: HTMLElement | null): void {
+  if (!element?.isConnected) return;
+  suppressTooltipOnFocus = true;
+  try {
+    element.focus({ preventScroll: true });
+  } finally {
+    suppressTooltipOnFocus = false;
+  }
 }
 
 function scheduleTooltipClose(): void {
@@ -454,19 +470,19 @@ function dismissPopover(restoreFocus: boolean, fallback = false): void {
   void nextTick(() => {
     const trigger = oldId ? nodeButtons.get(oldId) : null;
     if (trigger?.isConnected && !fallback) {
-      trigger.focus({ preventScroll: true });
+      focusWithoutTooltip(trigger);
       return;
     }
     if (isNarrow.value && railTrigger.value?.isConnected) {
-      railTrigger.value.focus({ preventScroll: true });
+      focusWithoutTooltip(railTrigger.value);
       return;
     }
     const firstVisible = chart.value.rows.find((row): row is WorkerChartAgentRow => row.kind === 'agent');
     const firstButton = firstVisible ? nodeButtons.get(firstVisible.agent.id) : null;
-    if (firstButton?.isConnected) firstButton.focus({ preventScroll: true });
+    if (firstButton?.isConnected) focusWithoutTooltip(firstButton);
     else if (host.value) {
       host.value.tabIndex = -1;
-      host.value.focus({ preventScroll: true });
+      focusWithoutTooltip(host.value);
     }
   });
 }
