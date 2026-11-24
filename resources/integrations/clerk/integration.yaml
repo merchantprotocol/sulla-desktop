@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+apiVersion: sulla/v1
+kind: Integration
+id: clerk
+name: Clerk
+description: Manage Clerk users, organizations, invitations, and sessions with protected access to your staging and production instances.
+category: Developer Tools
+icon: clerk.svg
+version: 1.0.0
+lastUpdated: '2026-11-23 00:00:00'
+developer: Clerk
+sort: 5
+paid: false
+beta: false
+comingSoon: false
+builtin: true
+authType: credentials
+formGuide: Find both keys on the API Keys page for the matching Clerk instance.
+guideLinks:
+  - title: Clerk Backend API
+    description: Clerk’s endpoint and field reference.
+    url: https://clerk.com/docs/reference/backend-api

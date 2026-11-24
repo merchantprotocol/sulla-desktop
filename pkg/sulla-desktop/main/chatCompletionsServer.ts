@@ -11,6 +11,7 @@ import path from 'node:path';
 import cors from 'cors';
 import express, { Request, Response, NextFunction } from 'express';
 
+import { ClerkApiRoute } from './ClerkApiRoute';
 import { getMCPServerHost } from './MCPServerHost';
 import { ChatToolRequestSecurity } from './ChatToolRequestSecurity';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
@@ -18,6 +19,9 @@ import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '@pkg/agent/ser
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
+import { createDesktopClerkClient, type ClerkCaller } from '@pkg/agent/integrations/clerk/ClerkClient';
+import { CLERK_DEADLINE_MS } from '@pkg/agent/integrations/clerk/ClerkEndpoints';
+import { ClerkToolSessionResolver } from './ClerkToolSessionResolver';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
@@ -312,6 +316,10 @@ export class ChatCompletionsServer {
     // instead of a stack trace in the console.
     this.app.use((err: any, req: Request, res: Response, next: NextFunction) => {
       if (err?.type === 'entity.parse.failed') {
+        if (/\/clerk(?:\/|$)/.test(req.path)) {
+          res.status(400).json({ success: false, error: 'Malformed Clerk tool arguments. Provide valid JSON.' });
+          return;
+        }
         const raw = (req as any).rawBody ?? '';
         const pos = typeof err.body === 'string' ? err.body.length : raw.length;
         const pointer = raw.length > 0
@@ -330,7 +338,7 @@ export class ChatCompletionsServer {
 
     // Add request logging
     this.app.use((req: Request, res: Response, next: NextFunction) => {
-      console.log(`[ChatCompletionsAPI] ${ req.method } ${ req.path }`);
+      console.log(`[ChatCompletionsAPI] ${ req.method } ${ req.path.replace(/sk_(?:live|test)_[A-Za-z0-9_-]+/g, '[REDACTED]') }`);
       next();
     });
 
@@ -442,10 +450,13 @@ export class ChatCompletionsServer {
       const requested = String(req.params.tool);
       const args = req.body?.args ?? {};
       const ctx = req.body?.ctx;
-      const deadlineMs = this.toolDeadlinePolicy.requestedDeadlineMs(req.body?.deadlineMs);
+      const requestedDeadlineMs = this.toolDeadlinePolicy.requestedDeadlineMs(req.body?.deadlineMs);
       const startedAt = Date.now();
       let toolName = `${ category }/${ requested }`;
       let operationTypes: readonly string[] = [];
+      // Keep the effective bounded budget visible to the catch path too; it is
+      // the budget actually handed to the worker, not merely the request hint.
+      let deadlineMs = requestedDeadlineMs;
       try {
         const { toolRegistry } = await import('@pkg/agent/tools/registry');
         const worker = await toolRegistry.createToolForCategory(category, requested);
@@ -454,6 +465,11 @@ export class ChatCompletionsServer {
           toolName = registeredName;
           operationTypes = toolRegistry.getOperationTypes(registeredName);
         }
+        const executionDeadlineAt = Date.now() + (category === 'clerk'
+          ? Math.min(requestedDeadlineMs, CLERK_DEADLINE_MS)
+          : requestedDeadlineMs);
+        deadlineMs = Math.max(1, executionDeadlineAt - Date.now());
+        worker.deadlineAt = executionDeadlineAt;
         worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);
@@ -463,16 +479,40 @@ export class ChatCompletionsServer {
           if (graph?.state) worker.setState?.(graph.state);
         }
         const deadline = AbortSignal.timeout(deadlineMs);
-        worker.approvalSignal = deadline;
+        if (category === 'clerk') {
+          const disconnected = new AbortController();
+          res.once('close', () => { if (!res.writableEnded) disconnected.abort(); });
+          if (res.destroyed) disconnected.abort();
+          worker.approvalSignal = AbortSignal.any([deadline, disconnected.signal]);
+        } else {
+          worker.approvalSignal = deadline;
+        }
         const result = await Promise.race([
           worker.call(args),
           new Promise((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
         ]);
+        if (category === 'clerk' && result && typeof result === 'object' && (result as { success?: unknown }).success === false) {
+          const failure = result as { status?: unknown; result?: unknown; retryAfter?: unknown };
+          const status = typeof failure.status === 'number' && Number.isInteger(failure.status) && failure.status >= 400 && failure.status <= 599 ? failure.status : 400;
+          const retryAfter = typeof failure.retryAfter === 'string' && /^\d{1,15}$/.test(failure.retryAfter) && Number.isSafeInteger(Number(failure.retryAfter)) && Number(failure.retryAfter) > 0
+            ? String(Number(failure.retryAfter))
+            : undefined;
+          if (status === 429 && retryAfter) res.setHeader('Retry-After', retryAfter);
+          return res.status(status).json({
+            success: false,
+            error: {
+              code: status === 429 ? 'clerk_rate_limited' : 'clerk_request_failed',
+              message: typeof failure.result === 'string' ? failure.result : 'Clerk request failed.',
+              details: { httpStatus: status, ...(retryAfter ? { retryAfter } : {}) },
+            },
+          });
+        }
         return res.json({ success: true, result });
       } catch (error) {
         const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
         // One line per failed tool call, so routine tool errors can be told apart from platform outages.
         console.warn(`[DesktopExecutor] ${ toolName } failed after ${ Date.now() - startedAt } ms: ${ (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300) }`);
+        if (res.destroyed) return;
         return res.status(timedOut ? 504 : 500).json({
           success: false,
           error: {
@@ -1233,10 +1273,18 @@ export class ChatCompletionsServer {
     }
   }
 
+  private clerkRoute(): ClerkApiRoute {
+    const callerResolver = new ClerkToolSessionResolver(
+      getMCPServerHost(), configuredVaultBrokerProvider, () => this.apiToken,
+    );
+    return new ClerkApiRoute(createDesktopClerkClient, (request, name, signal) => callerResolver.resolve(request, name, signal));
+  }
+
   private async handleIntegrationCall(req: Request, res: Response) {
     const accountId = String(req.params.accountId);
     const slug = String(req.params.slug);
     const endpoint = String(req.params.endpoint);
+    if (slug === 'clerk' && accountId !== 'internal') return this.clerkRoute().handle(req, res, endpoint);
 
     try {
       // Route internal tool calls — reconstruct full tool name from slug + endpoint
@@ -1306,7 +1354,39 @@ export class ChatCompletionsServer {
           return res.status(403).json({ success: false, error: 'GitHub tool requires a verified tool session' });
         }
 
-        let sessionContext = session?.executionContext;
+        let clerkCaller: ClerkCaller | undefined;
+        let clerkDisconnect: AbortController | undefined;
+        let clerkDisconnectHandler: (() => void) | undefined;
+        let cleanupClerkDisconnect: (() => void) | undefined;
+        if (canonicalCategory === 'clerk') {
+          const registeredClerkName = toolRegistry.resolveRegisteredName('clerk', toolName);
+          if (!registeredClerkName || !toolRegistry.getToolNamesForCategory('clerk').includes(registeredClerkName)) {
+            return res.status(403).json({ success: false, error: 'Clerk tool is not registered in the Clerk category' });
+          }
+          clerkDisconnect = new AbortController();
+          clerkDisconnectHandler = () => { if (!res.writableEnded) clerkDisconnect?.abort() };
+          cleanupClerkDisconnect = () => {
+            if (clerkDisconnectHandler) res.off('close', clerkDisconnectHandler);
+            res.off('finish', cleanupClerkDisconnect!);
+          };
+          res.once('close', clerkDisconnectHandler);
+          res.once('finish', cleanupClerkDisconnect);
+          try {
+            clerkCaller = await new ClerkToolSessionResolver(host, configuredVaultBrokerProvider, () => this.apiToken)
+              .resolve(req, registeredClerkName, clerkDisconnect.signal);
+          } catch (error) {
+            cleanupClerkDisconnect();
+            return res.status(403).json({ success: false, error: error instanceof Error ? error.message : 'Clerk tool session is not authorized' });
+          }
+          const bindCaller = (tool as { bindClerkCaller?: (caller: ClerkCaller) => void }).bindClerkCaller;
+          if (typeof bindCaller !== 'function') {
+            cleanupClerkDisconnect();
+            return res.status(403).json({ success: false, error: 'Clerk executor cannot revalidate its caller session' });
+          }
+          bindCaller.call(tool, clerkCaller);
+        }
+
+        let sessionContext = clerkCaller?.execution ?? session?.executionContext;
         let trustedDesktopSessionFallback = false;
         if (session && needsGitHubCredential && usesContainerVaultAuthority() && !sessionContext) {
           const metadata = session.state.metadata as Record<string, any>;
@@ -1354,7 +1434,7 @@ export class ChatCompletionsServer {
         }
 
         let bearerContext: ToolExecutionContext | undefined;
-        if (bearer && bearer !== this.apiToken && bearer !== sessionToken) {
+        if (canonicalCategory !== 'clerk' && bearer && bearer !== this.apiToken && bearer !== sessionToken) {
           try {
             bearerContext = {
               ...await verifyCapabilityToken(bearer, deriveCapabilitySigningKey(this.apiToken!), { category: canonicalCategory, tool: toolName }),
@@ -1522,18 +1602,37 @@ export class ChatCompletionsServer {
           return res.json({ success: true, result });
         }
 
-        const disconnected = new AbortController();
-        const onDisconnect = () => { if (!res.writableEnded) disconnected.abort(); };
-        res.once('close', onDisconnect);
-        tool.approvalSignal = disconnected.signal;
+        const disconnected = clerkDisconnect ?? new AbortController();
+        const onDisconnect = clerkDisconnectHandler ?? (() => { if (!res.writableEnded) disconnected.abort(); });
+        if (!clerkDisconnectHandler) res.once('close', onDisconnect);
+        tool.approvalSignal = clerkCaller?.signal ?? disconnected.signal;
         try {
           const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
           const callTool = () => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
           const result = runtime ? await withAgentContainerRuntime(runtime, callTool) : await callTool();
+          if (canonicalCategory === 'clerk' && result && typeof result === 'object' && (result as { success?: unknown }).success === false) {
+            const failure = result as { status?: unknown; result?: unknown; retryAfter?: unknown };
+            const status = typeof failure.status === 'number' && Number.isInteger(failure.status) && failure.status >= 400 && failure.status <= 599 ? failure.status : 400;
+            const retryAfter = typeof failure.retryAfter === 'string' && /^\d{1,15}$/.test(failure.retryAfter) && Number.isSafeInteger(Number(failure.retryAfter)) && Number(failure.retryAfter) > 0
+              ? String(Number(failure.retryAfter))
+              : undefined;
+            if (status === 429 && retryAfter) res.setHeader('Retry-After', retryAfter);
+            return res.status(status).json({
+              success: false,
+              error: {
+                code: status === 429 ? 'clerk_rate_limited' : 'clerk_request_failed',
+                message: typeof failure.result === 'string' ? failure.result : 'Clerk request failed.',
+                details: { httpStatus: status, ...(retryAfter ? { retryAfter } : {}) },
+              },
+            });
+          }
           return res.json({ success: true, result });
-        } finally { res.off('close', onDisconnect) }
+        } finally {
+          res.off('close', onDisconnect);
+          cleanupClerkDisconnect?.();
+        }
       }
 
       // Route MCP calls to the MCPBridge instead of ConfigApiClient
@@ -1643,6 +1742,7 @@ export class ChatCompletionsServer {
   private async handleProxyCall(req: Request, res: Response) {
     const accountId = String(req.params.accountId);
     const slug = String(req.params.slug);
+    if (slug === 'clerk') return this.clerkRoute().handle(req, res);
 
     const {
       method = 'GET',
