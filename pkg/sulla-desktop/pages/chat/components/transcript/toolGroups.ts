@@ -108,6 +108,11 @@ export class TranscriptReporting {
     return entries;
   }
 
+  /** Stable Standard projection shared by Standard and Detailed; Brief remains filtered. */
+  standardEntries(messages: readonly Message[], level: ReportingLevel): TranscriptEntry[] {
+    return this.entries(messages, level === 'fatal' ? 'fatal' : 'info');
+  }
+
   /** Insert a paragraph gap before streamed text only when its nearest text
    * segment belongs to the same reply stream. Activity rows are transparent;
    * other cards are a substantive boundary and must stop the continuation. */

@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <ul :class="['supporting-reports', { standard: true }]" aria-label="Sources and reports">
+  <ul class="supporting-reports standard" aria-label="Sources and reports">
     <li
       v-for="(source, index) in msg.sources"
       :key="index"
@@ -21,10 +21,6 @@
       ><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6" /></svg>
       <div class="report-copy">
         <b>{{ source.title }}</b>
-        <small v-if="false">{{ resolver.webUrl(source) ? 'Web source' : 'Saved report reference' }}</small>
-        <details v-if="false" class="report-location">
-          <summary>Location</summary><p>{{ source.origin }}</p>
-        </details>
         <p
           v-if="errors[index]"
           class="report-error"

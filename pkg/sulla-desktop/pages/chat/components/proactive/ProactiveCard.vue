@@ -10,7 +10,7 @@
     v-if="msg.result"
     :data="msg.result"
     :message-id="msg.id"
-    :standard="true"
+    standard
   />
   <!-- An old text notice about finished agents: one compact line, hidden once a result card covers its job. -->
   <div

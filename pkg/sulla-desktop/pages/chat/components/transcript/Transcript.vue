@@ -9,7 +9,7 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript" :class="{ 'transcript-standard': true }">
+  <div class="transcript transcript-standard">
     <div
       ref="scroller"
       class="scroller"
@@ -65,7 +65,7 @@
     -->
     <ScrollPill
       :visible="showPill"
-      :standard="true"
+      standard
       @jump="scrollToBottom"
     />
   </div>
@@ -92,7 +92,7 @@ const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 
-const transcriptEntries = computed(() => reporting.entries(controller.messages.value, 'info'));
+const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;

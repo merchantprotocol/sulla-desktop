@@ -10,10 +10,6 @@
 -->
 <template>
   <div class="chat-turn sulla chat-fade-in">
-    <span v-if="false" class="chat-role"><span
-      class="noir-avatar"
-      aria-hidden="true"
-    >S</span>Sulla · {{ timeLabel }} · responding</span>
     <div class="chat-body">
       <div v-if="paragraphBreak" class="streaming-paragraph-break" aria-hidden="true" />
       <InlineReplyBody :text="msg.text" agent-cards />
