@@ -41,7 +41,7 @@ class DecisionServiceFixture {
   };
   readonly pendingRepository = {
     ancestry: vi.fn(async() => []),
-    findApproval: vi.fn(async(_session: string, key: string, value: string) => [...this.records.values()].find(record => record.kind === 'approval' && record.payload?.[key] === value && record.expiresAt > Date.now()),
+    findApproval: vi.fn(async(_session: string, key: string, value: string) => [...this.records.values()].find(record => record.kind === 'approval' && record.payload?.[key] === value && record.expiresAt > Date.now())),
   };
   readonly service = new DecisionService(undefined, { decisions: this.repository as any, pendingDecisions: this.pendingRepository as any });
 }
