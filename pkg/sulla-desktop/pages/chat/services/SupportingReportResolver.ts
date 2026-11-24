@@ -28,11 +28,10 @@ export class SupportingReportResolver {
     const candidate = SupportingReportResolver.isPlainName(title) ? SupportingReportResolver.safePath(`${ origin }/${ title }`) : undefined;
     // With a plain file name, the exact origin and origin + title are equal candidates: one distinct file in total, or refuse.
     const exact = await this.matches(origin);
+    // A path that is a file in one collection and a folder in any collection is ambiguous, whatever the title says.
+    if (exact.length && await this.isFolder(origin)) throw new Error(AMBIGUOUS);
     const found = [...exact, ...(candidate ? await this.matches(candidate) : [])];
-    const distinct = [...new Map(found.map(file => [`${ file.collectionId }\u0000${ file.fileId }`, file])).values()];
-    // A path that is a file in one collection and a folder in another is ambiguous, whatever the title says.
-    if (distinct.length === 1 && exact.length && await this.isFolder(origin)) throw new Error(AMBIGUOUS);
-    return SupportingReportResolver.one(distinct);
+    return SupportingReportResolver.one([...new Map(found.map(file => [`${ file.collectionId }\u0000${ file.fileId }`, file])).values()]);
   }
 
   /** A `sulla-file://<id>` link resolves to that file only when Files still has it; otherwise the path rules apply. */
