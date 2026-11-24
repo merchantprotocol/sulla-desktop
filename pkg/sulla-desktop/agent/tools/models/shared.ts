@@ -11,7 +11,7 @@ import { runCommand } from '../util/CommandRunner';
 const EXCLUDED_PROVIDER_IDS = new Set(['activepieces', 'composio', 'mcp', 'enterprise-gateway']);
 
 export const CLI_PROVIDERS: Record<string, { command: string; versionCommand: string }> = {
-  'claude-code': { command: 'claude', versionCommand: 'claude --version' },
+  'claude-code': { command: 'claude', versionCommand: 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude --version' },
   codex:         { command: 'codex', versionCommand: 'codex --version' },
   opencode:      { command: 'opencode', versionCommand: 'opencode --version' },
   cursor:        { command: 'cursor-agent', versionCommand: 'cursor-agent --version' },

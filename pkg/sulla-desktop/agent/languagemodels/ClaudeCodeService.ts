@@ -146,8 +146,9 @@ const BACKGROUND_HOLD_SETTLE_MS = 60_000;
  */
 const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_HOLD_MS + 30 * 60_000;
 
-/** Claude Code background traffic Sulla never needs (verified in 2.1.310). */
-const CLAUDE_QUIET_ENV = {
+/** Environment policy applied to every Claude Code CLI process Sulla starts. */
+const CLAUDE_PROCESS_ENV = {
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   DISABLE_AUTOUPDATER: '1',
   DISABLE_TELEMETRY: '1',
@@ -368,7 +369,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const envAssignments: string[] = [];
-    for (const [name, value] of Object.entries(CLAUDE_QUIET_ENV)) envAssignments.push(`${ name }=${ value }`);
+    for (const [name, value] of Object.entries(CLAUDE_PROCESS_ENV)) envAssignments.push(`${ name }=${ value }`);
     if (p.toolSessionId) envAssignments.push(`SULLA_TOOL_SESSION=${ shq(p.toolSessionId) }`);
     if (p.oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(p.oauthToken) }`);
     if (p.apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(p.apiKey) }`);
@@ -450,7 +451,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
 
-    return { executable: 'claude', args, env: { ...p.environment, ...CLAUDE_QUIET_ENV } };
+    return { executable: 'claude', args, env: { ...p.environment, ...CLAUDE_PROCESS_ENV } };
   }
 
   override getContextWindow(): number {
