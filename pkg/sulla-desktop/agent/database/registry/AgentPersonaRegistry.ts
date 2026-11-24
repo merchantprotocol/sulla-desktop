@@ -22,6 +22,8 @@ export interface ChatMessage {
   agentReporting?: 'brief' | 'standard';
   reportingActivity?: 'status' | 'tool';
   replyStreamId?: string;
+  /** Text segment of the reply stream; a closed bubble reopens only for its own segment. */
+  replySegment?: number;
   replyAttribution?: { agent?: string; model?: string };
   modelStatus?:      import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
