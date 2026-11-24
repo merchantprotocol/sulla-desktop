@@ -36,7 +36,7 @@ const visible      = computed(() => showStop.value || showContinue.value);
 <style scoped>
 .run-controls {
   display: flex;
-  position: absolute; top: -48px; right: 0;
+  position: static; top: auto; right: auto; bottom: auto;
   gap: 8px;
 }
 .run-controls button {
@@ -61,10 +61,7 @@ const visible      = computed(() => showStop.value || showContinue.value);
 .run-controls .continue::before {
   content: "▸"; color: var(--accent-hover); font-size: 13px;
 }
-.run-controls .stop { display: none; }
-.run-controls {
-  top: auto; right: 56px; bottom: 28px; z-index: 5;
-}
+.run-controls { z-index: 5; }
 .run-controls .continue {
   padding: 6px 10px; border-color: var(--border-default);
   color: var(--text-muted); background: var(--accent);
