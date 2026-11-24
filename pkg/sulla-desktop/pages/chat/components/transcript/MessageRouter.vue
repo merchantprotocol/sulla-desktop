@@ -21,11 +21,16 @@
   <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
-  />
+  >
+    <template v-if="$slots.sources" #sources><slot name="sources" /></template>
+  </TurnSulla>
   <div v-else-if="msg.kind === 'html'" class="chat-turn sulla chat-fade-in">
     <InlineReplyBody class="chat-body" :text="msg.html" legacy-html />
+    <slot name="sources" />
   </div>
-  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :paragraph-break="streamingParagraphBreak" />
+  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :paragraph-break="streamingParagraphBreak">
+    <template v-if="$slots.sources" #sources><slot name="sources" /></template>
+  </TurnStreaming>
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
   <div v-else-if="mainDecisionTranscript && decisionId && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
@@ -55,8 +60,6 @@
   <ToolQuestion v-else-if="msg.kind === 'tool_question'" :msg="msg" :draft="questionDraft(msg)" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
-  <SubAgentBubble  v-else-if="msg.kind === 'subagent'"  :msg="msg" />
-  <SubAgentExchange v-else-if="msg.kind === 'subagent_exchange'" :msg="msg" />
   <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
   <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
@@ -92,8 +95,6 @@ import HeartbeatMessage from '../heartbeat/HeartbeatMessage.vue';
 import MemoryNote      from '../memory/MemoryNote.vue';
 import PatchBlock      from '../patch/PatchBlock.vue';
 import ProactiveCard   from '../proactive/ProactiveCard.vue';
-import SubAgentBubble  from '../subagent/SubAgentBubble.vue';
-import SubAgentExchange from '../subagent/SubAgentExchange.vue';
 import ToolApproval    from '../tool/ToolApproval.vue';
 import ToolQuestion    from '../tool/ToolQuestion.vue';
 import ToolTask        from '../tool/ToolTask.vue';

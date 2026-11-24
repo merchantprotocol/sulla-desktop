@@ -3,8 +3,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source';
-export type TraceRowStatus = 'ok' | 'failed' | 'waiting' | 'approved' | 'running';
+export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
+export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'waiting' | 'blocked' | 'returned' | 'failed' | 'stopped';
+
+export interface SubAgentTraceDetails {
+  agentId?: string;
+  conversationId?: string;
+  jobId?: string;
+  taskIndex?: number;
+  model?: string;
+  runLocation?: string;
+  isReviewer?: boolean;
+  brief?: string;
+  briefAt?: number;
+  checkinAt?: number;
+  checkinSummary?: string;
+  report: string;
+  startedAt?: number;
+  endedAt?: number;
+  noteAt?: number;
+}
+
+export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'running';
 
 export interface TraceRow {
   id: string;
@@ -16,6 +36,7 @@ export interface TraceRow {
   durationLabel?: string;
   status: TraceRowStatus;
   note?: string;
+  subagent?: SubAgentTraceDetails;
   rawPayload?: string;
   anchorEntryId: string;
   at?: number;

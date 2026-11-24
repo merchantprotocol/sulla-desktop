@@ -3,9 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-const MAX_RENDER_CHARS = 200_000;
-
-/** Serializes recorded trace payloads without filtering; rendering caps only the display size. */
+/** Serializes complete recorded trace payloads without modification. */
 export class TracePayloadSerializer {
   serialize(value: unknown): string {
     let text: string;
@@ -14,7 +12,7 @@ export class TracePayloadSerializer {
     } catch {
       text = String(value);
     }
-    return text.length > MAX_RENDER_CHARS ? `${text.slice(0, MAX_RENDER_CHARS)}… truncated` : text;
+    return text;
   }
 
   summary(value: unknown): string {

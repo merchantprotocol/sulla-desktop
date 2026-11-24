@@ -18,6 +18,7 @@
         aria-hidden="true"
       />
     </div>
+    <slot name="sources" />
     <div class="writing-status">
       <span aria-hidden="true" />Writing…
     </div>

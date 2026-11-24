@@ -34,14 +34,12 @@
           <TraceTurn
             v-for="turn in traceTurns.filter(item => item.anchorEntryId === entry.id)"
             :key="turn.id"
-            :turn="turn"
+            :turn="turn" :now="traceNow"
           />
         <div
           :ref="el => jumper.register(entry.id, el)"
+          v-if="!replyCitations.attached.has(entry.id)"
           class="report-entry"
-          :class="{
-            'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
-          }"
         >
           <span
             v-if="reportLabelVisible(entry)"
@@ -52,14 +50,24 @@
             v-if="entry.kind === 'card'"
             :msg="entry.message"
             :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
-          />
+          >
+            <template v-if="replyCitations.byReply.has(entry.id)" #sources>
+              <div
+                v-for="citation in replyCitations.byReply.get(entry.id)"
+                :key="citation.id"
+                :ref="el => jumper.register(citation.id, el)"
+              >
+                <CitationRow :msg="citation" />
+              </div>
+            </template>
+          </MessageRouter>
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
 
           </div>
         </div>
         </template>
-        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" />
+        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" :now="traceNow" />
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
           <TurnWaiting
@@ -90,17 +98,20 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import MessageRouter from './MessageRouter.vue';
 import TraceTurn from './TraceTurn.vue';
+import CitationRow from '../citation/CitationRow.vue';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ReplyCitationProjection } from './ReplyCitationProjection';
 import { DetailedTraceProjection } from './DetailedTraceProjection';
 import { TraceDisclosureController } from './traceDisclosure';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
+import { useResultActivity } from '../../composables/useResultActivity';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
 import { TranscriptJump } from '../../messages/transcriptJump';
-import { waitingOn } from '../../messages/waitingStatus';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
 const props = defineProps<{ reportingLevel: ReportingLevel }>();
@@ -108,26 +119,28 @@ const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 const traceProjection = new DetailedTraceProjection();
+const citationProjection = new ReplyCitationProjection();
+const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
+const traceNow = ref(Date.now());
+watch(() => props.reportingLevel === 'debug', (detailed, _, onCleanup) => {
+  if (!detailed) return;
+  traceNow.value = Date.now();
+  const timer = setInterval(() => { traceNow.value = Date.now() }, 1_000);
+  onCleanup(() => clearInterval(timer));
+}, { immediate: true });
+const { activity: resultActivity } = useResultActivity();
 const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
-const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel));
-const traceTurns = computed(() => props.reportingLevel === 'debug' ? traceProjection.project(controller.messages.value, transcriptEntries.value) : []);
+const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel, item => !!resultActivity(item).decision));
+const replyCitations = computed(() => citationProjection.project(transcriptEntries.value));
+const traceTurns = computed(() => props.reportingLevel === 'debug'
+  ? traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows })
+  : []);
 const trailingTraceTurns = computed(() => traceTurns.value.filter(turn => !transcriptEntries.value.some(entry => entry.id === turn.anchorEntryId)));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
   return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
-}
-function isStandardEvidenceAfterReply(index: number): boolean {
-  const entry = transcriptEntries.value[index];
-  if (entry?.kind !== 'card' || entry.message.kind !== 'citation') return false;
-  for (let i = index - 1; i >= 0; i--) {
-    const prior = transcriptEntries.value[i];
-    if (!prior || prior.kind === 'activity') continue;
-    return prior.kind === 'card' && (prior.message.kind === 'sulla' ||
-      prior.message.kind === 'streaming' || prior.message.kind === 'html');
-  }
-  return false;
 }
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
@@ -184,7 +197,7 @@ onMounted(() => { window.addEventListener('chat:jump-to-message', onJump); scrol
 onBeforeUnmount(() => { pageEpoch++; window.removeEventListener('chat:jump-to-message', onJump); scroller.value?.removeEventListener('scroll', loadOlderOnScroll); });
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
-const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
+const waiting = computed(() => reporting.waiting(transcriptEntries.value, controller.isRunning.value));
 function resend(): void {
   const text = waiting.value?.message.text;
   controller.stop();
@@ -261,8 +274,6 @@ defineExpose({ scroller, scrollToBottom });
 /* The jump pill stays centred over the messages, not the gutter. */
 .transcript :deep(.scroll-pill) { left: calc(50% - var(--chart-gutter-w, 0px) / 2); }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
-.report-entry-standard-evidence-after-reply { margin-top: -12px; }
-.report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
 .report-label {
   color: var(--text-muted); margin-bottom: 4px;
   font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em;

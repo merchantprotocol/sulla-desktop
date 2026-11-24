@@ -11,6 +11,7 @@ import { CitationExtractor } from '@pkg/agent/controllers/CitationExtractor';
 import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispatcher';
 import type { ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import Transcript from '@pkg/pages/chat/components/transcript/Transcript.vue';
+import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
 import { TranscriptReporting } from '@pkg/pages/chat/components/transcript/toolGroups';
 import ToolApproval from '@pkg/pages/chat/components/tool/ToolApproval.vue';
 import { ChatController } from '@pkg/pages/chat/controller/ChatController';
@@ -180,7 +181,8 @@ it('keeps the original actionable cards and terminal failure at every level', as
     expect(approvalCard.props('msg')).toMatchObject(approval);
     expect(wrapper.text()).toContain(deliverable.text);
     expect(wrapper.text()).toContain('The execution environment stopped.');
-    expect(wrapper.text().includes('Details withheld')).toBe(level === 'debug');
+    expect(wrapper.text().includes('synthetic command')).toBe(level === 'debug');
+    expect(wrapper.text()).not.toContain('Details withheld');
     expect(live.entries(level).at(-1)).toMatchObject({ kind: 'card', level: 'fatal' });
   }
   await wrapper.setProps({ reportingLevel: 'fatal' });
@@ -343,11 +345,14 @@ it('keeps recorded reply attribution and its actions together across levels and 
   expect(recorded.classes()).not.toContain('tact-latest');
   expect(followUp.classes()).not.toContain('tact-latest');
 
+  await wrapper.setProps({ reportingLevel: 'debug' });
+  expect(actionRows().map(row => row.element)).toEqual([legacy, recorded, followUp].map(row => row.element));
+  expect(recorded.text()).toContain('Research Agent');
+  expect(recorded.text()).not.toContain('reported-model');
+  expect(wrapper.text()).toContain('reported-model');
   await wrapper.setProps({ reportingLevel: 'fatal' });
-  expect(recorded.text()).toContain('reported-model');
-  const newestVisible = wrapper.get('.tact-sulla.tact-latest');
-  expect(newestVisible.text()).toContain('Research Agent');
-  expect(newestVisible.findAll('button')).toHaveLength(5);
+  const newestVisible = actionRows().find(row => row.text().includes('Research Agent'))!;
+  expect(newestVisible.element).toBe(recorded.element);
 
   // Preserve the existing Reply, Regenerate and Pin dispatches; Copy and Fork
   // remain on the same row (Fork is still the existing visual placeholder).
@@ -413,16 +418,11 @@ it('renders ordered citation and report links directly at Standard and Detailed 
   expect(hydrated.findAll('.report-row b').map(row => row.text())).toEqual([...titles, ...titles]);
 });
 
-// risk: Detailed paraphrases authorized visible fields, leaks free-form
-// values or timing into lower reporting levels, reorders events, or changes
-// the timing and other records carried into history.
-it('projects benign visible tool fields and recorded time from unchanged live and saved records', async() => {
+// risk: losing recorded provenance or exposing payloads in the shared Standard entries.
+it('retains exact tool data and recorded timestamps through Detailed projection and reload', async() => {
   const live = new ReportingFixture();
-  live.emit('assistant_message', { kind: 'thinking', content: 'Steering Claude with your message…', reportingActivity: 'status' });
-  live.emit('progress', { phase: 'tool_call', toolRunId: 'benign-run', toolName: 'exec', args: {} });
-  live.emit('progress', { phase: 'tool_result', toolRunId: 'benign-run', success: true, result: 'PRIVATE_OUTPUT' });
-  live.emit('assistant_message', { kind: 'thinking', content: 'PRIVATE_HIDDEN_REASONING' });
-  live.emit('assistant_message', { kind: 'thinking', content: 'Claude picked up your message', reportingActivity: 'status' });
+  live.emit('progress', { phase: 'tool_call', toolRunId: 'benign-run', toolName: 'exec', args: { command: 'echo fixture' } });
+  live.emit('progress', { phase: 'tool_result', toolRunId: 'benign-run', success: true, result: 'FIXTURE_OUTPUT' });
   live.chat.appendMessage({
     id: asMessageId('undated-status'), kind: 'thinking', createdAt: 0,
     thoughts: ['Preparing your turn…'], reportingActivity: 'status', startedAt: 0, completed: true,
@@ -430,43 +430,28 @@ it('projects benign visible tool fields and recorded time from unchanged live an
   const saved = JSON.stringify(live.chat.serialize());
   const originalRecords = JSON.stringify(live.chat.messages.value);
   const tool = live.chat.messages.value.find(message => message.kind === 'tool')!;
-  expect(tool).toMatchObject({ tool: 'Bash', status: 'ok', desc: 'Running command' });
-  const recordedTime = new Date(Number(tool.id.split('_')[0])).toISOString();
-  const expected = [
-    'Steering Claude with your message…', 'Bash · ok · Running command · Details withheld',
-    'Claude picked up your message', 'Preparing your turn…',
-  ];
-  const wrapper = live.mount('info');
-  expect(wrapper.findAll('.report-activity').map(row => row.text())).toEqual(['Shell · Completed']);
-  expect(wrapper.find('.report-activity time').exists()).toBe(false);
-  await wrapper.setProps({ reportingLevel: 'fatal' });
-  expect(wrapper.find('.report-activity').exists()).toBe(false);
-  await wrapper.setProps({ reportingLevel: 'debug' });
-  expect(wrapper.findAll('.report-activity-text').map(row => row.text())).toEqual(expected);
-  const toolTime = wrapper.findAll('.report-activity')[1].get('time');
-  expect(toolTime.attributes('datetime')).toBe(recordedTime);
-  expect(toolTime.text()).not.toBe('');
-  const undated = wrapper.findAll('.report-activity').at(-1)!;
-  expect(undated.find('time').exists()).toBe(false);
-  expect(undated.text()).toContain('Time unavailable');
-  expect(wrapper.text()).not.toContain('PRIVATE_');
-  expect(JSON.stringify(live.chat.messages.value)).toBe(originalRecords);
-
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(saved) }));
-  const hydrated = reopened.mount('debug');
-  expect(hydrated.findAll('.report-activity-text').map(row => row.text())).toEqual(expected);
-  const restoredTime = hydrated.findAll('.report-activity')[1].get('time');
-  expect(restoredTime.attributes('datetime')).toBe(recordedTime);
-  expect(restoredTime.text()).toBe(toolTime.text());
-  expect(hydrated.text()).not.toContain('PRIVATE_');
-  await hydrated.setProps({ reportingLevel: 'info' });
-  expect(hydrated.findAll('.report-activity').map(row => row.text())).toEqual(['Shell · Completed']);
-  expect(hydrated.find('.report-activity time').exists()).toBe(false);
-  await hydrated.setProps({ reportingLevel: 'fatal' });
-  expect(hydrated.find('.report-activity').exists()).toBe(false);
-  expect(JSON.stringify(reopened.chat.messages.value)).toBe(originalRecords);
-});
+  for (const fixture of [live, reopened]) {
+    const standard = fixture.reporting.standardEntries(fixture.chat.messages.value, 'info');
+    const turns = new DetailedTraceProjection().project(fixture.chat.messages.value, standard);
+    const rows = turns.flatMap(turn => turn.rows);
+    const trace = rows.find(row => row.kind === 'tool')!;
+    expect(trace).toMatchObject({ target: 'exec', status: 'ok', at: tool.createdAt });
+    expect(JSON.parse(trace.rawPayload!)).toMatchObject({ input: tool.input, output: 'FIXTURE_OUTPUT' });
+    expect(rows).toContainEqual(expect.objectContaining({ at: 0, target: 'Preparing your turn…' }));
+    expect(JSON.stringify(fixture.chat.messages.value)).toBe(originalRecords);
+  }
 
+  const wrapper = reopened.mount('info');
+  const standardText = wrapper.findAll('.report-activity-text').map(row => row.text());
+  expect(standardText).toEqual(['Shell · Completed']);
+  await wrapper.setProps({ reportingLevel: 'debug' });
+  expect(wrapper.findAll('.report-activity-text').map(row => row.text())).toEqual(standardText);
+  await wrapper.get('article.dtr-row-tool button').trigger('click');
+  expect(wrapper.get('article.dtr-row-tool pre').text()).toContain('FIXTURE_OUTPUT');
+  await wrapper.setProps({ reportingLevel: 'fatal' });
+  expect(wrapper.text()).not.toContain('FIXTURE_OUTPUT');
+});
 
 // risk: Brief loses a deliverable or picks up structured narration by reading its prose;
 // a final stream classification must not change earlier segments or another stream.
@@ -562,39 +547,42 @@ it('deduplicates lifecycle envelope redelivery in scope without losing phases, o
   ]);
 });
 
-// risk: safe formatter descriptions vanish, or similarly prefixed private text and raw tool fields leak.
-it('preserves exact payload-free descriptions from the formatter through projection and reload', async() => {
+// risk: formatter aliases replace the actual callable identity or captured payload on replay.
+it('uses the recorded tool name and full payload through Detailed projection and reload', async() => {
   const live = new ReportingFixture();
   const calls = [
-    ['git_status', { absolutePath: 'PRIVATE_PATH' }],
-    ['get_page_text', { tabId: 'PRIVATE_TAB' }],
-    ['calendar_list', { calendar: 'PRIVATE_CALENDAR' }],
-    ['browser_tab', { action: 'close', title: 'PRIVATE_TITLE' }],
-    ['calendar_update', { title: 'PRIVATE_EVENT' }],
+    ['git_status', { absolutePath: 'fixture-path' }],
+    ['get_page_text', { tabId: 'fixture-tab' }],
+    ['calendar_list', { calendar: 'fixture-calendar' }],
+    ['browser_tab', { action: 'close', title: 'fixture-title' }],
+    ['calendar_update', { title: 'fixture-event' }],
   ] as const;
+  const output = 'x'.repeat(200_001) + '\nfixture-tail';
   calls.forEach(([toolName, args], index) => {
     const toolRunId = `format-${ index }`;
     live.emit('progress', { phase: 'tool_call', toolRunId, toolName, args });
-    live.emit('progress', { phase: 'tool_result', toolRunId, success: true, result: 'PRIVATE_RESULT' });
+    live.emit('progress', { phase: 'tool_result', toolRunId, success: true, result: 'fixture-result' });
+    // Legacy producer formatters may omit inputs; exercise exact retained data
+    // independently of those formatters, including a payload beyond the old renderer cap.
+    const tool = live.chat.messages.value.findLast(message => message.kind === 'tool')!;
+    live.chat.updateMessage(tool.id, { ...tool, input: JSON.stringify(args), output: index === 0 ? output : 'fixture-result' });
   });
-  const snapshot = JSON.parse(JSON.stringify(live.chat.serialize()));
-  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: snapshot }));
-  const activity = (fixture: ReportingFixture, level: ReportingLevel) =>
-    fixture.entries(level).flatMap(row => row.kind === 'activity' ? [row.text] : []);
-  expect(activity(live, 'debug')).toEqual([
-    'Git · ok · Checking status · Details withheld',
-    'Browser · ok · Reading page text · Details withheld',
-    'Calendar · ok · Listing events · Details withheld',
-    'Browser · ok · Details withheld',
-    'Calendar · ok · Details withheld',
-  ]);
-  expect(activity(reopened, 'debug')).toEqual(activity(live, 'debug'));
-  expect(activity(reopened, 'info')).toEqual([
-    'Git · Completed', 'Browser · Completed', 'Calendar · Completed', 'Browser · Completed', 'Calendar · Completed',
-  ]);
-  const rendered = reopened.mount('debug');
-  expect(rendered.text()).toContain('Git · ok · Checking status');
-  expect(rendered.text()).not.toContain('PRIVATE_');
-  await rendered.setProps({ reportingLevel: 'info' });
-  expect(rendered.text()).not.toContain('Checking status');
+  const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  const projection = new DetailedTraceProjection();
+  for (const fixture of [live, reopened]) {
+    const messages = fixture.chat.messages.value;
+    const standard = fixture.reporting.standardEntries(messages, 'info');
+    expect(fixture.reporting.standardEntries(messages, 'debug')).toEqual(standard);
+    expect(standard.flatMap(row => row.kind === 'activity' ? [row.text] : [])).toEqual([
+      'Git · Completed', 'Browser · Completed', 'Calendar · Completed', 'Browser · Completed', 'Calendar · Completed',
+    ]);
+    const raw = projection.project(messages, standard).flatMap(turn => turn.rows)
+      .filter(row => row.kind === 'tool')
+      .map(row => JSON.parse(row.rawPayload!));
+    expect(raw.map(row => [row.tool, row.status])).toEqual(calls.map(([name]) => [name, 'ok']));
+    raw.forEach((row, index) => {
+      expect(JSON.parse(row.input)).toEqual(calls[index][1]);
+      expect(row.output).toBe(index === 0 ? output : 'fixture-result');
+    });
+  }
 });

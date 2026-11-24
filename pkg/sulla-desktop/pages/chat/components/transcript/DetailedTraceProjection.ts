@@ -3,22 +3,29 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMessage, SubAgentExchangeMessage, ToolApprovalMessage, CitationMessage, SullaMessage } from '../../models/Message';
+import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMessage, ToolApprovalMessage, CitationMessage, SullaMessage } from '../../models/Message';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
+import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
 import { TracePayloadSerializer } from './TracePayloadSerializer';
 import type { TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
-  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer()) {}
+  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection()) {}
 
-  project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[]): TraceTurn[] {
+  project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
     const activities = this.debugActivities(messages, standardEntries);
+    const subagents = this.subagents.rowsByMessage(messages, subagentInput);
     return this.groups(messages).map((group, index) => {
       const reply = group.find(message => message.kind === 'sulla' || message.kind === 'streaming');
       const last = group[group.length - 1];
       const anchorEntryId = this.anchorFor(reply, last.createdAt, standardEntries);
-      const rows = group.flatMap(message => this.rowsFor(message, anchorEntryId, activities.get(message.id)));
+      const rows = group.flatMap(message => {
+        const jobRows = subagents.get(message.id) ?? [];
+        subagents.delete(message.id);
+        return [...this.rowsFor(message, anchorEntryId, activities.get(message.id)),
+          ...jobRows.map(row => ({ ...row, anchorEntryId }))];
+      });
       const usage = this.usage(group);
       return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows, ...(usage ? { usage } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));
@@ -55,13 +62,16 @@ export class DetailedTraceProjection {
   }
 
   private rowsFor(message: Message, anchor: string, activities?: readonly string[]): TraceRow[] {
-    const rows = (activities ?? []).map((text, index) => this.row(`${message.id}:activity:${index}`, 'activity', 'Status', text, 'ok', anchor, message.createdAt));
+    // Actual tool records and typed tool thoughts already have faithful rows.
+    // Don't render their legacy formatter summaries as a second trace item.
+    const hasRecordedToolRow = message.kind === 'tool' ||
+      (message.kind === 'thinking' && message.reportingActivity === 'tool' && !message.chatToolActivity);
+    const rows = (hasRecordedToolRow ? [] : activities ?? []).map((text, index) => this.row(`${message.id}:activity:${index}`, 'activity', 'Status', text, 'ok', anchor, message.createdAt));
     switch (message.kind) {
       case 'thinking': return rows.concat(this.rowsForThinking(message, anchor));
       case 'tool': return rows.concat(this.rowsForTool(message, anchor));
       case 'memory': return rows.concat(this.rowsForMemory(message, anchor));
       case 'heartbeat': return rows.concat(this.rowsForHeartbeat(message, anchor));
-      case 'subagent_exchange': return rows.concat(this.rowsForExchange(message, anchor));
       case 'tool_approval': return rows.concat(this.rowsForApproval(message, anchor));
       case 'citation': return rows.concat(this.rowsForCitation(message, anchor));
       default: return rows;
@@ -75,7 +85,7 @@ export class DetailedTraceProjection {
   private rowsForTool(message: ToolMessage, anchor: string): TraceRow[] {
     const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
     const target = message.recordedToolName ?? message.tool;
-    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status, anchor, message.createdAt, this.duration(message.meta), this.serializer.summary(message.input), this.serializer.serialize({ tool: target, input: message.input, output: message.output, error: message.error }))];
+    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status, anchor, message.createdAt, this.duration(message.meta), this.serializer.summary(message.input), this.serializer.serialize({ tool: target, status: message.status, input: message.input, output: message.output, error: message.error, description: message.desc, meta: message.meta }))];
   }
 
   private rowsForMemory(message: MemoryMessage, anchor: string): TraceRow[] {
@@ -84,11 +94,6 @@ export class DetailedTraceProjection {
 
   private rowsForHeartbeat(message: HeartbeatMessage, anchor: string): TraceRow[] {
     return [this.row(message.id, 'heartbeat', 'Heartbeat', `${message.intervalMinutes} minute interval`, 'ok', anchor, message.createdAt, undefined, this.serializer.summary(message.text), this.serializer.serialize(message))];
-  }
-
-  private rowsForExchange(message: SubAgentExchangeMessage, anchor: string): TraceRow[] {
-    const status: TraceRowStatus = message.status === 'running' ? 'running' : message.status === 'done' ? 'ok' : 'failed';
-    return [this.row(message.id, message.direction === 'to_agent' ? 'handoff' : 'activity', message.direction, message.label, status, anchor, message.createdAt, undefined, message.summary, this.serializer.serialize(message))];
   }
 
   private rowsForApproval(message: ToolApprovalMessage, anchor: string): TraceRow[] {
