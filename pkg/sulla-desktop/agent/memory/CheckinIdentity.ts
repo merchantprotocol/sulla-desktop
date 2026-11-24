@@ -16,7 +16,7 @@ export class CheckinIdentity {
   private static readonly threadPattern = /\b(thread_\w+)\b/i;
   private static readonly pullRequestPattern = /\b(?:pr|pull request|draft)\s*#\s*(\d+)\b/i;
   private static readonly statusPattern =
-    /\b(?:check[ -]?in|status(?: update| report)?|progress(?: update| report)?|orchestrator wake[- ]?up|wake[- ]?up|sub[- ]agent result|agent result|worker report|heartbeat status|resume[ds]?|resuming|working on|currently working|next step|pushed|merged|blocked|completed|finished)\b/i;
+    /\b(?:detailed chat trace|chat trace|check[ -]?in|status(?: update| report)?|progress(?: update| report)?|orchestrator wake[- ]?up|wake[- ]?up|sub[- ]agent result|agent result|worker report|heartbeat status|resume[ds]?|resuming|working on|currently working|next step|pushed|merged|blocked|completed|finished)\b/i;
   private static readonly roleStatusPattern =
     /\b(?:manager|coding[- ]manager|agent|worker|heartbeat|orchestrator)\b.{0,60}\b(?:turn|check[ -]?in|status|progress|report|result|update|wake[- ]?up)\b/i;
   private static readonly statusRolePattern =

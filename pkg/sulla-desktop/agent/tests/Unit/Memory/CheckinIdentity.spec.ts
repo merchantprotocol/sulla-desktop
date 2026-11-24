@@ -23,6 +23,14 @@ describe('CheckinIdentity', () => {
     })).toBe('pr:2816');
   });
 
+  it('identifies the repeated detailed chat-trace entry by its epic PR', () => {
+    // risk: duplicated timeline check-ins are missed when they use trace wording
+    expect(CheckinIdentity.keyFor({
+      id: 'episode-trace',
+      text: 'Detailed chat trace for the memory cap epic on draft #2816 records ongoing work.',
+    })).toBe('pr:2816');
+  });
+
   it('identifies a sub-agent result by its job id', () => {
     // risk: repeated worker result/progress entries survive as separate memory
     expect(CheckinIdentity.keyFor({
