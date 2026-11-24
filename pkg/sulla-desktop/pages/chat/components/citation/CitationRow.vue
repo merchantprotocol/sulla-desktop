@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <ul :class="['supporting-reports', { standard: props.reportingLevel === 'info' }]" aria-label="Sources and reports">
+  <ul class="supporting-reports standard" aria-label="Sources and reports">
     <li
       v-for="(source, index) in msg.sources"
       :key="index"
@@ -21,10 +21,6 @@
       ><path d="M14 3H6v18h12V7zM14 3v5h4M9 12h6M9 16h6" /></svg>
       <div class="report-copy">
         <b>{{ source.title }}</b>
-        <small v-if="props.reportingLevel !== 'info'">{{ resolver.webUrl(source) ? 'Web source' : 'Saved report reference' }}</small>
-        <details v-if="props.reportingLevel !== 'info'" class="report-location">
-          <summary>Location</summary><p>{{ source.origin }}</p>
-        </details>
         <p
           v-if="errors[index]"
           class="report-error"
@@ -61,11 +57,8 @@ import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { CitationMessage } from '../../models/Message';
-import type { ReportingLevel } from '../../models/ReportingLevel';
 
-const props = withDefaults(defineProps<{ msg: CitationMessage; reportingLevel?: ReportingLevel }>(), {
-  reportingLevel: 'debug',
-});
+const props = defineProps<{ msg: CitationMessage; }>();
 const resolver = new SupportingReportResolver(ipcRenderer);
 const busy = reactive(new Set<number>());
 const errors = reactive<Record<number, string>>({});

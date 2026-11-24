@@ -69,6 +69,19 @@ class ReportingFixture {
   }
 }
 
+// risk: layout parity — Detailed must use the exact Standard projection; Brief still filters.
+it('keeps the Standard entry projection identical for info and debug while Brief filters', () => {
+  const live = new ReportingFixture();
+  live.emit('assistant_message', { kind: 'user', content: 'hello' });
+  live.emit('assistant_message', { kind: 'thinking', content: 'Preparing your turn…', reportingActivity: 'status' });
+  live.emit('assistant_message', { kind: 'citation', citations: [{ num: 1, title: 'Evidence', origin: 'fixture' }] });
+  const standard = live.reporting.standardEntries(live.chat.messages.value, 'info');
+  const detailed = live.reporting.standardEntries(live.chat.messages.value, 'debug');
+  expect(detailed).toEqual(standard);
+  expect(live.reporting.standardEntries(live.chat.messages.value, 'fatal')).not.toEqual(standard);
+  expect(live.reporting.standardEntries(live.chat.messages.value, 'fatal').map(row => row.id)).not.toContain(standard.find(row => row.kind === 'card' && row.message.kind === 'user')?.id);
+});
+
 // risk: text integrity — a completed segment must retain its stream identity so
 // the next text segment gets a paragraph break without crossing reply/card boundaries.
 it('keeps same-stream paragraph breaks after a completed segment and not across other replies', () => {

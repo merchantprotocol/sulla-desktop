@@ -40,16 +40,35 @@
       >{{ controller.thread.value.title }}</span>
     </div>
 
-    <select v-model="reportingLevel" class="ch-reporting" aria-label="Reporting" title="Reporting">
-      <option value="fatal">Brief</option>
-      <option value="info">Standard</option>
-      <option value="debug">Detailed</option>
-    </select>
+    <div
+      ref="reportingGroup"
+      class="ch-reporting"
+      role="radiogroup"
+      aria-label="Reporting"
+      @keydown="onReportingKeydown"
+    >
+      <button
+        v-for="mode in reportingModes"
+        :key="mode.value"
+        :data-reporting-level="mode.value"
+        class="ch-reporting-option"
+        type="button"
+        role="radio"
+        :aria-label="mode.label"
+        :aria-checked="activeReportingLevel === mode.value"
+        :tabindex="activeReportingLevel === mode.value ? 0 : -1"
+        :title="mode.label"
+        @click="reportingLevel = mode.value"
+      >
+        <span class="ch-reporting-label">{{ mode.label }}</span>
+        <span class="ch-reporting-short" aria-hidden="true">{{ mode.shortLabel }}</span>
+      </button>
+    </div>
   </header>
 </template>
 
 <script setup lang="ts">
-import { inject, ref, type Ref } from 'vue';
+import { computed, inject, nextTick, ref, type Ref } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 
@@ -57,9 +76,46 @@ import type { ReportingLevel } from '../../models/ReportingLevel';
 
 const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { default: 'info' });
 const controller = useChatController();
+const reportingModes: Array<{ value: ReportingLevel; label: string; shortLabel: string }> = [
+  { value: 'fatal', label: 'Brief', shortLabel: 'B' },
+  { value: 'info', label: 'Standard', shortLabel: 'S' },
+  { value: 'debug', label: 'Detailed', shortLabel: 'D' },
+];
+const activeReportingLevel = computed(() =>
+  reportingModes.some(({ value }) => value === reportingLevel.value) ? reportingLevel.value : 'info',
+);
+const reportingGroup = ref<HTMLDivElement | null>(null);
 /** Set when this chat is an agent's own tab: who launched it, and a way back. */
 const origin = inject<Ref<{ name: string; back: () => void } | null>>('chat:agent-origin', ref(null));
 const titleEl = ref<HTMLElement | null>(null);
+
+async function onReportingKeydown(event: KeyboardEvent): Promise<void> {
+  const currentIndex = reportingModes.findIndex(({ value }) => value === activeReportingLevel.value);
+  let nextIndex: number;
+
+  switch (event.key) {
+    case 'ArrowLeft':
+      nextIndex = (currentIndex + reportingModes.length - 1) % reportingModes.length;
+      break;
+    case 'ArrowRight':
+      nextIndex = (currentIndex + 1) % reportingModes.length;
+      break;
+    case 'Home':
+      nextIndex = 0;
+      break;
+    case 'End':
+      nextIndex = reportingModes.length - 1;
+      break;
+    default:
+      return;
+  }
+
+  event.preventDefault();
+  const nextLevel = reportingModes[nextIndex].value;
+  reportingLevel.value = nextLevel;
+  await nextTick();
+  reportingGroup.value?.querySelector<HTMLButtonElement>(`[data-reporting-level="${nextLevel}"]`)?.focus();
+}
 
 function commitTitle(): void {
   const next = (titleEl.value?.textContent || '').trim() || 'New chat';
@@ -76,6 +132,7 @@ function cancelTitle(): void {
 
 <style scoped>
 .chat-header {
+  container: chat-header / inline-size;
   position: absolute; top: 0; left: 0; right: 0; z-index: 21;
   display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto; align-items: center;
   /* Keep the previous 52px outer height and content alignment without the 1px border. */
@@ -108,9 +165,25 @@ function cancelTitle(): void {
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-reporting {
-  justify-self: end; margin-left: 8px; max-width: 100%; height: 28px; padding: 0 6px;
-  color: var(--text-primary); background: var(--bg-surface);
-  border: 1px solid var(--border-default); border-radius: 6px; font: inherit; font-size: 12px;
+  display: flex; align-items: center; gap: 2px; min-width: 0; padding: 2px;
+  justify-self: end; margin-left: 8px;
+  border: 1px solid var(--border-default); border-radius: 9px;
+  background: var(--bg-surface);
 }
-.ch-reporting:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ch-reporting-option {
+  flex: none; min-width: 0; padding: 3px 10px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text-secondary);
+  font: inherit; font-size: 12px; line-height: 1.25; white-space: nowrap; cursor: pointer;
+}
+.ch-reporting-option:hover { color: var(--text-primary); }
+.ch-reporting-option[aria-checked="true"] {
+  background: var(--accent-dim); color: var(--text-primary); font-weight: 500;
+}
+.ch-reporting-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ch-reporting-short { display: none; }
+@container chat-header (max-width: 480px) {
+  .ch-reporting-option { padding-inline: 6px; min-width: 24px; }
+  .ch-reporting-label { display: none; }
+  .ch-reporting-short { display: inline; }
+}
 </style>

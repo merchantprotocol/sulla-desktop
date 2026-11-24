@@ -18,14 +18,14 @@
 <template>
   <InlineFileMessage v-if="msg.kind === 'inline_file_reference'" :reference="{ fileId: msg.fileId, collectionId: msg.collectionId, toolCallId: msg.toolCallId, threadId: msg.threadId }" />
   <TurnUser        v-else-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
-  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="latestReply" :reporting-level="reportingLevel"
+  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="false"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
   />
   <div v-else-if="msg.kind === 'html'" class="chat-turn sulla chat-fade-in">
     <InlineReplyBody class="chat-body" :text="msg.html" legacy-html />
   </div>
-  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :reporting-level="reportingLevel" :paragraph-break="streamingParagraphBreak" />
+  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :paragraph-break="streamingParagraphBreak" />
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
   <div v-else-if="mainDecisionTranscript && decisionId && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
@@ -57,9 +57,9 @@
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
   <SubAgentBubble  v-else-if="msg.kind === 'subagent'"  :msg="msg" />
   <SubAgentExchange v-else-if="msg.kind === 'subagent_exchange'" :msg="msg" />
-  <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" :reporting-level="reportingLevel" />
+  <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
-  <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" :reporting-level="reportingLevel" />
+  <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
   <HeartbeatMessage v-else-if="msg.kind === 'heartbeat'" :msg="msg" />
   <TtsIndicator    v-else-if="msg.kind === 'tts'"       :msg="msg" />
   <ErrorCard       v-else-if="msg.kind === 'error'"     :msg="msg" @action="onErrorAction" />
@@ -98,10 +98,9 @@ import ToolApproval    from '../tool/ToolApproval.vue';
 import ToolQuestion    from '../tool/ToolQuestion.vue';
 import ToolTask        from '../tool/ToolTask.vue';
 import type { CardMessage } from './toolGroups';
-import type { ReportingLevel } from '../../models/ReportingLevel';
 import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CardMessage; latestReply?: boolean; reportingLevel: ReportingLevel; streamingParagraphBreak?: boolean }>();
+const props = defineProps<{ msg: CardMessage; latestReply?: boolean; streamingParagraphBreak?: boolean }>();
 const streamingParagraphBreak = computed(() => props.streamingParagraphBreak ?? false);
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();

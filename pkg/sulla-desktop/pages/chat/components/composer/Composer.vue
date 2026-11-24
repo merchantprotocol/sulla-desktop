@@ -66,8 +66,7 @@
             class="model-btn"
             type="button"
             :aria-label="`Choose model: ${selectionLabel}`"
-            :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle"
-            :style="{ '--usage': `${usagePercent}%` }"
+            :title="selectionTitle"
             @click="controller.openModal('model')"
           >
             <span class="model-avatar">{{ modelInitial }}</span>
@@ -218,16 +217,6 @@
 
           <div class="composer-tools" :class="{ 'remote-enabled': remoteChat.available.value || remoteChat.remote.value }">
             <HeartbeatControl />
-            <button
-              class="usage-meter"
-              type="button"
-              :aria-label="`Context usage: ${usagePercent}%`"
-              title="Context usage"
-              @click="controller.openModal('tokens')"
-            >
-              <span class="usage-ring" :style="{ '--usage': `${usagePercent}%` }" />
-              <span class="usage-value">{{ usagePercent }}%</span>
-            </button>
             <ComposerMic :live="isRecording" @toggle="toggleVoice" />
             <ComposerSend
               :running="remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value"
@@ -240,53 +229,6 @@
         </div>
       </div>
 
-      <div
-        v-if="reportingLevel !== 'info'"
-        class="hints"
-        :class="{ 'hints-contextual': contextualHints }"
-      >
-        <div class="classic-guide">
-          <span><kbd>⏎</kbd> send</span>
-          <span><kbd>hold ␣</kbd> talk</span>
-          <span><kbd>⌘/</kbd> voice</span>
-          <span><kbd>?</kbd> help</span>
-        </div>
-        <div class="noir-guide">
-          <template v-if="isRecording">
-            <span><kbd>⌘/</kbd> stop listening</span>
-          </template>
-          <template v-else-if="controller.popover.value.open">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> run</span>
-            <span><kbd>esc</kbd> close</span>
-          </template>
-          <template v-else-if="useCases.intent.value">
-            <span><kbd>⏎</kbd> {{ intentSendHint }}</span>
-            <span><kbd>⌫</kbd> remove chip (empty draft)</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else-if="useCases.open.value && useCases.strip.active >= 0">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> pick</span>
-            <span><kbd>esc</kbd> back to typing</span>
-          </template>
-          <template v-else-if="useCases.open.value">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>↓</kbd> suggestions</span>
-            <span><kbd>{{ modKey }}1–5</kbd> pick</span>
-            <span><kbd>esc</kbd> hide</span>
-          </template>
-          <template v-else-if="draft.trim()">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else>
-            <span><kbd>/</kbd> commands</span>
-            <span><kbd>@</kbd> context</span>
-            <span><kbd>⌘/</kbd> voice</span>
-          </template>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -331,11 +273,6 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { ReportingLevel } from '../../models/ReportingLevel';
-
-const props = defineProps<{ reportingLevel: ReportingLevel }>();
-const reportingLevel = computed(() => props.reportingLevel);
-
 const controller = useChatController();
 
 // Injected by ChatPage when nested inside a browser tab — lets us open the
@@ -472,23 +409,10 @@ const canSendDraft = computed(() => !filesImporting.value && (remoteChat.remote.
   : (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value)));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
-const contextLimit = computed(() => {
-  const raw = controller.model.value.ctx.toLowerCase().replace(/\s*ctx\s*/, '');
-  const amount = Number.parseFloat(raw);
-  if (!Number.isFinite(amount) || amount <= 0) return 0;
-  if (raw.endsWith('m')) return amount * 1_000_000;
-  if (raw.endsWith('k')) return amount * 1_000;
-  return amount;
-});
-const usagePercent = computed(() => {
-  if (!contextLimit.value) return 0;
-  return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
-});
 
 // ─── Right drawer (side dock): the status row's button opens or closes it ───
 const { position: dockPosition, setPosition } = DockPositions.use();
 const drawerOpen = computed(() => dockPosition.value === 'side');
-const side = computed(() => dockPosition.value === 'side');
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -953,7 +877,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 <style scoped>
 .composer-wrap {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 15;
-  box-sizing: border-box; padding: 0 20px 14px;
+  box-sizing: border-box; padding: 0 20px 48px;
 }
 .composer-inner { position: relative; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
@@ -989,9 +913,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .remote-chat-dot.live { background: var(--status-success, var(--accent)); }
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
 .composer-halo {
-  position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none; border-radius: 50%;
+  position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 56%, transparent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
-  filter: blur(10px); opacity: 0; transform: scale(1.03, 1.2); transition: opacity .32s ease, transform .32s ease; will-change: opacity, transform;
+  opacity: 0; transform: scale(1.03, 1.2); transition: opacity .32s ease, transform .32s ease; will-change: opacity, transform;
 }
 .composer-capsule.is-running .composer-halo { opacity: .72; animation: composer-capsule-breathe 4.8s ease-in-out infinite; }
 .composer-capsule.document-hidden .composer-halo { visibility: hidden; animation-play-state: paused; transition: none; }
@@ -1002,14 +926,11 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
   min-height: 64px; height: auto; padding: 0 10px; border: 0; border-radius: 32px; background: var(--bg-surface);
-  box-shadow: inset 0 0 0 1px var(--border-subtle), var(--elev-float); transition: box-shadow .18s ease;
+  box-shadow: 0 1px 2px rgba(20,26,44,.07), 0 14px 34px rgba(20,26,44,.12); transition: box-shadow .18s ease;
 }
-.composer:focus-within { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, var(--border-default)), var(--elev-float); }
+:global(.dark) .composer { box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07); }
 .composer.recording .glyph, .glyph { display: none; }
 .composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
-.usage-meter { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 0 0 44px; width: 44px; height: 44px; padding: 0 4px; border: 0; border-radius: 50%; color: var(--text-dim); background: transparent; font: 11px var(--font-mono); cursor: pointer; }
-.usage-meter:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.usage-ring { width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; background: conic-gradient(var(--accent) 0 var(--usage), color-mix(in srgb, var(--border-default) 75%, transparent) var(--usage) 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px)); }
 .hints { position: relative; display: flex; justify-content: center; gap: 0; min-height: 14px; margin-top: 9px; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
 .classic-guide { display: none; }
 .noir-guide { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
@@ -1025,11 +946,11 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-wrap { padding-right: 10px; padding-left: 10px; }
   .composer-agent-picker { gap: 6px; }
   .composer-agent-picker .model-btn { padding-right: 8px; }
-  .model-name, .model-caret, .usage-value { display: none; }
+  .model-name, .model-caret { display: none; }
   .composer-agent-picker :deep(.environment-pill span:first-of-type) { display: none; }
 }
 @media (max-width: 540px) {
-  .composer-up-row { gap: 8px; padding: 0 4px; }
+  .composer-up-row { gap: 8px; }
   .composer-agent-picker { max-width: 46%; gap: 4px; }
   .composer-agent-picker button.model-btn { width: 34px; justify-content: center; padding: 0 6px; }
   .composer-agent-picker select.remote-model { width: min(120px, calc(100% - 38px)); min-width: 84px; padding: 0 4px; font-size: 11px; }
@@ -1037,7 +958,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-agent-picker :deep(.environment-pill span:last-child) { display: none; }
   .composer-run-row { margin: 0 4px 8px; }
   .composer { gap: 2px; padding: 0 6px; }
-  .usage-meter { flex-basis: 38px; width: 38px; height: 38px; }
   .composer-top { margin: 0 4px 8px; }
   .composer-top .usecase-strip { max-width: 100%; overflow: hidden; }
 }
