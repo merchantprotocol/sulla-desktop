@@ -959,7 +959,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
 .chat-root.artifact-open .composer-inner { max-width: 760px; }
 .composer-up-row { display: flex; align-items: flex-end; gap: 12px; min-width: 0; margin-bottom: 12px; padding: 0 10px; }
-.dock-status { flex: 1 1 auto; min-width: 0; max-width: 470px; }
+.dock-status { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; max-width: 470px; }
 .dock-rollup { flex: 1 1 auto; min-width: 0; overflow: hidden; }
 .dock-status :deep(.status-rollup) { min-width: 0; }
 .dock-status :deep(.status-rollup__line) { max-width: 100%; overflow: hidden; }
