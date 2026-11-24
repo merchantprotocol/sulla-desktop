@@ -266,35 +266,11 @@
           :aria-label="isDark ? 'Switch to light mode' : 'Switch to dark mode'"
           @click="toggleTheme"
         >
-          <svg
-            v-if="isDark"
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="h-4 w-4"
-          >
-            <circle
-              cx="12"
-              cy="12"
-              r="4"
-            />
+          <svg v-if="isDark" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+            <circle cx="12" cy="12" r="4" />
             <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
           </svg>
-          <svg
-            v-else
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            class="h-4 w-4"
-          >
+          <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
             <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" />
           </svg>
         </button>
@@ -522,8 +498,8 @@ const tabLayoutRepository = new TabStripLayoutRepository(localStorage, tabStripL
 const foldedGroupIds = ref<TabGroupId[]>(tabLayoutRepository.loadFoldedGroups());
 
 defineProps<{
-  isDark:      boolean;
-  toggleTheme: () => void;
+  isDark:         boolean;
+  toggleTheme:    () => void;
 }>();
 
 const emit = defineEmits<{
@@ -894,20 +870,20 @@ interface HeaderTab {
  * inline so they inherit `currentColor` and stay crisp at any DPI.
  */
 const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
-  welcome:          'M3 12L12 3l9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10',
-  browser:          'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a13.5 13.5 0 010 18M12 3a13.5 13.5 0 000 18',
-  chat:             'M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z',
-  calendar:         'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
-  integrations:     'M9 2v6M15 2v6M9 16v6M15 16v6M6 8h12a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4a2 2 0 012-2z',
-  document:         'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
-  secretary:        'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16',
-  vault:            'M5 11a2 2 0 012-2h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2v-9zM8 11V7a4 4 0 118 0v4M12 15v2',
-  account:          'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
-  history:          'M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2',
-  routines:         'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
-  marketplace:      'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
-  terminal:         'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
-  usage:            'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
+  welcome:      'M3 12L12 3l9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10',
+  browser:      'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a13.5 13.5 0 010 18M12 3a13.5 13.5 0 000 18',
+  chat:         'M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z',
+  calendar:     'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
+  integrations: 'M9 2v6M15 2v6M9 16v6M15 16v6M6 8h12a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4a2 2 0 012-2z',
+  document:     'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
+  secretary:    'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16',
+  vault:        'M5 11a2 2 0 012-2h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2v-9zM8 11V7a4 4 0 118 0v4M12 15v2',
+  account:      'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
+  history:      'M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2',
+  routines:     'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
+  marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
+  terminal:     'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
+  usage:        'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
   'capture-studio': 'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
 };
 
