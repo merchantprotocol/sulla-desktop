@@ -373,6 +373,9 @@ export interface IpcMainInvokeEvents {
   'first-run-ai:status':    () => { ready: boolean };
   'first-run-ai:connected': (providerId: string) => void;
   'first-run-ai:connect-api-key': (payload: { providerId: 'anthropic' | 'openai' | 'grok'; apiKey: string; workspaceId?: string }) => { success: boolean; error?: string; models?: string[] };
+  'clerk:settings:load':           () => import('@pkg/main/ClerkSettingsService').ClerkSettingsResult;
+  'clerk:settings:save':           (values: Record<string, string>) => import('@pkg/main/ClerkSettingsService').ClerkSettingsResult;
+  'clerk:settings:disconnect':     () => import('@pkg/main/ClerkSettingsService').ClerkSettingsResult;
   'integration:connect-form': (payload: { integrationId: string; accountId: string; label: string; values: Record<string, string> }) => { success: boolean; error?: string };
   /** Whether the first chat can start right away; never blocks closing the wizard. */
   'first-run:chat-ready-status': () => import('@pkg/main/chatReadiness').ChatReadyStatus;

@@ -60,6 +60,8 @@ interface IpcMainProxy {
       ...args: globalThis.Parameters<IpcMainInvokeEvents[eventName]>
     ) => Promise<ReturnType<IpcMainInvokeEvents[eventName]>> | ReturnType<IpcMainInvokeEvents[eventName]>
   ): void;
+  /** Registers an IPC invoke handler whose arguments may contain credentials or private data. */
+  handleSensitive(channel: string, listener: Handler): void;
   handleOnce<eventName extends keyof IpcMainInvokeEvents>(
     channel: eventName,
     listener: (
@@ -217,6 +219,14 @@ class IpcMainProxyImpl implements IpcMainProxy {
       return handler(event, ...args);
     };
 
+    this.ipcMain.handle(channel, wrapper);
+  }
+
+  handleSensitive(channel: string, handler: Handler): void {
+    const wrapper: Handler = (event, ...args) => {
+      this.logger.debug(`ipcMain: "${ channel }" handle called (arguments redacted)`);
+      return handler(event, ...args);
+    };
     this.ipcMain.handle(channel, wrapper);
   }
 
