@@ -5,11 +5,13 @@
 
 import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
+import { TabCloseGuardRegistry } from './TabCloseGuardRegistry';
+import { TabGroupModel } from './TabGroupModel';
+import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
+
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
-import { TabCloseGuardRegistry } from './TabCloseGuardRegistry';
 
 const tabCloseGuards = new TabCloseGuardRegistry();
 
@@ -533,6 +535,11 @@ function closeTabInHistory(tabId: string): void {
 }
 
 export function useBrowserTabs() {
+  const tabGroupModel = new TabGroupModel();
+  const tabModesByHeaderId = () => new Map(tabs.map(tab => [`browser-${ tab.id }`, tab.mode] as const));
+  const orderTabIds = (ids: readonly string[], pins: readonly string[] = pinnedTabIds.value) =>
+    tabGroupModel.orderTabIds(ids, tabModesByHeaderId(), pins);
+
   const MODE_TITLES: Record<BrowserTabMode, string> = {
     welcome:      'New Tab',
     browser:      'New Tab',
@@ -706,7 +713,7 @@ export function useBrowserTabs() {
     const pinnedCount = orderedIds.filter(existing => pinnedTabIds.value.includes(existing)).length;
     const insertionIndex = transient?.pinned === true ? Math.min(index, pinnedCount) : Math.max(index, pinnedCount);
     orderedIds.splice(Math.max(0, Math.min(insertionIndex, orderedIds.length)), 0, headerId);
-    tabOrder.value = orderedIds;
+    tabOrder.value = orderTabIds(orderedIds);
     flushPersistTabs();
     return adopted;
   }
@@ -785,7 +792,7 @@ export function useBrowserTabs() {
 
     ids.splice(boundary, 0, id);
     pinnedTabIds.value = nextPinned;
-    tabOrder.value = orderPinnedFirst(ids, nextPinned);
+    tabOrder.value = orderTabIds(ids, nextPinned);
   }
 
   function prunePinnedTabs(validIds: readonly string[]): void {
@@ -796,16 +803,13 @@ export function useBrowserTabs() {
   }
 
   function reorderTabs(fromIndex: number, toIndex: number): void {
-    const ids = orderPinnedFirst([...tabOrder.value], pinnedTabIds.value);
-    if (fromIndex < 0 || fromIndex >= ids.length || toIndex < 0 || toIndex >= ids.length) return;
-    const pinnedCount = ids.filter(id => pinnedTabIds.value.includes(id)).length;
-    const movingPinned = fromIndex < pinnedCount;
-    const constrainedTarget = movingPinned
-      ? Math.min(toIndex, pinnedCount - 1)
-      : Math.max(toIndex, pinnedCount);
-    const [moved] = ids.splice(fromIndex, 1);
-    ids.splice(constrainedTarget, 0, moved);
-    tabOrder.value = ids;
+    tabOrder.value = tabGroupModel.reorderTabIds(
+      tabOrder.value,
+      fromIndex,
+      toIndex,
+      tabModesByHeaderId(),
+      pinnedTabIds.value,
+    );
   }
 
   /**
@@ -852,6 +856,7 @@ export function useBrowserTabs() {
     restoreHistoryTab,
     clearClosedTabs,
     reorderTabs,
+    tabStripLayoutStorageKey: storageKey('tab-strip-layout'),
   };
 }
 
