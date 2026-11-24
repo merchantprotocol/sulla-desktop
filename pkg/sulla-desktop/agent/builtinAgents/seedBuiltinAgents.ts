@@ -51,6 +51,7 @@ import {
   getBuiltinAgentSpecs,
   getRetiredBuiltinSlugs,
   hashManagedContent,
+  hashManagedContentBeforeAgentAwareness,
   readGitIdentity,
   RETIRED_CODING_MANAGER_SLUGS,
   renderBuiltinAgent,
@@ -122,6 +123,7 @@ function applyCardPatch(row: AgentDefinition, patch: AgentDefinitionPatch): Agen
     ...(patch.returns !== undefined ? { returns: patch.returns } : {}),
     ...(patch.costTier !== undefined ? { cost_tier: patch.costTier } : {}),
     ...(patch.canCall !== undefined ? { can_call: patch.canCall } : {}),
+    ...(patch.agentAwareness !== undefined ? { agent_awareness: patch.agentAwareness } : {}),
   };
 }
 
@@ -135,6 +137,8 @@ export function decideBuiltinSeedAction(
 
   const bundleHash = hashManagedContent(content);
   const liveHash = hashManagedContent(row);
+  const legacyBundleHash = hashManagedContentBeforeAgentAwareness(content);
+  const legacyLiveHash = hashManagedContentBeforeAgentAwareness(row);
   const fill = cardFillPatch(row, content);
   const hasFill = Object.keys(fill).length > 0;
 
@@ -142,7 +146,7 @@ export function decideBuiltinSeedAction(
     if (liveHash === bundleHash) {
       return row.builtin_hash === bundleHash ? { kind: 'unchanged' } : { kind: 'adopt', patch: { builtinHash: bundleHash } };
     }
-    if (row.builtin_hash && liveHash === row.builtin_hash) return { kind: 'refresh' };
+    if (row.builtin_hash && (liveHash === row.builtin_hash || legacyLiveHash === row.builtin_hash)) return { kind: 'refresh' };
     // Hash no longer matches a seeded built-in: the person saved it, or it carries
     // an older 'sha256:' hash and differs from the bundle. Leave it wholly as is;
     // do not put bundle card text back over a cleared field. Not-yet-hashed rows still fill.
@@ -153,7 +157,7 @@ export function decideBuiltinSeedAction(
   // A row this install already had (legacy import, hand-made, older build).
   // Adopt it only when it is exactly the bundled content apart from the card
   // fields that did not exist before; anything else is someone's version.
-  if (hashManagedContent(applyCardPatch(row, fill)) === bundleHash) {
+  if (hashManagedContent(applyCardPatch(row, fill)) === bundleHash || hashManagedContentBeforeAgentAwareness(applyCardPatch(row, fill)) === legacyBundleHash) {
     return { kind: 'adopt', patch: { ...fill, isBuiltin: true, builtinHash: bundleHash } };
   }
   return hasFill ? { kind: 'fill-cards', patch: fill } : { kind: 'kept' };
@@ -182,6 +186,7 @@ function contentPatch(content: BuiltinManagedContent, bundleHash: string): Agent
     returns:       content.returns,
     costTier:      content.cost_tier,
     canCall:       content.can_call,
+    agentAwareness: content.agent_awareness,
     isBuiltin:     true,
     builtinHash:   bundleHash,
   };

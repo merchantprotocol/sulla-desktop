@@ -53,6 +53,7 @@ function baseAgent(patch: Record<string, unknown> = {}) {
     canCall:            [],
     isBuiltin:          false,
     frontDoor:          null,
+    agentAwareness:     true,
     updatedAt:          T1,
     type:               'worker',
     allowedTools:       [],
@@ -76,7 +77,7 @@ beforeEach(() => {
     }
     if (name === 'model-routing:get') return structuredClone(f.routing);
     if (name === 'agent-definitions:export') return { spec: { skills: [] } };
-    if (name === 'agent-definitions:update') return { id: args[0], slug: f.agent.slug, enabled: args[1].enabled, updated_at: nextStamp() };
+    if (name === 'agent-definitions:update') { f.agent = { ...f.agent, ...args[1], updatedAt: nextStamp() }; return { id: args[0], slug: f.agent.slug, enabled: f.agent.enabled, updated_at: f.agent.updatedAt }; }
     if (name === 'model-routing:worker-set') {
       const change = args[0];
       if (change.candidates === null) delete f.routing.workerBindings[change.slug];
@@ -133,6 +134,24 @@ describe('Try opens a chat on the saved agent slug', () => {
     expect(selector.activeModelLabel.value).toBe('Reviewer');
     selector.restoreForChat(null, '', 'agent-1');
     expect(selector.activeModelLabel.value).not.toBe('Reviewer');
+  });
+});
+
+describe('Sees other agents editor toggle', () => {
+  it('saves the awareness opt-out and reloads it from the saved definition', async() => {
+    // risk: workers' opt-out is not persisted and their next prompt grows again.
+    const wrapper = await openEditor();
+    const toggle = wrapper.find('input[type="checkbox"][aria-label="Sees other agents"]');
+    expect((toggle.element as HTMLInputElement).checked).toBe(true);
+    await toggle.setValue(false);
+    await button(wrapper, 'Save').trigger('click');
+    await flushPromises();
+    expect(updates().at(-1)?.[2]?.agentAwareness).toBe(false);
+    wrapper.unmount();
+
+    const reloaded = await openEditor();
+    expect((reloaded.find('input[type="checkbox"][aria-label="Sees other agents"]').element as HTMLInputElement).checked).toBe(false);
+    reloaded.unmount();
   });
 });
 

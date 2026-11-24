@@ -51,8 +51,12 @@ vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
 
 import { SullaUseCaseFiles } from '@pkg/main/sullaUseCaseFiles';
 
-const packageRows = [{ id: 'grok-file', path: 'Use Cases/agents/grok-pr-reviewer/agent.yaml', published_version_id: 'published-v1' }];
-const packageText = `slug: grok-pr-reviewer\nname: Grok PR Reviewer\nprovider: grok\nmodel: grok-4.7\nsystemPrompt: Review the approved pull request head.\n`;
+const packageRows = [{ id: 'grok-file', path: 'Use Cases/agents/grok-pr-reviewer/agent.json', published_version_id: 'published-v1' }];
+const packageText = JSON.stringify({
+  apiVersion: 'sulla/v3', kind: 'Agent', manifestVersion: 1,
+  metadata: { slug: 'grok-pr-reviewer', title: 'Grok PR Reviewer', description: 'Reviews PRs.', version: '1.0.0' },
+  spec: { agentAwareness: false, provider: 'grok', model: 'grok-4.7', prompt: 'Review the approved pull request head.', tools: [], skills: [], routines: [], config: {}, promptFiles: {} },
+});
 
 function response(value: unknown): Response { return new Response(JSON.stringify(value), { status: 200 }); }
 
@@ -84,6 +88,7 @@ describe('published legacy agent registration retry', () => {
     expect(f.initializedRoutes[0][1]).toBe(f.insertParams[0][0]);
     expect(f.insertParams[0][1]).toBe('grok-pr-reviewer');
     expect(f.insertParams[0][12]).toBe('grok');
+    expect(f.insertParams[0][23]).toBe(false);
     // The rollback carries the exact identity it created, never just the agent id.
     expect(f.removedRoutes).toEqual([[ 'grok-pr-reviewer', f.insertParams[0][0], { editToken: 'created-token', revision: 1 } ]]);
     expect(f.storedAgent).toBeUndefined();

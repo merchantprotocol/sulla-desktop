@@ -29,6 +29,8 @@ import {
 } from './cliFaultRecovery';
 import { legacyProviderFailure, VaultLocked } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
+import { resolveAgentIdentity } from '../utils/agentIdentity';
 import { SupportSessionPolicy } from '../services/SupportSessionPolicy';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
@@ -809,7 +811,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     //     conversation's baseline from the install-global hash instead of
     //     force-sending. Only send if the global hash is missing/stale (first
     //     call, Redis down, or the content genuinely changed) — a safe fallback.
-    const stableText = stableParts.join('\n\n');
+    const promptPolicy = new AgentAwarenessPolicy();
+    const stableText = promptPolicy.filterRuntimeContext(stableParts, state?.metadata as any).join('\n\n');
     const stableHash = crypto.createHash('sha1').update(stableText).digest('hex');
 
     let lastHash = this.lastStableContextHash.get(opts.convId);
@@ -1004,7 +1007,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       purpose:       'system-prompt',
       suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
       data:          new SupportSessionPolicy().appendSupportContext(
-        systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(),
+        systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(state),
         options.state?.metadata?.supportContext,
       ),
     });
@@ -2028,10 +2031,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     }
   }
 
-  private async fallbackSystemPrompt(): Promise<string> {
+  private async fallbackSystemPrompt(state?: BaseThreadState): Promise<string> {
     try {
       const { buildFullSystemPrompt } = await import('../prompts/buildFullSystemPrompt');
-      return (await buildFullSystemPrompt({ provider: 'anthropic' })) || '';
+      return (await buildFullSystemPrompt({
+        provider: 'anthropic',
+        agentId: resolveAgentIdentity(state?.metadata ?? {} as any),
+        agentAwareness: typeof (state?.metadata as any)?.agentAwareness === 'boolean'
+          ? (state?.metadata as any).agentAwareness
+          : undefined,
+      })) || '';
     } catch {
       return '';
     }

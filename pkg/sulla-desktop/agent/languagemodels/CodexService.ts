@@ -18,6 +18,7 @@ import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCom
 import { CliFaultError, isCliFault, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
@@ -608,7 +609,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
     // Only send the stable tier when it's new to this session or has changed
     // since it was last sent.
-    const stableText = stableParts.join('\n\n');
+    const promptPolicy = new AgentAwarenessPolicy();
+    const stableText = promptPolicy.filterRuntimeContext(stableParts, state?.metadata as any).join('\n\n');
     const stableHash = crypto.createHash('sha1').update(stableText).digest('hex');
     if (opts.isNewSession || this.lastStableContextHash.get(opts.convId) !== stableHash) {
       parts.push(stableText);

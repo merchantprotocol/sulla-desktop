@@ -48,6 +48,8 @@ export interface BuiltinAgentCard {
 /** One entry of builtin-agents.json. */
 export interface BuiltinAgentSpec {
   slug:              string;
+  /** Defaults to visible for older bundles; worker bundles explicitly set false. */
+  agentAwareness?:   boolean;
   name:              string;
   description:       string;
   provider:          string | null;
@@ -92,6 +94,7 @@ export interface BuiltinManagedContent {
   returns:          string;
   cost_tier:        AgentCostTier | null;
   can_call:         string[];
+  agent_awareness:  boolean;
 }
 
 export const BUILTIN_HOME_TOKEN = '{{USER_HOME}}';
@@ -122,7 +125,7 @@ export function isRetiredCodingManagerSlug(slug: string): boolean {
 const MANAGED_FIELDS: (keyof BuiltinManagedContent)[] = [
   'name', 'description', 'system_prompt', 'prompt_content', 'soul_content', 'goals_content', 'prompt_files',
   'allowed_tools', 'skill_refs', 'routine_refs', 'model_priority', 'provider', 'model', 'model_slot', 'config',
-  ...BUILTIN_CARD_FIELDS,
+  ...BUILTIN_CARD_FIELDS, 'agent_awareness',
 ];
 
 export function getBuiltinAgentSpecs(): BuiltinAgentSpec[] {
@@ -220,6 +223,7 @@ export function renderBuiltinAgent(spec: BuiltinAgentSpec, home = os.homedir(), 
     returns:          s.card?.returns ?? '',
     cost_tier:        s.card?.costTier ?? null,
     can_call:         s.card?.canCall ?? [],
+    agent_awareness:  s.agentAwareness !== false,
   };
 }
 
@@ -267,8 +271,17 @@ function managedConfig(config: unknown): Record<string, unknown> {
  * row hashes exactly like the bundle content it was created from.
  */
 export function hashManagedContent(content: BuiltinManagedContent | AgentDefinition): string {
+  return hashFields(content, MANAGED_FIELDS);
+}
+
+/** Hash format used by builds before the awareness column became managed content. */
+export function hashManagedContentBeforeAgentAwareness(content: BuiltinManagedContent | AgentDefinition): string {
+  return hashFields(content, MANAGED_FIELDS.filter(field => field !== 'agent_awareness'));
+}
+
+function hashFields(content: BuiltinManagedContent | AgentDefinition, fields: readonly (keyof BuiltinManagedContent)[]): string {
   const picked: Record<string, unknown> = {};
-  for (const field of MANAGED_FIELDS) {
+  for (const field of fields) {
     if (POLICY_REWRITTEN_FIELDS.has(field)) continue;
     const value = (content as any)[field];
     picked[field] = field === 'config' ? managedConfig(value) : field === 'cost_tier' ? (value || null) : value;

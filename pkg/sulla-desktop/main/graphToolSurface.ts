@@ -24,6 +24,7 @@
  */
 
 import { sessionAllowsTool } from './toolSessionPolicy';
+import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
@@ -66,7 +67,10 @@ export function resolveGraphToolSurface(metadata: unknown): string[] | null {
   const meta = (metadata ?? {}) as Record<string, unknown>;
   const allowed = meta.allowedToolNames;
   if (!Array.isArray(allowed) || allowed.length === 0) return null;
-  return allowed.filter((name): name is string => typeof name === 'string');
+  return new AgentAwarenessPolicy().filterToolNames(
+    allowed.filter((name): name is string => typeof name === 'string'),
+    { agent_awareness: meta.agentAwareness as boolean | undefined },
+  );
 }
 
 /**

@@ -103,6 +103,17 @@ async function legacySeeded(bundled: BuiltinAgentSpec, options: { frontDoor?: bo
 beforeEach(() => { db.table = new AgentDefinitionTableFake() });
 
 describe('seeding built-ins against stored rows', () => {
+  it('ships awareness off for workers and on for every bundled lead/front-door agent', async() => {
+    // risk: a default or later seed update reintroduces other-agent context into workers.
+    const shipped = getBuiltinAgentSpecs();
+    const result = await seedBuiltinAgents(shipped);
+    expect(result.errors).toEqual([]);
+    const hidden = ['codex-luna-worker', 'codex-sol-worker', 'haiku-worker', 'sonnet-worker', 'opus-worker', 'analytics-worker'];
+    const visible = ['coding-manager', 'ui-test-manager', 'premortem-planner', 'mockup-designer', 'account-manager', 'project-manager', 'director', 'integrator', 'conversationalist'];
+    for (const slug of hidden) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(false);
+    for (const slug of visible) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(true);
+  });
+
   it('sees every shipped built-in as unchanged on the boot after it was installed', async() => {
     const shipped = getBuiltinAgentSpecs();
     const first = await seedBuiltinAgents(shipped);

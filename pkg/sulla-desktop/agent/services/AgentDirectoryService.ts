@@ -1,5 +1,6 @@
 import { agentDefinitionService } from './AgentDefinitionService';
 import { modelRouter } from '../languagemodels/modelRouter';
+import { AgentAwarenessPolicy } from './AgentAwarenessPolicy';
 
 import type { AgentCostTier, AgentDefinition, AgentModelSlot } from '../database/models/AgentDefinitionModel';
 import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
@@ -191,6 +192,7 @@ export function formatCardLine(card: AgentDirectoryCard): string {
 export async function buildAgentTeamBlock(opts: AgentTeamBlockOptions = {}): Promise<string> {
   const maxChars = opts.maxChars ?? 4000;
   const self = opts.forAgentSlug ? await agentDefinitionService.findBySlug(opts.forAgentSlug) : null;
+  if (self && !new AgentAwarenessPolicy().canSeeOtherAgents(self)) return '';
   const scoped = self?.can_call.length ? self.can_call : undefined;
 
   let cards = await listAgentDirectory({ slugs: scoped });

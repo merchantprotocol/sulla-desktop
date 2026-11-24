@@ -28,6 +28,7 @@ import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { MEMORY_CHAR_BUDGET, measureInjectedMemoryBlocks } from '../memory/MemoryBudget';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '../services/AgentAwarenessPolicy';
 import { latestUserText } from '../utils/latestUserText';
 import { stripTurnContext } from '../prompts/turnContext';
 
@@ -243,6 +244,20 @@ export async function runSubconsciousMiddleware(
     return;
   }
 
+  let awarenessSetting: AgentAwarenessSetting | null | undefined =
+    typeof meta.agentAwareness === 'boolean' ? { agent_awareness: meta.agentAwareness } : undefined;
+  if (!awarenessSetting) {
+    const awarenessAgentId = resolveAgentIdentity(state.metadata);
+    if (awarenessAgentId) {
+      try {
+        const { agentDefinitionService } = await import('../services/AgentDefinitionService');
+        awarenessSetting = await agentDefinitionService.findBySlug(awarenessAgentId);
+      } catch { /* absent definitions keep the visible-by-default behavior */ }
+    }
+  }
+  const canSeeOtherAgents = new AgentAwarenessPolicy().canSeeOtherAgents(awarenessSetting);
+  meta.agentAwareness = canSeeOtherAgents;
+
   const conversationalistVoice = String(meta.agentId || meta.wsChannel || '') === 'conversationalist'
     && (inputSource === 'microphone' || inputSource === 'voice');
   // Conversationalist voice keeps memory/observation recall. It skips only
@@ -390,8 +405,8 @@ export async function runSubconsciousMiddleware(
   // Keyword ranking over one table read: no LLM call, bounded size. It
   // suggests; the lead agent decides.
   const teamAgentSlug = resolveAgentIdentity(state.metadata);
-  if (teamAgentSlug && conversationalistVoice) skipped.push('team-recall');
-  if (teamAgentSlug && !conversationalistVoice) {
+  if (teamAgentSlug && (!canSeeOtherAgents || conversationalistVoice)) skipped.push('team-recall');
+  if (teamAgentSlug && canSeeOtherAgents && !conversationalistVoice) {
     launched.push('team-recall');
     awaitedTasks.push(timed('team-recall', 'Recalling team', runTeamRecall(recallState, teamAgentSlug)));
   }
@@ -409,8 +424,8 @@ export async function runSubconsciousMiddleware(
   // R11. Subagent directory — any agent with children on this thread sees each
   // child (hidden or tab), its last check-in, stalls and unprocessed results,
   // injected as <subagent_directory>. Job-table read only: no LLM call.
-  if (typeof meta.threadId === 'string' && meta.threadId && conversationalistVoice) skipped.push('subagent-directory');
-  if (typeof meta.threadId === 'string' && meta.threadId && !conversationalistVoice) {
+  if (typeof meta.threadId === 'string' && meta.threadId && (!canSeeOtherAgents || conversationalistVoice)) skipped.push('subagent-directory');
+  if (typeof meta.threadId === 'string' && meta.threadId && canSeeOtherAgents && !conversationalistVoice) {
     launched.push('subagent-directory');
     awaitedTasks.push(timed('subagent-directory', 'Checking subagents', runSubagentDirectory(recallState)));
   }
