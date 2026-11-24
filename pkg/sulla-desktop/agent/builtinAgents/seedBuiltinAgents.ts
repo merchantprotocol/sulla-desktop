@@ -209,6 +209,10 @@ export interface BuiltinSeedSummary {
 
 export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAgentSpecs()): Promise<BuiltinSeedSummary> {
   const summary: BuiltinSeedSummary = { inserted: 0, refreshed: 0, adopted: 0, filled: 0, kept: 0, unchanged: 0, skipped: 0, errors: [] };
+  // Retire these before the rest of the seed work so a transient builtin-ledger error cannot
+  // prevent long-tail rows from being switched off at startup.
+  const retiredManagers = await retireLongTailCodingManagers();
+  summary.errors.push(...retiredManagers.errors);
   const seen = await seenSlugs();
   const home = os.homedir();
   const git = readGitIdentity(home);
@@ -270,11 +274,6 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
       summary.errors.push(`${ spec.slug }: ${ error instanceof Error ? error.message : String(error) }`);
     }
   }
-
-  // These manager rows were not bundle built-ins. Archive by exact slug regardless of source
-  // and remove any matching worker binding; registration paths independently refuse the slugs.
-  const retiredManagers = await retireLongTailCodingManagers();
-  summary.errors.push(...retiredManagers.errors);
 
   return summary;
 }

@@ -4,6 +4,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { RETIRED_CODING_MANAGER_SLUGS } from '@pkg/agent/builtinAgents/index';
+
 const f = vi.hoisted(() => ({
   rows: [] as { id: string; path: string; published_version_id: string }[],
   agentRows: {} as Record<string, { enabled: boolean; status: string; use_case_file_id: string | null }>,
@@ -47,7 +49,7 @@ vi.mock('@pkg/agent/database/registry/SkillsRegistry', () => ({ skillsRegistry: 
 
 import { SullaUseCaseFiles } from '@pkg/main/sullaUseCaseFiles';
 
-const retiredSlugs = ['coding-manager-sol', 'coding-manager-grok', 'coding-manager-gpt'];
+const retiredSlugs = RETIRED_CODING_MANAGER_SLUGS;
 const files = retiredSlugs.map((slug, index) => ({
   id: `file-${ index }`,
   path: `Use Cases/agents/${ slug }/agent.json`,
