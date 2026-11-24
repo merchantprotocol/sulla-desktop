@@ -391,10 +391,11 @@ export async function recallV7SubjectMemory(
     recent.forEach((episode) => standaloneEpisodeIds.add(episode.id));
   }
   const history = hits
-    .map((hit) => hit.x)
-    .filter((episode) => !standaloneEpisodeIds.has(episode.id))
+    .filter((hit) => !standaloneEpisodeIds.has(hit.x.id))
+    .sort((a, b) => b.x.ts - a.x.ts || b.s - a.s)
     .slice(0, 20)
-    .reverse();
+    .reverse()
+    .map((hit) => hit.x);
   history.forEach((episode) => standaloneEpisodeIds.add(episode.id));
   const projectRuleItems: Array<{ slug: string; item: Item }> = [];
   for (let index = 0; projectRows.some((row) => index < Math.max(row.majorRules.length, row.rules.length)); index++) {
