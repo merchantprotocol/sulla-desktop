@@ -25,7 +25,7 @@ import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
-import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
+import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { CodexTurnOutcome } from './codexTurnOutcome';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
@@ -210,6 +210,9 @@ export class CodexService extends BaseLanguageModel {
       codexArgs.push('--model', shq(this.model));
     }
     if (this.effort) codexArgs.push('-c', shq(`model_reasoning_effort=${ JSON.stringify(this.effort) }`));
+    for (const override of CODEX_MEMORY_CONFIG_OVERRIDES) {
+      codexArgs.push('-c', shq(override));
+    }
     codexArgs.push('-'); // read the prompt from stdin
 
     // `exec` replaces the inner sh with codex so there's no shell layer
@@ -253,6 +256,7 @@ export class CodexService extends BaseLanguageModel {
     if (p.instructionsPath) args.push('-c', `model_instructions_file=${ JSON.stringify(p.instructionsPath) }`);
     if (this.model && this.model !== 'codex') args.push('--model', this.model);
     if (this.effort) args.push('-c', `model_reasoning_effort=${ JSON.stringify(this.effort) }`);
+    for (const override of CODEX_MEMORY_CONFIG_OVERRIDES) args.push('-c', override);
     args.push('-');
 
     return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
