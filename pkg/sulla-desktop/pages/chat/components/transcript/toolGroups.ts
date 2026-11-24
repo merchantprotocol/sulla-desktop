@@ -125,6 +125,19 @@ export class TranscriptReporting {
     return false;
   }
 
+  /**
+   * Return only formatter labels and summaries that are explicitly audited as
+   * payload-free. Tool arguments, results and error strings are never safe
+   * defaults for the Detailed trace; they remain available only in its
+   * redacted, user-opened payload disclosure.
+   */
+  safeToolDisplay(message: ToolMessage): { label: string; summary?: string } {
+    const isMemory = ChatToolReporting.isMemoryTool(message.recordedToolName);
+    const label = isMemory ? 'Memory' : toolLabels.get(message.tool) ?? 'Tool';
+    const summary = !isMemory && safeToolSummaries.get(message.tool)?.includes(message.desc) ? message.desc : undefined;
+    return { label, ...(summary ? { summary } : {}) };
+  }
+
   private *project(message: Message, messages: readonly Message[], level: ReportingLevel): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {
@@ -193,11 +206,12 @@ export class TranscriptReporting {
     // Untyped legacy/demo cards and unsupported formatter labels fail closed.
     if (!/^\d+_tool_[\w.-]+$/.test(message.id)) return undefined;
     const isMemory = ChatToolReporting.isMemoryTool(message.recordedToolName);
+    const display = this.safeToolDisplay(message);
     const label = isMemory ? 'Memory' : toolLabels.get(message.tool);
     const status = toolStatuses.get(message.status);
     if (level !== 'debug') return label && status ? `${ label } · ${ status }` : undefined;
 
-    const safeSummary = label && safeToolSummaries.get(message.tool)?.includes(message.desc) ? message.desc : undefined;
+    const safeSummary = label ? display.summary : undefined;
     const withheld = (message.desc && !safeSummary) || message.input || message.output || message.error || message.meta;
     return [
       isMemory ? 'Memory' : label ? message.tool : 'Tool name withheld',
