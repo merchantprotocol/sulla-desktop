@@ -108,4 +108,28 @@ describe('ParkedAgentRehydrator', () => {
     expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('coding-manager-sol'));
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'manager-job' }), expect.stringContaining('coding-manager-sol'));
   });
+
+  it('fails legacy provider-only tasks during resolve and keeps apply non-throwing', async() => {
+    // risk: a legacy effort-only task crashes the wake before failure reaches its parent
+    const job = parkedJob();
+    job.tasks[0].provider = 'codex';
+    delete job.tasks[0].model;
+    delete job.tasks[0].workerModelRoute;
+    const fail = vi.fn(); const notify = vi.fn();
+    const service = new ParkedAgentRehydrator(
+      { findByTaskThread: async() => job },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' }) },
+      fail, notify,
+    );
+    await expect(service.resolve('manager-thread')).rejects.toThrow('Agent "coding-manager-sol" has an invalid saved model override "codex/unspecified"');
+    expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('codex/unspecified'));
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'manager-job' }), expect.stringContaining('coding-manager-sol'));
+
+    const state = { metadata: {} as Record<string, unknown> };
+    const identity = {
+      job, task: job.tasks[0], taskIndex: 0, agentId: 'coding-manager-sol',
+      modelPrecedence: { requested: null, ran: null, step: 'override', choice: { mode: 'list' } },
+    } as any;
+    expect(() => service.apply(state, identity)).not.toThrow();
+  });
 });

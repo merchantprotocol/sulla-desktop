@@ -587,28 +587,42 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   }
 
   private async persistModelDecision(state: BaseThreadState, service: BaseLanguageModel, reason?: string): Promise<void> {
-    const meta = state.metadata as any;
-    const reference = meta.modelDecisionTask;
-    if (!reference?.jobId || !Number.isInteger(reference.taskIndex)) return;
-    const current: ModelDecision = meta.modelDecision ?? { requested: null, ran: null, step: 'category' };
-    const ran = { provider: service.getProviderName(), model: service.getModel() };
-    const decision: ModelDecision = {
-      ...current,
-      ran,
-      ...(reason ? { reason: [current.reason, reason].filter(Boolean).join('; ') } : {}),
-    };
-    const persisted = await agentJobProvider.states.mutateJob(reference.jobId, job => {
-      const task = job.tasks[reference.taskIndex];
-      if (!['running', 'parked'].includes(job.status) || !task || !['queued', 'running', 'parked'].includes(task.status) ||
-          (reference.threadId && task.threadId !== reference.threadId) || (task.generation ?? 1) !== (reference.generation ?? 1)) {
-        throw new Error('Worker execution ownership changed; refusing to record a stale model decision.');
+    try {
+      const meta = state.metadata as any;
+      const reference = meta.modelDecisionTask;
+      if (!reference?.jobId || !Number.isInteger(reference.taskIndex)) return;
+      const current: ModelDecision = meta.modelDecision ?? { requested: null, ran: null, step: 'category' };
+      const ran = { provider: service.getProviderName(), model: service.getModel() };
+      const sameRan = current.ran?.provider === ran.provider && current.ran?.model === ran.model;
+      const reasons = current.reason ? current.reason.split('; ') : [];
+      if (reason && !reasons.includes(reason)) reasons.push(reason);
+      const nextReason = reasons.join('; ');
+      if (sameRan && nextReason === (current.reason ?? '')) return;
+      const decision: ModelDecision = {
+        ...current,
+        ran,
+        ...(nextReason ? { reason: nextReason } : {}),
+      };
+      // Keep the live thread truthful even when durable bookkeeping is unavailable.
+      meta.modelDecision = decision;
+      try {
+        const persisted = await agentJobProvider.states.mutateJob(reference.jobId, job => {
+          const task = job.tasks[reference.taskIndex];
+          if (!['running', 'parked'].includes(job.status) || !task || !['queued', 'running', 'parked'].includes(task.status) ||
+              (reference.threadId && task.threadId !== reference.threadId) || (task.generation ?? 1) !== (reference.generation ?? 1)) {
+            throw new Error('Worker execution ownership changed; refusing to record a stale model decision.');
+          }
+          return { ...job, tasks: job.tasks.map((item, index) => index === reference.taskIndex ? { ...item, modelDecision: decision } : item) };
+        }, undefined, false);
+        if (!persisted) throw new Error('Agent job is unavailable; model-decision bookkeeping was skipped.');
+      } catch (error) {
+        console.warn(`[ModelPrecedence] Could not persist model decision for job=${ reference.jobId }; continuing model execution.`, error);
       }
-      return { ...job, tasks: job.tasks.map((item, index) => index === reference.taskIndex ? { ...item, modelDecision: decision } : item) };
-    }, undefined, false);
-    if (!persisted) throw new Error('Agent job is unavailable; refusing to lose the resolved model decision.');
-    meta.modelDecision = decision;
-    const requested = decision.requested ? `${ decision.requested.provider }/${ decision.requested.model }` : 'none';
-    console.info(`[ModelPrecedence] job=${ reference.jobId } requested=${ requested } ran=${ ran.provider }/${ ran.model } step=${ decision.step}`);
+      const requested = decision.requested ? `${ decision.requested.provider }/${ decision.requested.model }` : 'none';
+      console.info(`[ModelPrecedence] job=${ reference.jobId } requested=${ requested } ran=${ ran.provider }/${ ran.model } step=${ decision.step}`);
+    } catch (error) {
+      console.warn('[ModelPrecedence] Failed to record the resolved model; continuing model execution.', error);
+    }
   }
 
   protected recordedReplyAttribution(state: BaseThreadState, model?: string): { agent?: string; model?: string } {

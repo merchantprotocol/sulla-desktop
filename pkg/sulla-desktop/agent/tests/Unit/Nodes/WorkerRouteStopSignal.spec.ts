@@ -72,6 +72,32 @@ describe('resolved model decision persistence', () => {
     });
     expect(log).toHaveBeenCalledWith('[ModelPrecedence] job=fallback-job requested=none ran=claude-code/claude-fallback step=category');
   });
+
+  it('skips the durable job write when the resolved model and reason are unchanged', async() => {
+    // risk: every chat turn creates an unnecessary agent-job database write
+    const node = new RouteProbeNode();
+    const mutate = vi.spyOn(agentJobProvider.states, 'mutateJob');
+    const state = stateWith(undefined) as any;
+    state.metadata.modelDecisionTask = { jobId: 'same-model-job', taskIndex: 0, generation: 1, threadId: 't' };
+    state.metadata.modelDecision = { requested: null, ran: { provider: 'codex', model: 'gpt-same' }, step: 'category', reason: 'same reason' };
+
+    await (node as any).persistModelDecision(state, { getProviderName: () => 'codex', getModel: () => 'gpt-same' }, 'same reason');
+
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('continues the model turn when durable decision bookkeeping fails', async() => {
+    // risk: a database outage prevents the model call even though bookkeeping is nonessential
+    const node = new RouteProbeNode();
+    vi.spyOn(agentJobProvider.states, 'mutateJob').mockRejectedValue(new Error('database unavailable'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const state = stateWith(undefined) as any;
+    state.metadata.modelDecisionTask = { jobId: 'unavailable-job', taskIndex: 0, generation: 1, threadId: 't' };
+    state.metadata.modelDecision = { requested: null, ran: null, step: 'category' };
+
+    await expect((node as any).persistModelDecision(state, { getProviderName: () => 'codex', getModel: () => 'gpt-current' })).resolves.toBeUndefined();
+    expect(state.metadata.modelDecision.ran).toEqual({ provider: 'codex', model: 'gpt-current' });
+  });
 });
 
 describe('deferred stall input at the model boundary', () => {
