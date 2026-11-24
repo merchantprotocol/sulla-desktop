@@ -74,7 +74,7 @@ describe('WorkerChart', () => {
     expect(wrapper.emitted('open-agent')).toEqual([[{ agentId: 'worker-1' }]]);
   });
 
-  it('returns focus to the selected dot on Escape and falls back when that node disappears', async () => {
+  it('closes the dialog on Escape and restores focus with accessible tooltip feedback', async () => {
     // risk: keyboard access — closing a popover must not strand focus on a removed element
     const wrapper = mountChart();
     const trigger = wrapper.get('[data-agent-id="worker-1"]');
@@ -85,13 +85,16 @@ describe('WorkerChart', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await nextTick();
     expect(document.activeElement).toBe(trigger.element);
+    expect(document.body.querySelector('.worker-chart__popover[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')).not.toBeNull();
 
     await trigger.trigger('click');
     await nextTick();
     await wrapper.setProps({ root: { ...sampleTree(), children: [] } });
     await nextTick();
     await nextTick();
-    expect(document.body.querySelector('.worker-chart__popover')).toBeNull();
+    expect(document.body.querySelector('.worker-chart__popover[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('.worker-chart__popover[role="tooltip"]')?.textContent).toContain('Sulla');
     expect((document.activeElement as HTMLElement).dataset.agentId).toBe('root');
   });
 
