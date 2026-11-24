@@ -302,10 +302,13 @@ onBeforeUnmount(() => {
   .heartbeat-heart.enabled { animation: none; }
 }
 .heartbeat-heart {
-  display: grid; place-items: center; width: 34px; height: 34px; padding: 0;
+  display: grid; place-items: center; width: 44px; height: 44px; padding: 0;
   border-radius: 50%; color: var(--text-dim); opacity: 1; font-size: 15px;
 }
 .heartbeat-heart:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+@media (max-width: 540px) {
+  .heartbeat-heart { width: 38px; height: 38px; }
+}
 /* Hover label: what the heart is and its current state (off, next wake-up, paused). */
 .heartbeat-heart { position: relative; }
 .heartbeat-heart[data-tip]::after {
