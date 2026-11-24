@@ -336,7 +336,6 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
   // Existing helpers
   // ─────────────────────────────────────────────────────────────
 
-  /** Bind activity to the invocation's trusted originating thread, never a selected chat or tool argument. */
   /** Emit a file reference to the originating visible chat, preserving delivery failures. */
   protected async emitInlineFileReference(record: unknown): Promise<void> {
     const metadata = this.state?.metadata;
@@ -350,6 +349,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
     if (sent !== true) throw new Error('Inline file reference was not delivered');
   }
 
+  /** Bind activity to the invocation's trusted originating thread, never a selected chat or tool argument. */
   protected bindChatToolActivity(): (activity: ChatToolActivity) => Promise<void> {
     const metadata = this.state?.metadata;
     const threadId = metadata?.threadId;

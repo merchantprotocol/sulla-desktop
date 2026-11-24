@@ -1481,7 +1481,8 @@ export class BackendGraphWebSocketService {
       (state.metadata as any).desktopChatVisible = channelId === SULLA_DESKTOP_CHANNEL_ID
         && triggerType === 'sulla-desktop'
         && metadata?.relayed !== true
-        && (state.metadata as any).isSubAgent !== true;
+        && (state.metadata as any).isSubAgent !== true
+        && (state.metadata as any).userVisibleBrowser !== false;
       // Relayed organization turns are explicitly marked so BaseTool can
       // require approval for writes while still running as this Desktop's user.
       (state.metadata as any).relayed = metadata?.relayed === true;
