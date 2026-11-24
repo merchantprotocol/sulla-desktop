@@ -367,6 +367,17 @@ export class SullaFilesWatcher {
   /** Trusted identity used to bind a main-process preview read across metadata and content requests. */
   async currentPrincipalId():Promise<string> { await this.ensureUnlocked(); return this.filesRequests.localPrincipalId() }
 
+  /** Composite authority for preview reads: local Files principal plus signed-in Cloud account and org. */
+  async currentAuthorityId():Promise<string> {
+    await this.ensureUnlocked();
+    const [localPrincipal, cloudAuth] = await Promise.all([
+      this.filesRequests.localPrincipalId(),
+      import('./sullaCloudAuth'),
+    ]);
+    const [accountId, orgId] = await Promise.all([cloudAuth.getCurrentUserId(), cloudAuth.getActiveContractorId()]);
+    return JSON.stringify({ localPrincipal, accountId:accountId || '', orgId:orgId || '' });
+  }
+
   async notifyRescan():Promise<void> {
     return this.notifyRescanNow();
   }
