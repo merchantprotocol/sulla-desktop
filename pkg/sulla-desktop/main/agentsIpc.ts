@@ -17,6 +17,7 @@
 
 import { app, ipcMain } from 'electron';
 import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvider';
+import { AgentTraceHistory } from '@pkg/agent/app/Services/AgentTraceHistory';
 import { AgentRuntimeLiveness } from '@pkg/agent/app/Services/AgentRuntimeLiveness';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import { ParentStallNoticeService } from '@pkg/agent/app/Services/ParentStallNoticeService';
@@ -538,6 +539,10 @@ export function initAgentsIpc(): void {
       ...log,
     };
   });
+
+  const traceHistory = new AgentTraceHistory(agentJobProvider.states, agentJobProvider.messaging);
+  ipcMain.handle('agents:trace-history', (_event, parentThreadId: string, jobId: string, taskIndex: number) =>
+    traceHistory.get(parentThreadId, jobId, taskIndex));
 
   ipcMain.handle('agents:thread-jobs', async(_event, parentThreadId: string): Promise<ThreadAgentCard[]> => {
     if (!parentThreadId || typeof parentThreadId !== 'string') return [];

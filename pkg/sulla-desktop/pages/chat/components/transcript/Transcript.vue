@@ -9,12 +9,20 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript" :class="{ 'transcript-standard': reportingLevel === 'info' }">
+  <div class="transcript transcript-standard">
     <div
       ref="scroller"
       class="scroller"
-      :class="{ 'has-scroll-pill': showPill }"
+      :class="{ 'has-scroll-pill': showPill, 'has-aside': Boolean($slots.aside) }"
     >
+      <!--
+        Sticky layer inside the scroller (the worker chart): it stays put
+        over the right gutter while the messages scroll under it, and the
+        scroller's scrollbar stays at the far right, after it.
+      -->
+      <div v-if="$slots.aside" class="scroller-aside">
+        <slot name="aside" />
+      </div>
       <div class="chat-dialogue">
         <!-- Time marker for today (phase-0 scaffold) -->
         <TimeMarker
@@ -22,15 +30,16 @@
           :label="todayLabel"
         />
 
+        <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
+          <TraceTurn
+            v-for="turn in traceTurnsByAnchor?.get(entry.id)"
+            :key="turn.id"
+            :turn="turn"
+          />
         <div
-          v-for="(entry, index) in transcriptEntries"
-          :key="entry.id"
           :ref="el => jumper.register(entry.id, el)"
+          v-if="!replyCitations.attached.has(entry.id)"
           class="report-entry"
-          :class="{
-            'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
-            'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
-          }"
         >
           <span
             v-if="reportLabelVisible(entry)"
@@ -40,20 +49,25 @@
           <MessageRouter
             v-if="entry.kind === 'card'"
             :msg="entry.message"
-            :latest-reply="entry.id === latestReplyId"
-            :reporting-level="reportingLevel"
             :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
-          />
+          >
+            <template v-if="replyCitations.byReply.has(entry.id)" #sources>
+              <div
+                v-for="citation in replyCitations.byReply.get(entry.id)"
+                :key="citation.id"
+                :ref="el => jumper.register(citation.id, el)"
+              >
+                <CitationRow :msg="citation" />
+              </div>
+            </template>
+          </MessageRouter>
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
-            <template v-if="reportingLevel === 'debug'">
-              <time v-if="activityTimes.get(entry.id)" class="report-activity-time" :datetime="activityTimes.get(entry.id)?.iso">
-                {{ activityTimes.get(entry.id)?.label }}
-              </time>
-              <span v-else class="report-activity-time">Time unavailable</span>
-            </template>
+
           </div>
         </div>
+        </template>
+        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" />
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
           <TurnWaiting
@@ -72,53 +86,56 @@
     -->
     <ScrollPill
       :visible="showPill"
-      :standard="reportingLevel === 'info'"
+      standard
       @jump="scrollToBottom"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import MessageRouter from './MessageRouter.vue';
+import TraceTurn from './TraceTurn.vue';
+import CitationRow from '../citation/CitationRow.vue';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ReplyCitationProjection } from './ReplyCitationProjection';
+import { DetailedTraceProjection } from './DetailedTraceProjection';
+import { TraceDisclosureController } from './traceDisclosure';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
+import { useResultActivity } from '../../composables/useResultActivity';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
-import { TranscriptJump } from '../../messages/transcriptJump';
 import { waitingOn } from '../../messages/waitingStatus';
+import { TranscriptJump } from '../../messages/transcriptJump';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
 const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
+const traceProjection = new DetailedTraceProjection();
+const citationProjection = new ReplyCitationProjection();
+const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
+const { activity: resultActivity } = useResultActivity();
+const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
-const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel, item => !!resultActivity(item).decision));
+const replyCitations = computed(() => citationProjection.project(transcriptEntries.value));
+const traceTurnsByAnchor = computed(() => props.reportingLevel === 'debug'
+  ? traceProjection.byAnchor(traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows }))
+  : undefined);
+const trailingTraceTurns = computed(() => traceTurnsByAnchor.value?.get(DetailedTraceProjection.trailingAnchor));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
-  if (props.reportingLevel !== 'info' || entry.kind !== 'card') return true;
+  if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
   return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
 }
-function isStandardEvidenceAfterReply(index: number): boolean {
-  if (props.reportingLevel !== 'info') return false;
-  const entry = transcriptEntries.value[index];
-  if (entry?.kind !== 'card' || entry.message.kind !== 'citation') return false;
-  for (let i = index - 1; i >= 0; i--) {
-    const prior = transcriptEntries.value[i];
-    if (!prior || prior.kind === 'activity') continue;
-    return prior.kind === 'card' && (prior.message.kind === 'sulla' ||
-      prior.message.kind === 'streaming' || prior.message.kind === 'html');
-  }
-  return false;
-}
-const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
-  entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
 // Detailed activity has its own timestamps; only cards participate in
@@ -128,20 +145,6 @@ const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(
   at: LineTimes.idTime(entry.sourceId) ?? entry.createdAt,
 }))));
 provide(LineTimeKey, id => times.value.get(id));
-
-const activityTimes = computed(() => {
-  const recorded = new Map<string, { iso: string; label: string }>();
-  if (props.reportingLevel !== 'debug') return recorded;
-  for (const entry of transcriptEntries.value) {
-    if (entry.kind !== 'activity') continue;
-    const at = LineTimes.idTime(entry.sourceId) ?? entry.createdAt;
-    const date = new Date(at);
-    if (at > 0 && Number.isFinite(date.getTime())) {
-      recorded.set(entry.id, { iso: date.toISOString(), label: LineTimes.fullTime(at) });
-    }
-  }
-  return recorded;
-});
 
 // "Jump to" from the side dock, status line or quick switcher: whichever
 // transcript shows the message scrolls to it.
@@ -231,9 +234,40 @@ defineExpose({ scroller, scrollToBottom });
 .transcript-standard .scroller {
   padding-top: 112px;
 }
+/*
+ * With an aside the scroller drops its side padding so the aside can reach
+ * the right edge; the messages get the same 8% inset as margins instead.
+ * --chart-gutter-w (set by ChatPage while the chart sits in the gutter)
+ * keeps the messages exactly where they were when the chart was a column
+ * beside the transcript: 8% of the narrower column on each side, plus the
+ * gutter on the right.
+ */
+.scroller.has-aside { padding-right: 0; padding-left: 0; }
+.scroller.has-aside > .chat-dialogue {
+  margin-right: calc(8% + 0.92 * var(--chart-gutter-w, 0px));
+  margin-left: calc(8% - 0.08 * var(--chart-gutter-w, 0px));
+}
+/*
+ * The aside layer covers the visible transcript from the top edge down to
+ * the bottom padding, pinned with sticky. Floated with no width so it takes
+ * no room from the messages; its children position against it.
+ */
+.scroller-aside {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  float: right;
+  width: 0;
+  height: calc(100% + 96px);
+  margin-top: -96px;
+}
+.transcript-standard .scroller-aside {
+  height: calc(100% + 112px);
+  margin-top: -112px;
+}
+/* The jump pill stays centred over the messages, not the gutter. */
+.transcript :deep(.scroll-pill) { left: calc(50% - var(--chart-gutter-w, 0px) / 2); }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
-.report-entry-standard-evidence-after-reply { margin-top: -12px; }
-.report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
 .report-label {
   color: var(--text-muted); margin-bottom: 4px;
   font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em;

@@ -46,7 +46,7 @@ function commit(): void {
   font-size: 9.5px;
   letter-spacing: 0.4em;
   text-transform: uppercase;
-  color: var(--accent-hover);
+  color: var(--primary-color-text-override, var(--accent-hover));
   display: inline-flex; align-items: center; gap: 14px;
 }
 .session-mark::before,

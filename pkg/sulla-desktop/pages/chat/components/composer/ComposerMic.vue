@@ -31,14 +31,14 @@ defineEmits<{ (e: 'toggle'): void }>();
   width: 36px; height: 36px; border-radius: 50%;
   background: var(--accent-dim);
   border: 1px solid var(--accent-dim);
-  color: var(--accent-hover); font-size: 15px;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-size: 15px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; flex-shrink: 0; align-self: center;
   transition: all 0.2s ease; padding: 0;
 }
 .mic-btn:hover {
   background: var(--accent-dim);
-  border-color: var(--accent-hover); color: var(--accent-hover);
+  border-color: var(--accent-hover); color: var(--primary-color-text-override, var(--accent-hover));
   box-shadow: 0 0 14px var(--accent-glow);
 }
 .mic-btn.live {

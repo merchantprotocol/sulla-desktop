@@ -49,7 +49,7 @@ defineEmits<{
 
 .e-kicker {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.4em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   margin-bottom: 20px;
   display: inline-flex; align-items: center; gap: 14px;
 }

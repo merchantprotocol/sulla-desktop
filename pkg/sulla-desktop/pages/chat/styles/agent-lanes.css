@@ -97,7 +97,7 @@
   background: var(--bg-surface); color: var(--text-primary); font: inherit; font-size: 13px;
 }
 .ln-msg input:focus { outline: 2px solid var(--accent); outline-offset: 0; }
-.ln-msg button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--bg-page); font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.ln-msg button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--primary-color-on-override, var(--bg-page)); font: inherit; font-size: 12.5px; font-weight: 650; cursor: pointer; }
 .ln-msg button:disabled { opacity: .5; cursor: default; }
 .ln-notice { margin: 2px 0 0; color: var(--ln-ink-2); font-size: 12px; }
 .ln-fin summary { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--ln-ink-2); font-size: 13px; cursor: pointer; list-style: none; }
@@ -113,7 +113,7 @@
 /* Recorded work groups retain the existing agent controls and live status. */
 .ln-work + .ln-work { border-top: 1px solid var(--border-default); }
 .ln-work-heading { display: flex; gap: 10px; align-items: center; padding: 12px 10px 5px; cursor: pointer; color: var(--text-primary); font-size: 13px; font-weight: 650; }
-.ln-work-heading::before { content: "▸"; color: var(--accent); }
+.ln-work-heading::before { content: "▸"; color: var(--primary-color-text-override, var(--accent)); }
 .ln-work[open] > .ln-work-heading::before { content: "▾"; }
 .ln-work-heading > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ln-work-heading small { color: var(--ln-ink-3); white-space: nowrap; font-size: 11px; font-weight: 400; }

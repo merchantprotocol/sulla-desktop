@@ -29,7 +29,7 @@
   --text-primary: #0d0d0d;
   --text-secondary: #64748b;
   --text-muted: #94a3b8;
-  --text-link: #0284c7;
+  --text-link: var(--accent-primary-hover);
   --text-on-accent: #ffffff;
   --text-success: #16a34a;
   --text-error: #dc2626;
@@ -61,8 +61,8 @@
   --border-error: #fca5a5;
   --border-warning: #fde68a;
   --border-info: #7dd3fc;
-  --border-accent: rgba(14, 165, 233, 0.5);
-  --border-focus: rgba(14, 165, 233, 0.5);
+  --border-accent: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  --border-focus: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Status */
   --status-success: #22c55e;
@@ -72,7 +72,7 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-  --ring-color: rgba(14, 165, 233, 0.5);
+  --ring-color: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Editor */
   --editor-bg: #f0f0f0;
@@ -141,8 +141,8 @@
   --topmost-light-hover: #f1f5f9;
 
   /* Accent Button */
-  --accent-btn: rgba(14, 165, 233, 0.1);
-  --accent-btn-hover: #0ea5e9;
+  --accent-btn: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+  --accent-btn-hover: var(--accent-primary);
   --accent-btn-hover-text: #ffffff;
 
   /* Modal */
@@ -158,7 +158,7 @@
   --checkbox-disabled-bg: #e2e8f0;
   --checkbox-tick-locked: #0d0d0d;
   --checkbox-locked-bg: #f1f5f9;
-  --checkbox-ticked-bg: #0284c7;
+  --checkbox-ticked-bg: var(--accent-primary-hover);
   --checkbox-locked-border: #f1f5f9;
   --checkbox-locked-shadow: #f1f5f9;
 
@@ -166,7 +166,7 @@
   --dropdown-bg: #ffffff;
   --dropdown-border: #e2e8f0;
   --dropdown-divider: #e2e8f0;
-  --dropdown-text: #0284c7;
+  --dropdown-text: var(--accent-primary-hover);
   --dropdown-active-text: #ffffff;
   --dropdown-active-bg: #94a3b8;
   --dropdown-hover-text: var(--body-text);
@@ -209,7 +209,7 @@
   --sortable-table-top-divider: var(--border);
   --sortable-table-body-divider: #e2e8f0;
   --sortable-table-hover-bg: #f1f5f9;
-  --sortable-table-selected-bg: rgba(14, 165, 233, 0.05);
+  --sortable-table-selected-bg: color-mix(in srgb, var(--accent-primary) 5%, transparent);
   --sortable-table-group-label: #64748b;
 
   /* Tag */
@@ -283,7 +283,7 @@
   --simple-box-shadow: none;
 
   /* Terminal (additional) */
-  --terminal-selection: rgba(14, 165, 233, 0.5);
+  --terminal-selection: color-mix(in srgb, var(--accent-primary) 50%, transparent);
   --terminal-text: var(--body-text);
 
   /* Logs */
@@ -453,8 +453,8 @@
 
 .theme-default-light .sug:hover,
 .theme-default-light .suggests button:hover {
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-color: rgba(14, 165, 233, 0.5) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, transparent) !important;
   color: #0d0d0d !important;
 }
 
@@ -473,13 +473,13 @@
 
 .theme-default-light .tab:hover {
   color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.08) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
 }
 
 .theme-default-light .tab.on {
-  color: #0ea5e9 !important;
-  background: rgba(14, 165, 233, 0.12) !important;
-  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: var(--accent-primary) !important;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent) !important;
 }
 
 .theme-default-light .tab-num {
@@ -488,8 +488,8 @@
 }
 
 .theme-default-light .tab.on .tab-num {
-  background: rgba(14, 165, 233, 0.2) !important;
-  color: #0ea5e9 !important;
+  background: color-mix(in srgb, var(--accent-primary) 20%, transparent) !important;
+  color: var(--accent-primary) !important;
 }
 
 /* Sub-tabs */
@@ -505,9 +505,9 @@
 }
 
 .theme-default-light .subtab.on {
-  color: #0ea5e9 !important;
-  background: rgba(14, 165, 233, 0.12) !important;
-  border-color: rgba(14, 165, 233, 0.3) !important;
+  color: var(--accent-primary) !important;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent) !important;
 }
 
 /* Browser Tabs */
@@ -583,7 +583,7 @@
 }
 
 .theme-default-light .ribbon .c .sig b {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -642,7 +642,7 @@
 .theme-default-light [class*="tag"],
 .theme-default-light .multiselect__option--highlight,
 .theme-default-light .multiselect__option--selected {
-  background: rgba(14, 165, 233, 0.15) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
   color: #0d0d0d !important;
 }
 
@@ -665,7 +665,7 @@
 .theme-default-light .pwgen-mode-toggle button.active,
 .theme-default-light [class*="mode-toggle"] button.active,
 .theme-default-light [class*="toggle"] button.active {
-  background: var(--accent-primary, #0ea5e9) !important;
+  background: var(--accent-primary, var(--accent-primary)) !important;
   color: #ffffff !important;
 }
 
@@ -708,8 +708,8 @@
 /* Subtab active state */
 .theme-default-light .subtab.on {
   color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-color: rgba(14, 165, 233, 0.4) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
 }
 
 /* Subtab number badge */
@@ -719,8 +719,8 @@
 }
 
 .theme-default-light .subtab.on .subtab-num {
-  background: rgba(14, 165, 233, 0.25) !important;
-  color: #0ea5e9 !important;
+  background: color-mix(in srgb, var(--accent-primary) 25%, transparent) !important;
+  color: var(--accent-primary) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -737,7 +737,7 @@
 /* Empty state kicker (e.g., "No routines yet") */
 .theme-default-light .empty-state .kicker,
 .theme-default-light .empty-state-kicker {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* Empty state title (e.g., "Your stage is empty.") */
@@ -772,8 +772,8 @@
 .theme-default-light .tab-mode-routines,
 .theme-default-light .tab-mode-marketplace {
   --tab-bg: var(--bg-surface, #f8fafc) !important;
-  --tab-bg-hover: rgba(14, 165, 233, 0.12) !important;
-  --tab-accent: #0ea5e9 !important;
+  --tab-bg-hover: color-mix(in srgb, var(--accent-primary) 12%, transparent) !important;
+  --tab-accent: var(--accent-primary) !important;
 }
 
 /* Ensure active tab in these modes uses light colors */
@@ -806,14 +806,14 @@
 }
 
 .theme-default-light .library .rail-item:hover {
-  background: rgba(14, 165, 233, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
   color: #0d0d0d !important;
 }
 
 /* Active rail item */
 .theme-default-light .library .rail-item.on {
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-color: rgba(14, 165, 233, 0.4) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
   color: #0d0d0d !important;
 }
 
@@ -824,8 +824,8 @@
 }
 
 .theme-default-light .library .rail-item.on .count {
-  color: #0ea5e9 !important;
-  background: rgba(14, 165, 233, 0.2) !important;
+  color: var(--accent-primary) !important;
+  background: color-mix(in srgb, var(--accent-primary) 20%, transparent) !important;
 }
 
 /* Rail divider */
@@ -884,7 +884,7 @@
 
 .theme-default-light .library .stat-tile:hover {
   background: rgba(255, 255, 255, 0.9) !important;
-  border-color: rgba(14, 165, 233, 0.4) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
   color: #0d0d0d !important;
 }
 
@@ -904,7 +904,7 @@
 
 .theme-default-light .library .draft-row:hover {
   background: linear-gradient(90deg, rgba(241, 245, 249, 1), rgba(255, 255, 255, 0.9)) !important;
-  border-color: rgba(14, 165, 233, 0.4) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
 }
 
 .theme-default-light .library .draft-row .title {
@@ -968,7 +968,7 @@
 }
 
 .theme-default-light .dt-bubble-you {
-  background: rgba(14, 165, 233, 0.15) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
 }
 
 .theme-default-light .dt-bubble-text {
@@ -1065,7 +1065,7 @@
 
 .theme-default-light .msearch input {
   color: #0d0d0d !important;
-  caret-color: #0ea5e9 !important;
+  caret-color: var(--accent-primary) !important;
 }
 
 .theme-default-light .msearch input::placeholder {
@@ -1074,14 +1074,14 @@
 
 /* Group header (provider name) */
 .theme-default-light .mgroup-head .provider {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* Primary pill */
 .theme-default-light .mgroup-head .primary-pill {
-  color: #0ea5e9 !important;
-  background: rgba(14, 165, 233, 0.1) !important;
-  border-color: rgba(14, 165, 233, 0.25) !important;
+  color: var(--accent-primary) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 25%, transparent) !important;
 }
 
 /* Divider between groups */
@@ -1096,7 +1096,7 @@
 
 /* Model items */
 .theme-default-light .mitem:hover {
-  background: rgba(14, 165, 233, 0.08) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
 }
 
 /* Model name */
@@ -1120,11 +1120,11 @@
 
 /* Active model row */
 .theme-default-light .mitem.active {
-  background: rgba(14, 165, 233, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
 }
 
 .theme-default-light .mitem.active::before {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1167,11 +1167,11 @@
 
 /* Kicker "SULLA" */
 .theme-default-light .e-kicker {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 .theme-default-light .e-kicker::before,
 .theme-default-light .e-kicker::after {
-  background: #0ea5e9 !important;
+  background: var(--accent-primary) !important;
 }
 
 /* Lede/hero text */
@@ -1182,13 +1182,13 @@
 /* Suggestion buttons */
 .theme-default-light .sug {
   background: rgba(255, 255, 255, 0.7) !important;
-  border-color: rgba(14, 165, 233, 0.3) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent) !important;
   color: #0d0d0d !important;
 }
 
 .theme-default-light .sug:hover {
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-color: #0ea5e9 !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
+  border-color: var(--accent-primary) !important;
   color: #0d0d0d !important;
 }
 
@@ -1196,7 +1196,7 @@
 .theme-default-light .input,
 .theme-default-light textarea.input {
   color: #0d0d0d !important;
-  caret-color: #0ea5e9 !important;
+  caret-color: var(--accent-primary) !important;
   background: transparent !important;
 }
 
@@ -1236,16 +1236,16 @@
 
 .theme-default-light .tab:hover {
   color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.08) !important;
-  border-color: rgba(14, 165, 233, 0.2) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 20%, transparent) !important;
 }
 
 /* Active tab - match subtab.on style */
 .theme-default-light .tab.on {
   color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-color: rgba(14, 165, 233, 0.4) !important;
-  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.15) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
 }
 
 /* Tab numbers/badges */
@@ -1256,8 +1256,8 @@
 
 /* Active tab badge */
 .theme-default-light .tab.on .tab-num {
-  background: rgba(14, 165, 233, 0.25) !important;
-  color: #0ea5e9 !important;
+  background: color-mix(in srgb, var(--accent-primary) 25%, transparent) !important;
+  color: var(--accent-primary) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1280,24 +1280,24 @@
 
 /* Thinking block container */
 .theme-default-light .thinking {
-  border-left-color: rgba(14, 165, 233, 0.3) !important;
+  border-left-color: color-mix(in srgb, var(--accent-primary) 30%, transparent) !important;
 }
 
 .theme-default-light .thinking:hover {
-  border-left-color: rgba(14, 165, 233, 0.5) !important;
+  border-left-color: color-mix(in srgb, var(--accent-primary) 50%, transparent) !important;
 }
 
 .theme-default-light .thinking::before {
-  background: rgba(14, 165, 233, 0.5) !important;
+  background: color-mix(in srgb, var(--accent-primary) 50%, transparent) !important;
 }
 
 .theme-default-light .thinking.live {
-  border-left-color: rgba(14, 165, 233, 0.6) !important;
+  border-left-color: color-mix(in srgb, var(--accent-primary) 60%, transparent) !important;
 }
 
 .theme-default-light .thinking.live::before {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 14px #0ea5e9 !important;
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 14px var(--accent-primary) !important;
 }
 
 /* Head "Sulla is thinking" / "3 thoughts · 0.65s" */
@@ -1350,7 +1350,7 @@
 }
 
 .theme-default-light .att-chip .ic {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 .theme-default-light .att-chip .size {
@@ -1386,7 +1386,7 @@
 
 .theme-default-light .strip:hover {
   background: linear-gradient(90deg, rgba(226, 232, 240, 0.9), rgba(203, 213, 225, 0.7)) !important;
-  border-color: rgba(14, 165, 233, 0.5) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, transparent) !important;
 }
 
 .theme-default-light .strip::before {
@@ -1421,8 +1421,8 @@
 }
 
 .theme-default-light .strip .chip.blue {
-  border-color: rgba(14, 165, 233, 0.4) !important;
-  color: #0284c7 !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
+  color: var(--accent-primary-hover) !important;
   background: rgba(224, 242, 254, 0.6) !important;
 }
 
@@ -1474,20 +1474,20 @@
 }
 
 .theme-default-light .strip .btn:hover {
-  border-color: rgba(14, 165, 233, 0.5) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 50%, transparent) !important;
   color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
 }
 
 .theme-default-light .strip .btn.primary {
-  border-color: rgba(14, 165, 233, 0.6) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 60%, transparent) !important;
   color: #ffffff !important;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.85), rgba(2, 132, 199, 0.9)) !important;
-  box-shadow: 0 8px 22px rgba(14, 165, 233, 0.25), 0 0 14px rgba(14, 165, 233, 0.15) !important;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 85%, transparent), color-mix(in srgb, var(--accent-primary-hover) 90%, transparent)) !important;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent-primary) 25%, transparent), 0 0 14px color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
 }
 
 .theme-default-light .strip .btn.primary:hover {
-  background: linear-gradient(135deg, rgba(14, 165, 233, 1), rgba(2, 132, 199, 1)) !important;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-primary-hover)) !important;
 }
 
 .theme-default-light .strip .btn.ghost {
@@ -1502,8 +1502,8 @@
 .theme-default-light .strip .btn.kebab:hover,
 .theme-default-light .strip .btn.kebab.on {
   color: #0d0d0d !important;
-  background: rgba(14, 165, 233, 0.15) !important;
-  border-color: rgba(14, 165, 233, 0.4) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
 }
 
 /* Dropdown menu */
@@ -1518,7 +1518,7 @@
 }
 
 .theme-default-light .strip .menu-item:hover {
-  background: rgba(14, 165, 233, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
   color: #0d0d0d !important;
 }
 
@@ -1546,7 +1546,7 @@
 
 /* Kicker (THE CAST) */
 .theme-default-light .kicker {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 .theme-default-light .kicker::before {
@@ -1554,8 +1554,8 @@
 }
 
 .theme-default-light .kicker .d {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 8px #0ea5e9 !important;
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 8px var(--accent-primary) !important;
 }
 
 /* Hero title (My Work.) */
@@ -1630,8 +1630,8 @@
 
 /* Pulsing dot */
 .theme-default-light .session-mark .dot {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 8px #0ea5e9 !important;
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 8px var(--accent-primary) !important;
 }
 
 /* Editable title text */
@@ -1640,7 +1640,7 @@
 }
 
 .theme-default-light .session-mark .title[contenteditable="true"]:focus {
-  background: rgba(14, 165, 233, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
 }
 
 /* ═════════════════════════════════════════════════════════════════
@@ -1656,12 +1656,12 @@
 
 /* Model badge */
 .theme-default-light .badge.model {
-  color: #0ea5e9 !important;
+  color: var(--accent-primary) !important;
 }
 
 .theme-default-light .badge.model:hover {
-  color: #0284c7 !important;
-  border-color: #0ea5e9 !important;
+  color: var(--accent-primary-hover) !important;
+  border-color: var(--accent-primary) !important;
 }
 
 /* Dots in badges */
@@ -1671,8 +1671,8 @@
 }
 
 .theme-default-light .badge.model .dot {
-  background: #0ea5e9 !important;
-  box-shadow: 0 0 10px #0ea5e9 !important;
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 10px var(--accent-primary) !important;
 }
 
 /* Degraded state */
@@ -1693,4 +1693,22 @@
 .theme-default-light .badge.offline .dot {
   background: #ef4444 !important;
   box-shadow: 0 0 8px #ef4444 !important;
+}
+
+/* Preserve the old light-theme look without an override; selected fills use
+   the computed foreground and opaque accent tones for reliable contrast. */
+html.theme-default-light.has-primary-color-override .pwgen-mode-toggle button.active,
+html.theme-default-light.has-primary-color-override [class*="mode-toggle"] button.active,
+html.theme-default-light.has-primary-color-override [class*="toggle"] button.active {
+  color: var(--text-on-accent) !important;
+}
+html.theme-default-light.has-primary-color-override .strip .btn.primary {
+  background: var(--accent-primary) !important;
+  border-color: var(--accent-primary) !important;
+  color: var(--text-on-accent) !important;
+}
+html.theme-default-light.has-primary-color-override .strip .btn.primary:hover {
+  background: var(--accent-primary-hover) !important;
+  border-color: var(--accent-primary-hover) !important;
+  color: var(--text-on-accent-hover) !important;
 }

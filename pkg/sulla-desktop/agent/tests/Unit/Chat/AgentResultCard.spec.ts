@@ -8,7 +8,9 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computed, ref, nextTick } from 'vue';
 
+import AgentResultCard from '@pkg/pages/chat/components/proactive/AgentResultCard.vue';
 import ProactiveCard from '@pkg/pages/chat/components/proactive/ProactiveCard.vue';
+import { asMessageId } from '@pkg/pages/chat/types/chat';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
@@ -49,16 +51,16 @@ const review: AgentResultItem = {
 
 const mounted: { unmount(): void }[] = [];
 function tracked<T extends { unmount(): void }>(card: T): T { mounted.push(card); return card }
-function render(msg: Record<string, unknown>, openConversation = vi.fn(), chat: { messages?: any[]; running?: boolean; rows?: any[] } = {}) {
+function render(msg: { id?: string; result: { items: AgentResultItem[] } }, openConversation = vi.fn(), chat: { messages?: any[]; running?: boolean; rows?: any[] } = {}) {
   const snapshot = ref({ rows: chat.rows ?? [] });
   const messageList = ref(chat.messages ?? []);
   return {
     snapshot,
     messageList,
     openConversation,
-    card: tracked(mount(ProactiveCard, {
+    card: tracked(mount(AgentResultCard, {
       attachTo: document.body,
-      props:    { msg: { id: 'p1', kind: 'proactive', createdAt: 1, headline: 'Background agents finished', body: 'Task ready.', ...msg } as any },
+      props:    { messageId: msg.id ?? 'p1', data: msg.result },
       global:   { provide: { 'chat:activity-context': { backendThreadId: ref('parent') }, [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot, error: ref('') }, [ChatControllerKey as symbol]: { thread: computed(() => ({ id: 'thread-1' })), messages: messageList, isRunning: computed(() => !!chat.running) }, 'chat:open-subagent-conversation': openConversation } },
     })),
   };
@@ -114,7 +116,8 @@ describe('a finished background agent in the chat', () => {
   });
 
   it('keeps the plain notice for anything that is not a finished-agent notice', () => {
-    expect(render({ headline: 'Heartbeat insight' }).card.text()).toContain('Task ready.');
+    const notice = tracked(mount(ProactiveCard, { props: { msg: { id: asMessageId('notice'), kind: 'proactive', createdAt: 1, headline: 'Heartbeat insight', body: 'Task ready.' } } }));
+    expect(notice.text()).toContain('Task ready.');
     expect(readAgentResultCard({ items: [{ ...merge, tone: 'rainbow' }] })).toBeUndefined();
   });
 

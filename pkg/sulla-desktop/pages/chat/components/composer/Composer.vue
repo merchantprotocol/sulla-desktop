@@ -10,10 +10,9 @@
     • Queue strip (visible only when queued messages exist)
     • Attachment tray (visible when staged attachments exist)
     • Command popover (slash / mention autocomplete)
-    • Run controls (stop / continue)
+    • Stop / limit-continue through the Send button (no separate run row)
     • Either the textarea OR the voice panel, mutually exclusive
     • Mic + paperclip buttons
-    • Keyboard hints row below the input underline
 
   Reads everything from the controller. The only "logic" here is:
     1. send() / queue()   on Enter
@@ -93,9 +92,6 @@
             @choose="chooseEnvironment"
           />
         </div>
-      </div>
-      <div class="composer-run-row">
-        <RunControls />
       </div>
       <div class="composer-card">
         <div class="composer-top">
@@ -181,9 +177,11 @@
 
         <div
           class="composer-capsule"
-          :class="{ 'is-running': isRunActive, 'document-hidden': isDocumentHidden }"
+          :class="glowClasses"
+          :data-glow-level="glow.state.level"
         >
           <div class="composer-halo" aria-hidden="true" />
+          <div class="composer-halo composer-halo--stalled" aria-hidden="true" />
           <div
           :class="['composer', 'composer-pill', { recording: isRecording }]"
           @mousedown="focusFromBar"
@@ -221,6 +219,7 @@
             <ComposerSend
               :running="remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value"
               :can-send="canSendDraft"
+              :continuable="canContinueFromSend"
               @send="onSend(draft)"
             />
           </div>
@@ -229,53 +228,6 @@
         </div>
       </div>
 
-      <div
-        v-if="reportingLevel !== 'info'"
-        class="hints"
-        :class="{ 'hints-contextual': contextualHints }"
-      >
-        <div class="classic-guide">
-          <span><kbd>⏎</kbd> send</span>
-          <span><kbd>hold ␣</kbd> talk</span>
-          <span><kbd>⌘/</kbd> voice</span>
-          <span><kbd>?</kbd> help</span>
-        </div>
-        <div class="noir-guide">
-          <template v-if="isRecording">
-            <span><kbd>⌘/</kbd> stop listening</span>
-          </template>
-          <template v-else-if="controller.popover.value.open">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> run</span>
-            <span><kbd>esc</kbd> close</span>
-          </template>
-          <template v-else-if="useCases.intent.value">
-            <span><kbd>⏎</kbd> {{ intentSendHint }}</span>
-            <span><kbd>⌫</kbd> remove chip (empty draft)</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else-if="useCases.open.value && useCases.strip.active >= 0">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> pick</span>
-            <span><kbd>esc</kbd> back to typing</span>
-          </template>
-          <template v-else-if="useCases.open.value">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>↓</kbd> suggestions</span>
-            <span><kbd>{{ modKey }}1–5</kbd> pick</span>
-            <span><kbd>esc</kbd> hide</span>
-          </template>
-          <template v-else-if="draft.trim()">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else>
-            <span><kbd>/</kbd> commands</span>
-            <span><kbd>@</kbd> context</span>
-            <span><kbd>⌘/</kbd> voice</span>
-          </template>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -290,11 +242,11 @@ import ComposerInput      from './ComposerInput.vue';
 import ComposerMic        from './ComposerMic.vue';
 import ComposerSend       from './ComposerSend.vue';
 import ComposerVoicePanel from './ComposerVoicePanel.vue';
+import { ComposerGlow }    from './ComposerGlow';
 import EnvironmentPicker from './EnvironmentPicker.vue';
 import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import QueueStrip         from './QueueStrip.vue';
-import RunControls        from './RunControls.vue';
 import ShelfPanel         from './ShelfPanel.vue';
 import StatusRollup       from './StatusRollup.vue';
 import ThreadStatusLine   from './ThreadStatusLine.vue';
@@ -308,11 +260,12 @@ import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActiv
 import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
 import { ChatController } from '../../controller/ChatController';
 import { LocalStoragePersister } from '../../services/LocalStoragePersister';
-import { asThreadId } from '../../types/chat';
+import { asThreadId, type MessageId } from '../../types/chat';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
+import { canContinue } from '../../models/RunState';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 import { RemoteChatSession, type RemoteChatTransport, type RemoteDevice, type RemoteModel } from '../../services/RemoteChatSession';
@@ -320,11 +273,6 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { ReportingLevel } from '../../models/ReportingLevel';
-
-const props = defineProps<{ reportingLevel: ReportingLevel }>();
-const reportingLevel = computed(() => props.reportingLevel);
-
 const controller = useChatController();
 
 // Injected by ChatPage when nested inside a browser tab — lets us open the
@@ -368,6 +316,76 @@ const isDocumentHidden = ref(false);
 function updateDocumentVisibility(): void {
   isDocumentHidden.value = document.visibilityState === 'hidden' || !document.hasFocus();
 }
+
+// ─── Breathing glow (approved Capsule mockup) ───────────────────────
+// Driven only by events the app already emits: ChatController's run state and
+// transcript events, plus the thread's sub-agent check-ins from ChatPage.
+const glow = new ComposerGlow();
+const glowClasses = computed(() => ({
+  'is-running':      isRunActive.value,
+  'document-hidden': isDocumentHidden.value,
+  'glow-on':         glow.state.active,
+  'glow-stream':     glow.state.streaming,
+  'glow-deep':       glow.state.deep,
+  'glow-stalled':    glow.state.stalled,
+  'glow-hit':        glow.state.pulses.hit,
+  'glow-soft':       glow.state.pulses.soft,
+  'glow-tick':       glow.state.pulses.tick,
+  'glow-settle':     glow.state.pulses.settle,
+}));
+watch(isRunActive, (active) => {
+  // Only a run that finished normally settles; a stop, error or limit pause just fades.
+  const finished = remoteChat.remote.value || controller.runState.value.phase === 'idle';
+  glow.setActive(active, !active && finished);
+}, { immediate: true });
+watch(() => isDocumentHidden.value || tabActive?.value === false, paused => glow.setPaused(paused), { immediate: true });
+function isStreamingText(messageId: MessageId): boolean {
+  const recent = controller.messages.value;
+  for (let i = recent.length - 1, seen = 0; i >= 0 && seen < 20; i--, seen++) {
+    if (recent[i].id === messageId) return recent[i].kind === 'streaming' || recent[i].kind === 'sulla';
+  }
+  return false;
+}
+const glowSubscriptions = [
+  controller.on('runStateChanged', ({ from, to }) => {
+    if (to.phase === 'streaming') glow.setStreaming(true);
+    else if (from.phase === 'streaming') glow.setStreaming(false);
+  }),
+  controller.on('messageAppended', ({ message }) => {
+    switch (message.kind) {
+    case 'tool':
+      if (message.status === 'running') glow.toolStarted(String(message.id));
+      else glow.action();
+      break;
+    case 'thinking': case 'patch': case 'tool_approval': case 'tool_question':
+      glow.action();
+      break;
+    case 'subagent': case 'subagent_exchange':
+      glow.checkIn();
+      break;
+    case 'streaming':
+      glow.streamed();
+      break;
+    default:
+      break;
+    }
+  }),
+  controller.on('messageUpdated', ({ messageId, patch }) => {
+    const status = (patch as { status?: string }).status;
+    if (status && status !== 'running') glow.toolFinished(String(messageId));
+    if (patch.kind === 'streaming' || ('text' in patch && isStreamingText(messageId))) glow.streamed();
+  }),
+];
+// Sub-agent check-ins. Root items mirror this chat's own transcript, already counted above.
+const seenCheckIns = new Set<string>();
+watch(() => threadActivity?.checkIns.value ?? [], (items) => {
+  const fresh = Date.now() - ComposerGlow.windowMs;
+  for (const item of items) {
+    if (seenCheckIns.has(item.key)) continue;
+    seenCheckIns.add(item.key);
+    if (item.role !== 'root' && item.observedAt >= fresh) glow.checkIn();
+  }
+}, { immediate: true });
 const modelKey = (model: RemoteModel) => JSON.stringify([model.providerId, model.modelId]);
 const remoteModelKey = computed(() => remoteChat.model.value ? modelKey(remoteChat.model.value) : '');
 const remoteDevices = remoteChat.pickerDevices;
@@ -449,7 +467,7 @@ function onScreenRecordingState(_event:unknown, state:{ recording?:boolean }):vo
 const filesImporting = ref(false);
 const filesImportError = ref('');
 
-// ─── Placeholder + keyboard hints ──────────────────────────────────
+// ─── Placeholder ────────────────────────────────────────────────────
 const placeholder = computed(() => {
   return controller.isRunning.value
     ? 'send while Sulla is working — queued'
@@ -459,6 +477,9 @@ const placeholder = computed(() => {
 const canSendDraft = computed(() => !filesImporting.value && (remoteChat.remote.value
   ? !!draft.value.trim() && !controller.staged.value.length && !useCases.intent.value && !replyTo.value && remoteChat.canSend()
   : (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value)));
+// The Send button turns into Continue only for a local run paused at its step
+// limit with nothing typed; it resumes on click only, never on Enter.
+const canContinueFromSend = computed(() => !remoteChat.remote.value && canContinue(controller.runState.value));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
 
@@ -479,16 +500,6 @@ const useCases = useUseCaseSuggestions({
   isNarrow: () => window.matchMedia?.('(max-width: 640px)').matches ?? false,
 });
 const intentLabel = computed(() => useCases.intent.value ? useCases.directive.label(useCases.intent.value) : { verb: '', title: '' });
-const intentSendHint = computed(() => {
-  const picked = useCases.intent.value?.item;
-  if (!picked) return 'send';
-  if (picked.type === 'agent') return `send to ${ picked.title }`;
-  if (picked.type === 'skill') return 'send with skill';
-
-  return `send + run ${ picked.title }`;
-});
-/** The hint row says something beyond the placeholder: recording, a menu, a draft or a use case. */
-const contextualHints = computed(() => isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
 function pickUseCase(item: SuggestedUseCase): void {
   useCases.pick(item);
   inputRef.value?.focus();
@@ -828,6 +839,8 @@ const resumeRemote = () => { if (tabActive?.value !== false) void remoteChat.ref
 let remoteRefreshTimer: ReturnType<typeof setInterval>;
 watch(() => tabActive?.value, resumeRemote);
 onBeforeUnmount(() => {
+  glowSubscriptions.forEach(unsubscribe => unsubscribe());
+  glow.dispose();
   remoteChat.dispose();
   controller.openRemoteDiscovery = undefined;
   clearInterval(remoteRefreshTimer);
@@ -951,30 +964,43 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 .composer-agent-picker .model-btn:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface)); }
 .composer-agent-picker .remote-model { padding: 0 10px; }
-.model-avatar { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); font-size: 11px; font-weight: 600; }
+.model-avatar { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; color: var(--primary-color-text-override, var(--accent)); background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); font-size: 11px; font-weight: 600; }
 .model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-caret { color: var(--text-muted); font-size: 9px; }
 .composer-agent-picker :deep(.environment-pill) { height: 34px; box-shadow: var(--elev-rest, var(--shadow-sm)); }
-.composer-run-row { display: flex; justify-content: flex-end; min-height: 0; margin: 0 10px 8px; }
-.composer-run-row:has(.run-controls) { min-height: 30px; }
-.composer-run-row :deep(.run-controls) { align-items: center; }
 .composer-card { position: relative; display: block; min-width: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
 .composer-top { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0 10px 10px; }
 .remote-chat-status { min-width: 0; padding: 4px 8px; border-radius: 10px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-surface) 88%, transparent); font-size: 12px; }
 .remote-chat-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
 .remote-chat-dot.live { background: var(--status-success, var(--accent)); }
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
+/* Breathing glow: pre-painted layers; only opacity and transform change (ComposerGlow.ts drives the classes). */
+.composer-capsule {
+  --glow-o: .2; --glow-c: var(--accent);
+  --glow-ease: cubic-bezier(.22, 1, .36, 1); --glow-ease-in: cubic-bezier(.16, 1, .3, 1);
+}
+.composer-capsule[data-glow-level="1"] { --glow-o: .36; }
+.composer-capsule[data-glow-level="2"] { --glow-o: .52; }
+.composer-capsule[data-glow-level="3"] { --glow-o: .66; }
+.composer-capsule.glow-stream { --glow-o: .62; }
+.composer-capsule.glow-deep { --glow-o: .56; }
 .composer-halo {
   position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 56%, transparent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
-  opacity: 0; transform: scale(1.03, 1.2); transition: opacity .32s ease, transform .32s ease; will-change: opacity, transform;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--glow-c) 56%, transparent), color-mix(in srgb, var(--glow-c) 22%, transparent) 55%, transparent);
+  opacity: 0; transform: none; transition: opacity 2600ms var(--glow-ease), transform 2600ms var(--glow-ease); will-change: opacity, transform;
 }
-.composer-capsule.is-running .composer-halo { opacity: .72; animation: composer-capsule-breathe 4.8s ease-in-out infinite; }
-.composer-capsule.document-hidden .composer-halo { visibility: hidden; animation-play-state: paused; transition: none; }
-@keyframes composer-capsule-breathe {
-  0%, 100% { opacity: .38; transform: scale(1.01, 1.06); }
-  50% { opacity: .92; transform: scale(1.05, 1.2); }
+.composer-halo--stalled { --glow-c: var(--status-warning, #f0a020); }
+.composer-capsule.glow-on .composer-halo { opacity: var(--glow-o); transition-duration: 1600ms; }
+.composer-capsule.glow-on .composer-halo--stalled { opacity: 0; }
+.composer-capsule.glow-soft .composer-halo:not(.composer-halo--stalled) { opacity: .72; transition-duration: 280ms; }
+.composer-capsule.glow-tick .composer-halo:not(.composer-halo--stalled) { opacity: .88; transition-duration: 110ms; }
+.composer-capsule.glow-hit .composer-halo:not(.composer-halo--stalled) {
+  opacity: 1; transform: scale(1.03, 1.2); transition-duration: 200ms; transition-timing-function: var(--glow-ease-in);
 }
+.composer-capsule.glow-stalled .composer-halo { opacity: 0; }
+.composer-capsule.glow-stalled .composer-halo--stalled { opacity: .55; transition-duration: 1600ms; }
+.composer-capsule.glow-settle .composer-halo:not(.composer-halo--stalled) { opacity: 1; transform: scale(1.03, 1.2); transition-duration: 320ms; }
+.composer-capsule.document-hidden .composer-halo { visibility: hidden; transition: none; }
 .composer {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
   min-height: 64px; height: auto; padding: 0 10px; border: 0; border-radius: 32px; background: var(--bg-surface);
@@ -983,12 +1009,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 :global(.dark) .composer { box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07); }
 .composer.recording .glyph, .glyph { display: none; }
 .composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
-.hints { position: relative; display: flex; justify-content: center; gap: 0; min-height: 14px; margin-top: 9px; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
-.classic-guide { display: none; }
-.noir-guide { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
-.noir-guide span::before { display: none; }
-.hints kbd { margin: 0; padding: 0; border: 0; color: var(--text-muted); background: transparent; font-size: inherit; font-weight: 500; }
-.noir-guide span:not(:last-child)::after { content: " ·"; color: var(--text-dim); }
 .hidden-file-input { display: none; }
 .composer-wrap :deep(button:focus-visible), .composer-wrap :deep(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
 .composer-top .usecase-strip { margin: 0; }
@@ -1001,6 +1021,13 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .model-name, .model-caret { display: none; }
   .composer-agent-picker :deep(.environment-pill span:first-of-type) { display: none; }
 }
+/* Phone (approved mockup): the round pill buttons shrink from 44px to 38px. */
+@media (max-width: 759.98px) {
+  .composer-pill :deep(.attach-btn), .composer-pill :deep(.heartbeat-heart),
+  .composer-pill :deep(.mic-btn), .composer-pill :deep(.composer-send) {
+    width: 38px; height: 38px; flex-basis: 38px;
+  }
+}
 @media (max-width: 540px) {
   .composer-up-row { gap: 8px; }
   .composer-agent-picker { max-width: 46%; gap: 4px; }
@@ -1008,14 +1035,15 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-agent-picker select.remote-model { width: min(120px, calc(100% - 38px)); min-width: 84px; padding: 0 4px; font-size: 11px; }
   .composer-agent-picker :deep(.environment-pill) { width: 34px; justify-content: center; padding: 0; }
   .composer-agent-picker :deep(.environment-pill span:last-child) { display: none; }
-  .composer-run-row { margin: 0 4px 8px; }
   .composer { gap: 2px; padding: 0 6px; }
   .composer-top { margin: 0 4px 8px; }
   .composer-top .usecase-strip { max-width: 100%; overflow: hidden; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .composer-capsule.is-running .composer-halo { opacity: .68; animation: none; }
-  .composer-halo { transition-duration: .32s; }
+  /* Steady glow at the activity level: no pulses, no scale. */
+  .composer-capsule .composer-halo { transform: none !important; transition: opacity .6s linear !important; }
+  .composer-capsule.glow-on:not(.glow-stalled) .composer-halo:not(.composer-halo--stalled) { opacity: var(--glow-o) !important; }
+  .composer-capsule.glow-settle:not(.glow-on) .composer-halo { opacity: 0 !important; }
 }
 @keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
@@ -1071,7 +1099,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   animation: usecase-strip-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
 }
 .usecase-chip .usecase-type { display: none; }
-.usecase-verb { color: var(--accent-hover); }
+.usecase-verb { color: var(--primary-color-text-override, var(--accent-hover)); }
 .usecase-chip b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usecase-inputs { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 2px; }
 .usecase-field {
@@ -1134,7 +1162,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .dock-move:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
 .dock-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dock-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
-.dock-move.on { color: var(--accent); }
+.dock-move.on { color: var(--primary-color-text-override, var(--accent)); }
 </style>
 <style scoped src="../../styles/composer-field.css"></style>
 

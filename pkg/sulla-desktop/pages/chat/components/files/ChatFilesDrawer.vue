@@ -296,7 +296,7 @@ header { height:48px;display:flex;align-items:center;gap:8px;padding:0 10px 0 14
 header>svg { width:14px;height:14px;color:var(--text-muted) }
 header b { font:600 12.5px var(--font-body) }
 header button { border:0;background:transparent }
-.open-files { margin-left:auto;color:var(--accent-hover);font:500 11.5px var(--font-body) }
+.open-files { margin-left:auto;color:var(--primary-color-text-override, var(--accent-hover));font:500 11.5px var(--font-body) }
 .close { width:25px;height:25px;border-radius:6px;color:var(--text-dim);font-size:18px;line-height:1 }
 .close:hover { background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--text-primary) }
 .drawer-scroll { min-height:0;overflow:auto;padding:8px }
@@ -312,7 +312,7 @@ h3 { margin:8px 6px 4px;color:var(--text-dim);font:600 10.5px var(--font-body);l
 .file-meta b { font:500 12px var(--font-body) }
 .file-meta small { margin-top:1px;color:var(--text-dim);font:10.5px var(--font-body) }
 .keep { flex:none;border:1px solid var(--border-default);border-radius:6px;padding:3px 8px;background:transparent;color:var(--text-secondary);font:500 11px var(--font-body) }
-.keep:hover { border-color:var(--accent);color:var(--accent-hover) }
+.keep:hover { border-color:var(--accent);color:var(--primary-color-text-override, var(--accent-hover)) }
 .empty,.error { margin:12px 8px;padding:14px;border:1px dashed var(--border-default);border-radius:9px;color:var(--text-dim);font:11px/1.5 var(--font-body);text-align:center }
 .inventory-status { margin:10px 8px;color:var(--text-dim);font:11px/1.5 var(--font-body);text-align:center }
 .error { color:var(--status-error) }

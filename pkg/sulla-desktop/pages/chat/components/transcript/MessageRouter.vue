@@ -18,14 +18,19 @@
 <template>
   <InlineFileMessage v-if="msg.kind === 'inline_file_reference'" :reference="{ fileId: msg.fileId, collectionId: msg.collectionId, toolCallId: msg.toolCallId, threadId: msg.threadId }" />
   <TurnUser        v-else-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
-  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="latestReply" :reporting-level="reportingLevel"
+  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
-  />
+  >
+    <template v-if="$slots.sources" #sources><slot name="sources" /></template>
+  </TurnSulla>
   <div v-else-if="msg.kind === 'html'" class="chat-turn sulla chat-fade-in">
     <InlineReplyBody class="chat-body" :text="msg.html" legacy-html />
+    <slot name="sources" />
   </div>
-  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :reporting-level="reportingLevel" :paragraph-break="streamingParagraphBreak" />
+  <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :paragraph-break="streamingParagraphBreak">
+    <template v-if="$slots.sources" #sources><slot name="sources" /></template>
+  </TurnStreaming>
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
   <div v-else-if="decisionId && (mainDecisionTranscript || msg.kind === 'tool_approval') && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
@@ -55,11 +60,9 @@
   <ToolQuestion v-else-if="msg.kind === 'tool_question'" :msg="msg" :draft="questionDraft(msg)" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
   <ChannelMessage  v-else-if="msg.kind === 'channel'"   :msg="msg" />
-  <SubAgentBubble  v-else-if="msg.kind === 'subagent'"  :msg="msg" />
-  <SubAgentExchange v-else-if="msg.kind === 'subagent_exchange'" :msg="msg" />
-  <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" :reporting-level="reportingLevel" />
+  <CitationRow     v-else-if="msg.kind === 'citation'"  :msg="msg" />
   <MemoryNote      v-else-if="msg.kind === 'memory'"    :msg="msg" />
-  <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" :reporting-level="reportingLevel" />
+  <ProactiveCard   v-else-if="msg.kind === 'proactive'" :msg="msg" />
   <HeartbeatMessage v-else-if="msg.kind === 'heartbeat'" :msg="msg" />
   <TtsIndicator    v-else-if="msg.kind === 'tts'"       :msg="msg" />
   <ErrorCard       v-else-if="msg.kind === 'error'"     :msg="msg" @action="onErrorAction" />
@@ -92,16 +95,13 @@ import HeartbeatMessage from '../heartbeat/HeartbeatMessage.vue';
 import MemoryNote      from '../memory/MemoryNote.vue';
 import PatchBlock      from '../patch/PatchBlock.vue';
 import ProactiveCard   from '../proactive/ProactiveCard.vue';
-import SubAgentBubble  from '../subagent/SubAgentBubble.vue';
-import SubAgentExchange from '../subagent/SubAgentExchange.vue';
 import ToolApproval    from '../tool/ToolApproval.vue';
 import ToolQuestion    from '../tool/ToolQuestion.vue';
 import ToolTask        from '../tool/ToolTask.vue';
 import type { CardMessage } from './toolGroups';
-import type { ReportingLevel } from '../../models/ReportingLevel';
 import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CardMessage; latestReply?: boolean; reportingLevel: ReportingLevel; streamingParagraphBreak?: boolean }>();
+const props = defineProps<{ msg: CardMessage; streamingParagraphBreak?: boolean }>();
 const streamingParagraphBreak = computed(() => props.streamingParagraphBreak ?? false);
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();
