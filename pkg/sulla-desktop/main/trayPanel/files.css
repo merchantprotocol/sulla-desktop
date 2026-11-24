@@ -42,6 +42,15 @@
   -webkit-font-smoothing: antialiased;
   font-feature-settings: "tnum" 1, "cv11" 1;
 }
+
+html.has-primary-color-override #panel-files {
+  --accent: var(--accent-primary);
+  --accent-2: var(--accent-primary-hover);
+  --accent-soft: var(--accent-dim);
+  --accent-line: var(--accent-border);
+}
+html.has-primary-color-override #app.files-mode .sidebar-btn.active { background: var(--accent-dim); color: var(--accent-primary); }
+html.has-primary-color-override #panel-files .fi.doc { background: var(--accent-dim); color: var(--accent-primary-hover); }
 #panel-files button { font: inherit; color: inherit; cursor: pointer; }
 #panel-files svg { display: block; }
 

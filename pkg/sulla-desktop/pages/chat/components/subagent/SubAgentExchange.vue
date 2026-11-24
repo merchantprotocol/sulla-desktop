@@ -140,7 +140,7 @@ function openConversation(): void {
 }
 .sx-arrow {
   display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-size: 12px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--primary-color-text-override, var(--accent)); font-size: 12px;
 }
 .sx-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sx-text b, .sx-agent { color: var(--text-primary); font-weight: 600; }

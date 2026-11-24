@@ -43,7 +43,7 @@ defineEmits<{ (e: 'action', kind: 'retry' | 'continue' | 'dismiss' | 'connect'):
 .head {
   font-family: var(--font-mono); font-style: normal;
   font-size: 10px; letter-spacing: 0.25em; text-transform: uppercase;
-  color: var(--accent-hover); margin-bottom: 6px;
+  color: var(--primary-color-text-override, var(--accent-hover)); margin-bottom: 6px;
 }
 .detail { font-family: var(--font-mono); font-style: normal; font-size: 12px; color: var(--text-muted); margin-top: 8px; }
 .action {

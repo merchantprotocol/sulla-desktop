@@ -83,7 +83,7 @@
   border-radius: 6px; font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap;
 }
 .ta-chip .ta-dot { width: 6px; height: 6px; }
-.ta-chip-working { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.ta-chip-working { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--primary-color-text-override, var(--accent)); }
 .ta-chip-waiting { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ta-ink-2); }
 .ta-chip-idle { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--ta-ink-2); }
 .ta-chip-you { background: color-mix(in srgb, var(--status-warning) 18%, transparent); color: var(--status-warning); }
@@ -108,7 +108,7 @@
 .ta-btn svg .ta-fill { fill: currentColor; stroke: none; }
 .ta-btn.ta-danger { color: var(--status-error); }
 .ta-btn.ta-danger:hover:not(:disabled), .ta-btn.ta-confirm { color: var(--status-error); border-color: var(--status-error); }
-.ta-btn.ta-pri { height: 32px; padding: 0 14px; background: var(--accent); border-color: var(--accent); color: var(--bg-page); font-weight: 650; }
+.ta-btn.ta-pri { height: 32px; padding: 0 14px; background: var(--accent); border-color: var(--accent); color: var(--primary-color-on-override, var(--bg-page)); font-weight: 650; }
 
 .ta-body { padding: 2px 14px 14px calc(104px + 26px); font-size: 13px; }
 .ta-body.ta-card { padding-left: 14px; }

@@ -36,7 +36,7 @@ defineEmits<{ (e: 'pick'): void }>();
 }
 .attach-btn:hover {
   background: var(--accent-dim);
-  border-color: var(--accent-hover); color: var(--accent-hover);
+  border-color: var(--accent-hover); color: var(--primary-color-text-override, var(--accent-hover));
   box-shadow: 0 0 14px var(--accent-glow);
 }
 .attach-btn {

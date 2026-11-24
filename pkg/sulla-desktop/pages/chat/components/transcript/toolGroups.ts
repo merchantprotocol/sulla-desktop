@@ -4,8 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
+import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 
-import { returnCoveredByCard } from '../../messages/handoffCover';
+import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import type { Message, ToolMessage } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
@@ -95,17 +96,22 @@ const toolStatuses = new Map([['running', 'Running'], ['ok', 'Completed'], ['err
 
 export class TranscriptReporting {
   /** Project one active thread, never reorder or change its retained messages. */
-  entries(messages: readonly Message[], level: ReportingLevel): TranscriptEntry[] {
+  entries(messages: readonly Message[], level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): TranscriptEntry[] {
     const entries: TranscriptEntry[] = [];
     const seen = new Set<string>();
     for (const message of messages) {
       if (seen.has(message.id)) continue;
       seen.add(message.id);
-      for (const entry of this.project(message, messages, level)) {
+      for (const entry of this.project(message, level, needsHumanDecision)) {
         if (entry.essential || rank[entry.level] <= rank[level]) entries.push(entry);
       }
     }
     return entries;
+  }
+
+  /** Stable Standard projection shared by Standard and Detailed; Brief remains filtered. */
+  standardEntries(messages: readonly Message[], level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): TranscriptEntry[] {
+    return this.entries(messages, level === 'fatal' ? 'fatal' : 'info', needsHumanDecision);
   }
 
   /** Insert a paragraph gap before streamed text only when its nearest text
@@ -126,7 +132,7 @@ export class TranscriptReporting {
     return false;
   }
 
-  private *project(message: Message, messages: readonly Message[], level: ReportingLevel): Iterable<TranscriptEntry> {
+  private *project(message: Message, level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {
       if (message.chatToolActivity) {
@@ -173,11 +179,21 @@ export class TranscriptReporting {
         return;
       }
     }
-    if (message.kind === 'subagent_exchange' && returnCoveredByCard(message, messages)) return;
+    if (message.kind === 'subagent' || message.kind === 'subagent_exchange') return;
+    if (message.kind === 'proactive') {
+      if (message.result) {
+        // Preserve a path to child approvals/questions, but never keep unrelated
+        // tasks from the same result batch in the Standard transcript.
+        const items = message.result.items.filter(item => item.decisionIds?.length || needsHumanDecision?.(item));
+        if (items.length) yield { ...base, kind: 'card', label: 'Result', level: 'fatal',
+          message: { ...message, result: { ...message.result, items } } };
+        return;
+      }
+      if (LegacyAgentNotices.parseLegacyAgentNotice(message.headline, message.body)) return;
+    }
     const report = Object.hasOwn(cards, message.kind) ? cards[message.kind] : undefined;
     if (!report) return;
-    const label = message.kind === 'proactive' && message.result ? 'Result' :
-      message.kind === 'user' && message.voiceIdentity ? 'Voice' : report.label;
+    const label = message.kind === 'user' && message.voiceIdentity ? 'Voice' : report.label;
     const classification = message.kind === 'sulla' || message.kind === 'streaming' ||
       message.kind === 'html' || message.kind === 'channel' || message.kind === 'proactive'
       ? message.agentReporting : undefined;

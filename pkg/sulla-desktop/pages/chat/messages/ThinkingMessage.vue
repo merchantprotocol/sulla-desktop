@@ -225,7 +225,7 @@ function scrollToBottom(el: any) {
 
 .ti-label {
   font-size: 12px;
-  color: var(--accent, var(--accent));
+  color: var(--primary-color-text-override, var(--accent, var(--accent)));
   font-weight: 500;
   margin-bottom: 8px;
 }

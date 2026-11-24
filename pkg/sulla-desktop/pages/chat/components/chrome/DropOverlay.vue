@@ -38,7 +38,7 @@ defineProps<{ active: boolean }>();
   box-shadow: 0 0 60px var(--accent-glow);
 }
 .drop-icon {
-  font-size: 44px; color: var(--accent-hover); margin-bottom: 14px;
+  font-size: 44px; color: var(--primary-color-text-override, var(--accent-hover)); margin-bottom: 14px;
   filter: drop-shadow(0 0 14px var(--accent-glow));
 }
 .drop-title {
@@ -47,7 +47,7 @@ defineProps<{ active: boolean }>();
 }
 .drop-sub {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
 }
 .drop-fade-enter-active, .drop-fade-leave-active { transition: opacity 0.18s ease; }
 .drop-fade-enter-from,  .drop-fade-leave-to    { opacity: 0; }

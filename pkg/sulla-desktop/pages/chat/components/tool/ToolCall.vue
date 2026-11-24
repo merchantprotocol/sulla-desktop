@@ -76,17 +76,17 @@ const metaLabel = computed(() => props.msg.meta ?? (props.msg.status === 'runnin
   animation: chat-pulse 1.5s infinite;
 }
 .tool.run .kind {
-  background: var(--accent-dim); color: var(--accent-hover);
+  background: var(--accent-dim); color: var(--primary-color-text-override, var(--accent-hover));
   border-color: var(--accent-glow);
 }
-.tool.run .meta { color: var(--accent-hover); }
+.tool.run .meta { color: var(--primary-color-text-override, var(--accent-hover)); }
 .tool.err::before { background: var(--status-error); }
 .tool.err .kind   { background: var(--status-warning-soft); color: var(--status-error); border-color: var(--status-warning); }
 .tool-output {
   flex-basis: 100%; margin-top: 6px;
   color: var(--text-secondary);
 }
-.tool-output summary { cursor: pointer; color: var(--accent-hover); }
+.tool-output summary { cursor: pointer; color: var(--primary-color-text-override, var(--accent-hover)); }
 .tool-output span {
   display: block; margin-top: 8px;
   color: var(--text-muted); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;

@@ -751,6 +751,7 @@ export interface IpcMainInvokeEvents {
   'agents-list':                   () => { id: string; name: string; description: string; type: string; templateId: string; path: string }[];
   'agents:list':                   () => import('@pkg/main/agentsIpc').AgentsListResponse;
   'agents:result-tracking':          (ownerThread: string) => import('@pkg/shared/agentResults/AgentResultCard').ResultActivityRecord[];
+  'agents:trace-history':         (parentThreadId: string, jobId: string, taskIndex: number) => import('@pkg/agent/app/Services/AgentTraceHistory').AgentTraceHistoryData | null;
   'agents:state-snapshot':         () => import('@pkg/shared/agentState/AgentStateSnapshot').AgentStateSnapshot;
   'agents:message-job':            (jobId: string, taskIndex: number, message: string) => import('@pkg/shared/agentState/AgentStateSnapshot').AgentActionResult;
   'agents:stop-job':               (jobId: string) => import('@pkg/shared/agentState/AgentStateSnapshot').AgentActionResult;
@@ -1361,6 +1362,7 @@ export interface IpcMainInvokeEvents {
 export interface IpcRendererEvents {
   'remote-chat:frame': (frame: Record<string, unknown>) => void;
   'sulla:theme-changed': (theme: string) => void;
+  'sulla:primary-color-changed': (color: string | null) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;

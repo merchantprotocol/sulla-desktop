@@ -514,3 +514,73 @@
 .cv-root .recbar .paused{color:#febc2e;font-weight:600}
 .cv-root .cambub{position:absolute;left:16px;bottom:16px;z-index:70;width:120px;height:120px;border-radius:50%;border:3px solid #fff;box-shadow:var(--shadow-lg);background:linear-gradient(135deg,#1a2332,#3a7fa0);color:#fff;display:grid;place-items:center;font-size:30px;font-weight:700}
 .cv-root .cambub.big{width:220px;height:220px;font-size:56px}
+
+/* The Conversations shell owns its mockup palette locally; opt it into the
+   shared theme accent only when the user has explicitly chosen an override. */
+html.has-primary-color-override .cv-root,
+html.has-primary-color-override .cv-root.dark {
+  --accent: var(--accent-primary);
+  --accent-2: var(--accent-primary-hover);
+  --accent-soft: var(--accent-dim);
+  --accent-line: var(--accent-border);
+  --glow-1: var(--brand-glow-soft);
+  --glow-2: var(--brand-glow-soft);
+}
+
+html.has-primary-color-override .cv-root .nav a .cnt.hot,
+html.has-primary-color-override .cv-root .btn.pri,
+html.has-primary-color-override .cv-root .row .badge,
+html.has-primary-color-override .cv-root .orgbtn .ocnt,
+html.has-primary-color-override .cv-root .orow .cnt,
+html.has-primary-color-override .cv-root .newb {
+  color: var(--text-on-accent);
+}
+
+html.has-primary-color-override .cv-root .brand .mark,
+html.has-primary-color-override .cv-root .avatar.a,
+html.has-primary-color-override .cv-root .avatar.bot {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+html.has-primary-color-override .cv-root .dt-btn-unmuted,
+html.has-primary-color-override .cv-root .dt-btn-new {
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+}
+
+html.has-primary-color-override .cv-root .dt-bullet {
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent-primary) 40%, transparent);
+}
+
+html.has-primary-color-override .cv-root .dt-chat-send {
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
+}
+
+html.has-primary-color-override .cv-root .cbtn.on {
+  background: color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  color: var(--text-primary);
+}
+
+html.has-primary-color-override .cv-root .ringav {
+  animation-name: cv-ringp-primary;
+}
+
+@keyframes cv-ringp-primary {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-primary) 55%, transparent); }
+  100% { box-shadow: 0 0 0 26px color-mix(in srgb, var(--accent-primary) 0%, transparent); }
+}
+
+html.has-primary-color-override .cv-root .vwin i.a {
+  background: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+}
+
+html.has-primary-color-override .cv-root .cambub {
+  background: var(--accent-primary);
+  color: var(--text-on-accent);
+}
+
+html.has-primary-color-override .cv-root .btn.pri:hover {
+  color: var(--text-on-accent-hover);
+}

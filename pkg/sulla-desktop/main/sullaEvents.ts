@@ -39,6 +39,7 @@ import { initRemoteChatViewerIpc } from './cloud/remoteChat/ipc';
 
 import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
+import { PRIMARY_COLOR_SETTING_KEY, sanitizePrimaryColor } from '@pkg/config/primaryColor';
 import Logging from '@pkg/utils/logging';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
 
@@ -135,14 +136,19 @@ export function initSullaEvents(): void {
 
   ipcMainProxy.handle('sulla-settings-get', async(_event: unknown, property: string, defaultValue: any = null) => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const value = await SullaSettingsModel.get(property, defaultValue);
 
-    return SullaSettingsModel.get(property, defaultValue);
+    return property === PRIMARY_COLOR_SETTING_KEY
+      ? sanitizePrimaryColor(value) ?? sanitizePrimaryColor(defaultValue)
+      : value;
   });
 
   ipcMainProxy.handle('sulla-settings-set', async(_event: unknown, property: string, value: any, cast?: string) => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
+    const primaryColor = property === PRIMARY_COLOR_SETTING_KEY ? sanitizePrimaryColor(value) : null;
+    if (property === PRIMARY_COLOR_SETTING_KEY && !primaryColor) return;
 
-    await SullaSettingsModel.set(property, value, cast);
+    await SullaSettingsModel.set(property, property === PRIMARY_COLOR_SETTING_KEY ? primaryColor : value, property === PRIMARY_COLOR_SETTING_KEY ? 'string' : cast);
 
     // Broadcast theme changes to all browser tab WebContentsViews so
     // file:// pages can update their light/dark class via the preload bridge.
@@ -152,12 +158,24 @@ export function initSullaEvents(): void {
         try { wc.send('sulla:theme-changed', value); } catch { /* disposed */ }
       }
     }
+    if (property === PRIMARY_COLOR_SETTING_KEY) {
+      const { webContents } = await import('electron');
+      for (const wc of webContents.getAllWebContents()) {
+        try { wc.send('sulla:primary-color-changed', primaryColor); } catch { /* disposed */ }
+      }
+    }
   });
 
   ipcMainProxy.handle('sulla-settings-delete', async(_event: unknown, property: string) => {
     const { SullaSettingsModel } = await import('@pkg/agent/database/models/SullaSettingsModel');
 
     await SullaSettingsModel.delete(property);
+    if (property === PRIMARY_COLOR_SETTING_KEY) {
+      const { webContents } = await import('electron');
+      for (const wc of webContents.getAllWebContents()) {
+        try { wc.send('sulla:primary-color-changed', null); } catch { /* disposed */ }
+      }
+    }
   });
 
   // ─────────────────────────────────────────────────────────────
