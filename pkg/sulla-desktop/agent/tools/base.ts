@@ -44,6 +44,8 @@ export interface ToolResponse {
   responseString: string;
   /** Optional structured payload; BaseTool exposes it without double encoding. */
   result?: unknown;
+  status?: number;
+  retryAfter?: string;
 }
 
 export interface ToolRegistration {
@@ -73,6 +75,8 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
   metadata:          ToolMetadata = { category: 'general' };
   /** Verified caller identity for containerized or relayed execution. */
   executionContext?: ToolExecutionContext;
+  /** Absolute wall-clock deadline shared by transports and broker retries. */
+  deadlineAt?: number;
 
   // ─────────────────────────────────────────────────────────────
   // Runtime validation + JSON schema generation

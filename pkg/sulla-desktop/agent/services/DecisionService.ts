@@ -216,6 +216,10 @@ export class DecisionService {
     return this.pendingDecisions.findApproval(this.session, key, value, Date.now());
   }
 
+  async findApprovalForPayload(key: string, value: string): Promise<DecisionRecord | undefined> {
+    return this.pendingDecisions.findApprovalOutcome(this.session, key, value);
+  }
+
   async list(): Promise<DecisionRecord[]> {
     await this.reconcileExpired();
     return this.decisions.listRecent();

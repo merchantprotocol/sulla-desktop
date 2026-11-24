@@ -76,12 +76,13 @@ export class ToolRegistry {
   /** Native tool definitions that bypass convertToolToLLM (e.g. Anthropic computer use). */
   private nativeToolDefs = new Map<string, Record<string, any>>();
   private categoriesList = [
-    'agents', 'applescript', 'desktop', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'docker', 'extensions', 'files', 'fs', 'function', 'gdrive', 'github', 'integrations', 'kubectl', 'ledger', 'mail', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'org', 'pg', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
+    'agents', 'applescript', 'desktop', 'bridge', 'bookmarks', 'browser', 'calendar', 'capture', 'chat', 'clerk', 'docker', 'extensions', 'files', 'fs', 'function', 'gdrive', 'github', 'integrations', 'kubectl', 'ledger', 'mail', 'marketplace', 'memory', 'meta', 'mobile', 'models', 'notify', 'observation', 'org', 'pg', 'redis', 'rules', 'secretary', 'settings', 'skills', 'slack', 'ui', 'vault', 'workspace', 'workflow',
     // Integration catalog categories (AP backed)
     'communication', 'developer_tools', 'productivity', 'project_management', 'crm_sales', 'marketing', 'customer_support', 'social_media', 'finance', 'file_storage', 'ecommerce', 'analytics', 'automation', 'database', 'design', 'hr_recruiting', 'ai_ml',
   ];
 
   private categoryDescriptions: Record<string, string> = {
+    clerk:              'Manage Clerk users, orgs, invitations, and sessions through your saved Clerk integration.',
     desktop:            'See and operate macOS apps through the accessibility tree when Administrative Access is enabled.',
     applescript:        'Execute AppleScript to control macOS applications when Administrative Access is enabled.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
