@@ -511,13 +511,11 @@ export class MCPServerHost {
         buildGraphToolHandler(
           graphToolSurface,
           name => toolRegistry.createTool(name),
-          session.executionContext
-            ? {
-              state:            session.state,
-              executionContext: session.executionContext,
-              executionTarget:  name => toolRegistry.getExecutionTarget(name),
-            }
-            : undefined,
+          {
+            state:            session.state,
+            executionContext: session.executionContext,
+            executionTarget:  name => toolRegistry.getExecutionTarget(name),
+          },
         ),
       );
     }
