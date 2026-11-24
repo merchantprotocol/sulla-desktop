@@ -47,14 +47,14 @@ describe('FilesOpenWorker inline wiring', () => {
     ['sub-agent', { threadId: 'thread-1', desktopChatVisible: true, isSubAgent: true }],
     ['muted', { threadId: 'thread-1', desktopChatVisible: true, _muteWsChat: true }],
   ])('%s uses the legacy tab route', async(_name, metadata) => {
-    // risk: authorization — non-visible and internal turns must not emit chat cards.
     const worker = new InlineTestWorker();
     worker.setState({ metadata } as any);
     worker.executionContext = { thread_id: 'thread-1' } as any;
     worker.sendChatMessage = vi.fn(async() => true);
     const response = await worker.execute({ path: 'Projects/example/file.md' });
-    expect(response.successBoolean).toBe(false); // tab acknowledgement is intentionally absent in this unit
+    expect(response.successBoolean).toBe(true);
     expect(worker.sendChatMessage).not.toHaveBeenCalled();
+    expect(state.window.webContents.send).toHaveBeenCalledWith('agent-command', expect.objectContaining({ command: 'open-files-item' }));
   });
 
   it('fails instead of falling back when inline delivery returns false or throws', async() => {
@@ -64,9 +64,7 @@ describe('FilesOpenWorker inline wiring', () => {
       worker.setState(visibleState);
       worker.executionContext = { thread_id: 'thread-1' } as any;
       worker.sendChatMessage = send as any;
-      const response = await worker.execute({ path: 'Projects/example/file.md' });
-      expect(response.successBoolean).toBe(false);
-      expect(response.error).toMatch(/delivery|transport/);
+      await expect(worker.execute({ path: 'Projects/example/file.md' })).rejects.toThrow(/not delivered|transport down/);
       expect(state.window.webContents.send).not.toHaveBeenCalled();
     }
   });
