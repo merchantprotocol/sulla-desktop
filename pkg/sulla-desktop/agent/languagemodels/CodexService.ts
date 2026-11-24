@@ -226,16 +226,9 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    // Codex has no memory-dir setting, and SQLite locking over FUSE is not
-    // safe. Keep the live db local; restore it from Files after a VM restart
-    // wiped it, and snapshot the current copy into Files on every launch.
-    const memorySetup = `if [ -d /mnt/sulla-files/Sulla ]; then M=/mnt/sulla-files/Memory/codex; L="$HOME/.codex/memories_1.sqlite"; ` +
-      `mkdir -p "$M" "$HOME/.codex"; ` +
-      `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
-      `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
     const pluginPolicySetup = `export CODEX_HOME="$HOME/.codex"${ bridgeEnvExport }${ mcpTokenExport }; ` +
       `codex features disable plugins >/dev/null && codex features disable remote_plugin >/dev/null; `;
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }${ pluginPolicySetup }echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ pluginPolicySetup }echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
