@@ -12,198 +12,98 @@
     <div class="relative flex shrink-0 items-center self-stretch">
       <WindowDragLogo :size="20" />
     </div>
-    <!-- Phase 4: Scroll wrapper with chevrons -->
+    <TabNeedsYouMenu
+      :tabs="needsYouTabs"
+      :count="needsYouCount"
+      @select="activateTabById"
+    />
     <div
+      ref="tabScrollWrapper"
       class="tab-scroll-wrapper"
-      :class="tabDensityClass"
+      :class="{ 'fade-left': canScrollLeft, 'fade-right': canScrollRight }"
     >
-      <button
-        v-show="canScrollLeft"
-        class="tab-scroll-chevron tab-scroll-chevron-left"
-        type="button"
-        aria-label="Scroll tabs left"
-        @click="scrollTabsLeft"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          class="h-3 w-3"
-        >
-          <path d="M15 18l-6-6 6-6" />
-        </svg>
-      </button>
-      <!-- Phase 8: TransitionGroup as scroll container -->
-      <TransitionGroup
+      <div
         ref="tabScrollContainer"
-        tag="div"
-        name="tab-anim"
         class="tab-scroll-container"
         @wheel.prevent="onTabWheel"
-        @after-enter="updateActiveIndicator"
-        @after-leave="updateActiveIndicator"
       >
-        <span
-          key="active-tab-indicator"
-          class="tab-active-indicator"
-          :style="activeIndicatorStyle"
-          aria-hidden="true"
-        />
-        <router-link
-          v-for="(tab, index) in orderedTabs"
-          :key="tab.id"
-          :to="tab.route"
-          draggable="false"
-          class="tab-item text-sm md:text-base"
-          :data-active="tab.isActive ? 'true' : undefined"
-          :class="[
-            tab.mode ? `tab-mode-${tab.mode}` : '',
-            {
-              'tab-native': tab.native,
-              'tab-active': tab.isActive && !tab.native,
-              'tab-active-native': tab.isActive && tab.native,
-              'tab-inactive': !tab.isActive,
-              'tab-pinned': tab.pinned,
-              'tab-pinned-boundary': !tab.pinned && index === pinnedTabCount && pinnedTabCount > 0,
-              'tab-working': tab.working,
-              'tab-pointer-dragging': dragState !== null && dragState.originIndex === index,
-              'tab-preview': tab.preview,
-            },
-          ]"
-          :aria-label="[tab.label, tab.activity && tab.activity !== 'idle' ? ACTIVITY_LABEL[tab.activity] : '', tab.pinned ? 'Pinned' : ''].filter(Boolean).join(' · ')"
-          @pointerdown="onPointerDown($event, index)"
-          @dragstart.prevent
-          @dblclick="tab.browserId && promoteTab(tab.browserId)"
-          @auxclick.prevent="onAuxClick($event, tab)"
-          @contextmenu.prevent="onTabContextMenu($event, tab, index)"
-        >
-          <span class="tab-accent-bar" />
-          <svg
-            v-if="tab.pinned"
-            class="tab-pin"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            role="img"
-            aria-label="Pinned"
-          >
-            <path d="M15 4.5l-4 4l-4 1.5l-1.5 1.5l7 7l1.5 -1.5l1.5 -4l4 -4" />
-            <path d="M9 15l-4.5 4.5" />
-            <path d="M14.5 4l5.5 5.5" />
-          </svg>
-          <span class="tab-icon">
-            <span
-              v-if="tab.activity === 'working'"
-              class="tab-status tab-status-working tab-icon-meter"
-              role="img"
-              :aria-label="ACTIVITY_LABEL.working"
-              :title="ACTIVITY_LABEL.working"
-            >
-              <svg
-                viewBox="0 0 12 12"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                aria-hidden="true"
-              >
-                <path d="M2 5v4" />
-                <path d="M6 2v7" />
-                <path d="M10 4v5" />
-              </svg>
-            </span>
-            <img
-              v-else-if="tab.favicon"
-              :src="tab.favicon"
-              draggable="false"
-              class="tab-favicon-img"
-              alt=""
-            >
-            <svg
-              v-else-if="tab.iconPath"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              class="tab-favicon-svg"
-            >
-              <path :d="tab.iconPath" />
-            </svg>
-            <span
-              v-if="tab.activity && tab.activity !== 'idle' && tab.activity !== 'working'"
-              class="tab-activity-dot"
-              :class="`tab-activity-${tab.activity}`"
-              role="img"
-              :aria-label="ACTIVITY_LABEL[tab.activity]"
-              :title="ACTIVITY_LABEL[tab.activity]"
-            />
-          </span>
-          <input
-            v-if="renamingTabId === tab.id"
-            ref="renameInput"
-            v-model="renameDraft"
-            class="tab-rename"
-            type="text"
-            maxlength="80"
-            aria-label="Tab name"
-            :placeholder="tab.pageTitle"
-            @pointerdown.stop
-            @click.stop.prevent
-            @dblclick.stop
-            @keydown.enter.prevent="commitRename"
-            @keydown.esc.prevent="cancelRename"
-            @blur="onRenameBlur"
-          >
-          <span
+        <template v-for="section in tabSections" :key="section.id">
+          <div v-if="section.pinned" class="tab-pinned-section">
+            <TransitionGroup tag="div" name="tab-anim" class="tab-group-tabs">
+              <TabStripTab
+                v-for="(tab, localIndex) in section.tabs"
+                :key="tab.id"
+                :tab="tab"
+                :index="section.startIndex + localIndex"
+                :pinned-boundary="false"
+                :dragging="dragState?.active && dragState.tabHeaderId === tab.id"
+                :renaming="renamingTabId === tab.id"
+                :rename-draft="renameDraft"
+                :activity-labels="ACTIVITY_LABEL"
+                @pointerdown="onPointerDown"
+                @hover="scheduleTabHover"
+                @hover-end="hideTabHover"
+                @promote="promoteTab"
+                @auxclick="onAuxClick"
+                @contextmenu="onTabContextMenu"
+                @close="closeAnyTab"
+                @update:rename-draft="renameDraft = $event"
+                @commit-rename="commitRename"
+                @cancel-rename="cancelRename"
+                @rename-blur="onRenameBlur"
+              />
+            </TransitionGroup>
+          </div>
+          <div
             v-else
-            class="tab-label"
-          >{{ tab.label }}</span>
-          <button
-            v-if="tab.closeable"
-            class="tab-close"
-            type="button"
-            aria-label="Close tab"
-            @click.prevent.stop="closeAnyTab(tab)"
-            @pointerdown.stop
+            class="tab-group"
+            :class="[`tab-group-${section.id}`, { 'tab-group-folded': isGroupFolded(section.id) }]"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              class="h-2.5 w-2.5 md:h-3 md:w-3"
+            <button
+              class="tab-group-label"
+              type="button"
+              :aria-expanded="!isGroupFolded(section.id)"
+              @click="toggleGroup(section.id)"
             >
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </router-link>
-      </TransitionGroup>
-      <button
-        v-show="canScrollRight"
-        class="tab-scroll-chevron tab-scroll-chevron-right"
-        type="button"
-        aria-label="Scroll tabs right"
-        @click="scrollTabsRight"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          class="h-3 w-3"
-        >
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </button>
+              <svg class="tab-group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path :d="section.iconPath" /></svg>
+              <span>{{ section.label }}</span>
+              <span class="tab-group-count">{{ section.tabs.length }}</span>
+              <span v-if="isGroupFolded(section.id)" class="tab-group-dots" aria-hidden="true">
+                <i v-for="tab in section.tabs.filter(isActiveTabActivity)" :key="`${tab.id}-${tab.activity}`" :class="`tab-group-dot-${tab.activity}`" />
+              </span>
+            </button>
+            <TransitionGroup
+              v-show="!isGroupFolded(section.id)"
+              tag="div"
+              name="tab-anim"
+              class="tab-group-tabs"
+            >
+              <TabStripTab
+                v-for="(tab, localIndex) in section.tabs"
+                :key="tab.id"
+                :tab="tab"
+                :index="section.startIndex + localIndex"
+                :pinned-boundary="section.startIndex + localIndex === pinnedTabCount && pinnedTabCount > 0"
+                :dragging="dragState?.active && dragState.tabHeaderId === tab.id"
+                :renaming="renamingTabId === tab.id"
+                :rename-draft="renameDraft"
+                :activity-labels="ACTIVITY_LABEL"
+                @pointerdown="onPointerDown"
+                @hover="scheduleTabHover"
+                @hover-end="hideTabHover"
+                @promote="promoteTab"
+                @auxclick="onAuxClick"
+                @contextmenu="onTabContextMenu"
+                @close="closeAnyTab"
+                @update:rename-draft="renameDraft = $event"
+                @commit-rename="commitRename"
+                @cancel-rename="cancelRename"
+                @rename-blur="onRenameBlur"
+              />
+            </TransitionGroup>
+          </div>
+        </template>
+      </div>
       <button
         class="tab-new"
         type="button"
@@ -221,6 +121,10 @@
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
+      <div v-if="hoveredTab" class="tab-hover-card" :style="hoverCardStyle">
+        <strong>{{ hoveredTab.label }}</strong>
+        <span>{{ hoverStatusLine(hoveredTab) }}</span>
+      </div>
     </div>
     <div class="titlebar-controls relative flex shrink-0 justify-end items-center gap-4">
       <div
@@ -447,11 +351,15 @@
 import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
+import TabNeedsYouMenu from './TabNeedsYouMenu.vue';
+import TabStripTab from './TabStripTab.vue';
+import { isTabCloseable } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { orderPinnedFirst, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
+import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
+import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -552,7 +460,11 @@ const {
   tabs: browserTabs, closedTabs, tabOrder, previewTabId, pinnedTabIds,
   createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab,
   reorderTabs, promoteTab, isTabPinned, setTabPinned, prunePinnedTabs,
+  tabStripLayoutStorageKey,
 } = useBrowserTabs();
+const tabGroupModel = new TabGroupModel();
+const tabLayoutRepository = new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey);
+const foldedGroupIds = ref<TabGroupId[]>(tabLayoutRepository.loadFoldedGroups());
 
 defineProps<{
   isDark:         boolean;
@@ -589,6 +501,7 @@ const isMobileMenuOpen = ref(false);
 function openModeTab(mode: BrowserTabMode) {
   const tab = createTab('about:blank', { mode });
 
+  setGroupFolded(tabGroupModel.groupForMode(mode), false);
   router.push(`/Browser/${ tab.id }`);
   return tab;
 }
@@ -626,7 +539,7 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     const allTabs = orderedTabs.value;
     const idx = e.key === '9' ? allTabs.length - 1 : parseInt(e.key) - 1;
     const target = allTabs[idx];
-    if (target) router.push(target.route);
+    if (target) activateTab(target);
     return;
   }
 
@@ -655,24 +568,22 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
 function handleNavigateTab(event: Event) {
   const tabId = (event as CustomEvent).detail?.tabId;
   if (tabId) {
+    const tab = getTab(tabId);
+    if (tab) setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
     router.push(`/Browser/${ tabId }`);
   }
 }
 
-// ── Phase 4: Scroll controls ──
+// ── Grouped tab strip scrolling ──
 
-const tabScrollContainer = ref<InstanceType<typeof import('vue').TransitionGroup> | null>(null);
+const tabScrollContainer = ref<HTMLElement | null>(null);
+const tabScrollWrapper = ref<HTMLElement | null>(null);
 const canScrollLeft = ref(false);
 const canScrollRight = ref(false);
-const activeIndicatorStyle = ref({
-  opacity:   '0',
-  transform: 'translateX(0px)',
-  width:     '0px',
-});
 let scrollObserver: ResizeObserver | null = null;
 
 function getScrollEl(): HTMLElement | null {
-  return (tabScrollContainer.value as any)?.$el ?? null;
+  return tabScrollContainer.value;
 }
 
 function updateScrollButtons() {
@@ -680,23 +591,6 @@ function updateScrollButtons() {
   if (!el) return;
   canScrollLeft.value = el.scrollLeft > 1;
   canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-}
-
-function updateActiveIndicator() {
-  const el = getScrollEl();
-  if (!el) return;
-  const metrics = measureActiveTabIndicator(el);
-
-  if (!metrics) {
-    activeIndicatorStyle.value = { ...activeIndicatorStyle.value, opacity: '0' };
-    return;
-  }
-
-  activeIndicatorStyle.value = {
-    opacity:   '1',
-    transform: `translateX(${ metrics.x }px)`,
-    width:     `${ metrics.width }px`,
-  };
 }
 
 /** Hidden strips (inactive browser tabs, kept-alive pages) must not drive the shared offset. */
@@ -709,53 +603,65 @@ function onTabStripScroll() {
   if (!el) return;
   if (isStripVisible(el)) sharedTabScrollLeft = el.scrollLeft;
   updateScrollButtons();
-  updateActiveIndicator();
 }
 
-/**
- * Restore the shared scroll offset on the visible strip, then scroll the
- * minimum needed to fully show the active tab.
- */
+/** Restore the shared offset, then reveal the active tab without resetting the strip. */
 function syncTabStrip() {
   const el = getScrollEl();
   if (!el || !isStripVisible(el)) return;
 
   let left = sharedTabScrollLeft;
   const active = el.querySelector<HTMLElement>('.tab-active, .tab-active-native');
-
   if (active) {
-    const start = active.offsetLeft;
-    const end = start + active.offsetWidth;
-
-    if (start < left) {
-      left = start;
-    } else if (end > left + el.clientWidth) {
-      left = end - el.clientWidth;
-    }
+    const viewport = el.getBoundingClientRect();
+    const tab = active.getBoundingClientRect();
+    const start = tab.left - viewport.left + el.scrollLeft;
+    const end = start + tab.width;
+    if (start < left) left = start;
+    else if (end > left + el.clientWidth) left = end - el.clientWidth;
   }
   el.scrollTo({ left, behavior: 'instant' });
   sharedTabScrollLeft = el.scrollLeft;
   updateScrollButtons();
-  updateActiveIndicator();
 }
 
-function scrollTabsLeft() {
+function onTabWheel(event: WheelEvent) {
   const el = getScrollEl();
-  if (el) el.scrollBy({ left: -(el.clientWidth * 0.75), behavior: 'smooth' });
+  if (!el) return;
+  el.scrollLeft += Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+  updateScrollButtons();
 }
 
-function scrollTabsRight() {
-  const el = getScrollEl();
-  if (el) el.scrollBy({ left: el.clientWidth * 0.75, behavior: 'smooth' });
+const hoveredTab = ref<HeaderTab | null>(null);
+const hoverCardStyle = ref<Record<string, string>>({ left: '8px' });
+let hoverTimer: number | undefined;
+
+function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
+  hideTabHover();
+  if (dragState.value?.active) return;
+  const tabElement = event.currentTarget as HTMLElement;
+  hoverTimer = window.setTimeout(() => {
+    const wrapper = tabScrollWrapper.value;
+    if (!wrapper || !tabElement.isConnected) return;
+    const tabRect = tabElement.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const left = Math.max(8, Math.min(tabRect.left - wrapperRect.left, wrapperRect.width - 328));
+    hoverCardStyle.value = { left: `${ left }px` };
+    hoveredTab.value = tab;
+  }, 350);
 }
 
-function onTabWheel(e: WheelEvent) {
-  const el = getScrollEl();
-  if (el) {
-    el.scrollLeft += e.deltaY !== 0 ? e.deltaY : e.deltaX;
-    updateScrollButtons();
-    updateActiveIndicator();
+function hideTabHover(): void {
+  if (hoverTimer !== undefined) {
+    window.clearTimeout(hoverTimer);
+    hoverTimer = undefined;
   }
+  hoveredTab.value = null;
+}
+
+function hoverStatusLine(tab: HeaderTab): string {
+  const activity = tab.activity && tab.activity !== 'idle' ? ACTIVITY_LABEL[tab.activity] : 'Idle';
+  return tab.statusLine ? `${ activity } · ${ tab.statusLine }` : activity;
 }
 
 onMounted(() => {
@@ -770,14 +676,14 @@ onMounted(() => {
   _onMoreFetchHist = handleMoreMenuFetchHistory;
   _mountIpcListeners();
 
-  // Set up ResizeObserver for scroll chevron visibility
+  // Keep fade edges current as tab widths or the window size change.
   const el = getScrollEl();
   if (el) {
     scrollObserver = new ResizeObserver(() => {
       updateScrollButtons();
-      updateActiveIndicator();
     });
     scrollObserver.observe(el);
+    if (tabScrollWrapper.value) scrollObserver.observe(tabScrollWrapper.value);
     el.addEventListener('scroll', onTabStripScroll, { passive: true });
     updateScrollButtons();
   }
@@ -786,6 +692,7 @@ onMounted(() => {
 onActivated(() => nextTick(syncTabStrip));
 onUnmounted(() => {
   document.documentElement.classList.remove('tab-pointer-dragging');
+  hideTabHover();
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -803,6 +710,7 @@ function onRestoreClosedTab(index: number) {
   const tab = restoreClosedTab(index);
 
   if (tab) {
+    setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
     router.push(`/Browser/${ tab.id }`);
   }
 }
@@ -864,12 +772,14 @@ function handleMoreMenuAction(
     } else {
       tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
     }
+    setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
     router.push(`/Browser/${ tab.id }`);
     break;
   }
   case 'showAllHistory': {
     const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
 
+    setGroupFolded('tools', false);
     router.push(`/Browser/${ tab.id }`);
     break;
   }
@@ -894,6 +804,7 @@ const toggleMobileMenu = () => {
 function openNewBrowserTab() {
   const tab = createTab('about:blank', { mode: 'chat' });
 
+  setGroupFolded('chats', false);
   router.push(`/Browser/${ tab.id }`);
 }
 
@@ -944,6 +855,78 @@ const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
   usage:        'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
   'capture-studio': 'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
 };
+
+interface TabStripSection {
+  id: TabGroupId | 'pinned';
+  label: string;
+  iconPath: string;
+  tabs: HeaderTab[];
+  pinned: boolean;
+  startIndex: number;
+}
+
+const needsYouTabs = computed(() => orderedTabs.value.filter(tab => tab.activity === 'you' || tab.activity === 'stalled'));
+const needsYouCount = computed(() => tabGroupModel.needsYouCount(orderedTabs.value));
+
+function isGroupFolded(id: TabGroupId): boolean {
+  return foldedGroupIds.value.includes(id);
+}
+
+function setGroupFolded(id: TabGroupId, folded: boolean): void {
+  const next = new Set(foldedGroupIds.value);
+  if (folded) next.add(id);
+  else next.delete(id);
+  if (next.size === foldedGroupIds.value.length && foldedGroupIds.value.every(group => next.has(group))) return;
+  foldedGroupIds.value = [...next];
+  tabLayoutRepository.saveFoldedGroups(foldedGroupIds.value);
+}
+
+function toggleGroup(id: TabGroupId): void {
+  setGroupFolded(id, !isGroupFolded(id));
+}
+
+function isActiveTabActivity(tab: HeaderTab): boolean {
+  return Boolean(tab.activity && tab.activity !== 'idle');
+}
+
+function activateTab(tab: HeaderTab): void {
+  setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
+  router.push(tab.route).then(() => nextTick(() => scrollTabIntoView(tab.id)));
+}
+
+function activateTabById(tabId: string): void {
+  const tab = orderedTabs.value.find(candidate => candidate.id === tabId);
+  if (tab) activateTab(tab);
+}
+
+function scrollTabIntoView(tabId: string): void {
+  const container = getScrollEl();
+  const tab = Array.from(container?.querySelectorAll<HTMLElement>('.tab-item') ?? []).find(element => element.dataset.tabId === tabId);
+  tab?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+}
+
+const tabSections = computed<TabStripSection[]>(() => {
+  const grouped = tabGroupModel.groupTabs(orderedTabs.value);
+  const sections: TabStripSection[] = [];
+  let startIndex = 0;
+
+  if (grouped.pinned.length) {
+    sections.push({ id: 'pinned', label: '', iconPath: '', tabs: grouped.pinned, pinned: true, startIndex });
+    startIndex += grouped.pinned.length;
+  }
+  for (const group of grouped.groups) {
+    if (!group.tabs.length) continue;
+    const presentation = group.id === 'chats'
+      ? { label: 'Chats', iconPath: MODE_ICON_PATHS.chat }
+      : group.id === 'browser'
+        ? { label: 'Browser', iconPath: MODE_ICON_PATHS.browser }
+        : { label: 'Tools', iconPath: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z' };
+    sections.push({ id: group.id, ...presentation, tabs: group.tabs, pinned: false, startIndex });
+    startIndex += group.tabs.length;
+  }
+
+  return sections;
+});
 
 /** Build the unordered set of all tabs from their sources */
 const allTabsById = computed(() => {
@@ -1000,36 +983,10 @@ const allTabsById = computed(() => {
   return map;
 });
 
-/** Tabs in user-chosen order, with new tabs appended at the end */
-const orderedTabs = computed(() => {
-  const map = allTabsById.value;
-  const seen = new Set<string>();
-  const result: HeaderTab[] = [];
-
-  // First, add tabs in the saved order (skip any that no longer exist)
-  for (const id of tabOrder.value) {
-    const tab = map.get(id);
-
-    if (tab) {
-      result.push(tab);
-      seen.add(id);
-    }
-  }
-
-  // Then append any new tabs not yet in the order
-  for (const [id, tab] of map) {
-    if (!seen.has(id)) {
-      result.push(tab);
-    }
-  }
-
-  const orderedIds = orderPinnedFirst(result.map(tab => tab.id), pinnedTabIds.value);
-
-  return orderedIds.map(id => map.get(id)!).filter(Boolean);
-});
+/** Saved order is reconciled and sorted into visual order by the group model. */
+const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
 
 const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
-const tabDensityClass = computed(() => orderedTabs.value.length >= 12 ? 'tabs-compact' : orderedTabs.value.length >= 8 ? 'tabs-tight' : 'tabs-normal');
 
 // Keep tabOrder in sync when tabs are added/removed
 watch(
@@ -1046,23 +1003,21 @@ watch(
         filtered.push(id);
       }
     }
-    tabOrder.value = orderPinnedFirst(filtered, pinnedTabIds.value);
+    tabOrder.value = tabGroupModel.orderTabs([...allTabsById.value.values()], filtered).map(tab => tab.id);
     prunePinnedTabs(currentIds);
   },
   { immediate: true },
 );
 
-// Update chevrons when tabs change
-watch(() => orderedTabs.value.length, () => {
-  nextTick(() => {
-    updateScrollButtons();
-    updateActiveIndicator();
-  });
-});
-
+// Update scroll fades and active visibility when order or status changes.
 watch(
-  () => orderedTabs.value.map(tab => `${ tab.id }:${ tab.isActive }:${ tab.pinned }`).join('|'),
-  () => nextTick(updateActiveIndicator),
+  () => orderedTabs.value.map(tab => `${ tab.id }:${ tab.isActive }:${ tab.pinned }:${ tab.activity || '' }`).join('|'),
+  () => {
+    nextTick(() => {
+      updateScrollButtons();
+      syncTabStrip();
+    });
+  },
   { flush: 'post' },
 );
 
@@ -1077,11 +1032,13 @@ async function closeBrowserTab(id: string) {
 
   // Snapshot visual position BEFORE closing so we can pick the adjacent tab
   let nextTabRoute: string | null = null;
+  let nextTab: HeaderTab | null = null;
   if (isActive) {
     const visual = orderedTabs.value;
     const visualIdx = visual.findIndex(t => t.browserId === id);
     // Prefer the tab to the right, then left — Chrome behavior
     const candidate = visual[visualIdx + 1] ?? visual[visualIdx - 1];
+    nextTab = candidate ?? null;
     nextTabRoute = candidate?.route ?? null;
   }
 
@@ -1090,10 +1047,12 @@ async function closeBrowserTab(id: string) {
 
   if (isActive) {
     if (nextTabRoute) {
-      router.push(nextTabRoute);
+      if (nextTab) activateTab(nextTab);
+      else router.push(nextTabRoute);
     } else {
       // Fallback: closeTab auto-creates a welcome tab when list is empty
       const next = browserTabs[browserTabs.length - 1];
+      setGroupFolded(tabGroupModel.groupForMode(next.mode), false);
       router.push(`/Browser/${ next.id }`);
     }
   }
@@ -1113,15 +1072,19 @@ async function closeAnyTab(tab: HeaderTab) {
 // ── Phase 5: Pointer-event drag-and-drop ──
 
 interface DragState {
-  active:       boolean;
-  originIndex:  number;
+  active: boolean;
+  originIndex: number;
   currentIndex: number;
-  startX:       number;
-  pointerId:    number;
-  tabEl:        HTMLElement;
-  startY:       number;
-  tabId:        string;
-  detached:     boolean;
+  startX: number;
+  startY: number;
+  pointerId: number;
+  grabOffsetX: number;
+  lastClientX: number;
+  tabEl: HTMLElement;
+  tabId: string;
+  tabHeaderId: string;
+  detached: boolean;
+  initialOrder: string[];
 }
 
 const dragState = ref<DragState | null>(null);
@@ -1133,128 +1096,159 @@ function onTransferSnapshot(event: Event) {
 }
 const DRAG_DEADZONE = 5;
 
-function onPointerDown(e: PointerEvent, index: number) {
-  // Only primary button (left click)
-  if (e.button !== 0) return;
-  // Don't start drag from close button
-  if ((e.target as HTMLElement).closest('.tab-close')) return;
+function offsetLeftWithin(element: HTMLElement, ancestor: HTMLElement): number {
+  let left = 0;
+  let current: HTMLElement | null = element;
+  while (current && current !== ancestor) {
+    left += current.offsetLeft;
+    current = current.offsetParent as HTMLElement | null;
+  }
+  return left;
+}
 
-  const tabEl = e.currentTarget as HTMLElement;
-  // Do NOT call setPointerCapture — it conflicts with Electron's native
-  // window-drag region on the header and can leave the tab bar frozen after
-  // a drop. Window-level listeners cover everything we need.
+function positionDraggedTab(state: DragState, container: HTMLElement): void {
+  const containerLeft = container.getBoundingClientRect().left;
+  const layoutLeft = containerLeft + offsetLeftWithin(state.tabEl, container) - container.scrollLeft;
+  state.tabEl.style.setProperty('--tab-drag-x', `${ state.lastClientX - state.grabOffsetX - layoutLeft }px`);
+}
+
+function onPointerDown(event: PointerEvent, index: number): void {
+  if (event.button !== 0 || (event.target as HTMLElement).closest('.tab-close')) return;
+  const tabEl = event.currentTarget as HTMLElement;
+  const tab = orderedTabs.value[index];
+  if (!tab) return;
 
   const state: DragState = {
-    active:       false,
-    originIndex:  index,
+    active: false,
+    originIndex: index,
     currentIndex: index,
-    startX:       e.clientX,
-    startY:       e.clientY,
-    pointerId:    e.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    pointerId: event.pointerId,
+    grabOffsetX: 0,
+    lastClientX: event.clientX,
     tabEl,
-    tabId:        orderedTabs.value[index]?.browserId || '',
-    detached:     false,
+    tabId: tab.browserId || '',
+    tabHeaderId: tab.id,
+    detached: false,
+    initialOrder: orderedTabs.value.map(item => item.id),
   };
-
   dragState.value = state;
-  document.documentElement.classList.add('tab-pointer-dragging');
 
-  const onMove = (me: PointerEvent) => {
-    if (me.pointerId !== dragState.value?.pointerId) return;
-
-    const dx = me.clientX - dragState.value.startX;
-
-    // Deadzone: don't activate drag until threshold exceeded
-    if (!dragState.value.active) {
-      if (Math.abs(dx) < DRAG_DEADZONE) return;
-      dragState.value.active = true;
-      // Prevent the router-link navigation when dragging
+  const onMove = (moveEvent: PointerEvent): void => {
+    if (moveEvent.pointerId !== state.pointerId || dragState.value !== state) return;
+    const dx = moveEvent.clientX - state.startX;
+    const dy = moveEvent.clientY - state.startY;
+    if (!state.active) {
+      if (Math.hypot(dx, dy) < DRAG_DEADZONE) return;
+      state.active = true;
+      state.grabOffsetX = moveEvent.clientX - tabEl.getBoundingClientRect().left;
       tabEl.style.pointerEvents = 'none';
+      document.documentElement.classList.add('tab-pointer-dragging');
+      hideTabHover();
     }
+    state.lastClientX = moveEvent.clientX;
 
-    const stateNow = dragState.value;
-    if (!stateNow) return;
-    const detached = me.clientY < -30 || me.clientY > window.innerHeight + 30 || me.clientX < 0 || me.clientX > window.innerWidth || Math.abs(me.clientY - stateNow.startY) > 30;
-    if (detached && !stateNow.detached && stateNow.tabId) {
-      const descriptor = getTab(stateNow.tabId);
+    const detached = moveEvent.clientY < -30 || moveEvent.clientY > window.innerHeight + 30 ||
+      moveEvent.clientX < 0 || moveEvent.clientX > window.innerWidth || Math.abs(dy) > 30;
+    if (detached && !state.detached && state.tabId) {
+      const descriptor = getTab(state.tabId);
       if (descriptor) {
-        stateNow.detached = true;
+        state.detached = true;
         window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
-        ipcRenderer.send('tabs:drag-start', { tabId: descriptor.id, descriptor: { ...descriptor }, title: descriptor.label, favicon: descriptor.favicon, tabCount: browserTabs.length, screenX: me.screenX, screenY: me.screenY, grabOffsetX: Math.max(0, Math.min(me.clientX - tabEl.getBoundingClientRect().left, tabEl.getBoundingClientRect().width)), grabOffsetY: Math.max(0, Math.min(me.clientY - tabEl.getBoundingClientRect().top, tabEl.getBoundingClientRect().height)) });
+        const bounds = tabEl.getBoundingClientRect();
+        ipcRenderer.send('tabs:drag-start', {
+          tabId: descriptor.id,
+          descriptor: { ...descriptor },
+          title: descriptor.label,
+          favicon: descriptor.favicon,
+          tabCount: browserTabs.length,
+          screenX: moveEvent.screenX,
+          screenY: moveEvent.screenY,
+          grabOffsetX: Math.max(0, Math.min(moveEvent.clientX - bounds.left, bounds.width)),
+          grabOffsetY: Math.max(0, Math.min(moveEvent.clientY - bounds.top, bounds.height)),
+        });
       }
     }
-    if (stateNow.detached) return;
+    if (state.detached) return;
 
     const container = getScrollEl();
     if (!container) return;
+    const rect = container.getBoundingClientRect();
+    if (moveEvent.clientX > rect.right - 30) container.scrollLeft += 8;
+    else if (moveEvent.clientX < rect.left + 30) container.scrollLeft -= 8;
+    updateScrollButtons();
 
-    const children = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'));
+    const visibleTabs = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'))
+      .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0);
+    if (!visibleTabs.length) return;
 
-    // Find the dragged element's CURRENT index in the DOM after any previous
-    // reorders — don't trust the stored currentIndex which can be stale when
-    // multiple pointermove events fire before Vue flushes a re-render.
-    const fromIndex = children.indexOf(dragState.value.tabEl);
-    if (fromIndex === -1) return;
-
-    // Use offsetLeft (layout position) rather than getBoundingClientRect so
-    // hit-testing is stable during TransitionGroup FLIP animations, which
-    // temporarily offset elements via CSS transform and would otherwise
-    // cause rapid-fire phantom reorders after each swap.
-    const containerLeft = container.getBoundingClientRect().left;
-    const pointerX = me.clientX - containerLeft + container.scrollLeft;
-
-    let targetIndex = children.length - 1;
-    for (let i = 0; i < children.length; i++) {
-      const center = children[i].offsetLeft + children[i].offsetWidth / 2;
+    const fromIndex = orderedTabs.value.findIndex(item => item.id === state.tabHeaderId);
+    if (fromIndex < 0) return;
+    const pointerX = moveEvent.clientX - rect.left + container.scrollLeft;
+    let targetIndex = Number(visibleTabs[visibleTabs.length - 1].dataset.tabIndex);
+    for (const element of visibleTabs) {
+      const center = offsetLeftWithin(element, container) + element.offsetWidth / 2;
       if (pointerX < center) {
-        targetIndex = i;
+        targetIndex = Number(element.dataset.tabIndex);
         break;
       }
     }
-
-    // Clamp to valid range
-    targetIndex = Math.max(0, Math.min(targetIndex, children.length - 1));
-
-    // Reorder in real-time if target changed
+    if (!Number.isFinite(targetIndex)) return;
     if (targetIndex !== fromIndex) {
       reorderTabs(fromIndex, targetIndex);
-      dragState.value.currentIndex = targetIndex;
+      state.currentIndex = targetIndex;
+      nextTick(() => {
+        if (dragState.value === state && state.active && !state.detached) positionDraggedTab(state, container);
+      });
     }
+    positionDraggedTab(state, container);
   };
 
-  const onUp = (ue: PointerEvent) => {
-    if (ue.pointerId !== state.pointerId) return;
+  const onEscape = (keyEvent: KeyboardEvent): void => {
+    if (keyEvent.key !== 'Escape' || !state.active || state.detached) return;
+    keyEvent.preventDefault();
+    const liveTabs = [...allTabsById.value.values()];
+    tabOrder.value = tabGroupModel.orderTabs(liveTabs, state.initialOrder).map(item => item.id);
+    tabEl.style.removeProperty('--tab-drag-x');
+    tabEl.style.pointerEvents = '';
+    dragState.value = null;
+    document.documentElement.classList.remove('tab-pointer-dragging');
+  };
+
+  const onUp = (upEvent: PointerEvent): void => {
+    if (upEvent.pointerId !== state.pointerId) return;
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
+    window.removeEventListener('keydown', onEscape);
 
-    const wasDragging = dragState.value?.active ?? false;
-    const draggedEl = dragState.value?.tabEl ?? tabEl;
     dragState.value = null;
     document.documentElement.classList.remove('tab-pointer-dragging');
     if (state.detached) {
       window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: state.tabId } }));
-        ipcRenderer.send('tabs:drag-end', { tabId: state.tabId, screenX: ue.screenX, screenY: ue.screenY, transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) } });
+      ipcRenderer.send('tabs:drag-end', {
+        tabId: state.tabId,
+        screenX: upEvent.screenX,
+        screenY: upEvent.screenY,
+        transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) },
+      });
     }
-    // Always clear both references — belt-and-suspenders so a stale
-    // pointerEvents:none never leaves the bar frozen.
-    draggedEl.style.pointerEvents = '';
     tabEl.style.pointerEvents = '';
-
-    // If we were dragging, prevent the click/navigation that follows pointerup
-    if (wasDragging) {
-      const preventClick = (ce: Event) => {
-        ce.preventDefault();
-        ce.stopImmediatePropagation();
+    tabEl.style.removeProperty('--tab-drag-x');
+    if (state.active) {
+      const preventClick = (clickEvent: Event) => {
+        clickEvent.preventDefault();
+        clickEvent.stopImmediatePropagation();
       };
-      draggedEl.addEventListener('click', preventClick, { capture: true, once: true });
+      tabEl.addEventListener('click', preventClick, { capture: true, once: true });
     }
   };
 
-  // Window-level listeners receive events regardless of where the pointer moves.
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
+  window.addEventListener('keydown', onEscape);
 }
 
 // ── Phase 6: Middle-click to close ──
@@ -1307,25 +1301,11 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
 const renamingTabId = ref<string | null>(null);
 const renameDraft = ref('');
 let renameOriginal = '';
-const renameInput = ref<HTMLInputElement[] | HTMLInputElement | null>(null);
 
 function startRename(tab: HeaderTab): void {
   renamingTabId.value = tab.id;
   renameDraft.value = tab.label;
   renameOriginal = tab.label;
-  void nextTick(() => {
-    const input = Array.isArray(renameInput.value) ? renameInput.value[0] : renameInput.value;
-    // Every page keeps its own header; only the visible one edits, or a hidden
-    // copy would take the keyboard focus.
-    const box = input?.getBoundingClientRect();
-    const onTop = box && box.width > 0 && document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2) === input;
-    if (!input || !onTop) {
-      renamingTabId.value = null;
-      return;
-    }
-    input.focus();
-    input.select();
-  });
 }
 
 function commitRename(): void {
@@ -1402,9 +1382,11 @@ function handleTabContextMenuAction(
       const dupUrl = srcTab?.url && srcTab.url !== 'about:blank' ? srcTab.url : undefined;
       const newTab = createTab(dupUrl);
 
+      setGroupFolded(tabGroupModel.groupForMode(newTab.mode), false);
       router.push(`/Browser/${ newTab.id }`);
     } else {
-      router.push(tabRoute);
+      if (headerTab) activateTab(headerTab);
+      else router.push(tabRoute);
     }
     break;
 
@@ -2228,3 +2210,5 @@ html.tab-pointer-dragging * { cursor: grabbing !important; }
   }
 }
 </style>
+
+<style src="./tabStripGrouped.css"></style>
