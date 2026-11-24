@@ -36,7 +36,7 @@ export type MessageKind =
   | 'error'         // error/recovery
   | 'notice'        // neutral informational notice
   | 'html'
-  | 'inline_file_reference';         // rich HTML reply
+  | 'inline_file_reference';
 
 export interface MessageBase {
   readonly id:        MessageId;
