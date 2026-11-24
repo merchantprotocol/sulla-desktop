@@ -8,8 +8,8 @@ import { describe, expect, it } from 'vitest';
 import {
   WorkerChartActivityWindow,
   WorkerChartLayout,
-} from './workerChartModel';
-import type { WorkerChartAgent, WorkerChartState } from './workerChartModel';
+} from '../../../../pages/chat/components/workerChart/workerChartModel';
+import type { WorkerChartAgent, WorkerChartState } from '../../../../pages/chat/components/workerChart/workerChartModel';
 
 function agent(
   id: string,

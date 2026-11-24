@@ -1,14 +1,15 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// @vitest-environment jsdom
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
-import WorkerChart from './WorkerChart.vue';
-import type { WorkerChartAgent } from './workerChartModel';
+import WorkerChart from '../../../../pages/chat/components/workerChart/WorkerChart.vue';
+import type { WorkerChartAgent } from '../../../../pages/chat/components/workerChart/workerChartModel';
 
 const fixedNow = 1_700_000_000_000;
 const wrappers: VueWrapper[] = [];
