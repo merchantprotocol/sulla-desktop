@@ -247,8 +247,9 @@ export class DetailedTraceProjection {
       this.payloadCache.set(message, byKey);
     }
     if (byKey.has(key)) return byKey.get(key);
-    byKey.set(key, payload);
-    return payload;
+    const safePayload = this.payloadRedactor.redact(payload);
+    byKey.set(key, safePayload);
+    return safePayload;
   }
 
   private finish(turn: MutableTurn): DetailedTraceTurn {

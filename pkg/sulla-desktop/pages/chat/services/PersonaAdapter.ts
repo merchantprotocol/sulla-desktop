@@ -1002,7 +1002,7 @@ export class PersonaAdapter {
             : 'running';
       const tracePayloadRedactor = new TracePayloadRedactor();
       const safeResult = b.toolCard.result === undefined ? undefined : tracePayloadRedactor.redact(b.toolCard.result);
-      const output = toolOutputDetail(b.toolCard.output, safeResult);
+      const output = toolOutputDetail(b.toolCard.output, b.toolCard.result);
       const safeArgs = b.toolCard.args
         ? tracePayloadRedactor.redact(redactToolArgs(b.toolCard.toolName, b.toolCard.args)) as Readonly<Record<string, unknown>>
         : undefined;
@@ -1013,11 +1013,11 @@ export class PersonaAdapter {
         createdAt,
         recordedToolName: b.toolCard.toolName,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
-        desc: tracePayloadRedactor.redactText(b.toolCard.summary || b.toolCard.description || ''),
+        desc: b.toolCard.summary || b.toolCard.description || '',
         status,
-        input:        typeof b.toolCard.input === 'string' ? tracePayloadRedactor.redactText(b.toolCard.input) : undefined,
-        output:       typeof output === 'string' ? tracePayloadRedactor.redactText(output) : undefined,
-        error:        typeof b.toolCard.error === 'string' ? tracePayloadRedactor.redactText(b.toolCard.error) : undefined,
+        input:        b.toolCard.input,
+        output,
+        error:        b.toolCard.error ?? undefined,
         outputFormat: b.toolCard.outputFormat,
         durationMs:   b.toolCard.durationMs,
       } satisfies ToolMessage;

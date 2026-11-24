@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 import { PersonaAdapter } from './PersonaAdapter';
+import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispatcher';
+import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
+import { TranscriptReporting } from '../components/transcript/toolGroups';
 
 // Electron's npm entry throws "failed to install correctly" outside Electron; PersonaAdapter's import chain reaches it.
 vi.mock('electron', () => {
@@ -8,7 +11,74 @@ vi.mock('electron', () => {
   return { ipcRenderer, default: { ipcRenderer } };
 });
 
-describe('PersonaAdapter send feedback reconciliation', () => {
+describe('PersonaAdapter', () => {
+  it('preserves baseline Standard tool-card values while redacting Detailed payloads and legacy fallbacks', () => {
+    // risk: Standard compatibility/privacy — shared transcript fields keep baseline values while Detailed-only payloads redact credentials.
+    const command = 'echo "$HOME/$1" && echo "$tokenCount" # apiToken=fixture-shell-secret';
+    const description = 'Prose references tokenCount=32 and apiToken=fixture-description-secret.';
+    const error = 'Shell failed with accessToken=fixture-error-secret; tokenCount=32.';
+    const result = {
+      details: 'Result prose references tokenCount=32 and apiToken=fixture-result-secret.',
+      tokenCount: 32,
+    };
+    const dispatcher = createMessageDispatcher();
+    const context = {
+      messages: [],
+      toolRunIdToMessageId: new Map(),
+      currentActivity: { value: '' },
+    } as any;
+
+    dispatcher.dispatch(context, 'agent-1', 'thread-1', {
+      type: 'progress',
+      data: { phase: 'tool_call', toolRunId: 'run-1', toolName: 'exec', args: { command, description } },
+    } as any);
+    dispatcher.dispatch(context, 'agent-1', 'thread-1', {
+      type: 'progress',
+      data: { phase: 'tool_result', toolRunId: 'run-1', success: false, error, result },
+    } as any);
+
+    const backendMessage = context.messages[0];
+    expect(backendMessage.toolCard).toMatchObject({
+      args: { command, description },
+      description,
+      summary: command,
+      input: command,
+      result,
+      error,
+    });
+    expect(backendMessage.toolCard.output).toBeUndefined();
+
+    const tracePayloads = new Map<string, unknown>();
+    const adapter = Object.create(PersonaAdapter.prototype) as any;
+    adapter.firstSeenAt = new Map();
+    adapter.controller = {
+      setDetailedTracePayload: (id: string, payload: unknown) => tracePayloads.set(id, payload),
+    };
+    const standardMessage = adapter.mapBackendMessage(backendMessage);
+
+    expect(standardMessage).toMatchObject({
+      kind: 'tool',
+      desc: command,
+      input: command,
+      output: JSON.stringify(result, null, 2),
+      error,
+    });
+    expect(standardMessage.output).toContain('fixture-result-secret');
+    expect(JSON.stringify(tracePayloads.get(String(standardMessage.id)))).not.toMatch(/fixture-(?:shell|description|result)-secret/);
+
+    const reporting = new TranscriptReporting();
+    const legacyTrace = new DetailedTraceProjection().project(
+      [standardMessage], reporting.entries([standardMessage], 'debug'), [], undefined, new Map(),
+    );
+    const traceRow = legacyTrace[0].rows[0];
+    const serializedTraceRow = JSON.stringify(traceRow);
+    expect(serializedTraceRow).not.toMatch(/fixture-(?:shell|description|result|error)-secret/);
+    expect(serializedTraceRow).toContain('$HOME/$1');
+    expect(serializedTraceRow).toContain('$tokenCount');
+    expect(serializedTraceRow).toContain('tokenCount=32');
+    expect(serializedTraceRow).toContain('[REDACTED]');
+  });
+
   it('replaces matching optimistic bubbles in FIFO order before backend sync appends them', () => {
     // risk: data accuracy — sync order must not leave a duplicate user bubble.
     const adapter = Object.create(PersonaAdapter.prototype) as any;
