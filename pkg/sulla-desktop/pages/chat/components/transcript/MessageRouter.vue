@@ -99,7 +99,7 @@ import ToolQuestion    from '../tool/ToolQuestion.vue';
 import ToolTask        from '../tool/ToolTask.vue';
 import type { CardMessage } from './toolGroups';
 import type { ReportingLevel } from '../../models/ReportingLevel';
-import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage, InlineFileReferenceMessage } from '../../models/Message';
+import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
 const props = defineProps<{ msg: CardMessage; latestReply?: boolean; reportingLevel: ReportingLevel; streamingParagraphBreak?: boolean }>();
 const streamingParagraphBreak = computed(() => props.streamingParagraphBreak ?? false);

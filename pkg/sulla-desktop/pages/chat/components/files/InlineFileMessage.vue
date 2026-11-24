@@ -9,6 +9,7 @@
         :version-token="versionId"
         :authorized="true"
         :complete="!truncated"
+        :save-outcome="saveOutcome"
         @save-request="saveMarkdown"
       />
     </template>
@@ -16,12 +17,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import InlineFileCard from './InlineFileCard.vue';
-import InlineHtmlPreview from './InlineHtmlPreview.vue';
-import InlineImagePreview from './InlineImagePreview.vue';
-import InlineArchivePreview from './InlineArchivePreview.vue';
 import InlineTextPreview from './inline/InlineTextPreview.vue';
 import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
 
@@ -32,6 +30,7 @@ const content = ref('');
 const versionId = ref('');
 const truncated = ref(false);
 const textKind = ref<'markdown' | 'code' | 'csv' | undefined>();
+const saveOutcome = ref<any>(null);
 
 function bytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
@@ -57,9 +56,9 @@ async function load(): Promise<void> {
 function openInTab(reference: InlineFileActionReference): void { ipcRenderer.send('agent-command' as any, { command: 'open-files-item', requestId: crypto.randomUUID(), fileId: reference.fileId, path: reference.path, collectionId: props.reference.collectionId, kind: 'file', mode: 'view', focus: true }); }
 function showInFiles(reference: InlineFileActionReference): void { ipcRenderer.send('agent-command' as any, { command: 'open-tab', mode: 'files', fileId: reference.fileId, path: reference.path, collectionId: props.reference.collectionId }); }
 async function download(reference: InlineFileActionReference): Promise<void> { await ipcRenderer.invoke('files-ui:download-file', { fileId: reference.fileId, name: reference.name }); }
-async function saveMarkdown(request: { content: string; baseVersionId: string }): Promise<void> {
-  try { const result = await ipcRenderer.invoke('sulla-files:save-content', { fileId: props.reference.fileId, baseVersionId: request.baseVersionId, content: request.content }) as any; if (result?.versionId) versionId.value = result.versionId; }
-  catch (error) { console.warn('[InlineFileMessage] Markdown save failed', error); }
+async function saveMarkdown(request: { requestId: number; content: string; baseVersionId: string }): Promise<void> {
+  try { const result = await ipcRenderer.invoke('sulla-files:save-content', { fileId: props.reference.fileId, baseVersionId: request.baseVersionId, content: request.content }) as any; if (result?.versionId) { versionId.value = result.versionId; saveOutcome.value = { requestId: request.requestId, status: 'saved', content: request.content, versionToken: result.versionId }; } }
+  catch (error) { const cause = error as any; saveOutcome.value = { requestId: request.requestId, status: cause?.code === 'VERSION_CONFLICT' || cause?.status === 409 ? 'conflict' : 'error', message: cause?.message || 'Unable to save this file.', currentVersionToken: cause?.currentVersionId }; }
 }
 onMounted(load);
 </script>
