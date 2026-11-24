@@ -20,12 +20,11 @@ import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
-import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
-import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
+import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
 import { CodexTurnOutcome } from './codexTurnOutcome';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
@@ -210,6 +209,9 @@ export class CodexService extends BaseLanguageModel {
       codexArgs.push('--model', shq(this.model));
     }
     if (this.effort) codexArgs.push('-c', shq(`model_reasoning_effort=${ JSON.stringify(this.effort) }`));
+    for (const override of CODEX_MEMORY_CONFIG_OVERRIDES) {
+      codexArgs.push('-c', shq(override));
+    }
     codexArgs.push('-'); // read the prompt from stdin
 
     // `exec` replaces the inner sh with codex so there's no shell layer
@@ -224,16 +226,9 @@ export class CodexService extends BaseLanguageModel {
     // The pidfile lets an abort kill exactly this run; the PID line (stderr,
     // before exec — same PID after) lets a steer interrupt it. Neither
     // touches any other codex in the VM.
-    // Codex has no memory-dir setting, and SQLite locking over FUSE is not
-    // safe. Keep the live db local; restore it from Files after a VM restart
-    // wiped it, and snapshot the current copy into Files on every launch.
-    const memorySetup = `if [ -d /mnt/sulla-files/Sulla ]; then M=/mnt/sulla-files/Memory/codex; L="$HOME/.codex/memories_1.sqlite"; ` +
-      `mkdir -p "$M" "$HOME/.codex"; ` +
-      `if [ ! -f "$L" ] && [ -s "$M/memories_1.sqlite" ]; then cp "$M/memories_1.sqlite" "$L"; ` +
-      `elif [ -f "$L" ]; then cp "$L" "$M/memories_1.sqlite" 2>/dev/null || true; fi; fi; `;
     const pluginPolicySetup = `export CODEX_HOME="$HOME/.codex"${ bridgeEnvExport }${ mcpTokenExport }; ` +
       `codex features disable plugins >/dev/null && codex features disable remote_plugin >/dev/null; `;
-    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ memorySetup }${ pluginPolicySetup }echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
+    const innerCmd = `${ buildRemotePidRecordCommand(p.pidFile) }; ${ pluginPolicySetup }echo ${ CODEX_PID_MARKER }$$ >&2; exec ${ codexArgs.join(' ') }`;
     return ['exec', '--', 'sh', '-c', innerCmd];
   }
 
@@ -253,6 +248,7 @@ export class CodexService extends BaseLanguageModel {
     if (p.instructionsPath) args.push('-c', `model_instructions_file=${ JSON.stringify(p.instructionsPath) }`);
     if (this.model && this.model !== 'codex') args.push('--model', this.model);
     if (this.effort) args.push('-c', `model_reasoning_effort=${ JSON.stringify(this.effort) }`);
+    for (const override of CODEX_MEMORY_CONFIG_OVERRIDES) args.push('-c', override);
     args.push('-');
 
     return { executable: 'codex', args, env: p.environment ? { ...p.environment } : undefined };
@@ -540,11 +536,12 @@ export class CodexService extends BaseLanguageModel {
 
   /**
    * Build a <sulla_context> prefix for the outgoing user message, same
-   * strategy as ClaudeCodeService: the stable tier (platform rules,
-   * environment and, for spawned agents, their role instructions) is sent on
-   * the first turn and again only when its content changes. Memory and recall
-   * do not travel here; they arrive as the synthetic assistant context message
-   * that precedes the user message.
+   * strategy as ClaudeCodeService: the stable tier (platform rules and
+   * environment) is sent on the first turn and again only when its content
+   * changes. Agent role instructions are already in the system-role message
+   * and must not be duplicated here. Memory and recall do not travel here;
+   * they arrive as the synthetic assistant context message that precedes the
+   * user message.
    *
    * Returns the stable-tier hash alongside the prefix; the caller commits it
    * to lastStableContextHash only after a successful run, so changed context
@@ -604,14 +601,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const browserController = graphBrowserControllerContext(state);
     if (browserController) stableParts.push(browserController);
 
-    // AGENTS.md is built for the default agent; a spawned agent's own DB
-    // prompt would otherwise never reach codex.
-    const agentInstructions = await buildCodexAgentInstructions(
-      state?.metadata as any,
-      async(agentId) => (await import('../nodes/BaseNode')).loadAgentPromptData(agentId),
-    );
-    if (agentInstructions) stableParts.push(agentInstructions);
-
     const parts: string[] = [];
 
     // Only send the stable tier when it's new to this session or has changed
@@ -650,8 +639,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
     const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
-    // Each container owns one provider bridge, so pod id scopes bridge
-    // activity to this container without letting unrelated agents keep us alive.
     const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
@@ -862,12 +849,24 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       let codexPid: number | undefined;
       const outcome = new CodexTurnOutcome();
       let errorMessage = '';
+      let latestRateLimitReason: string | undefined;
+      let unsubscribeProviderBridgeRetryStatus = () => {};
       let lastUsage: any = null;
       let sawTerminalResult = false;
       const activeToolItems = new Map<string, { startedAt: number; approval: boolean }>();
       let sawToolExecution = false;
       let unresolvedTool = false;
       let settled = false;
+      // Surface provider retry state to the job, but never refresh the watchdog clock here.
+      unsubscribeProviderBridgeRetryStatus = providerBridgeActivity.subscribeRetryStatus(providerBridgePodId, event => {
+        if (settled) return;
+        if (event.status === 429) {
+          latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
+          emitActivity('Codex is rate-limited, retrying', 'status');
+        } else {
+          emitActivity('Codex is busy, retrying', 'status');
+        }
+      });
       let terminationPromise: Promise<void> | null = null;
       const persistSession = async(): Promise<Error | null> => {
         if (!capturedSessionId) return null;
@@ -924,37 +923,30 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       };
 
       // ── Stall watchdog ──────────────────────────────────────────────
-      // A codex process whose upstream connection dies mid-run can sit
-      // silent forever — no stdout, no exit, no error — leaving the promise
-      // unsettled and the UI stuck on "Isolated environment ready" /
-      // "calling model" with no recovery. ClaudeCodeService already carries
-      // this exact protection (observed hangs up to 7.7h); codex never had
-      // it. Stdout/stderr silence also occurs during model reasoning; it
-      // does not prove the process is dead. Allow ten quiet minutes, while
-      // retaining a finite recovery bound and the active-tool guards below.
-      const STALL_TIMEOUT_MS = 10 * 60 * 1_000;
+      // Jonathon's rule (2026-11-23): Codex must not sit silent for more than
+      // three minutes. Only process spawn and actual stdout/stderr reset this
+      // clock; provider-bridge activity is not model output.
+      const STALL_TIMEOUT_MS = 3 * 60 * 1_000;
       const STALL_CHECK_MS = 30 * 1_000;
       let lastStreamActivityAt = Date.now();
       let stalled = false;
-      let lastWatchdogDeferralAt = 0;
       let stallTimer: NodeJS.Timeout | null = null;
       const stopStallWatchdog = () => {
         if (stallTimer) {
           clearInterval(stallTimer);
           stallTimer = null;
         }
+        unsubscribeProviderBridgeRetryStatus();
+        unsubscribeProviderBridgeRetryStatus = () => {};
       };
+      const stallErrorMessage = () => unresolvedTool
+        ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+        : latestRateLimitReason
+          ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
+          : 'Codex stalled: no output for 3 minutes';
       const startStallWatchdog = () => {
         lastStreamActivityAt = Date.now();
         stallTimer = setInterval(() => {
-          const upstreamActivityAt = providerBridgeActivity.lastActivityAt(providerBridgePodId);
-          if (upstreamActivityAt > lastStreamActivityAt) {
-            lastStreamActivityAt = upstreamActivityAt;
-            if (Date.now() - lastWatchdogDeferralAt >= 60_000) {
-              lastWatchdogDeferralAt = Date.now();
-              log.info(`[CodexService] Stall watchdog deferred: provider bridge active (convId=${ convId })`);
-            }
-          }
           const silentMs = Date.now() - lastStreamActivityAt;
           if (activeToolItems.size > 0) {
             const tools = [...activeToolItems.values()];
@@ -970,11 +962,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           killSpawn();
           scheduleForcedSettlement(() => new CliFaultError(
             'stall',
-            unresolvedTool
-              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
-              : `Codex stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
+            stallErrorMessage(),
             undefined,
-            !unresolvedTool,
+            false,
             unresolvedTool,
           ));
         }, STALL_CHECK_MS);
@@ -1327,17 +1317,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           return;
         }
 
-        // Stall-watchdog kill — surface a clear, retryable error instead of
+        // Stall-watchdog kill — surface the exact rule violation instead of
         // falling through to the generic no-output message.
         if (stalled) {
-          const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
           const stallError = new CliFaultError(
             'stall',
-            unresolvedTool
-              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
-              : `Codex stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
+            stallErrorMessage(),
             undefined,
-            !unresolvedTool,
+            false,
             unresolvedTool,
           );
           failureDiagnostics.failure({ error: stallError, fault: 'stall', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });

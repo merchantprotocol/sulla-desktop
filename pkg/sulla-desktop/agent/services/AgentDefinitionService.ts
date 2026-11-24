@@ -8,6 +8,7 @@ import path from 'path';
 
 import yaml from 'yaml';
 
+import { isRetiredCodingManagerSlug } from '../builtinAgents';
 import {
   AgentDefinitionModel,
   type AgentCostTier,
@@ -74,17 +75,30 @@ export class AgentDefinitionService {
   get(id: string): Promise<AgentDefinition | null> { return AgentDefinitionModel.get(id) }
   findBySlug(slug: string): Promise<AgentDefinition | null> { return AgentDefinitionModel.findBySlug(slug) }
   list(status?: AgentDefinitionStatus): Promise<AgentDefinition[]> { return AgentDefinitionModel.list(status) }
-  create(input: AgentDefinitionInput): Promise<AgentDefinition> { return AgentDefinitionModel.create(input) }
+  create(input: AgentDefinitionInput): Promise<AgentDefinition> {
+    if (isRetiredCodingManagerSlug(input.slug)) throw new Error(`Agent ${ input.slug } is retired and cannot be created.`);
+    return AgentDefinitionModel.create(input);
+  }
   async update(id: string, patch: AgentDefinitionPatch, expectedUpdatedAt?: string): Promise<AgentDefinition | null> {
     const current = await this.get(id);
     if (!current) return null;
+    if (isRetiredCodingManagerSlug(current.slug) && (patch.enabled === true || (patch.status !== undefined && patch.status !== 'archive'))) {
+      throw new Error(`Agent ${ current.slug } is retired and cannot be enabled or unarchived.`);
+    }
     const promptFiles = patch.promptContent !== undefined && patch.promptFiles === undefined
       ? { ...current.prompt_files, 'prompt.md': patch.promptContent }
       : patch.promptFiles;
     return AgentDefinitionModel.update(id, { ...patch, ...(promptFiles ? { promptFiles } : {}) }, expectedUpdatedAt);
   }
 
-  setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> { return AgentDefinitionModel.setStatus(id, status) }
+  async setStatus(id: string, status: AgentDefinitionStatus): Promise<AgentDefinition | null> {
+    const current = await this.get(id);
+    if (!current) return null;
+    if (isRetiredCodingManagerSlug(current.slug) && status !== 'archive') {
+      throw new Error(`Agent ${ current.slug } is retired and cannot be unarchived.`);
+    }
+    return AgentDefinitionModel.setStatus(id, status);
+  }
   delete(id: string): Promise<boolean> { return AgentDefinitionModel.delete(id) }
 
   /** Import legacy directories once. Existing DB slugs always win. */
@@ -98,6 +112,10 @@ export class AgentDefinitionService {
       for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
         if (!entry.isDirectory() || seen.has(entry.name)) continue;
         seen.add(entry.name);
+        if (isRetiredCodingManagerSlug(entry.name)) {
+          skipped++;
+          continue;
+        }
         const dir = path.join(root, entry.name);
         const configPath = path.join(dir, 'config.yaml');
         if (!fs.existsSync(configPath)) continue;

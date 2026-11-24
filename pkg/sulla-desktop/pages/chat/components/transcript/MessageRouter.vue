@@ -16,7 +16,8 @@
   v-if ladders and keeps kinds orthogonal.
 -->
 <template>
-  <TurnUser        v-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
+  <InlineFileMessage v-if="msg.kind === 'inline_file_reference'" :reference="{ fileId: msg.fileId, collectionId: msg.collectionId, toolCallId: msg.toolCallId, threadId: msg.threadId }" />
+  <TurnUser        v-else-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
   <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="latestReply" :reporting-level="reportingLevel"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
@@ -74,6 +75,7 @@ import { computed, inject, ref } from 'vue';
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 import DecisionReference from './DecisionReference.vue';
 import InlineReplyBody from './InlineReplyBody.vue';
+import InlineFileMessage from '../files/InlineFileMessage.vue';
 import ErrorCard       from './ErrorCard.vue';
 import NoticeCard      from './NoticeCard.vue';
 import TtsIndicator    from './TtsIndicator.vue';

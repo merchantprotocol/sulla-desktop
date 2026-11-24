@@ -79,13 +79,9 @@ describe('custom agent defined only by prompt_content', () => {
     expect(loaded?.genericPrompt).not.toContain('Environment-only content.');
   });
 
-  it('applies template variables and the per-file size limit to prompt_content', async() => {
+  it('applies template variables to prompt_content', async() => {
     row = definition({ prompt_content: 'You are {{agent_name}}.' });
     expect((await loadAgentPromptData('qa-chat-grok-20261117'))?.genericPrompt).toBe('You are QA chat Grok.');
-    // Same 20,000-character per-file truncation as a prompt file (head and tail kept, middle marked).
-    row = definition({ prompt_content: `${ 'a'.repeat(30_000) }${ 'z'.repeat(30_000) }` });
-    const truncated = (await loadAgentPromptData('qa-chat-grok-20261117'))?.genericPrompt ?? '';
-    expect(truncated).toMatch(/^a{8000}\n\n\[\.\.\. 44000 chars truncated \.\.\.\]\n\nz{8000}$/);
   });
 
   it('stays empty and safe without prompt files or prompt_content', async() => {

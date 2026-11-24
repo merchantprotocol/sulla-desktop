@@ -10,14 +10,10 @@ import IsolatedHtml from './IsolatedHtml.vue';
 import { A2aCardMarkup } from '../../messages/a2aCardMarkup';
 import { InlineReplyMarkup } from '../../messages/InlineReplyMarkup';
 import { sanitizeMarkdownHtml } from '../../messages/markdown';
-import { structureReply } from '../../messages/replyStructure';
 
-const props = defineProps<{ text: string; legacyHtml?: boolean; agentCards?: boolean; structured?: boolean }>();
+const props = defineProps<{ text: string; legacyHtml?: boolean; agentCards?: boolean }>();
 const formatter = new InlineReplyMarkup();
 const cards = new A2aCardMarkup();
 const reply = computed(() => formatter.render(props.agentCards ? cards.render(props.text) : props.text, props.legacyHtml));
-const rendered = computed(() => {
-  const sanitized = sanitizeMarkdownHtml(reply.value.html);
-  return props.structured ? structureReply(sanitized) : sanitized;
-});
+const rendered = computed(() => sanitizeMarkdownHtml(reply.value.html));
 </script>

@@ -19,9 +19,11 @@ import {
   type DreamCursorStore,
   type DreamModel,
 } from './V7Dreamer';
+import { DreamDuplicateSweeper, type DuplicateSweepCursor, type SweepCursorValue } from './V7DuplicateSweeper';
 
 export const DREAMER_INTERVAL_SETTING = 'dreamerIntervalMinutes';
 export const DREAMER_CURSOR_SETTING = 'dreamerLastWindowEndMs';
+export const DREAMER_SWEEP_CURSOR_SETTING = 'dreamerDuplicateSweepBeforeTs';
 
 /** @deprecated use V7DreamRepository (app/Repositories/V7DreamRepository) */
 export { V7DreamRepository as PostgresV7DreamStore };
@@ -39,6 +41,37 @@ export class SettingsDreamCursor implements DreamCursorStore {
 
   async getIntervalMinutes(): Promise<number> {
     return Number(await SullaSettingsModel.get(DREAMER_INTERVAL_SETTING, DEFAULT_DREAMER_INTERVAL_MINUTES));
+  }
+}
+
+/** Persisted backward page for the duplicate sweeper; independent from the dream window cursor. */
+export class SettingsDreamSweepCursor implements DuplicateSweepCursor {
+  async getBeforeCursor(): Promise<SweepCursorValue | null> {
+    const value = await SullaSettingsModel.get(DREAMER_SWEEP_CURSOR_SETTING, 0);
+
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : null;
+    if (typeof value !== 'string') return null;
+
+    const separator = value.indexOf(':');
+    if (separator < 0) {
+      const legacyTs = Number(value);
+
+      return Number.isFinite(legacyTs) && legacyTs > 0 ? legacyTs : null;
+    }
+
+    const ts = Number(value.slice(0, separator));
+    const id = value.slice(separator + 1);
+
+    return Number.isFinite(ts) && ts > 0 && id.length > 0 ? { ts, id } : null;
+  }
+
+  async setBeforeCursor(before: SweepCursorValue | null): Promise<void> {
+    if (before === null || typeof before === 'number') {
+      await SullaSettingsModel.set(DREAMER_SWEEP_CURSOR_SETTING, before ?? 0, 'number');
+      return;
+    }
+
+    await SullaSettingsModel.set(DREAMER_SWEEP_CURSOR_SETTING, `${ before.ts }:${ before.id }`, 'string');
   }
 }
 
@@ -66,11 +99,15 @@ export class V7DreamerRuntime {
   private static instance: V7Dreamer | undefined;
 
   static shared(): V7Dreamer {
-    V7DreamerRuntime.instance ??= new V7Dreamer({
-      store:  new V7DreamRepository(),
-      cursor: new SettingsDreamCursor(),
-      model:  new SubconsciousDreamModel(),
-    });
+    if (!V7DreamerRuntime.instance) {
+      const store = new V7DreamRepository();
+      V7DreamerRuntime.instance = new V7Dreamer({
+        store,
+        cursor:  new SettingsDreamCursor(),
+        model:   new SubconsciousDreamModel(),
+        sweeper: new DreamDuplicateSweeper(store, new SettingsDreamSweepCursor()),
+      });
+    }
 
     return V7DreamerRuntime.instance;
   }

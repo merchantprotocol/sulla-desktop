@@ -12,20 +12,8 @@
 /* Anywhere on the bar that isn't a button puts the cursor in the box. */
 .composer { cursor: text; }
 
-/* Bottom dock: the card is the field; its edge lights on hover. */
-.composer-card:hover:not(:focus-within) { box-shadow: inset 0 0 0 1px var(--border-strong), var(--elev-float); }
-
-/* Side dock: a drawn field between the buttons, with its own hover and focus. */
+/* Capsule input keeps one geometry in the bottom and side docks. */
 .cw-side .composer > .input {
-  min-height: 34px; margin: 0 4px !important; padding: 6px 10px !important;
-  border: 1px solid var(--border-strong) !important; border-radius: 10px !important;
-  background: var(--bg-page) !important;
-  transition: border-color .15s cubic-bezier(.22, 1, .36, 1), box-shadow .15s cubic-bezier(.22, 1, .36, 1);
+  min-height: 24px; margin: 0 !important; padding: 0 10px !important;
+  border: 0 !important; border-radius: 0 !important; background: transparent !important; box-shadow: none !important;
 }
-.cw-side .composer > .input:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)) !important; }
-.cw-side .composer > .input:focus {
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent) !important;
-}
-/* The field shows focus itself; no second ring around the whole box. */
-.cw-side .composer-card:has(.composer:focus-within) { box-shadow: none; }

@@ -43,6 +43,7 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 
 import type { BaseThreadState, NodeResult } from './Graph';
+import type { ModelDecision } from '../languagemodels/modelPrecedence';
 import type { StreamContext } from '../controllers/Extractor';
 import { turnAgentDefinitionMemo } from './turnAgentDefinitionMemo';
 import { turnProviderResolver } from './TurnProviderResolver';
@@ -54,6 +55,7 @@ import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
 import Logging from '@pkg/utils/logging';
 import { TurnHopTiming } from '../utils/turnHopTiming';
+import { MEMORY_CHAR_BUDGET, MemoryBudgetLog, measureInjectedMemoryBlocks } from '../memory/MemoryBudget';
 
 // ============================================================================
 // DEFAULT SETTINGS
@@ -292,21 +294,6 @@ export async function getTemplateVariables(threadId = 'unknown'): Promise<Record
     }
   } catch { /* registry not available */ }
 
-  // Compact, DB-backed Files placement guide. Failure is non-fatal while Files is locked.
-  let folderMap = '';
-  const folderMapStarted = Date.now();
-  try {
-    folderMap = await templateSnapshotCache.get('filesFolderMap', async () => {
-    const { filesContainerJson } = await import('../files/containerClient');
-    const folders=await filesContainerJson<Array<{collectionName:string;path:string;description:string;namingHint?:string;needsDescription?:boolean}>>('/v1/folders/map?limit=38',{});
-    if (folders.length) return `## Folder map
-Check \`files_where\` before saving. Prefer described folders; if none fits, create a sensible folder with a description.
-${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`:''}: ${folder.description}${folder.namingHint?` (names: ${folder.namingHint})`:''}${folder.needsDescription?' [needs description]':''}`).join('\n')}`;
-    return '';
-    });
-    timing.filesFolderMap = Date.now() - folderMapStarted;
-  } catch { /* Files may be locked during bootstrap */ }
-
   // Installed extensions
   let installedExtensions = '';
   const extensionsStarted = Date.now();
@@ -330,7 +317,7 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
   } catch { /* extension service not available */ }
   timing.extensions = Date.now() - extensionsStarted;
 
-  perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables settings=${ timing.settings || 0 }ms skills=${ timing.skills || 0 }ms filesFolderMap=${ timing.filesFolderMap || 0 }ms extensions=${ timing.extensions || 0 }ms extensionsInitialize=${ timing.extensionsInitialize || 0 }ms total=${ Date.now() - startedAt }ms`);
+  perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables settings=${ timing.settings || 0 }ms skills=${ timing.skills || 0 }ms extensions=${ timing.extensions || 0 }ms extensionsInitialize=${ timing.extensionsInitialize || 0 }ms total=${ Date.now() - startedAt }ms`);
 
   return {
     '{{formattedTime}}':        formattedTime,
@@ -349,7 +336,6 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
     '{{skills_index}}':         skillsIndex,
     '{{tool_categories}}':      categoriesText,
     '{{installed_extensions}}':  installedExtensions,
-    '{{folder_map}}':             folderMap,
   };
   } catch (err) {
     perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables total=${ Date.now() - startedAt }ms failed=true`);
@@ -364,23 +350,6 @@ function applyTemplateVars(text: string, vars: Record<string, string>): string {
     result = result.replaceAll(key, value);
   }
   return result;
-}
-
-/** Maximum chars per bootstrap/agent .md file before truncation */
-const BOOTSTRAP_MAX_CHARS_PER_FILE = 20_000;
-/** Maximum total chars for all bootstrap/agent .md files combined */
-const BOOTSTRAP_TOTAL_MAX_CHARS = 150_000;
-
-/**
- * Truncate a file's content if it exceeds the per-file limit.
- * Keeps first 40% and last 40% with a truncation marker.
- */
-function truncateBootstrapContent(content: string, maxChars: number = BOOTSTRAP_MAX_CHARS_PER_FILE): string {
-  if (content.length <= maxChars) return content;
-  const headSize = Math.floor(maxChars * 0.4);
-  const tailSize = Math.floor(maxChars * 0.4);
-  const truncated = content.length - headSize - tailSize;
-  return `${ content.slice(0, headSize) }\n\n[... ${ truncated } chars truncated ...]\n\n${ content.slice(-tailSize) }`;
 }
 
 /**
@@ -458,7 +427,6 @@ export async function loadAgentPromptData(agentId: string, templateVarsPromise?:
 
     const sectionOverrides = new Map<string, string>();
     const genericSections: string[] = [];
-    let totalChars = 0;
 
     // Same rule as GraphRegistry.loadAgentConfig: with no usable .md prompt file, the definition's
     // own prompt_content is the agent prompt (processed like a prompt file below).
@@ -467,18 +435,8 @@ export async function loadAgentPromptData(agentId: string, templateVarsPromise?:
     }
 
     for (const [fileName, rawContent] of mdFiles) {
-      let content = String(rawContent).trim();
+      const content = String(rawContent).trim();
       if (!content) continue;
-
-      // Truncate if exceeds per-file limit
-      content = truncateBootstrapContent(content);
-
-      // Check total budget
-      if (totalChars + content.length > BOOTSTRAP_TOTAL_MAX_CHARS) {
-        console.warn(`[BaseNode] Bootstrap total budget exceeded for ${ agentId }, skipping ${ fileName }`);
-        break;
-      }
-      totalChars += content.length;
 
       // Check if this file name matches a registered section ID
       const sectionId = fileName.replace(/\.md$/, '');
@@ -564,19 +522,65 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.routingCandidates = await workerModelRouting.resolveRoute(workerRoute, isAbortSignal(runAbort) ? runAbort : runAbort?.signal);
       const selected = this.routingCandidates[0];
       await workerModelRouting.persistSelection(state, selected);
-      return getServiceByProvider(selected.provider, selected.model, selected.effort);
+      const service = await getServiceByProvider(selected.provider, selected.model, selected.effort);
+      await this.persistModelDecision(state, service);
+      return service;
     }
     const resolved = await turnProviderResolver.resolve(state);
     this.routingCandidates = resolved.candidates;
+    await this.persistModelDecision(state, resolved.provider);
     return resolved.provider;
   }
 
   private recordModelStatus(state: BaseThreadState, service: BaseLanguageModel): void {
-    const modelStatus = { ...((state.metadata as any).workerModelRoute && !(state.metadata as any).workerModelChatOverride ? { mapping: 'Worker mapping' } : {}), model: service.getModel(), provider: service.getProviderName(), effort: service.getEffort?.() ?? null, source: 'resolved' as const };
+    const meta = state.metadata as any;
+    const mapping = meta.modelDecision?.step === 'override' ? 'Override' : (meta.workerModelRoute && !meta.workerModelChatOverride ? 'Worker mapping' : undefined);
+    const modelStatus = { ...(mapping ? { mapping } : {}), model: service.getModel(), provider: service.getProviderName(), effort: service.getEffort?.() ?? null, source: 'resolved' as const };
     (state.metadata as any).resolvedModel = modelStatus.model;
     (state.metadata as any).resolvedProvider = modelStatus.provider;
     (state.metadata as any).resolvedModelStatus = modelStatus;
     AgentModelStatusRegistry.record(state.metadata.threadId, modelStatus);
+  }
+
+  private async persistModelDecision(state: BaseThreadState, service: BaseLanguageModel, reason?: string): Promise<void> {
+    try {
+      const meta = state.metadata as any;
+      const reference = meta.modelDecisionTask;
+      if (!reference?.jobId || !Number.isInteger(reference.taskIndex)) return;
+      const current: ModelDecision = meta.modelDecision ?? { requested: null, ran: null, step: 'category' };
+      const ran = { provider: service.getProviderName(), model: service.getModel() };
+      const sameRan = current.ran?.provider === ran.provider && current.ran?.model === ran.model;
+      const reasons = current.reason ? current.reason.split('; ') : [];
+      if (reason && !reasons.includes(reason)) reasons.push(reason);
+      const nextReason = reasons.join('; ');
+      if (sameRan && nextReason === (current.reason ?? '')) return;
+      const decision: ModelDecision = {
+        ...current,
+        ran,
+        ...(nextReason ? { reason: nextReason } : {}),
+      };
+      // Keep the live thread truthful even when durable bookkeeping is unavailable.
+      meta.modelDecision = decision;
+      try {
+        // Lazy: a top-level import creates a BaseNode <-> AgentJobServiceProvider cycle.
+        const { agentJobProvider } = await import('../app/Providers/AgentJobServiceProvider');
+        const persisted = await agentJobProvider.states.mutateJob(reference.jobId, job => {
+          const task = job.tasks[reference.taskIndex];
+          if (!['running', 'parked'].includes(job.status) || !task || !['queued', 'running', 'parked'].includes(task.status) ||
+              (reference.threadId && task.threadId !== reference.threadId) || (task.generation ?? 1) !== (reference.generation ?? 1)) {
+            throw new Error('Worker execution ownership changed; refusing to record a stale model decision.');
+          }
+          return { ...job, tasks: job.tasks.map((item, index) => index === reference.taskIndex ? { ...item, modelDecision: decision } : item) };
+        }, undefined, false);
+        if (!persisted) throw new Error('Agent job is unavailable; model-decision bookkeeping was skipped.');
+      } catch (error) {
+        console.warn(`[ModelPrecedence] Could not persist model decision for job=${ reference.jobId }; continuing model execution.`, error);
+      }
+      const requested = decision.requested ? `${ decision.requested.provider }/${ decision.requested.model }` : 'none';
+      console.info(`[ModelPrecedence] job=${ reference.jobId } requested=${ requested } ran=${ ran.provider }/${ ran.model } step=${ decision.step}`);
+    } catch (error) {
+      console.warn('[ModelPrecedence] Failed to record the resolved model; continuing model execution.', error);
+    }
   }
 
   protected recordedReplyAttribution(state: BaseThreadState, model?: string): { agent?: string; model?: string } {
@@ -861,8 +865,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (existingBlock && !isFinalMessage) return;
 
       const block = await buildTurnContext({
-        agentId:     String(state.metadata.wsChannel || 'sulla-desktop'),
-        wsChannel:   String(state.metadata.wsChannel || 'sulla-desktop'),
         chatMode:    options.chatMode || 'text',
         isHeartbeat: options.isHeartbeat || false,
       });
@@ -940,6 +942,43 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     this.stripInjectedContextBlocks(state);
 
     const metadata = state.metadata as any;
+    const observations = typeof metadata.observationalMemoryContext === 'string' ? metadata.observationalMemoryContext : '';
+    let brain = typeof metadata.brainMemoryContext === 'string' ? metadata.brainMemoryContext : '';
+    let latestUserIndex = -1;
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i]?.role === 'user') { latestUserIndex = i; break; }
+    }
+    const turnMarker = String(metadata.turnId || metadata.requestId || `${ latestUserIndex }:${ state.messages.length }`);
+    const measured = measureInjectedMemoryBlocks(observations, brain);
+    if (measured > MEMORY_CHAR_BUDGET) {
+      if (metadata.memoryBudgetGuardTurnMarker !== turnMarker) {
+        console.warn(`[MemoryBudgetGuard] thread=${ metadata.threadId || 'unknown' } observations=${ observations.trim().length } brain=${ brain.trim().length } total=${ measured } cap=${ MEMORY_CHAR_BUDGET }; dropping whole brain block`);
+        metadata.memoryBudgetGuardTurnMarker = turnMarker;
+      }
+      brain = '';
+      metadata.brainMemoryContext = '';
+      const priorStats = metadata.brainMemoryStats || {};
+      metadata.brainMemoryStats = {
+        ...priorStats,
+        sections: Object.fromEntries(Object.keys(priorStats.sections || {}).map((section) => [section, 0])),
+        brainCharacters: 0,
+        measuredCharacters: measureInjectedMemoryBlocks(observations, ''),
+      };
+    }
+
+    if (metadata.memoryBudgetLogTurnMarker !== turnMarker) {
+      new MemoryBudgetLog((line) => console.log(line)).write({
+        threadId: String(metadata.threadId || 'unknown'),
+        observations,
+        brain,
+        stats: metadata.brainMemoryStats,
+        teamDirectory: String(metadata.teamDirectoryContext || ''),
+        installedSkills: String(metadata.skillRecallContext || ''),
+        subagentDirectory: String(metadata.subagentDirectoryContext || ''),
+      });
+      metadata.memoryBudgetLogTurnMarker = turnMarker;
+    }
+
     const fields: [string, string][] = [
       ['human_identity_context', 'humanIdentityContext'],
       ['observational_memory', 'observationalMemoryContext'],
@@ -1406,6 +1445,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                 ? this.buildReducedRetryMessages(messages)
                 : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
             await workerModelRouting.persistSelection(state, candidate);
+            if (index > 0) await this.persistModelDecision(
+              state,
+              service,
+              `Fallback after ${ failedFirst.provider }/${ failedFirst.model } failed: ${ redactLLMFailureMessage(lastErr) }`,
+            );
             this.recordModelStatus(state, service);
             const reply = await this.callLLMStreaming(state, retryMessages, {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,
@@ -2058,7 +2102,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // `extras` with intentionally empty content. Don't drop them here —
     // the renderer needs them to close bubbles or render cards.
     const isSentinelKind = kind === 'streaming_complete' || kind === 'thinking_complete';
-    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'chat_tool_activity' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch';
+    const isStructuredKind = extras?.readinessWaitId !== undefined || kind === 'citation' || kind === 'chat_tool_activity' || kind === 'workflow_document' || kind === 'tool_approval' || kind === 'tool_question' || kind === 'file_patch' || kind === 'inline_file_reference';
     if (!content && !isSentinelKind && !isStructuredKind) {
       return false;
     }

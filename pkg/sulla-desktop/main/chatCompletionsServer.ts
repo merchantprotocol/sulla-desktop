@@ -652,6 +652,7 @@ export class ChatCompletionsServer {
 
     try {
       state.metadata.wsChannel = agentId;
+      (state.metadata as any).desktopChatVisible = false;
 
       // Append new user messages
       for (const msg of messages) {
@@ -1481,6 +1482,13 @@ export class ChatCompletionsServer {
           } catch (err) {
             console.warn('[ChatCompletionsAPI] failed to wire interactive tool chat emit:', err);
           }
+        }
+
+        // files/open needs the calling graph's chat transport to post an inline
+        // file card. Bind it only to the verified session's own live state.
+        if (session) {
+          const { ToolSessionChatTransport } = await import('@pkg/agent/tools/ToolSessionChatTransport');
+          new ToolSessionChatTransport().attach(tool, session.state);
         }
 
         // Workflow activation tools mutate live graph state. The CLI endpoint

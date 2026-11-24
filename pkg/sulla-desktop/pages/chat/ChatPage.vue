@@ -40,23 +40,34 @@
       />
 
       <main ref="mainRef" class="main">
-        <!--
-          Composer backdrop: bottom fade so transcript
-          content scrolling up doesn't fight the composer. Masked on the
-          right (left over from the removed Canvas glow; kept so the
-          bottom edge looks the same).
-        -->
-        <div class="composer-backdrop" aria-hidden="true" />
-        <ChatHeader v-model:reporting-level="reportingLevel" />
-        <SearchBar />
+        <div class="chat-column" :class="{ 'chart-gutter': chartInGutter }">
+          <!--
+            Composer backdrop: bottom fade so transcript
+            content scrolling up doesn't fight the composer. Masked on the
+            right (left over from the removed Canvas glow; kept so the
+            bottom edge looks the same).
+          -->
+          <div class="composer-backdrop" aria-hidden="true" />
+          <ChatHeader v-model:reporting-level="reportingLevel" />
+          <SearchBar />
 
-        <EmptyState
-          v-if="!hasTranscript"
-          :suggestions="suggestions"
-          @pick="onSuggestion"
-        />
-        <Transcript v-else :reporting-level="reportingLevel" />
-        <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
+          <EmptyState
+            v-if="!hasTranscript"
+            :suggestions="suggestions"
+            @pick="onSuggestion"
+          />
+          <Transcript v-else :reporting-level="reportingLevel">
+            <!-- The worker chart lives inside the transcript's scroll area, sticky on the right. -->
+            <template v-if="chartRoot" #aside>
+              <WorkerChart
+                :root="chartRoot"
+                :chat-column-width="appWidth"
+                @open-agent="openChartAgent"
+              />
+            </template>
+          </Transcript>
+          <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
+        </div>
       </main>
 
       <template v-if="!dockSide">
@@ -108,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import Canvas             from './components/chrome/Canvas.vue';
@@ -121,6 +132,7 @@ import TokenUsageModal    from './components/chrome/TokenUsageModal.vue';
 
 import Transcript        from './components/transcript/Transcript.vue';
 import Composer          from './components/composer/Composer.vue';
+import WorkerChart       from './components/workerChart/WorkerChart.vue';
 import HistoryRail       from './components/history/HistoryRail.vue';
 import EmptyState        from './components/empty/EmptyState.vue';
 import ChatFilesDrawer from './components/files/ChatFilesDrawer.vue';
@@ -129,6 +141,7 @@ import SideDock          from './components/sidedock/SideDock.vue';
 import QuickSwitcher     from './components/sidedock/QuickSwitcher.vue';
 import { ChatDecisions } from './composables/useChatDecisions';
 import { DockPositions } from './composables/useDockPosition';
+import { THREAD_AGENT_ACTIVITY_KEY, useThreadAgentActivity } from './composables/useThreadAgentActivity';
 import type { ThreadAgentCard } from '@pkg/main/agentsIpc';
 import type { SubAgentConversationTarget } from './components/subagent/subAgentConversation';
 
@@ -152,6 +165,7 @@ import { usePushToTalk }         from './composables/usePushToTalk';
 import { useResizeSync }         from './composables/useResizeSync';
 
 import { ipcRenderer }           from '@pkg/utils/ipcRenderer';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
@@ -455,7 +469,23 @@ const transcriptDecisionIds = computed(() => mainDecisionTranscript.value ? cont
   return id ? [id] : [];
 }) : []);
 provide('chat:main-decision-transcript', mainDecisionTranscript);
-ChatDecisions.provide(subAgentParentThreadId, transcriptDecisionIds);
+const chatDecisionStore = ChatDecisions.provide(subAgentParentThreadId, transcriptDecisionIds);
+const agentStateClient = inject(AGENT_STATE_CLIENT_KEY);
+if (!agentStateClient) throw new Error('AgentStateClient is not provided');
+const threadAgentActivity = useThreadAgentActivity({
+  snapshot: agentStateClient.snapshot,
+  threadId: subAgentParentThreadId,
+  decisions: chatDecisionStore.decisions,
+  // The primary agent's own tool calls and steps come from this chat's transcript.
+  transcript: controller.messages,
+  primaryAgentName: computed(() => {
+    const agentId = controller.thread.value.agentId;
+    const named = agentId ? modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.name : '';
+    return named || modelSelector.chatDefaultAgentName.value || 'Sulla';
+  }),
+});
+const chartRoot = threadAgentActivity.chartRoot;
+provide(THREAD_AGENT_ACTIVITY_KEY, threadAgentActivity);
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
   subAgentTarget.value = target;
@@ -696,6 +726,34 @@ usePushToTalk({
 // Composer resize sync — keep Transcript padding in lockstep with composer height.
 const mainRef     = ref<HTMLElement | null>(null);
 const composerRef = ref<HTMLElement | null>(null);
+const appWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
+
+function updateAppWidth(): void { appWidth.value = window.innerWidth }
+// The chart sits in the transcript's right gutter from 900px up; below that it is
+// WorkerChart's 24px overlay rail and the messages keep the full width.
+const chartInGutter = computed(() => hasTranscript.value && Boolean(chartRoot.value) && appWidth.value >= 900);
+onMounted(() => window.addEventListener('resize', updateAppWidth));
+onBeforeUnmount(() => window.removeEventListener('resize', updateAppWidth));
+
+async function openChartAgent({ agentId }: { agentId: string }): Promise<void> {
+  const projection = threadAgentActivity.projection.value;
+  const selected = projection.agents.find(agent => agent.row.key === agentId);
+  if (!selected) {
+    // The chart's virtual chat root is already open; focus its existing message/stop controls.
+    if (chartRoot.value?.id === agentId) mainRef.value?.querySelector<HTMLTextAreaElement>('.composer-wrap textarea')?.focus();
+    return;
+  }
+
+  const row = selected.row;
+  if (!row.canOpen) return;
+  const parent = row.parentJobId !== null && row.parentTaskIndex !== null
+    ? projection.agents.find(agent => agent.row.jobId === row.parentJobId && agent.row.taskIndex === row.parentTaskIndex)?.row
+    : undefined;
+  const parentThreadId = parent?.threadId || row.rootThreadId || subAgentParentThreadId.value;
+  if (!parentThreadId) return;
+  const opened = await ipcRenderer.invoke('agents:open-job-in-tab' as any, row.jobId, parentThreadId, row.taskIndex).catch(() => false);
+  if (!opened) console.warn('[ChatPage] WorkerChart could not open agent tab', row.key);
+}
 
 onMounted(() => {
   // Tabs remain mounted. Measure this chat's composer, never another tab's.
@@ -899,9 +957,24 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0; bottom: 0;
   left: 0; right: 0;
+  display: flex;
   overflow: hidden;
   transition: left 0.35s ease, right 0.35s ease;
 }
+.chat-column {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+/*
+ * While the worker chart sits in the transcript's right gutter (100px chart +
+ * 16px inset), the composer and its backdrop stay to the left of it, where
+ * they were when the chart was a column beside the chat.
+ */
+.chat-column.chart-gutter { --chart-gutter-w: 116px; }
+.main .chat-column.chart-gutter :deep(.composer-wrap) { right: var(--chart-gutter-w); }
 
 /*
  * Composer backdrop — fades the transcript at the bottom of .main.
@@ -912,7 +985,7 @@ onBeforeUnmount(() => {
  */
 .composer-backdrop {
   position: absolute;
-  bottom: 0; left: 0; right: 0;
+  bottom: 0; left: 0; right: var(--chart-gutter-w, 0px);
   height: 180px;
   z-index: 10;
   pointer-events: none;

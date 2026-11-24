@@ -13,7 +13,7 @@ import paths from '@pkg/utils/paths';
 import { OutputParser } from './OutputParser';
 
 const MOUNT_DEVPTS = 'mountpoint -q /dev/pts || { mkdir -p /dev/pts && mount -t devpts devpts /dev/pts -o newinstance,ptmxmode=0666,mode=0620,gid=5; }';
-const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios, time\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 1000, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            if data.endswith(b\"\\n\"):\n                body = data[:-1].replace(b\"\\n\", b\"\\r\")\n                if body:\n                    os.write(fd, body)\n                time.sleep(0.3)\n                os.write(fd, b\"\\r\")\n            else:\n                os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
+const GUEST_PTY_RELAY = "import fcntl, os, pty, select, struct, sys, termios, time\npid, fd = pty.fork()\nif pid == 0:\n    os.environ.setdefault(\"TERM\", \"xterm-256color\")\n    os.environ[\"CLAUDE_CODE_DISABLE_AUTO_MEMORY\"] = \"1\"\n    os.execvp(sys.argv[1], sys.argv[1:])\nfcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack(\"HHHH\", 30, 1000, 0, 0))\ninputs = [fd, 0]\nwhile True:\n    ready, _, _ = select.select(inputs, [], [])\n    if fd in ready:\n        try:\n            data = os.read(fd, 65536)\n        except OSError:\n            break\n        if not data:\n            break\n        os.write(1, data)\n    if 0 in ready:\n        data = os.read(0, 65536)\n        if data:\n            if data.endswith(b\"\\n\"):\n                body = data[:-1].replace(b\"\\n\", b\"\\r\")\n                if body:\n                    os.write(fd, body)\n                time.sleep(0.3)\n                os.write(fd, b\"\\r\")\n            else:\n                os.write(fd, data.replace(b\"\\n\", b\"\\r\"))\n        else:\n            inputs.remove(0)\n_, status = os.waitpid(pid, 0)\nsys.exit(os.waitstatus_to_exitcode(status))";
 
 export class ClaudeCliUnavailableError extends Error {}
 
@@ -154,7 +154,10 @@ export class ClaudeSetupTokenAdapter {
 
   private runGuestCommand(args: string[], timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...args], { env: { ...process.env } });
+      const guestArgs = args[0] === 'claude'
+        ? ['env', 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1', ...args]
+        : args;
+      const child = childProcess.spawn(paths.sullaRuntime, ['exec', '--', ...guestArgs], { env: { ...process.env } });
       let output = '';
       let settled = false;
       const finish = (error?: Error) => {

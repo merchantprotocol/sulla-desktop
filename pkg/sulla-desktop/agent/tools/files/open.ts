@@ -8,13 +8,19 @@ import { randomUUID } from 'node:crypto';
 import { ipcMain } from 'electron';
 
 import { FilesTool } from './common';
+import { AgentFileOpenRoutePolicy } from './AgentFileOpenRoutePolicy';
+import { InlineFileReferenceMessageFactory } from './InlineFileReferenceMessage';
 
 import { getActiveAgentWindow } from '@pkg/window/agentWindows';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 import type { ToolResponse } from '../base';
 
 interface FilesRecord { file: { id:string; collection_id:string; path:string } }
 interface OpenResult { opened:boolean; tabId:string; path:string; how:string }
+
+const fileOpenRoutePolicy = new AgentFileOpenRoutePolicy();
+const inlineFileReferenceFactory = new InlineFileReferenceMessageFactory();
 
 export function normalizeOpenPath(value:string):string {
   const trimmed = value.trim().replaceAll('\\', '/');
@@ -58,6 +64,31 @@ export class FilesOpenWorker extends FilesTool {
       resolvedPath = record.file.path;
     }
 
+    const metadata = (this as any).state?.metadata as Record<string, any> | undefined;
+    const decision = kind === 'folder' ? { kind: 'legacy-tab' as const, reason: 'folder' } : fileOpenRoutePolicy.route(input.placement, {
+      threadId:             metadata?.threadId,
+      executionThreadId:    this.executionContext?.thread_id,
+      hasChatTransport:     typeof this.sendChatMessage === 'function',
+      isDesktopChatVisible: metadata?.desktopChatVisible === true,
+      isSubAgent:           metadata?.isSubAgent === true,
+      isRelayed:            metadata?.relayed === true,
+      isChatMuted:          !!metadata?._muteWsChat,
+      isSubconsciousSilent: !!metadata?.subconsciousSilent,
+    });
+    console.log(`[files/open] route thread=${ metadata?.threadId || '(none)' } placement=${ input.placement ?? 'default' } eligible=${ decision.kind === 'inline' ? 'yes' : 'no' } decision=${ decision.kind } reason=${ decision.kind === 'inline' ? 'visible-desktop-chat' : decision.reason }`);
+    if (decision.kind === 'reject') throw new Error(decision.message);
+    if (decision.kind === 'inline') {
+      const record = inlineFileReferenceFactory.create({
+        threadId: decision.threadId,
+        toolCallId: randomUUID(),
+        fileId,
+        collectionId,
+      });
+      await this.emitInlineFileReference(record);
+      const name = resolvedPath.slice(resolvedPath.lastIndexOf('/') + 1);
+      return { successBoolean: true, responseString: JSON.stringify({ opened: true, placement: 'inline', fileId, path: resolvedPath, name }) };
+    }
+
     const agentWindow = getActiveAgentWindow();
     if (!agentWindow) throw new Error('Main Sulla Desktop window is not available yet');
     const requestId = randomUUID();
@@ -66,7 +97,9 @@ export class FilesOpenWorker extends FilesTool {
       const timer = setTimeout(() => { ipcMain.removeAllListeners(replyChannel); reject(new Error('Sulla Desktop did not acknowledge the file open request')); }, 10_000);
       ipcMain.once(replyChannel, (event, reply:OpenResult & { error?:string }) => {
         clearTimeout(timer);
-        if (event.sender !== agentWindow.webContents) return reject(new Error('Rejected an untrusted file open acknowledgement'));
+        // Non-editor files reply from the File Manager tab, which renders in an
+        // internal tab-host view owned by the window; resolve it to its owner.
+        if (event.sender !== agentWindow.webContents && agentWindowFromSender(event.sender) !== agentWindow) return reject(new Error('Rejected an untrusted file open acknowledgement'));
         if (reply?.error) return reject(new Error(reply.error));
         if (reply?.opened !== true) return reject(new Error('Sulla Desktop did not select the requested Files item'));
         resolve(reply);

@@ -81,6 +81,16 @@ export class SullaFilesClient {
     if (!endpoint.startsWith('/') || endpoint.startsWith('//')) throw new Error('Files endpoint must be service-relative');
     return getSullaFilesWatcher().requestFilesStream(endpoint, init, signal);
   }
+
+  /** Fresh main-process Files principal snapshot; never accepts caller or agent identity. */
+  currentPrincipalId():Promise<string> {
+    return getSullaFilesWatcher().currentPrincipalId();
+  }
+
+  /** Fresh composite main-process authority snapshot, including the signed-in Cloud account and org. */
+  currentAuthorityId():Promise<string> {
+    return getSullaFilesWatcher().currentAuthorityId();
+  }
 }
 
 export class SullaFilesClientProvider {

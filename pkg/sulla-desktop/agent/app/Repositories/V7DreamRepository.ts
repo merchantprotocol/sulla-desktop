@@ -14,9 +14,17 @@ import {
   type V7DreamStore,
   type ValidatedDreamWrite,
 } from '../../memory/V7Dreamer';
+import type {
+  DuplicateSweepStore,
+  SweepCursorValue,
+  SweepEpisode,
+  SweepSubject,
+} from '../../memory/V7DuplicateSweeper';
+
+type SweepEpisodeRow = Omit<SweepEpisode, 'ts'> & { ts: number | string };
 
 /** v7 subject-memory reads and the atomic dream append for V7Dreamer. */
-export class V7DreamRepository implements V7DreamStore {
+export class V7DreamRepository implements V7DreamStore, DuplicateSweepStore {
   static readonly MAX_CONTEXT_ITEMS = 150;
 
   constructor(private readonly client: Pick<typeof postgresClient, 'query' | 'transaction'> = postgresClient) {}
@@ -27,7 +35,7 @@ export class V7DreamRepository implements V7DreamStore {
       this.client.query<DreamEpisode>(
         `SELECT id, ts, source, text, keys, sentiment FROM (
            SELECT id, ts, source, text, keys, sentiment FROM subject_memory.episodes
-            WHERE ts >= $1 AND ts < $2 AND coalesce(worker, '') <> $3
+            WHERE ts >= $1 AND ts < $2 AND coalesce(worker, '') <> $3 AND superseded_by IS NULL
             ORDER BY ts DESC LIMIT $4) recent
           ORDER BY ts ASC, id ASC`,
         [window.fromTs, window.toTs, DREAMER_WORKER, limits.episodes],
@@ -46,6 +54,59 @@ export class V7DreamRepository implements V7DreamStore {
       episodes: episodes.map(row => ({ ...row, ts: Number(row.ts), keys: row.keys ?? [] })),
       items:    items.map(row => ({ ...row, ts: Number(row.ts), scope: row.scope ?? [] })),
     };
+  }
+
+  async loadSweepEpisodes(limit: number, before?: SweepCursorValue): Promise<SweepEpisode[]> {
+    const beforeTs = before === undefined ? null : typeof before === 'number' ? before : before.ts;
+    const beforeId = before !== undefined && typeof before !== 'number' ? before.id : null;
+    const rows = await this.client.query<SweepEpisodeRow>(
+      `SELECT e.id, e.ts, e.conversation_id, e.source, e.sentiment, e.text, e.keys,
+              e.checkin_key, e.superseded_by,
+              EXISTS (SELECT 1 FROM subject_memory.evidence evidence WHERE evidence.episode_id = e.id) AS "hasEvidence"
+         FROM subject_memory.episodes e
+        WHERE e.superseded_by IS NULL
+          AND ($2::bigint IS NULL
+            OR ($3::text IS NULL AND e.ts < $2::bigint)
+            OR (e.ts, e.id) < ($2::bigint, $3::text))
+        ORDER BY e.ts DESC, e.id DESC
+        LIMIT $1`,
+      [limit, beforeTs, beforeId],
+    );
+
+    return rows.map(row => ({
+      ...row,
+      ts: Number(row.ts),
+      conversation_id: row.conversation_id ?? null,
+      keys: row.keys ?? [],
+      checkin_key: row.checkin_key ?? null,
+      superseded_by: row.superseded_by ?? null,
+      hasEvidence: Boolean(row.hasEvidence),
+    }));
+  }
+
+  async loadSubjects(): Promise<SweepSubject[]> {
+    return this.client.query<SweepSubject>(
+      'SELECT slug, parent, kind FROM subject_memory.subjects ORDER BY slug',
+    );
+  }
+
+  async supersedeEpisode(oldId: string, keepId: string, runId: string, nowTs: number): Promise<boolean> {
+    const result = await this.client.transaction(client => client.query(
+      `UPDATE subject_memory.episodes
+          SET superseded_by = $2,
+              superseded_ts = $4,
+              superseded_reason = 'dream-sweep:' || $3
+        WHERE id = $1
+          AND id <> $2
+          AND superseded_by IS NULL
+          AND source <> 'user'
+          AND NOT EXISTS (SELECT 1 FROM subject_memory.evidence WHERE episode_id = $1)
+          AND EXISTS (SELECT 1 FROM subject_memory.episodes keep WHERE keep.id = $2 AND keep.superseded_by IS NULL)`,
+      [oldId, keepId, runId, nowTs],
+    ));
+
+    // Undo one sweep without deleting history: UPDATE subject_memory.episodes SET superseded_by=NULL, superseded_ts=NULL, superseded_reason=NULL WHERE superseded_reason='dream-sweep:<runId>'.
+    return result.rowCount === 1;
   }
 
   async loadContext(subjectSlugs: string[]): Promise<DreamContext> {

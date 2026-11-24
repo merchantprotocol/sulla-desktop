@@ -55,7 +55,7 @@ dbDescribe('delegated worker durable wait lifecycle (real Postgres)', () => {
   }
 
   const launch = async(execute: (state: any, threadId: string, call: number) => Promise<void>) => {
-    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'codex-sol-worker', run_location: 'vm' } as any);
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'codex-sol-worker', enabled: true, status: 'production', run_location: 'vm' } as any);
     let threadId = '';
     let calls = 0;
     const state: any = { metadata: { wsChannel: 'codex-sol-worker', options: {}, agent: {}, cycleComplete: false }, messages: [] };

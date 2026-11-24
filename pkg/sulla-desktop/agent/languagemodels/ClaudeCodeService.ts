@@ -146,13 +146,17 @@ const BACKGROUND_HOLD_SETTLE_MS = 60_000;
  */
 const PROC_MCP_SESSION_TTL_MS = BACKGROUND_TASK_MAX_HOLD_MS + 30 * 60_000;
 
-/** Claude Code background traffic Sulla never needs (verified in 2.1.310). */
-const CLAUDE_QUIET_ENV = {
+/** Environment policy applied to every Claude Code CLI process Sulla starts. */
+const CLAUDE_PROCESS_ENV = {
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   DISABLE_AUTOUPDATER: '1',
   DISABLE_TELEMETRY: '1',
   DISABLE_ERROR_REPORTING: '1',
 } as const;
+
+/** Disable Claude Code's separate background memory-consolidation cycle. */
+const CLAUDE_AGENT_SETTINGS = JSON.stringify({ autoDreamEnabled: false });
 
 /**
  * How long a turn stays open after `result` waiting for Claude to start the
@@ -368,7 +372,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     const shq = (s: string) => `'${ s.replace(/'/g, "'\\''") }'`;
 
     const envAssignments: string[] = [];
-    for (const [name, value] of Object.entries(CLAUDE_QUIET_ENV)) envAssignments.push(`${ name }=${ value }`);
+    for (const [name, value] of Object.entries(CLAUDE_PROCESS_ENV)) envAssignments.push(`${ name }=${ value }`);
     if (p.toolSessionId) envAssignments.push(`SULLA_TOOL_SESSION=${ shq(p.toolSessionId) }`);
     if (p.oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ shq(p.oauthToken) }`);
     if (p.apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ shq(p.apiKey) }`);
@@ -402,6 +406,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // Every acting agent (primary, workers, reviewers) gets the same set.
       '--disallowedTools', p.disallowedTools,
     ];
+    claudeArgs.push('--settings', shq(CLAUDE_AGENT_SETTINGS));
     // stream-json input: the prompt is fed as a JSON user message on stdin,
     // and "Send now" messages can be written into a running turn. Replay
     // echoes each stdin message back at the moment Claude consumes it — that's
@@ -443,6 +448,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--disallowedTools', p.disallowedTools,
       '--input-format', 'stream-json', '--replay-user-messages',
     ];
+    args.push('--settings', CLAUDE_AGENT_SETTINGS);
     if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
     if (this.effort) args.push('--effort', this.effort);
     if (p.existingSession) args.push('--resume', p.existingSession);
@@ -450,7 +456,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     if (p.mcpConfigPath) args.push('--mcp-config', p.mcpConfigPath);
     if (p.systemPromptPath) args.push('--append-system-prompt-file', p.systemPromptPath);
 
-    return { executable: 'claude', args, env: { ...p.environment, ...CLAUDE_QUIET_ENV } };
+    return { executable: 'claude', args, env: { ...p.environment, ...CLAUDE_PROCESS_ENV } };
   }
 
   override getContextWindow(): number {

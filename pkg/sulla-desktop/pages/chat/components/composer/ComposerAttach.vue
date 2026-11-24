@@ -9,6 +9,7 @@
   <button
     :class="['attach-btn', { open }]"
     type="button"
+    aria-label="Attach a file"
     title="Attach a file"
     @click="$emit('pick')"
   >
@@ -39,7 +40,8 @@ defineEmits<{ (e: 'pick'): void }>();
   box-shadow: 0 0 14px var(--accent-glow);
 }
 .attach-btn {
-  position: relative; width: 34px; height: 34px; border: 0; color: var(--text-muted);
+  position: relative; width: 44px; height: 44px; border: 0; color: var(--text-primary);
+  background: var(--surface-2, var(--bg-surface-alt, var(--bg-surface-hover)));
   transition: background 0.16s, color 0.16s, transform 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
 .attach-btn svg { display: none; }
@@ -50,8 +52,8 @@ defineEmits<{ (e: 'pick'): void }>();
   transition: transform 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
 .attach-btn::after { transform: rotate(90deg); }
-.attach-btn.open { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.attach-btn.open { color: var(--text-primary); background: var(--surface-2, var(--bg-surface-alt, var(--bg-surface-hover))); }
 .attach-btn.open::before { transform: rotate(45deg); }
 .attach-btn.open::after { transform: rotate(135deg); }
-.attach-btn:hover { border: 0; color: var(--text-primary); background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: none; }
+.attach-btn:hover { border: 0; color: var(--text-primary); background: var(--surface-2, var(--bg-surface-alt, var(--bg-surface-hover))); box-shadow: none; }
 </style>
