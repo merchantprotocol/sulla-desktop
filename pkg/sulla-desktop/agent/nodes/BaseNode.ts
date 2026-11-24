@@ -28,7 +28,6 @@ import { isAbortSignal, throwIfAborted } from '../services/AbortService';
 import { agentDefinitionService } from '../services/AgentDefinitionService';
 import { agentExecutionReadiness } from '../services/AgentExecutionReadiness';
 import { AgentModelStatusRegistry } from '../services/AgentModelStatusRegistry';
-import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { parseJson } from '../services/JsonParseService';
 import { RunActivity } from '../services/RunActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
@@ -606,6 +605,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // Keep the live thread truthful even when durable bookkeeping is unavailable.
       meta.modelDecision = decision;
       try {
+        // Lazy: a top-level import creates a BaseNode <-> AgentJobServiceProvider cycle.
+        const { agentJobProvider } = await import('../app/Providers/AgentJobServiceProvider');
         const persisted = await agentJobProvider.states.mutateJob(reference.jobId, job => {
           const task = job.tasks[reference.taskIndex];
           if (!['running', 'parked'].includes(job.status) || !task || !['queued', 'running', 'parked'].includes(task.status) ||

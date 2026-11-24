@@ -14,7 +14,7 @@ import type { LaunchModelPrecedence } from '../languagemodels/modelPrecedence';
 
 export interface ParkedAgentIdentity { job: AgentJob; task: AgentJobTask; taskIndex: number; agentId: string; modelPrecedence: LaunchModelPrecedence; }
 export interface ParkedJobReader { findByTaskThread(threadId: string): Promise<AgentJob | undefined>; }
-export interface AgentDefinitionReader { findBySlug(slug: string): Promise<{ enabled?: boolean; status?: string; model_choice?: import('../languagemodels/modelRoutingTypes').AgentModelChoice } | null>; }
+export interface AgentDefinitionReader { findBySlug(slug: string): Promise<{ enabled?: boolean; status?: string; model_choice?: import('../languagemodels/modelRoutingTypes').AgentModelChoice | null } | null>; }
 
 /**
  * The container persistence key a rehydrated thread must reuse. A hidden task
