@@ -36,22 +36,24 @@
       <!-- Kept mounted in the side dock (it also drives the tab dots); the tabs and lanes show its content there. -->
       <div class="composer-up-row">
         <div class="dock-status">
-          <ThreadStatusLine>
-            <template #end>
-              <span class="dock-divider" aria-hidden="true" />
-              <button
-                type="button"
-                class="dock-move"
-                :class="{ on: drawerOpen }"
-                :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
-                :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
-                :aria-pressed="drawerOpen"
-                @click="setPosition(drawerOpen ? 'bottom' : 'side')"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
-              </button>
-            </template>
-          </ThreadStatusLine>
+          <slot name="status-line">
+            <ThreadStatusLine>
+              <template #end>
+                <span class="dock-divider" aria-hidden="true" />
+                <button
+                  type="button"
+                  class="dock-move"
+                  :class="{ on: drawerOpen }"
+                  :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
+                  :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
+                  :aria-pressed="drawerOpen"
+                  @click="setPosition(drawerOpen ? 'bottom' : 'side')"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+                </button>
+              </template>
+            </ThreadStatusLine>
+          </slot>
         </div>
         <div class="composer-agent-picker">
           <button
