@@ -16,6 +16,7 @@ import {
   type ProviderCliBridgeLease,
   type ProviderCliBridgeOptions,
 } from '../../../../vault-broker/providerCliBridge';
+import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
 
 /**
  * Real ProviderCliBridgeService on a loopback port; only the vault broker
@@ -91,6 +92,42 @@ async function openBridge(overrides: Partial<ProviderCliBridgeOptions> & { broke
 }
 
 describe('provider bridge never falsely denies a healthy container job', () => {
+  it.each([429, 503])('logs only a bounded, redacted OpenAI error reason and retry-after for HTTP %i', async(status) => {
+    // risk: provider error diagnostics accidentally persist bearer credentials or unbounded response content
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const secret = 'sk-proj-synthetic-secret-token';
+    const providerMessage = `${ secret } rate limit details ${ 'for the selected model '.repeat(30) } Bearer ${ secret }`;
+    const broker = new FakeBroker(async() => new Response(JSON.stringify({ error: { message: providerMessage } }), {
+      status,
+      headers: { 'retry-after': '9' },
+    }));
+    const { send, timings } = await openBridge({ broker });
+    const statuses: Array<{ status: number; reason?: string; retryAfterSeconds?: number }> = [];
+    const unsubscribe = providerBridgeActivity.subscribeRetryStatus(context.pod_id, value => statuses.push(value));
+
+    try {
+      const response = await send();
+      await response.text();
+
+      const timing = timings.at(-1)!;
+      expect(response.status).toBe(status);
+      expect(timing).toContain(`status=${ status }`);
+      expect(timing).toContain('retry_after=9s');
+      expect(timing).toContain('openai_reason=');
+      expect(timing).toContain('rate limit details');
+      expect(timing).toContain('…');
+      expect(timing).not.toContain(secret);
+      expect(timing).not.toContain(`Bearer ${ secret }`);
+      expect(statuses[0]).toMatchObject({ status, retryAfterSeconds: 9 });
+      expect(statuses.at(-1)).toMatchObject({ status, retryAfterSeconds: 9 });
+      expect(statuses.at(-1)?.reason).toContain('rate limit details');
+      expect(statuses.at(-1)?.reason).not.toContain(secret);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('forwards the request when the early OAuth refresh fails instead of answering a terminal denial', async() => {
     // risk: one failed precautionary Codex token refresh killed the whole worker with 502 provider_bridge_failed
     vi.spyOn(console, 'warn').mockImplementation(() => {});

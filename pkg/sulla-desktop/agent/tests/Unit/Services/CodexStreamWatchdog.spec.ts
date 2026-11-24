@@ -13,6 +13,11 @@ vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'te
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
   getProviderExecutionTransport: vi.fn(), requireBrokeredContainerAuth: () => ({}), requireContainerToolConfig: () => ({}),
 }));
+vi.mock('../../../services/AgentContainerRuntimeRegistry', () => ({
+  currentAgentContainerRuntime: () => ({
+    podId: 'codex-watchdog-test-pod', subject: 'test', jobId: 'test', deviceId: 'test', workspacePath: '/tmp',
+  }),
+}));
 vi.mock('../../../languagemodels/providerSessionStore', () => ({ providerSessionStore: { get: vi.fn(), set: vi.fn() } }));
 vi.mock('../../../tools/agents/workerMessaging', () => ({ prepareWorkerTurnPrompt: (_state: unknown, prompt: string) => prompt }));
 vi.mock('../../../utils/steerChannel', () => ({ onSteer: () => () => {}, markSteerPending: vi.fn() }));
@@ -39,28 +44,36 @@ async function launch() {
   const service = createCodexService('gpt-6-luna', 'max') as any;
   vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
   let outcome: any;
+  const activities: Array<{ message: string; reportingActivity?: string }> = [];
   const finished = service.runCodex([
     { role: 'system', content: 'A synthetic watchdog test.' }, { role: 'user', content: 'Test only.' },
-  ], {}, { conversationId: 'watchdog-test' }).then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
+  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }) }, { conversationId: 'watchdog-test' })
+    .then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
   await vi.advanceTimersByTimeAsync(0);
   proc.emit('spawn');
-  return { proc, finished, outcome: () => outcome };
+  return { proc, finished, outcome: () => outcome, activities };
 }
 
 describe('Codex quiet stream watchdog', () => {
-  it('kills at three minutes despite ongoing provider-bridge activity and reports the exact stall text', async() => {
+  it('shows retry state but still stalls at three minutes with the last rate-limit reason', async() => {
     // risk: stalled Codex run hangs indefinitely while unrelated bridge activity masks silence
     const run = await launch();
     const bridgePodId = 'codex-watchdog-test-pod';
     providerBridgeActivity.mark(bridgePodId);
     const bridgeHeartbeat = setInterval(() => providerBridgeActivity.mark(bridgePodId), 30_000);
     try {
-      await vi.advanceTimersByTimeAsync(3 * 60_000);
+      await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
+      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, retryAfterSeconds: 9 });
+      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, reason: 'request rate limit exceeded', retryAfterSeconds: 9 });
+      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 503 });
+      await vi.advanceTimersByTimeAsync(30_000);
       expect(providerBridgeActivity.lastActivityAt(bridgePodId)).toBe(Date.now());
       expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
       await vi.advanceTimersByTimeAsync(5_000);
       await run.finished;
-      expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+      expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
+      expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
+      expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
     } finally {
       clearInterval(bridgeHeartbeat);
     }

@@ -23,6 +23,7 @@ import { providerSessionStore } from './providerSessionStore';
 import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
+import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
@@ -649,6 +650,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
     const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
+    const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -858,12 +860,24 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       let codexPid: number | undefined;
       const outcome = new CodexTurnOutcome();
       let errorMessage = '';
+      let latestRateLimitReason: string | undefined;
+      let unsubscribeProviderBridgeRetryStatus = () => {};
       let lastUsage: any = null;
       let sawTerminalResult = false;
       const activeToolItems = new Map<string, { startedAt: number; approval: boolean }>();
       let sawToolExecution = false;
       let unresolvedTool = false;
       let settled = false;
+      // Surface provider retry state to the job, but never refresh the watchdog clock here.
+      unsubscribeProviderBridgeRetryStatus = providerBridgeActivity.subscribeRetryStatus(providerBridgePodId, event => {
+        if (settled) return;
+        if (event.status === 429) {
+          latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
+          emitActivity('Codex is rate-limited, retrying', 'status');
+        } else {
+          emitActivity('Codex is busy, retrying', 'status');
+        }
+      });
       let terminationPromise: Promise<void> | null = null;
       const persistSession = async(): Promise<Error | null> => {
         if (!capturedSessionId) return null;
@@ -933,7 +947,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           clearInterval(stallTimer);
           stallTimer = null;
         }
+        unsubscribeProviderBridgeRetryStatus();
+        unsubscribeProviderBridgeRetryStatus = () => {};
       };
+      const stallErrorMessage = () => unresolvedTool
+        ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+        : latestRateLimitReason
+          ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
+          : 'Codex stalled: no output for 3 minutes';
       const startStallWatchdog = () => {
         lastStreamActivityAt = Date.now();
         stallTimer = setInterval(() => {
@@ -952,9 +973,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           killSpawn();
           scheduleForcedSettlement(() => new CliFaultError(
             'stall',
-            unresolvedTool
-              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
-              : 'Codex stalled: no output for 3 minutes',
+            stallErrorMessage(),
             undefined,
             false,
             unresolvedTool,
@@ -1314,9 +1333,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (stalled) {
           const stallError = new CliFaultError(
             'stall',
-            unresolvedTool
-              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
-              : 'Codex stalled: no output for 3 minutes',
+            stallErrorMessage(),
             undefined,
             false,
             unresolvedTool,
