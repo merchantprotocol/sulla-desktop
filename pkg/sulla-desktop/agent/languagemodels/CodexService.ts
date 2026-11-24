@@ -20,7 +20,6 @@ import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
-import { buildCodexAgentInstructions } from './codexAgentInstructions';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
@@ -540,11 +539,12 @@ export class CodexService extends BaseLanguageModel {
 
   /**
    * Build a <sulla_context> prefix for the outgoing user message, same
-   * strategy as ClaudeCodeService: the stable tier (platform rules,
-   * environment and, for spawned agents, their role instructions) is sent on
-   * the first turn and again only when its content changes. Memory and recall
-   * do not travel here; they arrive as the synthetic assistant context message
-   * that precedes the user message.
+   * strategy as ClaudeCodeService: the stable tier (platform rules and
+   * environment) is sent on the first turn and again only when its content
+   * changes. Agent role instructions are already in the system-role message
+   * and must not be duplicated here. Memory and recall do not travel here;
+   * they arrive as the synthetic assistant context message that precedes the
+   * user message.
    *
    * Returns the stable-tier hash alongside the prefix; the caller commits it
    * to lastStableContextHash only after a successful run, so changed context
@@ -603,14 +603,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
     const browserController = graphBrowserControllerContext(state);
     if (browserController) stableParts.push(browserController);
-
-    // AGENTS.md is built for the default agent; a spawned agent's own DB
-    // prompt would otherwise never reach codex.
-    const agentInstructions = await buildCodexAgentInstructions(
-      state?.metadata as any,
-      async(agentId) => (await import('../nodes/BaseNode')).loadAgentPromptData(agentId),
-    );
-    if (agentInstructions) stableParts.push(agentInstructions);
 
     const parts: string[] = [];
 

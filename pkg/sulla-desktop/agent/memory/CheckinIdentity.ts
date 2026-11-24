@@ -45,8 +45,11 @@ export class CheckinIdentity {
     const jobIds = this.uniqueMatches(this.agentJobPattern, identityText);
     const explicitPullRequestNumbers = this.uniqueMatches(this.pullRequestPattern, identityText);
     const pullRequestNumbers = [...explicitPullRequestNumbers];
-    for (const match of identityText.matchAll(this.hashNumberPattern)) {
-      const number = match[1];
+    const allowsBarePullRequestNumbers = /\b(?:pr|pull\s+request|draft|epic)\b/i.test(episode.text);
+    const barePullRequestNumbers = allowsBarePullRequestNumbers
+      ? this.uniqueMatches(this.hashNumberPattern, episode.text)
+      : [];
+    for (const number of barePullRequestNumbers) {
       if (number && !pullRequestNumbers.includes(number)) pullRequestNumbers.push(number);
     }
 

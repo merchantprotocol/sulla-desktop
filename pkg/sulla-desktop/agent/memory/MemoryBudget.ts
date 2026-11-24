@@ -140,6 +140,7 @@ export class MemoryBudgetPacker {
     const shortened = new Set<MemoryCandidate>();
     const emittedKeys = new Set<string>();
     let selectionDeduped = 0;
+    let currentMeasured = this.measure(this.render(selected).text);
 
     for (const candidate of unique.entries) {
       if (candidate.entryKey?.startsWith('e:') && candidate.keys.some((key) => emittedKeys.has(key))) {
@@ -149,9 +150,12 @@ export class MemoryBudgetPacker {
       const shortText = candidate.shortenable && candidate.text.length > ENTRY_SOFT_LIMIT
         ? MemoryBudgetPacker.shortenTimelineEntry(candidate.text)
         : candidate.text;
+      if (currentMeasured + shortText.length > this.budget) continue;
       const placed = { ...candidate, text: shortText };
       selected.push(placed);
-      if (this.measure(this.render(selected).text) <= this.budget) {
+      const measured = this.measure(this.render(selected).text);
+      if (measured <= this.budget) {
+        currentMeasured = measured;
         if (shortText !== candidate.text) shortened.add(placed);
         for (const key of candidate.keys) emittedKeys.add(key);
         continue;

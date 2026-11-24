@@ -16,6 +16,7 @@ interface StoredEpisode {
   id: string;
   ts: number;
   keys: string[];
+  source: string;
   conversation_id: string | null;
   sentiment: string | null;
   checkin_key: string | null;
@@ -54,7 +55,8 @@ class FakeSubjectMemoryDatabase {
 
   constructor(
     initialEpisodes: StoredEpisode[] = [],
-    private readonly subjectRows: SubjectRow[] = subjects
+    private readonly subjectRows: SubjectRow[] = subjects,
+    private readonly evidenceEpisodeIds: ReadonlySet<string> = new Set()
   ) {
     this.episodes = initialEpisodes.map(episode => ({ ...episode, keys: [...episode.keys] }));
   }
@@ -74,6 +76,7 @@ class FakeSubjectMemoryDatabase {
           this.episodes.push({
             id,
             ts: Number(params[1]),
+            source: String(params[3]),
             conversation_id: params[2] === null ? null : String(params[2]),
             sentiment: params[6] === null ? null : String(params[6]),
             keys: Array.isArray(params[5]) ? params[5].map(String) : [],
@@ -91,13 +94,17 @@ class FakeSubjectMemoryDatabase {
           const ts = Number(tsValue);
           const supersededTs = Number(supersededTsValue);
           const reason = String(reasonValue);
+          const excludesUsers = /\bsource\s*<>\s*'user'/i.test(sql);
+          const excludesEvidence = /NOT\s+EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+subject_memory\.evidence\s+ev/i.test(sql);
           let rowCount = 0;
           for (const episode of this.episodes) {
             if (
               episode.checkin_key === key &&
               episode.superseded_by === null &&
               episode.id !== newId &&
-              episode.ts <= ts
+              episode.ts <= ts &&
+              !(excludesUsers && episode.source === 'user') &&
+              !(excludesEvidence && this.evidenceEpisodeIds.has(episode.id))
             ) {
               episode.superseded_by = newId;
               episode.superseded_ts = supersededTs;
@@ -161,9 +168,10 @@ const stored = (
   id: string,
   ts: number,
   checkinKey: string,
-  supersededBy: string | null = null
+  supersededBy: string | null = null,
+  source = 'observed'
 ): StoredEpisode => ({
-  id, ts, conversation_id: null, sentiment: null, keys: ['project'],
+  id, ts, source, conversation_id: null, sentiment: null, keys: ['project'],
   checkin_key: checkinKey, superseded_by: supersededBy,
   superseded_ts: supersededBy ? ts : null, superseded_reason: supersededBy ? 'legacy' : null,
 });
@@ -219,6 +227,42 @@ describe('Episode check-in superseding', () => {
     expect(database.episodes.find(row => row.id === nonCheckin.id)).toMatchObject({ checkin_key: null, keys: nonCheckin.keys });
     expect(database.episodes.find(row => row.id === userEpisode.id)).toMatchObject({ checkin_key: null, keys: userEpisode.keys });
     expect(database.statements.some(statement => statement.sql.includes('UPDATE subject_memory.episodes'))).toBe(false);
+  });
+
+  it('keeps the original keys when no eligible primary subject exists', async () => {
+    // risk: a check-in is stored with no subject keys and disappears from scoped recall
+    const ts = 1_700_000_000_150;
+    const checkinWithOnlyIneligibleKeys = episode(
+      ts,
+      15,
+      'Worker status update: agent-job-1795493855725-88 is active.',
+      'observed',
+      ['global', 'company', 'missing-subject'],
+    );
+    const database = new FakeSubjectMemoryDatabase();
+
+    await writerFor(database).append(write([checkinWithOnlyIneligibleKeys]));
+
+    expect(database.episodes.find(row => row.id === checkinWithOnlyIneligibleKeys.id)?.keys)
+      .toEqual(checkinWithOnlyIneligibleKeys.keys);
+  });
+
+  it('does not supersede older evidence-backed or user-source rows', async () => {
+    // risk: referenced evidence or human-authored history is hidden by check-in replacement
+    const key = 'job:agent-job-1795493855725-88';
+    const ts = 1_700_000_000_180;
+    const evidenceBacked = stored(`${ts - 2}-observed-18`, ts - 2, key);
+    const userSourced = stored(`${ts - 1}-user-19`, ts - 1, key, null, 'user');
+    const database = new FakeSubjectMemoryDatabase(
+      [evidenceBacked, userSourced],
+      subjects,
+      new Set([evidenceBacked.id]),
+    );
+
+    await writerFor(database).append(write([checkin(ts, 20)]));
+
+    expect(database.episodes.find(row => row.id === evidenceBacked.id)?.superseded_by).toBeNull();
+    expect(database.episodes.find(row => row.id === userSourced.id)?.superseded_by).toBeNull();
   });
 
   it('does not key or supersede an episode referenced as evidence in this write', async () => {

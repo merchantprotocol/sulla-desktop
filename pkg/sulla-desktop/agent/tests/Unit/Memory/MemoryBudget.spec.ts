@@ -234,6 +234,7 @@ describe('MemoryBudgetPacker', () => {
       signature: 'unit',
       subjects: new Map([['project-alpha', { slug: 'project-alpha', kind: 'project', name: 'Alpha', parent: null, aliases: ['Alpha'] }]]),
       episodes,
+      checkinIdentities: new Map(),
       items: [{
         id: 'rule-1', kind: 'policy', ptype: 'do', text: 'Keep the result accurate.', why: null,
         scope: ['global'], ts: 1, always_on: true, confirmed: true, supersedes: null, origin: 'human',
