@@ -242,6 +242,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
   const replyStreamId = msg.type === 'assistant_message' && typeof data.replyStreamId === 'string'
     ? data.replyStreamId : undefined;
+  const replySegment = replyStreamId && Number.isInteger(data.replySegment) ? data.replySegment as number : undefined;
   const agentReporting = (msg.type === 'assistant_message' || msg.type === 'subconscious_message' || msg.type === 'chat_message') &&
     (data.role === undefined || data.role === 'assistant') &&
     (data.agentReporting === 'brief' || data.agentReporting === 'standard')
@@ -602,6 +603,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         break;
       }
     }
+    // A numbered chunk from a later segment never overwrites an open bubble
+    // from an earlier one (its close sentinel was lost or never sent): close
+    // that bubble and give the new segment its own.
+    const existingSegment = existingIdx !== -1 ? ctx.messages[existingIdx].replySegment : undefined;
+    if (existingIdx !== -1 && replySegment !== undefined && existingSegment !== undefined && existingSegment !== replySegment) {
+      (ctx.messages[existingIdx] as any)._completed = true;
+      existingIdx = -1;
+    }
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent, ...referenceUpdate };
       return;
@@ -631,6 +640,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
       ...(replyAttribution ? { replyAttribution } : {}),
       ...(replyStreamId ? { replyStreamId } : {}),
+      ...(replySegment !== undefined ? { replySegment } : {}),
       ...referenceUpdate,
     });
     return;

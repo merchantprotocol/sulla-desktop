@@ -1710,10 +1710,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let lastWsStreamingSendAt = 0;
     const replyStreamId = randomUUID();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
+    // Distinguish open segments of this reply even if a close event was missed.
+    let replySegment = 0;
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
-      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution })
+      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replySegment, replyAttribution })
         .catch(error => console.warn(`[${ this.name }] live reply send failed:`, error));
       streamingOpen = true;
     };
@@ -1753,6 +1755,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       streamingOpen = false;
       contentBuffer = '';
       displayBuffer = '';
+      if (hadText) replySegment++;
 
       return hadText;
     };

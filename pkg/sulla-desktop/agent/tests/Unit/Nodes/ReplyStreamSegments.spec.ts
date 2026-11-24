@@ -96,6 +96,21 @@ describe('live reply segments around provider tool activity', () => {
     expect(segments).toEqual(['The cause is the throttle.', 'The thread is fine.']);
   });
 
+  // risk: a one-word paragraph vanished from the chat when the next paragraph,
+  // after a tool call, opened with that same word
+  it('keeps a paragraph whose whole text opens the next paragraph after a tool call', async() => {
+    const { segments } = await streamSegments(async({ onToken, onActivity }) => {
+      onToken('Same');
+      onActivity('Running a shell command', 'tool');
+      onToken('\n\n');
+      onToken('Same');
+      await pause(120);
+      onToken(' word, distinct paragraph.');
+    });
+
+    expect(segments).toEqual(['Same', 'Same word, distinct paragraph.']);
+  });
+
   it('keeps each narration paragraph separate when back-to-back tools report the same activity line', async() => {
     const { segments } = await streamSegments(({ onToken, onActivity }) => {
       onToken('Finding the address the app uses for Files:');
