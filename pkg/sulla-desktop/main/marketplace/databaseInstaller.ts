@@ -24,6 +24,8 @@ import type { IntegrationPackage, IntegrationSignatureVerifier } from '@pkg/agen
 
 export type InstallableKind = 'agent' | 'skill' | 'routine' | 'function' | 'integration' | 'recipe';
 
+const retiredCodingManagerSlugs = new Set(['coding-manager-sol', 'coding-manager-grok', 'coding-manager-gpt']);
+
 /**
  * Post-commit hints to the suggestion index. The publisher is injected (tests
  * pass their own); the default broadcasts on the app's Redis channel, which
@@ -295,6 +297,11 @@ async function installArtifact(
   overwrite: boolean,
 ): Promise<{ installed: boolean; reason?: string }> {
   const slug = safeSlug(input.slug);
+  if (input.kind === 'agent' && retiredCodingManagerSlugs.has(slug)) {
+    const reason = 'retired Coding Manager agents are not installable';
+    console.info(`Skipping marketplace agent "${ slug }": ${ reason }.`);
+    return { installed: false, reason };
+  }
   const current = await artifactExists(client, input.kind, slug);
   if (current.exists && (!overwrite || current.userEdited)) {
     return { installed: false, reason: current.userEdited ? 'existing item was created or edited by the user' : 'already installed' };

@@ -52,7 +52,9 @@ import {
   getRetiredBuiltinSlugs,
   hashManagedContent,
   readGitIdentity,
+  RETIRED_CODING_MANAGER_SLUGS,
   renderBuiltinAgent,
+  isRetiredCodingManagerSlug,
   type BuiltinAgentSpec,
   type BuiltinManagedContent,
 } from './index';
@@ -207,12 +209,17 @@ export interface BuiltinSeedSummary {
 
 export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAgentSpecs()): Promise<BuiltinSeedSummary> {
   const summary: BuiltinSeedSummary = { inserted: 0, refreshed: 0, adopted: 0, filled: 0, kept: 0, unchanged: 0, skipped: 0, errors: [] };
+  // Retire these before the rest of the seed work so a transient builtin-ledger error cannot
+  // prevent long-tail rows from being switched off at startup.
+  const retiredManagers = await retireLongTailCodingManagers();
+  summary.errors.push(...retiredManagers.errors);
   const seen = await seenSlugs();
   const home = os.homedir();
   const git = readGitIdentity(home);
 
   for (const spec of specs) {
     try {
+      if (isRetiredCodingManagerSlug(spec.slug)) continue;
       const content = renderBuiltinAgent(spec, home, git);
       const bundleHash = hashManagedContent(content);
       const row = await AgentDefinitionModel.findBySlug(spec.slug);
@@ -290,6 +297,45 @@ export function shouldRetireBuiltin(row: AgentDefinition | null, handledBefore: 
 export interface BuiltinRetireSummary {
   disabled: number;
   errors:   string[];
+}
+
+export interface RetiredCodingManagerSummary {
+  archived: number;
+  errors:   string[];
+}
+
+/**
+ * Permanently retire the legacy Coding Manager variants across all row origins. Existing rows
+ * and history stay in place; repeated startup checks both enforce archive/disabled state and
+ * retry worker-binding cleanup if a previous call failed.
+ */
+export async function retireLongTailCodingManagers(
+  slugs: readonly string[] = RETIRED_CODING_MANAGER_SLUGS,
+): Promise<RetiredCodingManagerSummary> {
+  const summary: RetiredCodingManagerSummary = { archived: 0, errors: [] };
+  for (const slug of slugs) {
+    let row: AgentDefinition | null;
+    try {
+      row = await AgentDefinitionModel.findBySlug(slug);
+      if (!row) continue;
+      if (row.enabled || row.status !== 'archive') {
+        const archived = await AgentDefinitionModel.update(row.id, { enabled: false, status: 'archive' });
+        if (!archived) throw new Error(`Could not archive retired agent ${ slug }.`);
+        summary.archived++;
+      }
+    } catch (error) {
+      summary.errors.push(`${ slug }: ${ error instanceof Error ? error.message : String(error) }`);
+      continue;
+    }
+
+    try {
+      const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+      await workerModelRouting.removeBindingForDefinition(slug, row.id);
+    } catch (error) {
+      summary.errors.push(`${ slug } worker binding: ${ error instanceof Error ? error.message : String(error) }`);
+    }
+  }
+  return summary;
 }
 
 /**
