@@ -5,7 +5,6 @@
 
 import crypto from 'node:crypto';
 import http from 'node:http';
-import { ProviderModelPin } from './ProviderModelPin';
 import { PROVIDER_BRIDGE_RETRY_AFTER_SECONDS, ProviderBridgeAuthorizeUnavailableError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
 import { ProviderBridgeRevokedError, ProviderCliBridgeTools, ProviderCliBridgeResponsePolicy, ProviderCliBridgeFailurePolicy } from './providerCliBridge';
 import { configuredVaultBrokerProvider } from './VaultBrokerServiceProvider';
@@ -83,15 +82,11 @@ export class ProviderCliBridgeService {
   if (!advertisedHost && ['0.0.0.0', '::'].includes(listenHost)) {
     throw new Error('Provider CLI bridge requires an advertised service hostname for a non-loopback listener');
   }
-  if (options.models?.some(model => !model.trim())) {
-    throw new Error('Provider CLI bridge model scope contains an invalid model');
-  }
   const identity: Readonly<ProviderCliBridgeIdentity> = Object.freeze({
     context:   options.context,
     provider:  options.provider,
     accountId: options.accountId,
     authMode:  options.authMode,
-    models:    options.models ? Object.freeze([...options.models]) : undefined,
   });
   if (!await ProviderCliBridgeTools.liveContext(options, identity)) throw new Error('Provider CLI bridge identity is not active');
 
@@ -214,11 +209,6 @@ export class ProviderCliBridgeService {
       stage = 'authorize';
       const context = await checkLive();
       if (!context) return;
-      if (!ProviderCliBridgeTools.modelAllowed(bodyResult.body, identity.models)) {
-        // Model names only (no secrets): says which pin refused which request.
-        deny(403, 'provider_model_denied', { reason: `requested=${ String(ProviderModelPin.requested(bodyResult.body) ?? '(none)') } allowed=${ (identity.models ?? []).join(',') }` });
-        return;
-      }
       const headers = ProviderCliBridgeTools.requestHeaders(request.headers);
       const workspaceId = options.workspaceId?.trim();
       if (definition.cli === 'claude-code' && definition.authMode === 'api-key' && workspaceId) {
