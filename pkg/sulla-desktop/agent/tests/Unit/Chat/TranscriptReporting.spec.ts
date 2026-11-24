@@ -125,6 +125,13 @@ it('keeps every shared Standard DOM node identical when trace-only rows are remo
   const sharedDomWithoutTrace = () => {
     const dialogue = wrapper.get('.chat-dialogue').element.cloneNode(true) as HTMLElement;
     dialogue.querySelectorAll('.trace-turn, .trace-payload-controls').forEach(node => node.remove());
+    const walker = document.createTreeWalker(dialogue, NodeFilter.SHOW_COMMENT);
+    const anchors: Comment[] = [];
+    while (walker.nextNode()) {
+      const comment = walker.currentNode as Comment;
+      if (!comment.data || ['v-if', 'v-for', 'v-else', '[', ']'].includes(comment.data)) anchors.push(comment);
+    }
+    anchors.forEach(anchor => anchor.remove());
     return dialogue.innerHTML;
   };
   const standardDom = sharedDomWithoutTrace();
@@ -149,6 +156,33 @@ it('keeps every shared Standard DOM node identical when trace-only rows are remo
   expect(disclosures.every(button => button.attributes('aria-expanded') === 'false')).toBe(true);
 });
 
+it('keeps tool arguments and results behind the explicit Detailed payload disclosure', async() => {
+  // risk: private tool payloads — synthetic command/output fields must not enter default-visible trace rows.
+  const live = new ReportingFixture();
+  live.chat.appendMessage({ id: asMessageId('tool-user'), kind: 'user', createdAt: 1, text: 'Run a private fixture.' });
+  live.emit('progress', {
+    phase: 'tool_call', toolRunId: 'private-call', toolName: 'exec',
+    args: { command: 'echo PRIVATE_COMMAND', api_token: 'fixture-restored-secret' },
+  });
+  live.emit('progress', {
+    phase: 'tool_result', toolRunId: 'private-call', success: false,
+    error: 'PRIVATE_ERROR', result: { output: 'PRIVATE_OUTPUT' },
+  });
+
+  expect(live.entries('info').find(entry => entry.kind === 'activity')?.text).toBe('Shell · Failed');
+  const wrapper = live.mount('debug');
+  const row = wrapper.get('.trace-row[data-kind="tool"]');
+  expect(row.text()).toContain('Details withheld');
+  expect(wrapper.text()).not.toMatch(/PRIVATE_COMMAND|PRIVATE_ERROR|PRIVATE_OUTPUT|fixture-restored-secret/);
+  const payload = wrapper.get('.trace-row__payload');
+  expect(payload.text()).toBe('');
+
+  await wrapper.get('button.trace-row__expand').trigger('click');
+  expect(payload.text()).toContain('PRIVATE_COMMAND');
+  expect(payload.text()).toContain('PRIVATE_OUTPUT');
+  expect(payload.text()).not.toContain('fixture-restored-secret');
+});
+
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
 it('projects safe individual events in source order before and after tool settlement and reload', () => {
@@ -163,8 +197,10 @@ it('projects safe individual events in source order before and after tool settle
   live.emit('assistant_message', { kind: 'thinking', content: 'Tools connected — calling model' });
 
   const debug = live.entries('debug');
-  expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
-    'Preparing your turn…', 'citation', 'Details withheld', 'Bash · running · Details withheld', 'Tools connected — calling model',
+  expect(debug.map(row => row.kind === 'activity' ? { label: row.label, text: row.text } : row.message.kind)).toEqual([
+    { label: 'Status', text: 'Preparing your turn…' }, 'citation',
+    { label: 'Status', text: 'Details withheld' }, { label: 'Tool', text: 'Details withheld' },
+    { label: 'Status', text: 'Tools connected — calling model' },
   ]);
   expect(live.entries('info')).toEqual([debug[1]]);
   expect(live.entries('fatal')).toEqual([]);
@@ -209,7 +245,8 @@ it('keeps the original actionable cards and terminal failure at every level', as
     expect(approvalCard.props('msg')).toMatchObject(approval);
     expect(wrapper.text()).toContain(deliverable.text);
     expect(wrapper.text()).toContain('The execution environment stopped.');
-    expect(wrapper.text().includes('Details withheld')).toBe(level === 'debug');
+    expect(wrapper.findAll('.trace-row__thought').filter(row => row.text() === 'Details withheld')).toHaveLength(level === 'debug' ? 1 : 0);
+    expect(wrapper.text()).not.toContain('synthetic command');
     expect(live.entries(level).at(-1)).toMatchObject({ kind: 'card', level: 'fatal' });
   }
   await wrapper.setProps({ reportingLevel: 'fatal' });

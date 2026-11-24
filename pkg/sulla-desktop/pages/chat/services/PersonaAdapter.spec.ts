@@ -10,6 +10,10 @@ vi.mock('electron', () => {
   const ipcRenderer = { invoke: vi.fn(), send: vi.fn(), on: vi.fn(), removeListener: vi.fn() };
   return { ipcRenderer, default: { ipcRenderer } };
 });
+vi.mock('@pkg/utils/logging', () => {
+  const channel = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() };
+  return { default: new Proxy({}, { get: () => channel }) };
+});
 
 describe('PersonaAdapter', () => {
   it('preserves baseline Standard tool-card values while redacting Detailed payloads and legacy fallbacks', () => {

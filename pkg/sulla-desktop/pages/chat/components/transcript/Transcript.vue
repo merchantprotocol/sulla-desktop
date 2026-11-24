@@ -115,7 +115,7 @@ const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
-const detailedTraceProjection = new DetailedTraceProjection();
+const detailedTraceProjection = new DetailedTraceProjection(reporting);
 
 // Detailed is an overlay; keep the exact Standard projection, router props,
 // timing, streaming continuation, and DOM keys for every shared entry.

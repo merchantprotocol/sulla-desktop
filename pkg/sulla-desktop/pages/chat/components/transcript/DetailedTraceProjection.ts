@@ -10,7 +10,7 @@ import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import type {
   Message, ToolMessage,
 } from '../../models/Message';
-import type { TranscriptEntry } from './toolGroups';
+import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 
 export type TraceStatus = 'ok' | 'running' | 'failed' | 'waiting' | 'approved' | 'denied' | 'stopped' | 'cancelled';
 export type TraceRowKind = 'thought' | 'tool' | 'file' | 'read' | 'search' | 'memory' | 'handoff' | 'result' | 'approval' | 'question' | 'agent' | 'error' | 'notice' | 'heartbeat';
@@ -56,7 +56,6 @@ interface MutableTurn {
   metrics: DetailedTraceUsageSample[];
 }
 
-const targetKeys = ['command', 'cmd', 'url', 'path', 'file', 'query', 'name', 'slug'] as const;
 const publicStatuses = new Set([
   'Preparing your turn…', 'Wrapping up the previous background task…', 'Booting isolated environment…',
   'Tools connected — calling model', 'Session started — calling model', 'Steering Claude with your message…',
@@ -69,6 +68,8 @@ const safeActivities = new Set([
 
 /** Converts detailed-only events into one stable rail and one row grammar. */
 export class DetailedTraceProjection {
+  constructor(private readonly reporting = new TranscriptReporting()) {}
+
   private readonly payloadRedactor = new TracePayloadRedactor();
   private readonly payloadCache = new WeakMap<Message, Map<string, unknown>>();
 
@@ -161,28 +162,27 @@ export class DetailedTraceProjection {
       ? tracePayload as { args?: Readonly<Record<string, unknown>>; result?: unknown }
       : undefined;
     const args = details?.args;
-    const targetValue = args ? this.targetValue(args) : undefined;
-    const target = this.safeText(targetValue || message.desc || message.tool);
+    const display = this.reporting.safeToolDisplay(message);
+    const target = display.summary ?? display.label;
     const toolName = (message.recordedToolName ?? message.tool).toLowerCase();
     const status: TraceStatus = message.status === 'error'
       ? /cancel(?:led|ed)?/i.test(message.error ?? '') ? 'cancelled' : 'failed'
       : message.status === 'ok' ? 'ok' : 'running';
-    const shownArgs = args ? this.argumentSummary(args) : this.safeText(message.input ?? '');
-    const note = (status === 'failed' || status === 'cancelled') ? this.safeText(message.error ?? 'Tool call failed') :
-      message.output ? this.safeText(message.output) : undefined;
+    const hasWithheldDetails = (message.desc && !display.summary) || message.input || message.output || message.error || message.meta ||
+      (args && Object.keys(args).length > 0) || details?.result !== undefined;
+    const note = hasWithheldDetails ? 'Details withheld' : undefined;
     const kind: TraceRowKind = toolName.startsWith('memory_') || message.tool.toLowerCase() === 'memory' ? 'memory' :
       /(?:^|[_-])search(?:$|[_-])/.test(toolName) ? 'search' :
         /(?:^|[_-])(?:read|fetch)(?:$|[_-])/.test(toolName) ? 'read' :
           /(?:^|[_-])(?:create|write|edit|update|delete|move|copy|patch)(?:$|[_-])/.test(toolName) || message.tool.toLowerCase() === 'file' ? 'file' : 'tool';
-    const verb = this.toolVerb(toolName, message.tool, status);
+    const verb = this.toolVerb(toolName, display.label, status);
     return {
       id: message.id,
       sourceId: message.id,
       kind,
       verb,
       target,
-      toolName: this.safeText(message.recordedToolName ?? message.tool),
-      ...(shownArgs ? { args: shownArgs } : {}),
+      toolName: display.label,
       ...(typeof message.durationMs === 'number' && Number.isFinite(message.durationMs) ? { durationMs: Math.max(0, message.durationMs) } : {}),
       status,
       ...(note ? { note } : {}),
@@ -254,12 +254,18 @@ export class DetailedTraceProjection {
 
   private finish(turn: MutableTurn): DetailedTraceTurn {
     const orderedRows = [...turn.rows];
+    const messagesById = new Map(turn.messages.map(message => [message.id, message]));
     let next: DetailedTraceRow | undefined;
     for (let index = orderedRows.length - 1; index >= 0; index--) {
       const row = orderedRows[index];
       if (row.kind === 'thought') continue;
       if (row.status === 'failed' && next) {
-        if (row.toolName && row.toolName === next.toolName && row.target === next.target) next.verb = 'Retried';
+        const current = messagesById.get(row.sourceId);
+        const nextMessage = messagesById.get(next.sourceId);
+        const sameInvocation = current?.kind === 'tool' && nextMessage?.kind === 'tool' &&
+          (current.recordedToolName ?? current.tool) === (nextMessage.recordedToolName ?? nextMessage.tool) &&
+          !!current.input?.trim() && current.input === nextMessage.input;
+        if (sameInvocation && row.target === next.target) next.verb = 'Retried';
         row.note = `${ row.note ? `${ row.note } · ` : '' }Next: ${ next.verb } ${ next.target }.`;
       }
       next = row;
@@ -296,27 +302,6 @@ export class DetailedTraceProjection {
     if (message.thoughts.length !== 1) return undefined;
     const line = message.thoughts[0];
     return publicStatuses.has(line) || (message.reportingActivity === 'tool' && safeActivities.has(line)) ? line : undefined;
-  }
-
-  private targetValue(args: Readonly<Record<string, unknown>>): string | undefined {
-    for (const key of targetKeys) {
-      const value = args[key];
-      if (typeof value === 'string' && value.trim()) return value;
-    }
-    return undefined;
-  }
-
-  private argumentSummary(args: Readonly<Record<string, unknown>>): string {
-    const targetKey = targetKeys.find(key => typeof args[key] === 'string' && String(args[key]).trim());
-    const entries = Object.entries(args).filter(([key]) => key !== targetKey).slice(0, 3);
-    return entries.map(([key, value]) => `${ key }=${ this.valueLabel(value) }`).join(' · ');
-  }
-
-  private valueLabel(value: unknown): string {
-    if (typeof value === 'string') return this.safeText(value, 64);
-    if (Array.isArray(value)) return `${ value.length } items`;
-    if (value && typeof value === 'object') return '{…}';
-    return String(value ?? 'null');
   }
 
   private safeText(value: string, maxChars = 240): string {

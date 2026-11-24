@@ -2,6 +2,11 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@pkg/utils/logging', () => {
+  const channel = { log: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() };
+  return { default: new Proxy({}, { get: () => channel }) };
+});
+
 import { DetailedTraceUsage } from '../../../database/models/DetailedTraceUsage';
 import { createMessageDispatcher } from '../../../database/models/MessageDispatcher';
 

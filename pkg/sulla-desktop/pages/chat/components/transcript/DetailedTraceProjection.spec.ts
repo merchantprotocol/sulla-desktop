@@ -17,7 +17,7 @@ describe('DetailedTraceProjection', () => {
     const messages: Message[] = [
       { id: asMessageId('user_1700000000000_a'), kind: 'user', createdAt: 1_700_000_000_000, text: 'Check this.' },
       { id: asMessageId('1700000000001_thinking'), kind: 'thinking', createdAt: 1_700_000_000_001, thoughts: ['Searching files'], reportingActivity: 'tool', startedAt: 1_700_000_000_001, completed: true },
-      { id: asMessageId('1700000000002_tool_call'), kind: 'tool', createdAt: 1_700_000_000_002, tool: 'Shell', recordedToolName: 'exec', desc: 'Running command', status: 'ok', output: 'clean', durationMs: 120 },
+      { id: asMessageId('1700000000002_tool_call'), kind: 'tool', createdAt: 1_700_000_000_002, tool: 'Bash', recordedToolName: 'exec', desc: 'Running command', status: 'ok', output: 'clean', durationMs: 120 },
       { id: asMessageId('1700000000004_reply'), kind: 'sulla', createdAt: 1_700_000_000_004, text: 'Done.', replyAttribution: { agent: 'Sulla', model: 'test-model' } },
     ];
     const reporting = new TranscriptReporting();
@@ -32,7 +32,11 @@ describe('DetailedTraceProjection', () => {
 
     expect(turn.afterId).toBe(messages[0].id);
     expect(turn.rows.map(row => row.kind)).toEqual(['thought', 'tool']);
-    expect(turn.rows[1]).toMatchObject({ target: 'git status', toolName: 'exec', args: 'cwd=/repo', durationMs: 120, status: 'ok' });
+    expect(turn.rows[1]).toMatchObject({ target: 'Running command', toolName: 'Shell', durationMs: 120, status: 'ok' });
+    expect(turn.rows[1]).not.toHaveProperty('args');
+    expect(JSON.stringify({ target: turn.rows[1].target, toolName: turn.rows[1].toolName, args: turn.rows[1].args, note: turn.rows[1].note }))
+      .not.toContain('git status');
+    expect(turn.rows[1].rawPayload).toMatchObject({ tool: 'exec', args: { command: 'git status', cwd: '/repo' } });
     expect(turn.metadata).toMatchObject({ agent: 'Sulla', model: 'test-model', inputTokens: 80, outputTokens: 12, steps: 1, durationMs: 900 });
     expect(turn.metadata.startedAt).toBe(messages[0].createdAt);
   });
@@ -74,12 +78,12 @@ describe('DetailedTraceProjection', () => {
     expect(projection.project(messages, reporting.entries(messages, 'debug'))).toEqual([]);
   });
 
-  it('keeps failures and retries as separate rows and describes the next action', () => {
-    // risk: recovery visibility — the cause and retry must not be collapsed into one event.
+  it('keeps failures and retries separate while withholding private details', () => {
+    // risk: privacy and recovery — failure details stay withheld while the next action remains visible.
     const messages: Message[] = [
       { id: asMessageId('user_1700000000000_c'), kind: 'user', createdAt: 1_700_000_000_000, text: 'Run the check.' },
-      { id: asMessageId('1700000000001_tool_first'), kind: 'tool', createdAt: 1_700_000_000_001, tool: 'Shell', recordedToolName: 'exec', desc: 'Running command', status: 'error', error: 'process exited with status 1' },
-      { id: asMessageId('1700000000002_tool_retry'), kind: 'tool', createdAt: 1_700_000_000_002, tool: 'Shell', recordedToolName: 'exec', desc: 'Running command', status: 'ok', output: 'passed' },
+      { id: asMessageId('1700000000001_tool_first'), kind: 'tool', createdAt: 1_700_000_000_001, tool: 'Bash', recordedToolName: 'exec', desc: 'Running command', status: 'error', input: 'pnpm test', error: 'PRIVATE_ERROR: process exited with status 1' },
+      { id: asMessageId('1700000000002_tool_retry'), kind: 'tool', createdAt: 1_700_000_000_002, tool: 'Bash', recordedToolName: 'exec', desc: 'Running command', status: 'ok', input: 'pnpm test', output: 'PRIVATE_OUTPUT: passed' },
     ];
     const reporting = new TranscriptReporting();
     const tracePayloads = new Map([
@@ -89,10 +93,32 @@ describe('DetailedTraceProjection', () => {
     const [turn] = new DetailedTraceProjection().project(messages, reporting.entries(messages, 'debug'), [], undefined, tracePayloads);
 
     expect(turn.rows).toHaveLength(2);
-    expect(turn.rows[0].note).toContain('process exited with status 1');
-    expect(turn.rows[0].note).toContain('Next: Retried pnpm test');
+    expect(turn.rows[0].note).toBe('Details withheld · Next: Retried Running command.');
+    expect(JSON.stringify(turn.rows.map(row => ({ target: row.target, toolName: row.toolName, args: row.args, note: row.note })))
+      .not.toMatch(/PRIVATE_ERROR|PRIVATE_OUTPUT|pnpm test/);
     expect(turn.rows[1].verb).toBe('Retried');
+    expect(turn.rows[0].rawPayload).toMatchObject({ args: { command: 'pnpm test' }, error: 'PRIVATE_ERROR: process exited with status 1' });
     expect(turn.metadata.failures).toBe(1);
+  });
+
+  it('withholds unapproved legacy tool fields while preserving the explicit payload disclosure', () => {
+    // risk: private tool payloads — legacy input/output/error must not become default-visible trace text.
+    const message: Message = {
+      id: asMessageId('1700000000001_tool_legacy'), kind: 'tool', createdAt: 1_700_000_000_001,
+      tool: 'Legacy private fixture name', recordedToolName: 'custom_private_tool', desc: 'PRIVATE_DESCRIPTION',
+      status: 'error', input: 'PRIVATE_INPUT', output: 'PRIVATE_OUTPUT', error: 'PRIVATE_ERROR', meta: 'PRIVATE_META',
+    };
+    const reporting = new TranscriptReporting();
+    const [turn] = new DetailedTraceProjection(reporting).project([message], reporting.entries([message], 'debug'));
+    const [row] = turn.rows;
+    const visibleFields = JSON.stringify({ verb: row.verb, toolName: row.toolName, target: row.target, args: row.args, note: row.note });
+
+    expect(visibleFields).not.toMatch(/PRIVATE_|custom_private_tool|Legacy private fixture name/);
+    expect(row).toMatchObject({ toolName: 'Tool', target: 'Tool', note: 'Details withheld', status: 'failed' });
+    expect(row).not.toHaveProperty('args');
+    expect(JSON.stringify(row.rawPayload)).toContain('PRIVATE_INPUT');
+    expect(JSON.stringify(row.rawPayload)).toContain('PRIVATE_OUTPUT');
+    expect(JSON.stringify(row.rawPayload)).toContain('PRIVATE_ERROR');
   });
 
   it('keeps a 125-step turn intact and omits unavailable usage fields', () => {
