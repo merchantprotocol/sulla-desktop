@@ -17,9 +17,8 @@
  *     Two agents, at most three model calls per turn, single-flight per
  *     conversation. See memory/V7MemoryTurnPipeline.ts.
  *
- * The legacy observation/identity memory agents (observation writer, seven
- * identity observers, conversation writer and their per-domain recalls) are
- * gone; their tables stay for the scheduled dreamer and existing tools.
+ * The legacy observation/identity-memory systems are retired. V7 subject
+ * memory remains on its independent recall and post-turn writer path.
  */
 
 import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
@@ -160,7 +159,7 @@ const estimateTokensFromChars = (chars: number) => Math.ceil(Math.max(0, chars) 
 // ============================================================================
 
 export interface SubconsciousMiddlewareOptions {
-  /** Whether observations should be managed (false for planning agents) */
+  /** Whether memory recall and the v7 writer run (false for planning agents) */
   includeObservations: boolean;
   /**
    * Live progress sink. The awaited subconscious phase blocks the primary
@@ -245,12 +244,11 @@ export async function runSubconsciousMiddleware(
 
   const conversationalistVoice = String(meta.agentId || meta.wsChannel || '') === 'conversationalist'
     && (inputSource === 'microphone' || inputSource === 'voice');
-  // Conversationalist voice keeps memory/observation recall. It skips only
+  // Conversationalist voice keeps v7 memory recall. It skips only
   // team, skill-catalog and subagent-roster hints; this is an explicit,
   // reversible latency trade-off for Jonathon to veto.
 
   const startTime = Date.now();
-  for (const key of ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext']) meta[key] = '';
   meta.teamDirectoryContext = '';
   meta.skillRecallContext = '';
   meta.subagentDirectoryContext = '';
@@ -343,9 +341,9 @@ export async function runSubconsciousMiddleware(
   // needs, because starting a turn without the right context is worse than
   // starting it late (Jonathon, 2026-07-06).
   //
-  // PRE-TURN = RECALLS ONLY. Memory writers run POST-TURN in
-  // runSubconsciousObservationWriters(), after the loop ends, so they observe
-  // the COMPLETED exchange and never compete with the reply for the model.
+  // PRE-TURN = RECALLS ONLY. The v7 writer runs POST-TURN, after the loop
+  // ends, so it observes the COMPLETED exchange and never competes with the
+  // reply for the model.
 
   // Memory recall is v7 subject memory only: one deterministic lookup, no
   // LLM call. The legacy per-domain observation/identity recalls (and the
@@ -357,28 +355,17 @@ export async function runSubconsciousMiddleware(
     // A provider compaction or Sulla summary means the model no longer holds
     // the earlier injection, so clear this conversation's sent ledger.
     const reset = Boolean(meta.cliCompactedAt && meta.v7LedgerCompactedAt !== meta.cliCompactedAt) || Boolean(meta.v7LedgerSummarizedAt && meta.v7LedgerSummarizedAt !== meta.lastV7LedgerSummaryReset);
-    const observations = String(recallMeta.observationalMemoryContext || '');
-    const observationCost = measureInjectedMemoryBlocks(observations, '');
-    const brainBudget = MEMORY_CHAR_BUDGET - observationCost - 500;
-    const measureBrain = (brain: string) => measureInjectedMemoryBlocks(observations, brain) - observationCost;
+    const brainBudget = MEMORY_CHAR_BUDGET - 500;
+    const measureBrain = (brain: string) => measureInjectedMemoryBlocks(brain);
     awaitedTasks.push(timed('v7-subject-memory', 'Recalling subject memory', recallV7SubjectMemory(
       recentUserTexts(recallState, 3), threadId, reset, { budget: brainBudget, measureBrain }
     ).then(result => {
-      recallMeta.observationContext = '';
-      recallMeta.userObservationContext = '';
-      recallMeta.selfObservationContext = '';
-      recallMeta.businessObservationContext = '';
-      recallMeta.environmentObservationContext = '';
-      recallMeta.projectsObservationContext = '';
-      recallMeta.worldObservationContext = '';
-      recallMeta.skillsObservationContext = '';
       recallMeta.brainMemoryContext = result?.text || '';
       recallMeta.brainMemoryStats = result?.stats;
       if (reset) { recallMeta.v7LedgerCompactedAt = recallMeta.cliCompactedAt; recallMeta.lastV7LedgerSummaryReset = recallMeta.v7LedgerSummarizedAt }
     }).catch((error) => {
-      // Never fall back silently to the previous turn's observation blocks.
+      // Never fall back silently to the previous turn's brain-memory block.
       console.warn('[SubconsciousMiddleware] v7 subject-memory recall failed:', error instanceof Error ? error.message : error);
-      recallMeta.observationContext = '';
       recallMeta.brainMemoryContext = '';
       recallMeta.brainMemoryStats = undefined;
     })));
@@ -420,7 +407,7 @@ export async function runSubconsciousMiddleware(
   // Recall is intentionally unbounded per Jonathon's standing rule. Wait for
   // every requested recall to finish; independent tasks still run in parallel.
   const settledResults = await Promise.allSettled(awaitedTasks);
-  const contextKeys = ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext', 'brainMemoryContext', 'brainMemoryStats', 'teamDirectoryContext', 'skillRecallContext', 'subagentDirectoryContext', 'v7LedgerCompactedAt', 'lastV7LedgerSummaryReset'];
+  const contextKeys = ['brainMemoryContext', 'brainMemoryStats', 'teamDirectoryContext', 'skillRecallContext', 'subagentDirectoryContext', 'v7LedgerCompactedAt', 'lastV7LedgerSummaryReset'];
   for (const key of contextKeys) meta[key] = recallMeta[key];
   const failures = settledResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
   const elapsed = Date.now() - startTime;
@@ -431,12 +418,12 @@ export async function runSubconsciousMiddleware(
     }
   }
 
-  const obsRecallLen = ((state.metadata as any).observationContext || '').length;
-  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | observationContext: ${ obsRecallLen } chars`);
+  const brainRecallLen = ((state.metadata as any).brainMemoryContext || '').length;
+  console.log(`[SubconsciousMiddleware] Complete in ${ elapsed }ms | ${ settledResults.length - failures.length }/${ settledResults.length } succeeded | brainMemoryContext: ${ brainRecallLen } chars`);
 
   // Perf: total blocking prelude + per-sub-agent breakdown (which one dominates).
   const breakdown = Object.entries(timings).map(([n, ms]) => `${ n }=${ ms }ms`).join(', ');
-  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] skipped=[${ skipped.join(', ') }] timings=[${ breakdown }] obsChars=${ obsRecallLen }`);
+  perf.log(`[SubconsciousTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ elapsed } launched=[${ launched.join(', ') }] skipped=[${ skipped.join(', ') }] timings=[${ breakdown }] brainChars=${ brainRecallLen }`);
 }
 
 /**
@@ -451,13 +438,13 @@ export async function runSubconsciousMiddleware(
  * Skipped inside workflows (same gate as the pre-turn pass) and when the turn
  * carried no analyzable user message.
  */
-export function runSubconsciousObservationWriters(
+export function runV7MemoryWriter(
   state: BaseThreadState,
   options: { includeObservations: boolean },
 ): void {
   const meta = state.metadata as any;
   if (meta.workflowNodeId || meta.activeWorkflow || meta.scopedWorkflowId) {
-    return; // inside a workflow — writers stay off, same as the recall pass
+    return; // inside a workflow — the writer stays off, same as the recall pass
   }
   if (!hasAnalyzableUserMessage(state)) return;
 

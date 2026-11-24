@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseNode } from './BaseNode';
-import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '../middleware/SubconsciousMiddleware';
+import { runSubconsciousMiddleware, runV7MemoryWriter } from '../middleware/SubconsciousMiddleware';
 import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
@@ -296,10 +296,10 @@ export class AgentNode extends BaseNode {
     }
 
     // ----------------------------------------------------------------
-    // POST-TURN — observation writers see the COMPLETED exchange
+    // POST-TURN — the v7 memory writer sees the COMPLETED exchange
     // ----------------------------------------------------------------
     // state.messages now holds the whole turn (user message + this agent's
-    // response + any tool results), so fire the domain writers here to observe
+    // response + any tool results), so fire the v7 writer here to process
     // what actually happened — not the pre-turn state the middleware used to see.
     // Only when the loop has truly ended, never on intermediate tool-call
     // iterations; fire-and-forget, since the response is already out. "Ended"
@@ -311,9 +311,9 @@ export class AgentNode extends BaseNode {
     if (!state.metadata.supportSessionId && isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
-        runSubconsciousObservationWriters(state, { includeObservations });
+        runV7MemoryWriter(state, { includeObservations });
       } catch (err) {
-        console.warn('[AgentNode] post-turn observation writers failed to launch:', err);
+        console.warn('[AgentNode] post-turn v7 memory writer failed to launch:', err);
       }
     }
 

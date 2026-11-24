@@ -7,7 +7,7 @@ aliases: [observation, Sulla observation]
 ---
 
 ## Overview
-Observation tools record durable observational or identity memory and provide the restricted write_file operation. Observations should be focused, sourced, and safe to retain.
+The observation category holds the conversation keyword and log search tools and the restricted write_file operation. Observation memory itself has been removed from Sulla.
 
 ## Facts
 - Use the paired `sulla-tool-observation` skill for the exact operations and parameters.

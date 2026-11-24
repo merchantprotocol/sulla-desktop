@@ -5,8 +5,7 @@
 
 import { postgresClient } from '../database/PostgresClient';
 import { SubjectMemorySentModel } from '../database/models/SubjectMemorySentModel';
-import { POTION_MODEL_NAME } from './MemoryRecallService';
-import { PotionEmbedder } from './potionEmbedder';
+import { POTION_MODEL_NAME, PotionEmbedder } from './potionEmbedder';
 import { resolveBundledModelDir } from '../utils/sullaPaths';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { CheckinIdentity } from './CheckinIdentity';

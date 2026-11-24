@@ -3,7 +3,7 @@ slug: sulla-memory
 kind: system
 name: Sulla Memory
 parent: sulla
-aliases: [memory, recall, v7 memory, subject memory, observations, skills.md, human.md, lessons.md]
+aliases: [memory, recall, v7 memory, subject memory, skills.md, human.md, lessons.md]
 ---
 
 ## Overview
@@ -18,13 +18,13 @@ Sulla's v7 memory is a subject-scoped PostgreSQL store in the `subject_memory` s
 - A per-thread sent ledger suppresses repeated memory until conversation summarization or provider compaction clears it.
 - Subject kinds include global, major, project, person, client, system, and tool.
 - The active recall implementation uses the bundled Potion embedder and PostgreSQL; it does not need a network embedding call.
-- Operational and identity observation tools remain available for durable facts and targeted search.
+- Observation memory and identity observations have been removed; subject memory is the only memory store.
 
 ## Rules
 - DO: Treat recalled user-stated rules as authoritative unless the human changes them.
 - DO: Treat seeded Sulla facts as product reference, then verify volatile state and exact tool parameters live.
 - DO: Treat inferred conclusions and old episodes as fallible context; confirm before consequential action.
-- DO: Store a durable operational fact with the observation tool and, when appropriate, a file under `Memory/`.
+- DO: Keep a durable fact that needs a document as a file under `Memory/`; rules the human states are recorded automatically.
 - DON'T: Use memory for temporary task status. Use the project's `TASKS.md`.
 - DON'T: Assume absence from recall means absence from memory. Search explicitly when history matters.
 

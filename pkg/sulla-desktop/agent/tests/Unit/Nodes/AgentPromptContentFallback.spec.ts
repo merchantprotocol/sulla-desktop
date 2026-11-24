@@ -20,8 +20,6 @@ vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '
 vi.mock('@pkg/agent/database/registry/SkillsRegistry', () => ({ skillsRegistry: { getSkillSummaries: async() => [], getSkill: async() => null } }));
 vi.mock('@pkg/agent/files/containerClient', () => ({ filesContainerJson: async() => [] }));
 vi.mock('@pkg/agent/services/ExtensionService', () => ({ getExtensionService: () => ({ initialize: async() => undefined, fetchInstalledExtensions: async() => [] }) }));
-// Memory store boundary: the observational-memory section reads the memory database.
-vi.mock('@pkg/agent/prompts/sections/observationalMemory', () => ({ buildObservationalMemorySection: async() => null }));
 vi.mock('@pkg/agent/services/IntegrationService', () => ({ getIntegrationService: () => ({ initialize: async() => undefined, getConnectionStatus: async() => ({ connected: false }), onValueChange: () => undefined }) }));
 
 const SENTINEL = 'Reply exactly CHAT_AGENT_OK_20261117. Do not use tools, memory, projects or external actions.';

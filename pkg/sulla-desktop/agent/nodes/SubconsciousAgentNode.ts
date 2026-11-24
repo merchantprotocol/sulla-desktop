@@ -176,12 +176,6 @@ export class SubconsciousAgentNode extends BaseNode {
     // with those grants; a name missing here silently leaks a tool card.
     const THINKING_TOOLS = new Set([
       'file_search', 'read_file',
-      // Observation Writer / Observation Recall
-      'add_observational_memory', 'remove_observational_memory',
-      'search_observations', 'list_observations',
-      // Identity Observer (writer) / Identity Observation Recall — all 6 domains
-      'add_identity_observation', 'remove_identity_observation',
-      'search_identity_observations', 'list_identity_observations',
       // Conversation Writer
       'upsert_conversation_keywords',
       'vault_list', 'vault_is_enabled', 'search_conversations',
