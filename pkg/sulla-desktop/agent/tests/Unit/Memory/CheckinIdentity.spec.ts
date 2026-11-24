@@ -27,10 +27,14 @@ describe('CheckinIdentity', () => {
     // risk: unrelated conversation threads are merged as duplicate status reports
     expect(identity('Heartbeat status update in thread_heartbeat42: resumed.', { conversationId: 'thread_main' }))
       .toBeNull();
+    expect(identity('Sub-agent result from spawn-agent-memory-cap-worker completed.'))
+      .toBeNull();
     expect(identity('Heartbeat status update: resumed.', { id: 'thread_abc' }))
       .toBeNull();
-    expect(identity('Sub-agent result from spawn-agent-memory-cap-worker completed.', { conversationId: 'thread_main' }))
+    expect(identity('Sub-agent result in thread_spawn-agent-memory-cap-worker completed.', { conversationId: 'thread_main' }))
       .toBe('conv:thread_main|thread:spawn-agent-memory-cap-worker');
+    expect(identity('Heartbeat status update in thread_agent-job-1795493855725-88 resumed.'))
+      .toBe('job:agent-job-1795493855725-88');
   });
 
   it('keeps two same-template jobs in one conversation separate by job id', () => {
@@ -50,6 +54,12 @@ describe('CheckinIdentity', () => {
     expect(first).toBe('conv:thread_chat_a|job:agent-job-1795493855725-88');
     expect(second).toBe('conv:thread_chat_b|job:agent-job-1795493855725-88');
     expect(second).not.toBe(first);
+  });
+
+  it('does not treat a conversation id as a job identity source', () => {
+    // risk: a conversation identifier is mistaken for a worker job and merges episodes
+    expect(identity('Worker status update: still running.', { conversationId: 'agent-job-1795493855725-88' }))
+      .toBeNull();
   });
 
   it('returns null when a check-in names multiple distinct job ids', () => {
@@ -100,6 +110,8 @@ describe('CheckinIdentity', () => {
     // risk: unqualified issue numbers are mistaken for a PR status identity
     expect(identity('PR #2816 status update.')).toBe('pr:2816');
     expect(identity('#2816 status update.')).toBeNull();
+    expect(identity('Detailed chat trace for the memory cap epic #2816 status update.'))
+      .toBe('pr:2816');
     expect(identity('draft #2816 check-in.')).toBe('pr:2816');
     expect(identity('pull request #2816 progress report.')).toBe('pr:2816');
     expect(identity('PR #2816 status update.', { conversationId: 'thread_2816' }))
