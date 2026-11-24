@@ -989,9 +989,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .remote-chat-dot.live { background: var(--status-success, var(--accent)); }
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
 .composer-halo {
-  position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none; border-radius: 50%;
+  position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 56%, transparent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
-  filter: blur(10px); opacity: 0; transform: scale(1.03, 1.2); transition: opacity .32s ease, transform .32s ease; will-change: opacity, transform;
+  opacity: 0; transform: scale(1.03, 1.2); transition: opacity .32s ease, transform .32s ease; will-change: opacity, transform;
 }
 .composer-capsule.is-running .composer-halo { opacity: .72; animation: composer-capsule-breathe 4.8s ease-in-out infinite; }
 .composer-capsule.document-hidden .composer-halo { visibility: hidden; animation-play-state: paused; transition: none; }
@@ -1002,9 +1002,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
   min-height: 64px; height: auto; padding: 0 10px; border: 0; border-radius: 32px; background: var(--bg-surface);
-  box-shadow: inset 0 0 0 1px var(--border-subtle), var(--elev-float); transition: box-shadow .18s ease;
+  box-shadow: 0 1px 2px rgba(20,26,44,.07), 0 14px 34px rgba(20,26,44,.12); transition: box-shadow .18s ease;
 }
-.composer:focus-within { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, var(--border-default)), var(--elev-float); }
+:global(.dark) .composer { box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07); }
 .composer.recording .glyph, .glyph { display: none; }
 .composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
 .usage-meter { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 0 0 44px; width: 44px; height: 44px; padding: 0 4px; border: 0; border-radius: 50%; color: var(--text-dim); background: transparent; font: 11px var(--font-mono); cursor: pointer; }
@@ -1029,7 +1029,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-agent-picker :deep(.environment-pill span:first-of-type) { display: none; }
 }
 @media (max-width: 540px) {
-  .composer-up-row { gap: 8px; padding: 0 4px; }
+  .composer-up-row { gap: 8px; }
   .composer-agent-picker { max-width: 46%; gap: 4px; }
   .composer-agent-picker button.model-btn { width: 34px; justify-content: center; padding: 0 6px; }
   .composer-agent-picker select.remote-model { width: min(120px, calc(100% - 38px)); min-width: 84px; padding: 0 4px; font-size: 11px; }
