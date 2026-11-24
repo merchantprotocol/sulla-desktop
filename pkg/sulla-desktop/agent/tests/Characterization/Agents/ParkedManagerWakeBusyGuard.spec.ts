@@ -77,13 +77,13 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     const channelId = 'sulla-desktop';
     const threadId = 'busy-guard-live-wait-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId, depth: 1 }],
       channelId, 'busy-guard-live-wait-root',
     );
     await registry.parkJobTask(manager.jobId, 0, 1); // DB-parked while "this process" still holds the thread below
 
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (slug === 'coding-manager-sol' ? { slug, run_location: 'vm' } as any : null));
+      (slug === 'coding-manager' ? { slug, run_location: 'vm' } as any : null));
 
     const instance = bareInstance();
     const liveAbort = new AbortService();
@@ -93,7 +93,7 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     const target = (await messaging.AgentJobMessagingModel.targetsForJob(manager.jobId))[0];
     const record = await messaging.AgentJobMessagingModel.queueMessage(target, 'continue');
 
-    const woken = await instance.wakeParkedAgent(channelId, threadId, 'continue', 'coding-manager-sol', { jobMessageId: record.id, jobMessageThreadId: threadId });
+    const woken = await instance.wakeParkedAgent(channelId, threadId, 'continue', 'coding-manager', { jobMessageId: record.id, jobMessageThreadId: threadId });
 
     expect(woken).toBe(false);
     expect(dispatchSpy).not.toHaveBeenCalled();
@@ -111,13 +111,13 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     const channelId = 'sulla-desktop';
     const threadId = 'busy-guard-dormant-wake-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId, depth: 1 }],
       channelId, 'busy-guard-dormant-wake-root',
     );
     await registry.parkJobTask(manager.jobId, 0, 1); // dormant: no live waiter in THIS process
 
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (slug === 'coding-manager-sol' ? { slug, run_location: 'vm' } as any : null));
+      (slug === 'coding-manager' ? { slug, run_location: 'vm' } as any : null));
 
     const executeCalls: string[] = [];
     let releaseFirstExecute: (() => void) | undefined;
@@ -141,7 +141,7 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
 
     // The dormant wake: no live run for this thread yet, so it actually
     // dispatches — left "in flight" on the paused gate below.
-    const firstWakePromise = instance.wakeParkedAgent(channelId, threadId, 'first message', 'coding-manager-sol', { jobMessageId: firstRecord.id, jobMessageThreadId: threadId });
+    const firstWakePromise = instance.wakeParkedAgent(channelId, threadId, 'first message', 'coding-manager', { jobMessageId: firstRecord.id, jobMessageThreadId: threadId });
 
     await vi.waitFor(() => expect(executeCalls).toEqual(['call-1']), { timeout: 2_000, interval: 10 });
     expect(instance.hasActiveRun(channelId, threadId)).toBe(true);
@@ -154,7 +154,7 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     // before attempting delivery, so the row exists durably regardless of
     // what the dispatch attempt below does with it.
     const secondRecord = await messaging.AgentJobMessagingModel.queueMessage(target, 'second message');
-    await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', '[Message from orchestrator]\nsecond message', threadId, undefined, 'coding-manager-sol', 'system', {
+    await (instance as any).dispatchToAgent(channelId, 'sulla-desktop', '[Message from orchestrator]\nsecond message', threadId, undefined, 'coding-manager', 'system', {
       source: 'orchestrator_job_message', jobMessageId: secondRecord.id, jobMessageThreadId: threadId,
     });
 
