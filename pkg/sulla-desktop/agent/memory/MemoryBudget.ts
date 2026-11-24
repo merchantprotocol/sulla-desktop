@@ -138,8 +138,14 @@ export class MemoryBudgetPacker {
     const unique = this.deduplicate(prioritized);
     const selected: MemoryCandidate[] = [];
     const shortened = new Set<MemoryCandidate>();
+    const emittedKeys = new Set<string>();
+    let selectionDeduped = 0;
 
     for (const candidate of unique.entries) {
+      if (candidate.entryKey?.startsWith('e:') && candidate.keys.some((key) => emittedKeys.has(key))) {
+        selectionDeduped++;
+        continue;
+      }
       const shortText = candidate.shortenable && candidate.text.length > ENTRY_SOFT_LIMIT
         ? MemoryBudgetPacker.shortenTimelineEntry(candidate.text)
         : candidate.text;
@@ -147,12 +153,16 @@ export class MemoryBudgetPacker {
       selected.push(placed);
       if (this.measure(this.render(selected).text) <= this.budget) {
         if (shortText !== candidate.text) shortened.add(placed);
+        for (const key of candidate.keys) emittedKeys.add(key);
         continue;
       }
       selected.pop();
     }
 
     const rendered = this.render(selected);
+    const sectionSizes: Record<string, number> = Object.fromEntries(
+      [...new Set(candidates.map((candidate) => candidate.page))].map((page) => [page, rendered.sections[page] || 0]),
+    );
     const keys = [...new Set(selected
       .map((candidate, index) => ({ candidate, index }))
       .sort((a, b) => a.candidate.order - b.candidate.order || a.index - b.index)
@@ -161,9 +171,9 @@ export class MemoryBudgetPacker {
       text: rendered.text,
       keys,
       stats: {
-        sections: rendered.sections,
-        dropped: unique.entries.length - selected.length,
-        deduped: unique.deduped,
+        sections: sectionSizes,
+        dropped: unique.entries.length - selected.length - selectionDeduped,
+        deduped: unique.deduped + selectionDeduped,
         shortened: shortened.size,
         checkinGroupsCollapsed,
         brainCharacters: rendered.text.length,

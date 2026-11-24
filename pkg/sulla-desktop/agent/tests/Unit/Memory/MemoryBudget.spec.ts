@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   MEMORY_CHAR_BUDGET,
@@ -11,6 +11,7 @@ import {
   measureInjectedMemoryBlocks,
   type MemoryCandidate,
 } from '../../../memory/MemoryBudget';
+import { recallV7SubjectMemory } from '../../../memory/V7SubjectMemory';
 
 const candidate = (overrides: Partial<MemoryCandidate> = {}): MemoryCandidate => ({
   page: 'human',
@@ -116,19 +117,28 @@ describe('MemoryBudgetPacker', () => {
         tier: 3, order: 103, ts: 2, keys: ['e:new'], entryKey: 'e:new', shortenable: true,
       }),
     ];
+    const emptyPage = candidate({
+      page: 'empty-page', pageHeader: '## empty.md', section: 'Empty', sectionHeader: '### Empty section',
+      text: `This page must stay closed. ${'unused '.repeat(50)}`,
+      tier: 3, order: 104, ts: 0, keys: ['e:empty'], entryKey: 'e:empty', shortenable: true,
+    });
     const required = [humanAlways, humanStanding, ...projectRules, seeded, skill, fact, overview, timeline[1]];
     const exactRequiredText = new MemoryBudgetPacker(100_000, measure).pack(required).text;
     const cap = measure(exactRequiredText);
     const packed = new MemoryBudgetPacker(cap, measure).pack([
-      ...required.slice(0, -1), ...timeline,
+      ...required.slice(0, -1), ...timeline, emptyPage,
     ]);
 
     for (const rule of [...projectRules, humanAlways, humanStanding, seeded, skill]) expect(packed.text).toContain(rule.text);
     expect(packed.text).toContain(timeline[1].text);
     expect(packed.text).not.toContain(timeline[0].text);
-    expect(packed.text.indexOf(humanAlways.text)).toBeLessThan(packed.text.indexOf(timeline[1].text));
+    for (const rule of [humanAlways, humanStanding, ...projectRules, seeded, skill]) {
+      expect(packed.text.indexOf(rule.text)).toBeLessThan(packed.text.indexOf(timeline[1].text));
+    }
     expect(packed.text).not.toContain('### Unused section');
-    for (const row of [...required, timeline[0]]) {
+    expect(packed.text).not.toContain('## empty.md');
+    expect(packed.text).not.toContain('### Empty section');
+    for (const row of [...required, timeline[0], emptyPage]) {
       const accepted = row.shortenable && row.text.length > 400
         ? MemoryBudgetPacker.shortenTimelineEntry(row.text)
         : row.text;
@@ -170,6 +180,27 @@ describe('MemoryBudgetPacker', () => {
     expect(packed.stats.shortened).toBe(1);
   });
 
+  it('omits a skill that does not fit as a whole and continues to the next whole entry', () => {
+    // risk: a truncated skill omits constraints and changes agent behavior
+    const rule = candidate({ text: '- **DO** Keep the rule.', keys: ['i:rule'], entryKey: 'i:rule', priorityOrder: 0 });
+    const largeSkill = candidate({
+      page: 'skills', pageHeader: '## skills.md', section: 'large', sectionHeader: '### Large skill',
+      text: `Large skill starts. ${'complete-entry '.repeat(80)}`, keys: ['s:large@1'], entryKey: 's:large@1', priorityOrder: 1,
+    });
+    const smallSkill = candidate({
+      page: 'skills', pageHeader: '## skills.md', section: 'small', sectionHeader: '### Small skill',
+      text: 'Small skill stays whole.', keys: ['s:small@1'], entryKey: 's:small@1', priorityOrder: 2,
+    });
+    const measure = (text: string) => measureInjectedMemoryBlocks('', text);
+    const cap = measure(new MemoryBudgetPacker(100_000, measure).pack([rule, smallSkill]).text);
+    const packed = new MemoryBudgetPacker(cap, measure).pack([rule, largeSkill, smallSkill]);
+
+    expect(packed.text).toContain(rule.text);
+    expect(packed.text).toContain(smallSkill.text);
+    expect(packed.text).not.toContain(largeSkill.text);
+    expect(packed.keys).toEqual(['i:rule', 's:small@1']);
+  });
+
   it('returns only keys of emitted records, including lessons and Came-from origins', () => {
     // risk: marking a dropped memory as sent permanently hides it, or replaying an emitted item duplicates it
     const emitted = [
@@ -187,6 +218,53 @@ describe('MemoryBudgetPacker', () => {
     expect(packed.keys).not.toContain('e:dropped');
     expect(packed.text).toContain('Complete skill body.');
     expect(packed.text).toContain('- [2026-11-22] A past lesson.');
+  });
+
+  it('injects a database-free recall and records only the keys actually emitted', async () => {
+    // risk: a dropped memory is marked sent forever, or a displayed origin/lesson is replayed
+    const episodes = [
+      { id: 'project-episode', ts: 100, conversationId: null, source: 'user', sentiment: 'neutral', text: 'Alpha memory project timeline.', keys: ['project-alpha'] },
+      { id: 'lesson-episode', ts: 99, conversationId: null, source: 'user', sentiment: 'neutral', text: 'Alpha memory lesson timeline.', keys: [] },
+      ...Array.from({ length: 20 }, (_, index) => ({
+        id: `other-${index}`, ts: 98 - index, conversationId: null, source: 'user', sentiment: 'neutral', text: `Alpha memory context ${index}.`, keys: [],
+      })),
+      { id: 'origin-episode', ts: 1, conversationId: null, source: 'user', sentiment: 'neutral', text: 'Alpha memory source for a rule.', keys: [] },
+    ];
+    const cache = {
+      signature: 'unit',
+      subjects: new Map([['project-alpha', { slug: 'project-alpha', kind: 'project', name: 'Alpha', parent: null, aliases: ['Alpha'] }]]),
+      episodes,
+      items: [{
+        id: 'rule-1', kind: 'policy', ptype: 'do', text: 'Keep the result accurate.', why: null,
+        scope: ['global'], ts: 1, always_on: true, confirmed: true, supersedes: null, origin: 'human',
+      }],
+      evidence: new Map([['origin-episode', ['rule-1']]]),
+      overviews: new Map(), skills: [], epVectors: new Map(), itemVectors: new Map(),
+      skillVectors: new Map(), subjectVectors: new Map(),
+    };
+    const ledger = {
+      clearThread: vi.fn(async () => undefined),
+      deleteExpiredBatch: vi.fn(async () => 0),
+      activeKeys: vi.fn(async () => new Set<string>()),
+      record: vi.fn(async () => undefined),
+    };
+    const result = await recallV7SubjectMemory(['Alpha memory'], 'thread-1', true, {
+      dependencies: {
+        load: async () => cache as any,
+        embedder: () => ({ embed: () => new Float32Array([1]) }) as any,
+        packer: new MemoryBudgetPacker(100_000),
+        sentLedger: ledger,
+        getPrimaryUserName: async () => 'Jonathon',
+      },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.text).toContain('Alpha memory lesson timeline.');
+    expect(result?.text).toContain('Came from: [1970-01-01] Alpha memory source for a rule.');
+    expect(result?.keys).toContain('e:origin-episode');
+    expect(result?.keys).toContain('e:lesson-episode');
+    expect(ledger.clearThread).toHaveBeenCalledWith('thread-1');
+    expect(ledger.record).toHaveBeenCalledWith('thread-1', result?.keys);
   });
 
   it('keeps only the newest check-in per identity and drops a sent winner with its older group', () => {
