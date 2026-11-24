@@ -1439,13 +1439,19 @@ export class ChatCompletionsServer {
           }
         }
 
-        // The interactive tool (ask_user_question) needs a live chat channel
-        // to render its card. ToolExecutor injects sendChatMessage for
-        // in-process agent turns, but the CLI path
-        // (`sulla meta/ask_user_question`) hits this HTTP handler with a
-        // bare tool instance — without injection emitMessage() returns
-        // false and the card never appears in the UI. Wire a best-effort
-        // emitter that targets the active sulla-desktop chat.
+        // CLI tools that render interactive chat cards need a transport bound
+        // to the verified tool session before the fallback can inspect a
+        // transient tool.state. This keeps a `sulla` call on its originating
+        // thread instead of a default or stale channel.
+        if (session) {
+          const { ToolSessionChatTransport } = await import('@pkg/agent/tools/ToolSessionChatTransport');
+          new ToolSessionChatTransport().attach(tool, session.state);
+        }
+
+        // The interactive tools need a live chat channel to render their
+        // cards. ToolExecutor injects sendChatMessage for in-process turns;
+        // this fallback covers the CLI route when a verified graph state was
+        // already attached to the tool instance.
         const interactiveNames = new Set(['ask_user_question']);
         if (interactiveNames.has(toolName) && typeof (tool).sendChatMessage !== 'function') {
           try {
@@ -1454,7 +1460,9 @@ export class ChatCompletionsServer {
             const bound = (tool).state;
             const active = bound ? { state: bound, threadId: bound.metadata.threadId, wsChannel: bound.metadata.wsChannel } : null;
             const channel = active?.wsChannel || 'sulla-desktop';
-            const threadId = active?.threadId;
+            // A signed CLI capability carries the verified originating thread
+            // even when this HTTP request has no in-process graph state bound.
+            const threadId = active?.threadId || executionContext?.thread_id;
             const ws = getWebSocketClientService();
             (tool).sendChatMessage = async(
               content: string,
@@ -1482,13 +1490,6 @@ export class ChatCompletionsServer {
           } catch (err) {
             console.warn('[ChatCompletionsAPI] failed to wire interactive tool chat emit:', err);
           }
-        }
-
-        // files/open needs the calling graph's chat transport to post an inline
-        // file card. Bind it only to the verified session's own live state.
-        if (session) {
-          const { ToolSessionChatTransport } = await import('@pkg/agent/tools/ToolSessionChatTransport');
-          new ToolSessionChatTransport().attach(tool, session.state);
         }
 
         // Workflow activation tools mutate live graph state. The CLI endpoint

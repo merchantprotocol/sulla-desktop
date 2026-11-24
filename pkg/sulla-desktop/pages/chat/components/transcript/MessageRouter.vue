@@ -27,11 +27,11 @@
   </div>
   <TurnStreaming   v-else-if="msg.kind === 'streaming'" :msg="msg" :reporting-level="reportingLevel" :paragraph-break="streamingParagraphBreak" />
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
-  <div v-else-if="mainDecisionTranscript && decisionId && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
+  <div v-else-if="decisionId && (mainDecisionTranscript || msg.kind === 'tool_approval') && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
       v-if="msg.kind === 'tool_approval'"
       :msg="approvalMessage(msg)" :blocked="blocked"
-      :state-label="decisionLabel" :decide="inlineRecord ? decide : undefined"
+      :state-label="decisionLabel" :decide="inlineRecord ? decide : undefined" :show-decide-link="Boolean(inlineRecord)"
     />
     <ToolTask
       v-else-if="TaskAsks.isTask(msg)"
@@ -111,15 +111,17 @@ const decisionId = computed(() => props.msg.kind === 'tool_question' ? props.msg
 const inboxRecord = computed(() => decisions.decisions.value.find(record => record.id === decisionId.value));
 const inlineRecord = computed(() => {
   const kind = props.msg.kind === 'tool_question' ? 'question' : 'approval';
-  return mainDecisionTranscript.value && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
+  const canInline = mainDecisionTranscript.value || props.msg.kind === 'tool_approval';
+  return canInline && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
 });
-const checking = computed(() => !!(mainDecisionTranscript.value && decisionId.value && decisions.checkingInline(decisionId.value)));
+const checking = computed(() => !!((mainDecisionTranscript.value || props.msg.kind === 'tool_approval') && decisionId.value && decisions.checkingInline(decisionId.value)));
 const decisionCardKey = computed(() => inlineRecord.value ? 'saved' : checking.value ? 'loading' : 'original');
 const blocked = computed(() => checking.value || !!(inlineRecord.value && decisions.busy(inlineRecord.value.id)));
 const active = computed(() => !!inlineRecord.value && DecisionAttention.active(inlineRecord.value, decisions.now.value));
 const decisionLabel = computed(() => {
   const record = inlineRecord.value;
   if (!record) return undefined;
+  if (record.kind === 'approval' && (record.status === 'expired' || record.expiresAt <= decisions.now.value)) return 'Expired';
   // Keep the original Done/Replied or Answered state for a finished answer.
   if (record.status === 'answered' || record.answerDelivery === 'delivered') return undefined;
   if (active.value && record.status === 'expired' && !record.answerDelivery) return 'Sulla stopped waiting. Your answer will be queued in this chat.';
@@ -129,7 +131,7 @@ function approvalMessage(message: ToolApprovalMessage): ToolApprovalMessage {
   const record = inlineRecord.value;
   if (!record) return message;
   const decision = record.status === 'approved' || record.status === 'denied' ? record.status : active.value ? 'pending' : 'timed_out';
-  return { ...message, decision, resolutionError: decisions.actionError(record.id) };
+  return { ...message, title: record.title, expiresAt: record.expiresAt, decision, resolutionError: decisions.actionError(record.id) };
 }
 function questionMessage(message: ToolQuestionMessage): ToolQuestionMessage {
   const record = inlineRecord.value;

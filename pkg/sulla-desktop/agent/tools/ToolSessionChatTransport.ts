@@ -20,25 +20,30 @@ interface ChatCapableTool {
  * `sulla` CLI over a verified tool-session token, and the MCP sulla_tool.
  * The state passed in is always the live graph state bound server-side to the
  * session token, so messages go to that graph's own thread and channel exactly
- * as BaseNode.wsChatMessage would send them. Only allow-listed tools get it,
- * so other CLI tools keep their current (silent) behavior.
+ * as BaseNode.wsChatMessage would send them. Generic tools only forward explicit
+ * approval/question cards and tool activity; a few allow-listed tools also
+ * forward their structured chat messages.
  */
 export class ToolSessionChatTransport {
-  private static readonly SUPPORTED = new Set(['files/open', 'files/files_open']);
+  private static readonly SUPPORTED = new Set(['files/open', 'files/files_open', 'files/request_publish', 'files/files_request_publish']);
 
   constructor(private readonly bus: () => Promise<ChatMessageBus> = ToolSessionChatTransport.defaultBus) {}
 
   supports(tool: ChatCapableTool): boolean {
-    return ToolSessionChatTransport.SUPPORTED.has(`${ String(tool.metadata?.category ?? '') }/${ String(tool.name ?? '') }`);
+    return !!tool.name?.trim() && !!String(tool.metadata?.category ?? '').trim();
   }
 
   /** Give a supported tool a transport bound to the session's graph state; never replaces an existing one. */
   attach(tool: ChatCapableTool, state: BaseThreadState | undefined): void {
     if (!state || !this.supports(tool) || typeof tool.sendChatMessage === 'function') return;
-    tool.sendChatMessage = (content, kind = 'progress', extras) => this.send(state, content, kind, extras);
+    tool.sendChatMessage = (content, kind = 'progress', extras) => this.send(tool, state, content, kind, extras);
   }
 
-  private async send(state: BaseThreadState, content: string, kind: string, extras?: Record<string, unknown>): Promise<boolean> {
+  private async send(tool: ChatCapableTool, state: BaseThreadState, content: string, kind: string, extras?: Record<string, unknown>): Promise<boolean> {
+    const toolPath = `${ String(tool.metadata?.category ?? '') }/${ String(tool.name ?? '') }`;
+    const kindAllowed = ToolSessionChatTransport.SUPPORTED.has(toolPath) ||
+      kind === 'tool_approval' || kind === 'tool_question' || kind === 'chat_tool_activity';
+    if (!kindAllowed) return false;
     const metadata = state.metadata as Record<string, any>;
     const threadId = typeof metadata.threadId === 'string' ? metadata.threadId : '';
     const channel = typeof metadata.wsChannel === 'string' ? metadata.wsChannel : '';

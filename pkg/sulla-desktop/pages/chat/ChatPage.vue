@@ -461,10 +461,11 @@ const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
 const mainDecisionTranscript = computed(() => !props.agentTabContractId && !props.agentTabThreadId &&
   !props.initialAgentId && !props.supportSessionId && !controller.thread.value.agentId);
-const transcriptDecisionIds = computed(() => mainDecisionTranscript.value ? controller.messages.value.flatMap(message => {
-  const id = message.kind === 'tool_question' ? message.questionId : message.kind === 'tool_approval' ? message.approvalId : undefined;
+const transcriptDecisionIds = computed(() => controller.messages.value.flatMap(message => {
+  const id = message.kind === 'tool_approval' ? message.approvalId :
+    mainDecisionTranscript.value && message.kind === 'tool_question' ? message.questionId : undefined;
   return id ? [id] : [];
-}) : []);
+}));
 provide('chat:main-decision-transcript', mainDecisionTranscript);
 const chatDecisionStore = ChatDecisions.provide(subAgentParentThreadId, transcriptDecisionIds);
 const agentStateClient = inject(AGENT_STATE_CLIENT_KEY);
