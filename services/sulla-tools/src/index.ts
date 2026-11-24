@@ -25,6 +25,7 @@ import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relay
 import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
 import type { DesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 import { ToolRequestArguments } from '../../../packages/runtime-protocol/src/toolRequestArguments.js';
+import { ClerkRawRequestEnvelope } from '../../../pkg/sulla-desktop/agent/integrations/clerk/ClerkRawRequestEnvelope.js';
 import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolDeadlinePolicy.js';
 import { LateToolResultStore } from '../../../pkg/sulla-desktop/runtime/LateToolResultStore.js';
 
@@ -92,7 +93,53 @@ app.get('/v1/tools/help/:category', (request, response) => {
   response.type('text/plain').send(help(category));
 });
 
-app.post('/v1/proxy/:accountId/:slug', (request, response) => response.status(501).json({ success: false, error: { code: 'proxy_unavailable', message: 'Generic integration proxy is unavailable from this tool endpoint; use sulla slack/* for Slack Web API calls.' }, request_id: String(request.header('X-Request-Id') ?? crypto.randomUUID()) }));
+app.post('/v1/proxy/:accountId/:slug', async(request, response) => {
+  const requestId = String(request.header('X-Request-Id') ?? crypto.randomUUID());
+  response.setHeader('X-Request-Id', requestId);
+  if (request.params.slug !== 'clerk') {
+    return response.status(501).json({ success: false, error: { code: 'proxy_unavailable', message: 'Generic integration proxy is unavailable from this tool endpoint; use sulla slack/* for Slack Web API calls.' }, request_id: requestId });
+  }
+  const tool = resolveTool('clerk', 'raw_request');
+  if (!tool) return response.status(503).json({ success: false, error: { code: 'clerk_unavailable', message: 'Clerk is not available in this tool catalog.' }, request_id: requestId });
+  const body = request.body;
+  const proxyRefusal = new ClerkRawRequestEnvelope().refusal(body, 'proxy');
+  if (proxyRefusal) {
+    return response.status(400).json({ success: false, error: { code: 'invalid_clerk_envelope', message: proxyRefusal }, request_id: requestId });
+  }
+  const bearer = request.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+  let ctx: ToolExecutionContext;
+  try {
+    const claims = await verifyCapabilityToken(bearer, config.signingKey, { category: 'clerk', tool: tool.name, revocations });
+    ctx = { ...claims, request_id: requestId };
+  } catch (error) {
+    const auth = error instanceof CapabilityTokenError ? error : new CapabilityTokenError('invalid', 'Capability verification failed');
+    return response.status(auth.code === 'scope' ? 403 : 401).json({ success: false, error: { code: auth.code, message: auth.message }, request_id: requestId });
+  }
+  const args = { ...(body as Record<string, unknown>), accountId: String(request.params.accountId) };
+  try {
+    ctx = await scopeToolExecutionContext(ctx, tool, args);
+    const deadlineMs = toolDeadlines.deadlineMs(tool.name, tool.operationTypes, { category: tool.category, manifestDeadlineMs: tool.deadlineMs, args });
+    const result = await desktop.execute(ctx, 'clerk', 'raw_request', args, { deadlineMs, operationTypes: tool.operationTypes });
+    if (!result.success) {
+      const details = result.error?.details && typeof result.error.details === 'object' ? result.error.details as Record<string, unknown> : {};
+      const resultStatus = (result as typeof result & { status?: unknown }).status;
+      const status = typeof details.httpStatus === 'number' && Number.isInteger(details.httpStatus) && details.httpStatus >= 400 && details.httpStatus <= 599
+        ? details.httpStatus
+        : typeof resultStatus === 'number' && Number.isInteger(resultStatus) && resultStatus >= 400 && resultStatus <= 599
+          ? resultStatus
+        : result.error?.code === 'deadline_exceeded' ? 504 : 503;
+      const retry = details.retryAfter ?? (result as typeof result & { retryAfter?: unknown }).retryAfter;
+      const retryAfter = typeof retry === 'string' && /^\d{1,15}$/.test(retry) && Number.isSafeInteger(Number(retry)) && Number(retry) > 0
+        ? String(Number(retry))
+        : undefined;
+      if (status === 429 && retryAfter) response.setHeader('Retry-After', retryAfter);
+      return response.status(status).json({ ...result, ...(retryAfter ? { retryAfter } : {}), request_id: requestId });
+    }
+    return response.json({ ...result, request_id: requestId });
+  } catch (error) {
+    return response.status(503).json({ success: false, error: { code: 'clerk_unavailable', message: 'Clerk needs a running Desktop executor.' }, request_id: requestId });
+  }
+});
 
 app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => {
   const requestId = String(request.header('X-Request-Id') ?? crypto.randomUUID());
@@ -113,6 +160,10 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
     return response.status(status).json({ success: false, error: { code: auth.code, message: auth.message }, request_id: requestId });
   }
 
+  const toolRefusal = category === 'clerk' && tool.name === 'clerk_raw_request' ? new ClerkRawRequestEnvelope().refusal(request.body, 'tool') : undefined;
+  if (toolRefusal) {
+    return response.status(400).json({ success: false, error: { code: 'invalid_clerk_envelope', message: toolRefusal }, request_id: requestId });
+  }
   const args = ToolRequestArguments.normalize(request.body);
   try {
     ctx = await scopeToolExecutionContext(ctx, tool, args);
@@ -123,7 +174,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
       request_id: requestId,
     });
   }
-  const idempotencyKey = request.header('Idempotency-Key');
+  const idempotencyKey = category === 'clerk' ? undefined : request.header('Idempotency-Key');
   if (idempotencyKey && !await requests.reserveIdempotency(`${ ctx.sub }:${ idempotencyKey }`)) {
     return response.status(409).json({ success: false, error: { code: 'duplicate_request', message: 'Idempotency key was already used' }, request_id: requestId });
   }
@@ -163,7 +214,16 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
       : await desktop.execute(ctx, category, requested, args, { deadlineMs, operationTypes: tool.operationTypes });
     if (tool.executionTarget !== 'catalog') {
       const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
-      if (!forwarded.success) status = forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
+      const details = forwarded.error?.details && typeof forwarded.error.details === 'object' ? forwarded.error.details as Record<string, unknown> : {};
+      const claimedStatus = details.httpStatus ?? (forwarded as typeof forwarded & { status?: unknown }).status;
+      if (!forwarded.success) status = category === 'clerk' && typeof claimedStatus === 'number' && Number.isInteger(claimedStatus) && claimedStatus >= 400 && claimedStatus <= 599
+        ? claimedStatus
+        : forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
+      const retry = details.retryAfter ?? (forwarded as typeof forwarded & { retryAfter?: unknown }).retryAfter;
+      const retryAfter = category === 'clerk' && typeof retry === 'string' && /^\d{1,15}$/.test(retry) && Number.isSafeInteger(Number(retry)) && Number(retry) > 0
+        ? String(Number(retry))
+        : undefined;
+      if (status === 429 && retryAfter) response.setHeader('Retry-After', retryAfter);
       return response.status(status).json({ ...forwarded, request_id: requestId });
     }
     response.json({ success: true, result, request_id: requestId });
