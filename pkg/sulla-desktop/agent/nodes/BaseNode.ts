@@ -909,8 +909,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (existingBlock && !isFinalMessage) return;
 
       const block = await buildTurnContext({
-        agentId:     String(state.metadata.wsChannel || 'sulla-desktop'),
-        wsChannel:   String(state.metadata.wsChannel || 'sulla-desktop'),
         chatMode:    options.chatMode || 'text',
         isHeartbeat: options.isHeartbeat || false,
       });
