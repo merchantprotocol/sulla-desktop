@@ -17,7 +17,6 @@ import type {
 } from '../shared/agentEditor';
 
 const MAX_SHORT_TEXT = 10_000;
-const MAX_PROMPT_TEXT = 200_000;
 const MAX_LIST_ITEMS = 256;
 const MODEL_EFFORT_PATTERN = /^[a-z][a-z0-9_-]{1,31}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,99}$/;
@@ -103,7 +102,7 @@ function rejectUnknownKeys(
 function readString(
   record: RecordInput,
   key: string,
-  options: { required?: boolean; maxLength?: number; nonEmpty?: boolean } = {},
+  options: { required?: boolean; maxLength?: number; unbounded?: boolean; nonEmpty?: boolean } = {},
 ): string | undefined {
   if (!has(record, key)) {
     if (options.required) { throw new AgentEditorValidationError(`${ key } is required.`) }
@@ -115,7 +114,8 @@ function readString(
   if (options.nonEmpty && value.trim().length === 0) {
     throw new AgentEditorValidationError(`${ key } must not be empty.`);
   }
-  if (value.length > (options.maxLength ?? MAX_SHORT_TEXT)) {
+  const maxLength = options.unbounded ? undefined : options.maxLength ?? MAX_SHORT_TEXT;
+  if (maxLength !== undefined && value.length > maxLength) {
     throw new AgentEditorValidationError(`${ key } is too long.`);
   }
   return value;
@@ -314,7 +314,7 @@ function readCommonFields(
   const name = readString(record, 'name', { required, nonEmpty: required });
   const description = readString(record, 'description');
   const prompt = has(record, 'prompt')
-    ? readString(record, 'prompt', { maxLength: MAX_PROMPT_TEXT })
+    ? readString(record, 'prompt', { unbounded: true })
     : undefined;
   const provider = readString(record, 'provider');
   const runLocation = readString(record, 'runLocation');
@@ -328,14 +328,10 @@ function readCommonFields(
   const modelSlot = readModelSlot(record);
   const modelChoice = readModelChoice(record);
   const enabled = readBoolean(record, 'enabled');
-  const whenToCall = readString(record, 'whenToCall', {
-    maxLength: MAX_PROMPT_TEXT,
-  });
-  const whenNotToCall = readString(record, 'whenNotToCall', {
-    maxLength: MAX_PROMPT_TEXT,
-  });
-  const send = readString(record, 'send', { maxLength: MAX_PROMPT_TEXT });
-  const returns = readString(record, 'returns', { maxLength: MAX_PROMPT_TEXT });
+  const whenToCall = readString(record, 'whenToCall', { unbounded: true });
+  const whenNotToCall = readString(record, 'whenNotToCall', { unbounded: true });
+  const send = readString(record, 'send', { unbounded: true });
+  const returns = readString(record, 'returns', { unbounded: true });
   const costTier = readCostTier(record);
   const canCall = readStringList(record, 'canCall');
   const frontDoor = readNullableBoolean(record, 'frontDoor');

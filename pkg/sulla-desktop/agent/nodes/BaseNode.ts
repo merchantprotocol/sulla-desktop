@@ -368,23 +368,6 @@ function applyTemplateVars(text: string, vars: Record<string, string>): string {
   return result;
 }
 
-/** Maximum chars per bootstrap/agent .md file before truncation */
-const BOOTSTRAP_MAX_CHARS_PER_FILE = 20_000;
-/** Maximum total chars for all bootstrap/agent .md files combined */
-const BOOTSTRAP_TOTAL_MAX_CHARS = 150_000;
-
-/**
- * Truncate a file's content if it exceeds the per-file limit.
- * Keeps first 40% and last 40% with a truncation marker.
- */
-function truncateBootstrapContent(content: string, maxChars: number = BOOTSTRAP_MAX_CHARS_PER_FILE): string {
-  if (content.length <= maxChars) return content;
-  const headSize = Math.floor(maxChars * 0.4);
-  const tailSize = Math.floor(maxChars * 0.4);
-  const truncated = content.length - headSize - tailSize;
-  return `${ content.slice(0, headSize) }\n\n[... ${ truncated } chars truncated ...]\n\n${ content.slice(-tailSize) }`;
-}
-
 /**
  * Result of loading agent .md files, split into section overrides
  * and generic prompt content for the section-based builder.
@@ -460,7 +443,6 @@ export async function loadAgentPromptData(agentId: string, templateVarsPromise?:
 
     const sectionOverrides = new Map<string, string>();
     const genericSections: string[] = [];
-    let totalChars = 0;
 
     // Same rule as GraphRegistry.loadAgentConfig: with no usable .md prompt file, the definition's
     // own prompt_content is the agent prompt (processed like a prompt file below).
@@ -469,18 +451,8 @@ export async function loadAgentPromptData(agentId: string, templateVarsPromise?:
     }
 
     for (const [fileName, rawContent] of mdFiles) {
-      let content = String(rawContent).trim();
+      const content = String(rawContent).trim();
       if (!content) continue;
-
-      // Truncate if exceeds per-file limit
-      content = truncateBootstrapContent(content);
-
-      // Check total budget
-      if (totalChars + content.length > BOOTSTRAP_TOTAL_MAX_CHARS) {
-        console.warn(`[BaseNode] Bootstrap total budget exceeded for ${ agentId }, skipping ${ fileName }`);
-        break;
-      }
-      totalChars += content.length;
 
       // Check if this file name matches a registered section ID
       const sectionId = fileName.replace(/\.md$/, '');
