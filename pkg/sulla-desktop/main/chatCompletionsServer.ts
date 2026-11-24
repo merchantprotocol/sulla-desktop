@@ -1484,6 +1484,13 @@ export class ChatCompletionsServer {
           }
         }
 
+        // files/open needs the calling graph's chat transport to post an inline
+        // file card. Bind it only to the verified session's own live state.
+        if (session) {
+          const { ToolSessionChatTransport } = await import('@pkg/agent/tools/ToolSessionChatTransport');
+          new ToolSessionChatTransport().attach(tool, session.state);
+        }
+
         // Workflow activation tools mutate live graph state. The CLI endpoint
         // normally invokes stateless cached workers, so bind mutating workflow
         // calls to a fresh detached graph and start that graph only after the
