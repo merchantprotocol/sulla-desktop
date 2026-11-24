@@ -1488,7 +1488,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       try { graphAbort?.abort?.() } catch { /* graph is already unwinding */ }
       lifecycleAbort.abort();
     };
-    const createBridge = (provider: ProviderName, pinnedModel: string | undefined): Promise<ProviderCliBridgeLease> => {
+    const createBridge = (provider: ProviderName, _pinnedModel: string | undefined): Promise<ProviderCliBridgeLease> => {
       return (async() => {
         let integrationId: 'anthropic' | 'claude-code' | 'codex' | 'openai';
         let accountId: string;
@@ -1557,7 +1557,6 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           accountId,
           authMode,
           workspaceId,
-          models:         pinnedModel ? [pinnedModel] : undefined,
           advertisedHost:   mcpUrl.hostname,
           advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,
           signal:         lifecycleAbort.signal,
@@ -1587,9 +1586,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const bridgePool = new ProviderBridgeLeasePool({
       runProvider: run.provider,
       runModel:    run.model,
-      // A slot/tier alias ('primary', 'fast', …) is not a model id; pinning
-      // it denied every real request the CLI made through this bridge.
-      // 'fast' pins the light model the CLI is launched with instead.
+      // Leases are keyed per CLI launch model; a slot/tier alias ('primary', 'fast', …)
+      // maps to the real model the CLI is launched with.
       pinFor:      cliPinnedModelId,
       create:      createBridge,
     });
