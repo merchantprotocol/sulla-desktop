@@ -56,7 +56,6 @@
           ref="tree"
           class="worker-chart__tree"
           :class="{ 'worker-chart__tree--overlay': isNarrow }"
-          :style="treeStyle"
           @scroll="repositionPopover"
         >
           <TransitionGroup
@@ -65,6 +64,7 @@
             class="worker-chart__rows"
             role="list"
             aria-label="Agents"
+            :style="{ height: `${chart.contentHeight}px` }"
             @before-enter="beforeRowEnter"
             @before-leave="beforeRowLeave"
           >
@@ -248,9 +248,6 @@ const chart = computed(() => layout.layout(
   isNarrow.value && !chartOverlayOpen.value,
   collapsedDoneIds.value,
 ));
-const treeStyle = computed(() => ({
-  height: isNarrow.value && chartOverlayOpen.value ? '100%' : `${chart.value.contentHeight}px`,
-}));
 const activePopoverAgent = computed(() => layout.findAgent(props.root, selectedAgentId.value ?? hoveredAgentId.value));
 const doneIds = computed(() => layout.doneChildIds(props.root));
 const activitySamples = computed(() => activityWindow.recentSamples(activePopoverAgent.value?.activity, now.value));
@@ -639,10 +636,19 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
   flex: none;
   pointer-events: none;
 }
+.worker-chart__surface {
+  display: flex;
+  flex-direction: column;
+  width: 100px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
 .worker-chart__tree {
   position: relative;
-  width: 100px;
-  min-height: 100%;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
   max-height: calc(100vh - var(--chat-header-height, 52px));
   margin: 0;
   padding: 0;
@@ -652,7 +658,7 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
   scrollbar-color: var(--border-strong) transparent;
   overscroll-behavior: contain;
 }
-.worker-chart__rows { position: absolute; inset: 0; display: block; min-height: 100%; margin: 0; padding: 0; list-style: none; }
+.worker-chart__rows { position: relative; display: block; flex: none; min-height: 100%; margin: 0; padding: 0; list-style: none; }
 .worker-chart__row {
   position: absolute;
   display: block;
@@ -736,15 +742,17 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
 .worker-chart__surface--overlay {
   position: fixed;
   top: var(--chat-header-height, 52px);
+  left: auto;
   right: 0;
   bottom: 0;
   z-index: 30;
   width: 100px;
+  height: auto;
   overflow: hidden;
   background: var(--bg-surface);
   color: var(--text-primary);
 }
-.worker-chart__tree--overlay { height: 100%; max-height: none; }
+.worker-chart__tree--overlay { max-height: none; }
 .worker-chart__rail-trigger {
   position: absolute;
   inset: 0 0 0 auto;
