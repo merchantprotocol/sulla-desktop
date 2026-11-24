@@ -9,7 +9,10 @@ import { createCodexService } from '../../../languagemodels/CodexService';
 import { systemPromptFromMessages } from '../../../languagemodels/cliSystemPromptFile';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
-vi.mock('../../../nodes/BaseNode', () => ({ loadAgentPromptData: vi.fn() }));
+vi.mock('../../../nodes/BaseNode', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../nodes/BaseNode')>()),
+  loadAgentPromptData: vi.fn(),
+}));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
   getProviderExecutionTransport: vi.fn(), requireBrokeredContainerAuth: () => ({}), requireContainerToolConfig: () => ({}),
 }));
