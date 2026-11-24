@@ -859,7 +859,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Whole-loop liveness: stdout/stderr, every JSONL event, tool start and
       // result, and provider stream chunks relayed by the bridge (reasoning
       // tokens arrive there long before `codex exec --json` prints the item).
-      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, Date.now,
+      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, () => Date.now(),
         () => providerBridgeActivity.lastModelOutputAt(providerBridgePodId));
       let hungTool: RunToolInFlight | undefined;
       let lastBridgeOutputReportedAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
