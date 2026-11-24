@@ -309,12 +309,22 @@ describe('Capsule chat composer', () => {
   });
 
   it('keeps the RunControls stop and continue actions separate from the capsule send control', async() => {
-    // risk: execution control — Stop/Continue remain reachable above the pill and invoke controller transitions.
+    // risk: execution control — Stop appears during a run; Continue is reserved for a limit pause and resumes that run.
     controller.send('local run');
+    await flushPromises();
+    expect(capsule().get('.run-controls .stop').exists()).toBe(true);
     await capsule().get('.run-controls .stop').trigger('click');
     await flushPromises();
     expect(controller.isRunning.value).toBe(false);
+    expect(capsule().find('.run-controls .continue').exists()).toBe(false);
+
+    controller.send('start a second fixture run');
+    await flushPromises();
+    controller.transitionRun({ type: 'hitLimit' });
+    await flushPromises();
+    expect(capsule().get('.run-controls .continue').exists()).toBe(true);
     await capsule().get('.run-controls .continue').trigger('click');
+    await flushPromises();
     expect(controller.isRunning.value).toBe(true);
   });
 });
