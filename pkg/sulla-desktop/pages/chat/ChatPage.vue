@@ -40,7 +40,7 @@
       />
 
       <main ref="mainRef" class="main">
-        <div class="chat-column">
+        <div class="chat-column" :class="{ 'chart-gutter': chartInGutter }">
           <!--
             Composer backdrop: bottom fade so transcript
             content scrolling up doesn't fight the composer. Masked on the
@@ -56,15 +56,18 @@
             :suggestions="suggestions"
             @pick="onSuggestion"
           />
-          <Transcript v-else :reporting-level="reportingLevel" />
-          <Composer v-if="!props.supportSendBlocked" />
+          <Transcript v-else :reporting-level="reportingLevel">
+            <!-- The worker chart lives inside the transcript's scroll area, sticky on the right. -->
+            <template v-if="chartRoot" #aside>
+              <WorkerChart
+                :root="chartRoot"
+                :chat-column-width="appWidth"
+                @open-agent="openChartAgent"
+              />
+            </template>
+          </Transcript>
+          <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
         </div>
-        <WorkerChart
-          v-if="chartRoot"
-          :root="chartRoot"
-          :chat-column-width="appWidth"
-          @open-agent="openChartAgent"
-        />
       </main>
 
       <template v-if="!dockSide">
@@ -167,7 +170,6 @@ import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
 import type { ReportingLevel } from './models/ReportingLevel';
-import { TraceDisclosureController } from './components/transcript/traceDisclosure';
 import type { Thread }   from './models/Thread';
 import { asThreadId, type ThreadId } from './types/chat';
 
@@ -413,8 +415,6 @@ watch(
 
 // Provide so every descendant can call `useChatController()`.
 const reportingLevel = ref<ReportingLevel>('info');
-const traceDisclosure = new TraceDisclosureController();
-provide('chat:trace-disclosure', traceDisclosure);
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
@@ -729,6 +729,9 @@ const composerRef = ref<HTMLElement | null>(null);
 const appWidth = ref(typeof window === 'undefined' ? 1024 : window.innerWidth);
 
 function updateAppWidth(): void { appWidth.value = window.innerWidth }
+// The chart sits in the transcript's right gutter from 900px up; below that it is
+// WorkerChart's 24px overlay rail and the messages keep the full width.
+const chartInGutter = computed(() => hasTranscript.value && Boolean(chartRoot.value) && appWidth.value >= 900);
 onMounted(() => window.addEventListener('resize', updateAppWidth));
 onBeforeUnmount(() => window.removeEventListener('resize', updateAppWidth));
 
@@ -965,6 +968,13 @@ onBeforeUnmount(() => {
   height: 100%;
   overflow: hidden;
 }
+/*
+ * While the worker chart sits in the transcript's right gutter (100px chart +
+ * 16px inset), the composer and its backdrop stay to the left of it, where
+ * they were when the chart was a column beside the chat.
+ */
+.chat-column.chart-gutter { --chart-gutter-w: 116px; }
+.main .chat-column.chart-gutter :deep(.composer-wrap) { right: var(--chart-gutter-w); }
 
 /*
  * Composer backdrop — fades the transcript at the bottom of .main.
@@ -975,7 +985,7 @@ onBeforeUnmount(() => {
  */
 .composer-backdrop {
   position: absolute;
-  bottom: 0; left: 0; right: 0;
+  bottom: 0; left: 0; right: var(--chart-gutter-w, 0px);
   height: 180px;
   z-index: 10;
   pointer-events: none;

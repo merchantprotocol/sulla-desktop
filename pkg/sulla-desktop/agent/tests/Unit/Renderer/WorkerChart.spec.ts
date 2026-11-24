@@ -135,4 +135,26 @@ describe('WorkerChart', () => {
     await nextTick();
     expect(document.body.querySelector('[role="dialog"][aria-label="Worker chart"]')).toBeNull();
   });
+
+  it('renders a node for every child agent with no +N group, and keeps a finished agent visible until the linger delay ends', async () => {
+    // risk: agent visibility — every agent is listed, and a finished one shows its done state for a while before dropping off
+    const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id): WorkerChartAgent => ({
+      id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: id === 'f' ? 'done' : 'working',
+    }));
+    const wrapper = mountChart({ id: 'root', name: 'Sulla', initials: 'S', state: 'working', children });
+    await nextTick();
+
+    const ids = () => wrapper.findAll('[data-agent-id]').map(node => node.attributes('data-agent-id'));
+    expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e', 'worker-f']);
+    expect(wrapper.find('.worker-chart__node--group').exists()).toBe(false);
+    expect(wrapper.get('[data-agent-id="worker-f"]').attributes('data-state')).toBe('done');
+
+    vi.advanceTimersByTime(9_999);
+    await nextTick();
+    expect(ids()).toContain('worker-f');
+
+    vi.advanceTimersByTime(1);
+    await nextTick();
+    expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e']);
+  });
 });
