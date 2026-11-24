@@ -15,10 +15,16 @@ export function activateComposerSend(
   running: boolean,
   canSend: boolean,
   send: () => void,
+  continuable = false,
 ): void {
   if (running) {
     controller.stop();
     return;
   }
-  if (canSend) send();
+  if (canSend) {
+    send();
+    return;
+  }
+  // Only an explicit click on the Continue state resumes a limit-paused run.
+  if (continuable) controller.continueRun();
 }

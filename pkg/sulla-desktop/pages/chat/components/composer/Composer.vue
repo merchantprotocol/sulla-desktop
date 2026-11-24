@@ -10,7 +10,7 @@
     • Queue strip (visible only when queued messages exist)
     • Attachment tray (visible when staged attachments exist)
     • Command popover (slash / mention autocomplete)
-    • Run controls (stop / continue)
+    • Stop / limit-continue through the Send button (no separate run row)
     • Either the textarea OR the voice panel, mutually exclusive
     • Mic + paperclip buttons
     • Keyboard hints row below the input underline
@@ -93,9 +93,6 @@
             @choose="chooseEnvironment"
           />
         </div>
-      </div>
-      <div class="composer-run-row">
-        <RunControls />
       </div>
       <div class="composer-card">
         <div class="composer-top">
@@ -221,6 +218,7 @@
             <ComposerSend
               :running="remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value"
               :can-send="canSendDraft"
+              :continuable="canContinueFromSend"
               @send="onSend(draft)"
             />
           </div>
@@ -294,7 +292,6 @@ import EnvironmentPicker from './EnvironmentPicker.vue';
 import FilesAttachMenu, { type FilesReference } from './FilesAttachMenu.vue';
 import HeartbeatControl   from './HeartbeatControl.vue';
 import QueueStrip         from './QueueStrip.vue';
-import RunControls        from './RunControls.vue';
 import ShelfPanel         from './ShelfPanel.vue';
 import StatusRollup       from './StatusRollup.vue';
 import ThreadStatusLine   from './ThreadStatusLine.vue';
@@ -313,6 +310,7 @@ import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
 import { defaultSlashCommands, type SlashCommand, type MentionTarget } from '../../models/Command';
+import { canContinue } from '../../models/RunState';
 import { AttachmentService } from '../../services/AttachmentService';
 import { VoiceSessionAdapter } from '../../services/VoiceSessionAdapter';
 import { RemoteChatSession, type RemoteChatTransport, type RemoteDevice, type RemoteModel } from '../../services/RemoteChatSession';
@@ -459,6 +457,9 @@ const placeholder = computed(() => {
 const canSendDraft = computed(() => !filesImporting.value && (remoteChat.remote.value
   ? !!draft.value.trim() && !controller.staged.value.length && !useCases.intent.value && !replyTo.value && remoteChat.canSend()
   : (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value)));
+// The Send button turns into Continue only for a local run paused at its step
+// limit with nothing typed; it resumes on click only, never on Enter.
+const canContinueFromSend = computed(() => !remoteChat.remote.value && canContinue(controller.runState.value));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
 
@@ -955,9 +956,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-caret { color: var(--text-muted); font-size: 9px; }
 .composer-agent-picker :deep(.environment-pill) { height: 34px; box-shadow: var(--elev-rest, var(--shadow-sm)); }
-.composer-run-row { display: flex; justify-content: flex-end; min-height: 0; margin: 0 10px 8px; }
-.composer-run-row:has(.run-controls) { min-height: 30px; }
-.composer-run-row :deep(.run-controls) { align-items: center; }
 .composer-card { position: relative; display: block; min-width: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
 .composer-top { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0 10px 10px; }
 .remote-chat-status { min-width: 0; padding: 4px 8px; border-radius: 10px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-surface) 88%, transparent); font-size: 12px; }
@@ -1008,7 +1006,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-agent-picker select.remote-model { width: min(120px, calc(100% - 38px)); min-width: 84px; padding: 0 4px; font-size: 11px; }
   .composer-agent-picker :deep(.environment-pill) { width: 34px; justify-content: center; padding: 0; }
   .composer-agent-picker :deep(.environment-pill span:last-child) { display: none; }
-  .composer-run-row { margin: 0 4px 8px; }
   .composer { gap: 2px; padding: 0 6px; }
   .composer-top { margin: 0 4px 8px; }
   .composer-top .usecase-strip { max-width: 100%; overflow: hidden; }
