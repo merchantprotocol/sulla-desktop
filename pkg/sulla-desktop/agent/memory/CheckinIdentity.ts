@@ -22,7 +22,7 @@ export class CheckinIdentity {
   private static readonly statusRolePattern =
     /\b(?:turn|check[ -]?in|status|progress|report|result|update|wake[- ]?up)\b.{0,60}\b(?:manager|coding[- ]manager|agent|worker|heartbeat|orchestrator)\b/i;
   private static readonly humanDecisionPattern =
-    /\b(?:rule|decision|approval|approved|correction)\b|\b(?:jonathon|the user|user|human|owner)\b.{0,80}\b(?:said|asked|approved|decided|confirmed|corrected|requested|chose|wrote)\b|(?:^|\n)\s*(?:jonathon|the user|user|human)\s*:\s*["“]?/i;
+    /\b(?:rule|decision|approval|approved|correction)\b|\b(?:jonathon|the user|user|human|owner)\b.{0,80}\b(?:said|asked|approved|decided|confirmed|corrected|requested|chose|wrote)\b|(?:^|\n)\s*>?\s*(?:jonathon|the user|user|human)\s*:\s*["“]?/i;
   private static readonly attributedQuotePattern =
     /\b(?:jonathon|the user|user|human|owner)\b.{0,80}\b(?:said|asked|quoted|wrote)\b.{0,30}["“]/i;
 

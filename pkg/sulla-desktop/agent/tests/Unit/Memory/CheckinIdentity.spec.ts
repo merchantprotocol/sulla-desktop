@@ -52,6 +52,7 @@ describe('CheckinIdentity', () => {
     ['human approval statement', { id: 'episode-5', text: 'Jonathon approved X for agent-job-1795493855725-88; the manager reported progress.' }],
     ['rule statement', { id: 'episode-6', text: 'RULE: keep one check-in per agent-job-1795493855725-88, status reported.' }],
     ['quoted user statement', { id: 'episode-7', text: 'The user said: “keep only the last check-in” for agent-job-1795493855725-88.' }],
+    ['speaker-labeled user quote', { id: 'episode-10', text: '> Jonathon: “Keep only the last check-in” for agent-job-1795493855725-88.' }],
     ['missing identity', { id: 'episode-8', text: 'Manager status update: the epic is still in progress.' }],
     ['non-status note with an identity', { id: 'episode-9', text: 'This design note mentions agent-job-1795493855725-88 and describes a layout constraint.' }],
   ])('returns null for %s', (_label, episode) => {
