@@ -48,18 +48,7 @@ export interface WorkerChartAgentRow {
   y: number;
 }
 
-export interface WorkerChartGroupRow {
-  kind: 'group';
-  key: string;
-  parentId: string;
-  depth: number;
-  x: number;
-  y: number;
-  hiddenCount: number;
-  expanded: boolean;
-}
-
-export type WorkerChartRow = WorkerChartAgentRow | WorkerChartGroupRow;
+export type WorkerChartRow = WorkerChartAgentRow;
 
 export interface WorkerChartLayoutResult {
   rows: WorkerChartRow[];
@@ -67,14 +56,15 @@ export interface WorkerChartLayoutResult {
 }
 
 export class WorkerChartLayout {
+  /** How long a finished agent stays on the chart, with its done styling, before it drops off. */
+  public static readonly doneLingerMs = 10_000;
+
   private readonly rowHeight = 26;
   private readonly railRowHeight = 13;
   private readonly indent = 14;
-  private readonly urgentStates = new Set<WorkerChartState>(['needs-you', 'failed']);
 
   public layout(
     root: WorkerChartAgent | null,
-    expandedParentIds: ReadonlySet<string>,
     rail: boolean,
     collapsedDoneIds: ReadonlySet<string>,
   ): WorkerChartLayoutResult {
@@ -98,40 +88,7 @@ export class WorkerChartLayout {
       y += rowHeight;
 
       const children = (agent.children ?? []).filter(child => !collapsedDoneIds.has(child.id));
-      if (children.length > 3 && !expandedParentIds.has(agent.id)) {
-        const visibleIds = new Set(this.visibleSiblings(children).map(child => child.id));
-        for (const child of children) {
-          if (visibleIds.has(child.id)) addNode(child, agent.id, depth + 1);
-        }
-        rows.push({
-          kind: 'group',
-          key: `group:${agent.id}`,
-          parentId: agent.id,
-          depth: depth + 1,
-          x: rail ? 7 : 8 + (depth + 1) * indent,
-          y,
-          hiddenCount: children.length - visibleIds.size,
-          expanded: false,
-        });
-        y += rowHeight;
-        return;
-      }
-
       for (const child of children) addNode(child, agent.id, depth + 1);
-
-      if (children.length > 3) {
-        rows.push({
-          kind: 'group',
-          key: `group:${agent.id}`,
-          parentId: agent.id,
-          depth: depth + 1,
-          x: rail ? 7 : 8 + (depth + 1) * indent,
-          y,
-          hiddenCount: 0,
-          expanded: true,
-        });
-        y += rowHeight;
-      }
     };
 
     addNode(root, null, 0);
@@ -164,16 +121,6 @@ export class WorkerChartLayout {
     return visit(root);
   }
 
-  private visibleSiblings(children: readonly WorkerChartAgent[]): WorkerChartAgent[] {
-    const urgent = children.filter(child => this.urgentStates.has(child.state));
-    const keepCount = Math.max(2, urgent.length);
-    const visibleIds = new Set(urgent.map(child => child.id));
-    for (const child of children) {
-      if (visibleIds.size >= keepCount) break;
-      visibleIds.add(child.id);
-    }
-    return children.filter(child => visibleIds.has(child.id));
-  }
 }
 
 export class WorkerChartActivityWindow {
