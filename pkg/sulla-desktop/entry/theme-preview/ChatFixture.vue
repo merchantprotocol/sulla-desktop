@@ -1,4 +1,65 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
-<template><div class="chat-fixture"><ModeRail active="chat" /><section class="chat-main"><header><strong>Sulla</strong><span>Studio theme review</span><button>Share</button></header><div class="transcript"><div class="user"><b>You</b><p>Show me how the new Studio theme handles a complete conversation.</p></div><div class="assistant"><b>Sulla</b><div class="markdown"><h2>Theme preview</h2><p>This is a real renderer fixture with <strong>Markdown</strong>, lists, and inline <code>tokens</code>.</p><ul><li>Typography and spacing</li><li>Surface and border contrast</li></ul></div></div><div class="assistant"><b>Sulla · HTML</b><article class="html-card"><h3>Preview ready</h3><p>The HTML message surface follows the selected theme.</p><button>Open details</button></article></div><div class="tool-card"><div><span>✓</span><strong>read_file</strong><small>Completed in 42 ms</small></div><pre>pkg/sulla-desktop/assets/styles/themes.css</pre></div></div><footer class="composer"><textarea aria-label="Message" placeholder="Message Sulla…"></textarea><button aria-label="Send">↑</button></footer></section></div></template>
-<script setup lang="ts">import ModeRail from '@pkg/pages/chat/components/chrome/ModeRail.vue';</script>
-<style scoped>.chat-fixture{height:100%;display:flex;background:var(--bg,var(--background,#fff));color:var(--text,var(--foreground,#171717))}.chat-main{min-width:0;flex:1;display:grid;grid-template-rows:54px 1fr auto}.chat-main>header{display:flex;align-items:center;gap:14px;padding:0 22px;border-bottom:1px solid var(--border,#ddd)}header span{color:var(--text-muted,#777)}header button{margin-left:auto}.transcript{width:min(820px,calc(100% - 48px));margin:0 auto;padding:36px 0 24px;display:grid;gap:28px}.user{justify-self:end;max-width:72%;text-align:right}.user p{padding:16px 20px;border-radius:22px;background:var(--surface-2,#eee);text-align:left}.assistant{max-width:78%}.assistant b,.user b{font-size:12px;color:var(--text-muted,#777)}.markdown{line-height:1.55}.html-card,.tool-card{margin-top:8px;padding:18px;border:1px solid var(--border,#ddd);border-radius:14px;background:var(--surface-1,#fafafa)}.html-card h3{margin-top:0}.tool-card>div{display:flex;gap:10px;align-items:center}.tool-card small{margin-left:auto;color:var(--text-muted,#777)}.tool-card pre{margin:12px -6px -6px;padding:12px;border-radius:8px;background:var(--surface-2,#eee);overflow:auto}.composer{width:min(820px,calc(100% - 48px));margin:0 auto 22px;display:flex;align-items:end;gap:10px;padding:12px;border:1px solid var(--border,#ccc);border-radius:18px;background:var(--surface-1,#fff)}textarea{min-height:52px;flex:1;resize:none;border:0;outline:0;background:transparent;color:inherit;font:inherit}.composer button{width:36px;height:36px;border-radius:50%}</style>
+<template>
+  <div class="chat-root chat-fixture">
+    <ModeRail active="chat" />
+    <section class="chat-main">
+      <header>
+        <strong>Sulla</strong>
+        <span>Studio theme review</span>
+        <button class="fixture-run" type="button" @click="toggleRun">{{ controller.isRunning.value ? 'Stop preview run' : 'Preview running state' }}</button>
+      </header>
+      <div class="transcript">
+        <div class="user"><b>You</b><p>Show me how the real Capsule composer handles this conversation.</p></div>
+        <div class="assistant"><b>Sulla</b><div class="markdown"><h2>Theme preview</h2><p>This fixture mounts the production chat composer and the real chat controller. It keeps the transcript illustrative and does not send anything to a service.</p><ul><li>Theme tokens update live</li><li>Preview running state toggles the Capsule halo</li></ul></div></div>
+        <div class="assistant"><b>Sulla · HTML</b><article class="html-card"><h3>Preview ready</h3><p>The composer below is the actual <code>Composer.vue</code>, not a static mock.</p></article></div>
+      </div>
+      <Composer :reporting-level="'debug'" />
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { onBeforeUnmount, provide, ref } from 'vue';
+import ModeRail from '@pkg/pages/chat/components/chrome/ModeRail.vue';
+import Composer from '@pkg/pages/chat/components/composer/Composer.vue';
+import { ChatController } from '@pkg/pages/chat/controller/ChatController';
+import { provideChatController } from '@pkg/pages/chat/controller/useChatController';
+import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import type { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
+
+const controller = new ChatController();
+provideChatController(controller);
+provide(AGENT_STATE_CLIENT_KEY, { snapshot: ref({ rows: [] }) } as unknown as AgentStateClient);
+provide('chat:activity-context', { backendThreadId: ref(undefined) });
+provide('chat:is-active', ref(true));
+
+function toggleRun(): void {
+  if (controller.isRunning.value) controller.stop();
+  else controller.send('Local theme-preview run.');
+}
+
+onBeforeUnmount(() => controller.dispose());
+</script>
+
+<style scoped>
+.chat-fixture { height: 100%; display: flex; background: var(--bg-surface); color: var(--text-primary); }
+.chat-main { position: relative; min-width: 0; flex: 1; display: grid; grid-template-rows: 54px minmax(0, 1fr); }
+.chat-main > header { display: flex; align-items: center; gap: 14px; padding: 0 22px; border-bottom: 1px solid var(--border-default); }
+.chat-main > header span { color: var(--text-muted); }
+.fixture-run { margin-left: auto; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-secondary); background: var(--bg-surface); cursor: pointer; }
+.fixture-run:hover { border-color: var(--accent); }
+.transcript { width: min(820px, calc(100% - 48px)); min-width: 0; margin: 0 auto; padding: 36px 0 180px; display: grid; align-content: start; gap: 28px; overflow: auto; }
+.user { justify-self: end; max-width: 72%; text-align: right; }
+.user p { padding: 16px 20px; border-radius: 22px; background: var(--bg-surface-alt); text-align: left; }
+.assistant { max-width: 78%; }
+.assistant b, .user b { font-size: 12px; color: var(--text-muted); }
+.markdown { line-height: 1.55; }
+.html-card { margin-top: 8px; padding: 18px; border: 1px solid var(--border-default); border-radius: 14px; background: var(--bg-surface); }
+.html-card h3 { margin-top: 0; }
+@media (max-width: 540px) {
+  .chat-main > header { gap: 8px; padding: 0 10px; }
+  .chat-main > header span { display: none; }
+  .fixture-run { padding: 5px 7px; font-size: 11px; }
+  .transcript { width: calc(100% - 24px); padding-top: 20px; }
+}
+</style>

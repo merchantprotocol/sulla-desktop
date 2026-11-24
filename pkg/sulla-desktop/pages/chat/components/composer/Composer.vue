@@ -26,7 +26,6 @@
     class="composer-wrap"
   >
     <div class="composer-inner">
-      <RunControls />
       <CommandPopover @choose="choosePopoverItem" />
       <ShelfPanel
         v-if="shelfRequest"
@@ -35,35 +34,62 @@
         @close="shelfRequest = null"
       />
       <!-- Kept mounted in the side dock (it also drives the tab dots); the tabs and lanes show its content there. -->
-      <div class="dock-status">
-        <ThreadStatusLine>
-          <template #end>
-            <span
-              class="dock-divider"
-              aria-hidden="true"
-            />
-            <button
-              type="button"
-              class="dock-move"
-              :class="{ on: drawerOpen }"
-              :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
-              :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
-              :aria-pressed="drawerOpen"
-              @click="setPosition(drawerOpen ? 'bottom' : 'side')"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              ><rect
-                x="3"
-                y="4"
-                width="18"
-                height="16"
-                rx="2"
-              /><path d="M15 4v16" /></svg>
-            </button>
-          </template>
-        </ThreadStatusLine>
+      <div class="composer-up-row">
+        <div class="dock-status">
+          <ThreadStatusLine>
+            <template #end>
+              <span class="dock-divider" aria-hidden="true" />
+              <button
+                type="button"
+                class="dock-move"
+                :class="{ on: drawerOpen }"
+                :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
+                :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
+                :aria-pressed="drawerOpen"
+                @click="setPosition(drawerOpen ? 'bottom' : 'side')"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+              </button>
+            </template>
+          </ThreadStatusLine>
+        </div>
+        <div class="composer-agent-picker">
+          <button
+            v-if="!remoteChat.remote.value"
+            class="model-btn"
+            type="button"
+            :aria-label="`Choose model: ${selectionLabel}`"
+            :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle"
+            :style="{ '--usage': `${usagePercent}%` }"
+            @click="controller.openModal('model')"
+          >
+            <span class="model-avatar">{{ modelInitial }}</span>
+            <span class="model-name">{{ selectionLabel }}</span>
+            <span class="model-caret" aria-hidden="true">▾</span>
+          </button>
+          <select
+            v-else
+            class="model-btn remote-model"
+            aria-label="Model"
+            :value="remoteModelKey"
+            @change="onRemoteModel"
+          >
+            <option value="">Choose model</option>
+            <option v-for="model in remoteChat.models.value" :key="modelKey(model)" :value="modelKey(model)">
+              {{ model.modelId }} · {{ model.providerId }}
+            </option>
+          </select>
+          <EnvironmentPicker
+            v-if="remoteChat.available.value || remoteChat.remote.value"
+            :selected="remoteSelected"
+            :devices="remoteDevices"
+            :bound="Boolean(remoteChat.bound.value || controller.messages.value.length)"
+            @choose="chooseEnvironment"
+          />
+        </div>
+      </div>
+      <div class="composer-run-row">
+        <RunControls />
       </div>
       <div class="composer-card">
         <div class="composer-top">
@@ -113,15 +139,6 @@
               </label>
             </div>
           </div>
-
-        </div>
-
-        <div
-          :class="['composer', { recording: isRecording }]"
-          @mousedown="focusFromBar"
-        >
-          <span class="glyph">—</span>
-
           <div v-if="useCases.open.value" class="usecase-strip">
             <div class="usecase-strip-hd">
               <span class="usecase-lbl">Use cases</span>
@@ -154,6 +171,20 @@
               </li>
             </ul>
           </div>
+        </div>
+
+        <div
+          class="composer-capsule"
+          :class="{ 'is-running': isRunActive, 'document-hidden': isDocumentHidden }"
+        >
+          <div class="composer-halo" aria-hidden="true" />
+          <div
+          :class="['composer', 'composer-pill', { recording: isRecording }]"
+          @mousedown="focusFromBar"
+        >
+          <span class="glyph">—</span>
+          <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
+          <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
 
           <!-- Text mode -->
           <ComposerInput
@@ -179,31 +210,16 @@
           />
 
           <div class="composer-tools" :class="{ 'remote-enabled': remoteChat.available.value || remoteChat.remote.value }">
-            <ComposerAttach :open="filesMenuOpen" @pick="toggleFilesMenu" />
-            <FilesAttachMenu :open="filesMenuOpen" :recent="recentFiles" :recording="screenRecording" :uploading="filesImporting" :upload-error="filesImportError" @browse="browseFiles" @upload="uploadFromMac" @choose="stageFilesReference" @screenshot="takeScreenshot" @record="toggleScreenRecording" />
             <HeartbeatControl />
-            <button v-if="!remoteChat.remote.value" class="model-btn" type="button" :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle" :style="{ '--usage': `${usagePercent}%` }" @click="controller.openModal('model')">
-              <span class="model-avatar">{{ modelInitial }}</span>
-              <span class="model-name">{{ selectionLabel }}</span>
-              <span class="model-caret">▾</span>
-            </button>
-            <select v-else class="model-btn remote-model" aria-label="Model" :value="remoteModelKey" @change="onRemoteModel">
-              <option value="">Choose model</option>
-              <option v-for="model in remoteChat.models.value" :key="modelKey(model)" :value="modelKey(model)">
-                {{ model.modelId }} · {{ model.providerId }}
-              </option>
-            </select>
-            <EnvironmentPicker v-if="remoteChat.available.value || remoteChat.remote.value"
-              :selected="remoteSelected" :devices="remoteDevices"
-              :bound="Boolean(remoteChat.bound.value || controller.messages.value.length)"
-              @choose="chooseEnvironment" />
-            <span class="tool-spacer" />
             <button
-              class="usage-meter" type="button" title="Context usage"
+              class="usage-meter"
+              type="button"
+              :aria-label="`Context usage: ${usagePercent}%`"
+              title="Context usage"
               @click="controller.openModal('tokens')"
             >
               <span class="usage-ring" :style="{ '--usage': `${usagePercent}%` }" />
-              <span>{{ usagePercent }}%</span>
+              <span class="usage-value">{{ usagePercent }}%</span>
             </button>
             <ComposerMic :live="isRecording" @toggle="toggleVoice" />
             <ComposerSend
@@ -213,6 +229,7 @@
             />
           </div>
 
+        </div>
         </div>
       </div>
 
@@ -344,6 +361,11 @@ const remoteTransport: RemoteChatTransport = {
 const remoteChat = new RemoteChatSession(controller, remoteTransport, text => {
   if (draft.value.trim() === text) draft.value = '';
 }, () => tabActive?.value !== false);
+const isRunActive = computed(() => remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value);
+const isDocumentHidden = ref(false);
+function updateDocumentVisibility(): void {
+  isDocumentHidden.value = document.visibilityState === 'hidden' || !document.hasFocus();
+}
 const modelKey = (model: RemoteModel) => JSON.stringify([model.providerId, model.modelId]);
 const remoteModelKey = computed(() => remoteChat.model.value ? modelKey(remoteChat.model.value) : '');
 const remoteDevices = remoteChat.pickerDevices;
@@ -670,6 +692,7 @@ function onSend(text: string): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
+  if (e.isComposing || e.keyCode === 229) return;
   const p = controller.popover.value;
   if (!p.open && e.key === 'Escape' && replyTo.value) {
     e.preventDefault();
@@ -819,6 +842,9 @@ onBeforeUnmount(() => {
   remoteChat.dispose();
   controller.openRemoteDiscovery = undefined;
   clearInterval(remoteRefreshTimer);
+  document.removeEventListener('visibilitychange', updateDocumentVisibility);
+  window.removeEventListener('blur', updateDocumentVisibility);
+  window.removeEventListener('focus', updateDocumentVisibility);
   window.removeEventListener('online', resumeRemote);
   window.removeEventListener('focus', resumeRemote);
   voiceAdapter.dispose();
@@ -881,6 +907,10 @@ async function prefillFirstRunStarter(): Promise<void> {
 }
 
 onMounted(() => {
+  updateDocumentVisibility();
+  document.addEventListener('visibilitychange', updateDocumentVisibility);
+  window.addEventListener('blur', updateDocumentVisibility);
+  window.addEventListener('focus', updateDocumentVisibility);
   remoteChat.mount();
   controller.openRemoteDiscovery = id => { void openDiscoveredThread(id) };
   if (activityContext.tabId) {
@@ -909,214 +939,95 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 
 <style scoped>
 .composer-wrap {
-  position: absolute; bottom: 12px; left: 12%; right: 12%;
-  z-index: 15;
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 15;
+  box-sizing: border-box; padding: 0 20px 14px;
 }
-.chat-root.artifact-open .composer-wrap { left: 10%; right: 10%; }
-.composer-inner {
-  max-width: 960px; margin: 0 auto;
-  position: relative;
-}
-.chat-root.artifact-open .composer-inner { max-width: 720px; }
-.composer-card, .composer-top, .composer-tools, .classic-guide { display: contents; }
-.model-btn, .usage-meter, .tool-spacer, .noir-guide { display: none; }
-
-.composer {
-  display: flex; align-items: baseline; gap: 18px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--accent-glow);
-  transition: border-color 0.2s ease;
-}
-.composer:focus-within {
-  border-bottom-color: var(--accent-hover);
-  box-shadow: 0 14px 20px -14px var(--accent-glow);
-}
-.composer.recording { border-bottom-color: var(--accent-hover); }
-.composer.recording .glyph { color: var(--accent-hover); animation: chat-pulse 1.2s infinite; }
-
-.glyph {
-  font-family: var(--font-display); font-style: italic; font-size: 24px;
-  color: var(--accent-hover); line-height: 0.6; flex-shrink: 0;
-}
-
-.hints {
-  display: flex; justify-content: flex-end; gap: 18px;
-  margin-top: 8px;
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.3em;
-  text-transform: uppercase; color: var(--text-muted);
-}
-.hints span::before {
-  content: ""; display: inline-block; width: 1px; height: 9px;
-  background: var(--border-default); margin-right: 14px; vertical-align: -1px;
-}
-.hints span:first-child::before { display: none; }
-.hints kbd {
-  font-family: var(--font-mono); font-size: 9px;
-  padding: 1px 5px; border-radius: 3px;
-  background: var(--accent-dim);
-  border: 1px solid var(--accent-dim);
-  color: var(--text-muted); margin-right: 4px;
-}
-
-.hidden-file-input {
-  display: none;
-}
-
-/* Noir is a visual skin over the existing controller and keyboard behavior. */
-/* The dock is solid: see-through glass let transcript text show behind the status details. */
-.composer-wrap {
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 0 20px 14px;
-}
-.composer-inner {
-  max-width: 760px;
-}
+.composer-inner { position: relative; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
 .chat-root.artifact-open .composer-inner { max-width: 760px; }
-.composer-card {
-  display: block;
-  position: relative;
-  border-radius: 22px;
-  background: color-mix(in srgb, var(--bg-surface-alt) 72%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 87.5%, transparent), 0 16px 44px var(--bg-overlay);
-  backdrop-filter: blur(22px) saturate(135%);
-  transition: box-shadow 0.3s cubic-bezier(.22, 1, .36, 1),
-    transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
+.composer-up-row { display: flex; align-items: flex-end; gap: 12px; min-width: 0; margin-bottom: 12px; padding: 0 10px; }
+.dock-status { flex: 1 1 auto; min-width: 0; max-width: 470px; }
+.dock-status :deep(.ta) { border-bottom: 0; }
+.dock-status :deep(.ta-row), .dock-status :deep(.ta-row-working), .dock-status :deep(.ta-row-you), .dock-status :deep(.ta-row-stalled) { border-radius: 99px; background: transparent; }
+.dock-status :deep(.ta-line) { min-height: 34px; height: 34px; padding: 0 14px; border-radius: 99px; background: var(--bg-surface); box-shadow: var(--elev-rest, var(--shadow-sm)); }
+.dock-status :deep(.ta-line:hover:not(:disabled)) { background: var(--bg-surface-hover, var(--bg-surface)); }
+.composer-agent-picker { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 58%; margin-left: auto; }
+.composer-agent-picker .model-btn {
+  display: inline-flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 190px; height: 34px;
+  padding: 0 14px 0 6px; border: 0; border-radius: 99px; color: var(--text-secondary); background: var(--bg-surface);
+  box-shadow: var(--elev-rest, var(--shadow-sm)); font: 500 12.5px var(--font-body); cursor: pointer;
 }
-.composer-card:focus-within {
-  transform: translateY(-2px);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-hover) 55%, transparent),
-    0 0 0 4px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 44px color-mix(in srgb, var(--accent) 16%, transparent),
-    0 20px 56px var(--bg-page);
+.composer-agent-picker .model-btn:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface)); }
+.composer-agent-picker .remote-model { padding: 0 10px; }
+.model-avatar { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); font-size: 11px; font-weight: 600; }
+.model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-caret { color: var(--text-muted); font-size: 9px; }
+.composer-agent-picker :deep(.environment-pill) { height: 34px; box-shadow: var(--elev-rest, var(--shadow-sm)); }
+.composer-run-row { display: flex; justify-content: flex-end; min-height: 0; margin: 0 10px 8px; }
+.composer-run-row:has(.run-controls) { min-height: 30px; }
+.composer-run-row :deep(.run-controls) { align-items: center; }
+.composer-card { position: relative; display: block; min-width: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+.composer-top { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 0 10px 10px; }
+.remote-chat-status { min-width: 0; padding: 4px 8px; border-radius: 10px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-surface) 88%, transparent); font-size: 12px; }
+.remote-chat-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+.remote-chat-dot.live { background: var(--status-success, var(--accent)); }
+.composer-capsule { position: relative; isolation: isolate; min-width: 0; }
+.composer-halo {
+  position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none; border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 56%, transparent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
+  filter: blur(10px); opacity: 0; transform: scale(1.03, 1.2); transition: opacity .8s ease, transform .8s ease; will-change: opacity, transform;
 }
-.composer-card {
-  background: var(--bg-surface);
-  box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float);
-}
-/* The "you can type here" ring is for the message box, not for clicks in the status details. */
-.composer-card:focus-within:not(:has(.composer:focus-within)) { transform: none; box-shadow: inset 0 0 0 1px var(--border-default), var(--elev-float); }
-.composer-card:focus-within {
-  /* Clear "you can type here" ring: solid accent edge plus a visible halo. */
-  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent), var(--elev-float);
-}
-.composer-top {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 10px;
+.composer-capsule.is-running .composer-halo { opacity: .72; animation: composer-capsule-breathe 4.8s ease-in-out infinite; }
+.composer-capsule.document-hidden .composer-halo { visibility: hidden; animation-play-state: paused; transition: none; }
+@keyframes composer-capsule-breathe {
+  0%, 100% { opacity: .38; transform: scale(1.01, 1.06); }
+  50% { opacity: .92; transform: scale(1.05, 1.2); }
 }
 .composer {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  min-height: 102px;
-  padding: 0;
-  flex-wrap: wrap;
-  border: 0;
-  box-shadow: none;
+  position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
+  min-height: 64px; height: auto; padding: 0 10px; border: 0; border-radius: 32px; background: var(--bg-surface);
+  box-shadow: inset 0 0 0 1px var(--border-subtle), var(--elev-float); transition: box-shadow .18s ease;
 }
-.composer:focus-within,
-.composer.recording { border: 0; box-shadow: none; }
-.glyph { display: none; }
-.composer-tools {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  width: 100%;
-  min-height: 52px;
-  padding: 6px 8px 8px;
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 43.75%, transparent);
-}
-.model-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  max-width: 190px;
-  margin: 0 4px;
-  padding: 0 10px 0 3px;
-  border: 0;
-  border-radius: 15px;
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--border-default) 37.5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-default) 62.5%, transparent);
-  font: 500 12.5px var(--font-body);
-  cursor: pointer;
-}
-.remote-enabled .model-btn { display: inline-flex; }
-.remote-chat-dot { display: inline-block; width: 6px; height: 6px; background: var(--text-muted); border-radius: 50%; }
-.remote-chat-dot.live { background: var(--status-success, var(--accent)); }
-.remote-model { padding: 0 9px; }
-.remote-chat-status { padding: 4px 8px; font-size: 12px; color: var(--text-secondary); }
-.model-btn:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.model-avatar {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  border-radius: 50%;
-  color: var(--text-on-accent);
-  background: linear-gradient(135deg, #a8c0dc, var(--accent));
-  font-size: 11px;
-  font-weight: 700;
-}
-.model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.model-caret { color: var(--text-dim); font-size: 9px; }
-.tool-spacer { display: block; flex: 1; }
-.usage-meter {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  border: 0;
-  color: var(--text-dim);
-  background: transparent;
-  font: 11px var(--font-mono);
-  cursor: pointer;
-}
-.usage-ring {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: conic-gradient(var(--accent-hover) 0 var(--usage), color-mix(in srgb, var(--border-default) 75%, transparent) var(--usage) 100%);
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px));
-  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px));
-}
-.hints {
-  position: relative;
-  justify-content: center;
-  min-height: 14px;
-  margin-top: 9px;
-  gap: 0;
-  color: var(--text-dim);
-  font-size: 10.5px;
-  letter-spacing: 0;
-  text-transform: none;
-}
+.composer:focus-within { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 45%, var(--border-default)), var(--elev-float); }
+.composer.recording .glyph, .glyph { display: none; }
+.composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
+.usage-meter { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 0 0 44px; width: 44px; height: 44px; padding: 0 4px; border: 0; border-radius: 50%; color: var(--text-dim); background: transparent; font: 11px var(--font-mono); cursor: pointer; }
+.usage-meter:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.usage-ring { width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; background: conic-gradient(var(--accent) 0 var(--usage), color-mix(in srgb, var(--border-default) 75%, transparent) var(--usage) 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px)); }
+.hints { position: relative; display: flex; justify-content: center; gap: 0; min-height: 14px; margin-top: 9px; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
 .classic-guide { display: none; }
-.noir-guide { display: flex; gap: 4px; }
+.noir-guide { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
 .noir-guide span::before { display: none; }
-.hints kbd {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  color: var(--text-muted);
-  background: transparent;
-  font-size: inherit;
-  font-weight: 500;
-}
+.hints kbd { margin: 0; padding: 0; border: 0; color: var(--text-muted); background: transparent; font-size: inherit; font-weight: 500; }
 .noir-guide span:not(:last-child)::after { content: " ·"; color: var(--text-dim); }
+.hidden-file-input { display: none; }
+.composer-wrap :deep(button:focus-visible), .composer-wrap :deep(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
+.composer-top .usecase-strip { margin: 0; }
+.reply-chip { margin: 0; }
 
 @media (max-width: 680px) {
   .composer-wrap { padding-right: 10px; padding-left: 10px; }
-  .model-name, .usage-meter > span:last-child { display: none; }
+  .composer-agent-picker { gap: 6px; }
+  .composer-agent-picker .model-btn { padding-right: 8px; }
+  .model-name, .model-caret, .usage-value { display: none; }
+  .composer-agent-picker :deep(.environment-pill span:first-of-type) { display: none; }
 }
-
+@media (max-width: 540px) {
+  .composer-up-row { gap: 8px; padding: 0 4px; }
+  .composer-agent-picker { max-width: 46%; gap: 4px; }
+  .composer-agent-picker button.model-btn { width: 34px; justify-content: center; padding: 0 6px; }
+  .composer-agent-picker select.remote-model { width: min(120px, calc(100% - 38px)); min-width: 84px; padding: 0 4px; font-size: 11px; }
+  .composer-agent-picker :deep(.environment-pill) { width: 34px; justify-content: center; padding: 0; }
+  .composer-agent-picker :deep(.environment-pill span:last-child) { display: none; }
+  .composer-run-row { margin: 0 4px 8px; }
+  .composer { gap: 2px; padding: 0 6px; }
+  .usage-meter { flex-basis: 38px; width: 38px; height: 38px; }
+  .composer-top { margin: 0 4px 8px; }
+  .composer-top .usecase-strip { max-width: 100%; overflow: hidden; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .composer-card { animation: none; transition: none; }
+  .composer-capsule.is-running .composer-halo { opacity: .68; animation: none; }
+  .composer-halo { transition-duration: .8s; }
 }
 @keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */

@@ -149,7 +149,7 @@ const speaking = computed(() => props.speaking === true);
   box-shadow: 0 0 14px var(--accent-glow);
 }
 .voice-ui {
-  flex: 0 0 100%; height: 54px; gap: 14px; padding: 0 18px;
+  flex: 1 1 0; width: auto; min-width: 0; height: auto; gap: 10px; padding: 0;
   animation: noir-voice-in 0.4s cubic-bezier(.22, 1, .36, 1) both;
 }
 .label {
@@ -161,6 +161,12 @@ const speaking = computed(() => props.speaking === true);
 .waveform { order: -1; flex: 0 0 96px; height: 28px; gap: 3px; opacity: 0.55; }
 .waveform span { width: 3px; border-radius: 2px; background: var(--accent-hover); box-shadow: 0 0 6px color-mix(in srgb, var(--accent-hover) 60%, transparent); }
 .stop-rec { color: var(--text-muted); border-color: var(--border-default); }
+@media (max-width: 540px) {
+  .voice-ui { gap: 6px; }
+  .label, .waveform, .ptt-hint { display: none; }
+  .timer { font-size: 9.5px; }
+  .stop-rec { padding: 5px 8px; font-size: 9px; letter-spacing: .06em; }
+}
 @keyframes noir-voice-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .voice-ui { animation: none; } }
 </style>

@@ -141,7 +141,7 @@ defineEmits<{
 </script>
 
 <style scoped>
-.files-attach-menu { position:absolute; left:12px; bottom:52px; z-index:30; width:260px; max-width:calc(100% - 24px); box-sizing:border-box; padding:6px; border:1px solid var(--border-default); border-radius:10px; background:var(--bg-surface); box-shadow:var(--elev-float); }
+.files-attach-menu { position:absolute; left:12px; bottom:calc(100% + 8px); z-index:30; width:260px; max-width:calc(100% - 24px); box-sizing:border-box; padding:6px; border:1px solid var(--border-default); border-radius:10px; background:var(--bg-surface); box-shadow:var(--elev-float); }
 button { width:100%; display:flex; align-items:center; gap:9px; padding:7px 9px; border:0; border-radius:7px; color:var(--text-secondary); background:transparent; text-align:left; }
 button:hover { background:color-mix(in srgb, var(--accent) 13%, transparent); color:var(--text-primary); }
 button:disabled { cursor:progress; opacity:.62; }

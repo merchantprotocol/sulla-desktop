@@ -83,11 +83,11 @@ function activate(): void {
   position: relative;
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   margin: 0 0 0 6px;
   padding: 0;
-  flex: 0 0 38px;
+  flex: 0 0 44px;
   border: 0;
   border-radius: 50%;
   color: var(--text-dim);
@@ -143,6 +143,9 @@ function activate(): void {
   mask: radial-gradient(farthest-side, transparent calc(100% - 2px), var(--bg-page) calc(100% - 1.5px));
   animation: composer-run-spin 1s linear infinite;
   transition: opacity 0.2s;
+}
+@media (max-width: 540px) {
+  .composer-send { width: 38px; height: 38px; flex-basis: 38px; }
 }
 .composer-send.running .send-arrow { opacity: 0; transform: translateY(-10px); }
 .composer-send.running .stop-square { opacity: 1; transform: none; }
