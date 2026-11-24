@@ -179,12 +179,12 @@ export class SullaFilesIpcPreviewReadService {
     // Binary image previews must be complete; never issue a Range request or return a prefix.
     if (preview.kind === 'image' && file.size > preview.maxBytes) return { state:'too-large', kind:'image', document:this.publicDocument(file) };
     if (file.size === 0) {
-      const content = preview.kind === 'image' || preview.kind === 'pdf' ? new Uint8Array() : '';
+      const content = preview.kind === 'image' ? new Uint8Array() : '';
       return { state:'ready', kind:preview.kind, document:this.publicDocument(file), content, truncated:false };
     }
 
     if (signal?.aborted) return { state:'cancelled' };
-    const textKind = preview.kind !== 'image' && preview.kind !== 'pdf';
+    const textKind = preview.kind !== 'image'; // PDFs returned metadata-only above.
     const rangeRequested = textKind && file.size > preview.maxBytes;
     const headers = rangeRequested ? { range:`bytes=0-${ preview.maxBytes - 1 }` } : undefined;
     const endpoint = `/v1/files/${ encodeURIComponent(id) }/preview?versionId=${ encodeURIComponent(file.currentVersionId) }`;
