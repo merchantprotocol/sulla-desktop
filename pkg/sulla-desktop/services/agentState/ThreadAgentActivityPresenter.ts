@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { AgentStateRow, AgentStateSnapshot, AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
+import type { DecisionRecord } from '@pkg/shared/decisions';
 import { AgentTreeBuilder, type AgentTreeNode } from './AgentTreeBuilder';
 
 export type ThreadAgentUrgency = 'normal' | 'needs-you' | 'failed';
@@ -21,6 +22,7 @@ export interface ThreadAgentActivityProjection {
   threadId?: string;
   scope: ThreadAgentScope;
   decisionIds: readonly string[];
+  pendingDecisionIds: readonly string[];
   roots: ThreadAgentActivityNode[];
   agents: readonly PresentedThreadAgent[];
 }
@@ -33,23 +35,26 @@ export class ThreadAgentActivityPresenter {
   static readonly maxActivityPerAgent = 30;
 
   private acceptedVersion = -1;
+  private lastSnapshot?: AgentStateSnapshot;
   private activeThreadId?: string;
   private initialized = false;
   private checkins = new Map<string, ObservedAgentCheckin[]>();
   private activity = new Map<string, string[]>();
-  private current: ThreadAgentActivityProjection = { scope: 'empty', decisionIds: [], roots: [], agents: [] };
+  private current: ThreadAgentActivityProjection = { scope: 'empty', decisionIds: [], pendingDecisionIds: [], roots: [], agents: [] };
 
-  project(snapshot: AgentStateSnapshot, threadId: string | undefined, now = Date.now()): ThreadAgentActivityProjection {
+  project(snapshot: AgentStateSnapshot, threadId: string | undefined, now = Date.now(), decisions: readonly DecisionRecord[] = []): ThreadAgentActivityProjection {
     const threadChanged = !this.initialized || this.activeThreadId !== threadId;
     if (threadChanged) {
       this.initialized = true;
       this.activeThreadId = threadId;
       this.checkins.clear();
       this.activity.clear();
-      this.current = { threadId, scope: 'empty', decisionIds: [], roots: [], agents: [] };
+      this.current = { threadId, scope: 'empty', decisionIds: [], pendingDecisionIds: [], roots: [], agents: [] };
     }
-    if (!snapshot || snapshot.version < this.acceptedVersion || (!threadChanged && snapshot.version <= this.acceptedVersion)) return this.current;
+    if (!snapshot || snapshot.version < this.acceptedVersion ||
+      (snapshot.version === this.acceptedVersion && !!this.lastSnapshot && snapshot !== this.lastSnapshot)) return this.current;
     this.acceptedVersion = Math.max(this.acceptedVersion, snapshot.version);
+    this.lastSnapshot = snapshot;
 
     const builder = new AgentTreeBuilder(snapshot.rows);
     const scoped = this.scopeTree(builder, snapshot.rows, threadId, now);
@@ -57,27 +62,37 @@ export class ThreadAgentActivityPresenter {
     for (const node of flat) this.observe(node.row, now);
     this.prune(now, new Set(flat.map(node => node.row.key)));
 
-    const agents = flat.map(node => this.present(node.row));
+    const decisionIds = [...new Set(flat.flatMap(node => node.row.decisionIds ?? []))];
+    const scopedThreads = new Set(flat.map(node => node.row.threadId).filter((id): id is string => !!id));
+    const pendingDecisions = decisions.filter(decision => ['pending', 'deferred'].includes(decision.status) && decision.expiresAt > now &&
+      (scopedThreads.has(decision.conversationId) || (decisionIds.includes(decision.id) && decision.conversationId === scoped.ownerThreadId)));
+    const pendingDecisionIds = pendingDecisions.map(decision => decision.id);
+    const pendingByThread = new Set(pendingDecisions.map(decision => decision.conversationId));
+    const pendingByOwner = new Set(pendingDecisions.filter(decision => decision.conversationId === scoped.ownerThreadId).map(decision => decision.id));
+    const needsYouRows = new Set(flat.filter(node => pendingByThread.has(node.row.threadId ?? '') ||
+      (node.row.decisionIds ?? []).some(id => pendingByOwner.has(id))).map(node => node.row.key));
+    const agents = flat.map(node => this.present(node.row, needsYouRows.has(node.row.key)));
     const byKey = new Map(agents.map(agent => [agent.row.key, agent]));
     const roots = scoped.roots.map(node => this.presentTree(node, byKey));
     this.current = {
       threadId,
       scope: scoped.scope,
-      decisionIds: [...new Set(flat.flatMap(node => node.row.decisionIds ?? []))],
+      decisionIds,
+      pendingDecisionIds,
       roots,
       agents,
     };
     return this.current;
   }
 
-  private scopeTree(builder: AgentTreeBuilder, rows: readonly AgentStateRow[], threadId: string | undefined, now: number): { scope: ThreadAgentScope; roots: AgentTreeNode[] } {
+  private scopeTree(builder: AgentTreeBuilder, rows: readonly AgentStateRow[], threadId: string | undefined, now: number): { scope: ThreadAgentScope; ownerThreadId?: string; roots: AgentTreeNode[] } {
     if (threadId === undefined) {
       const liveHostRows = rows.filter(row => row.rootThreadId === null && this.isRecent(row.lastActivityAt, now, ThreadAgentActivityPresenter.orphanTtlMs));
       return { scope: liveHostRows.length ? 'host' : 'empty', roots: new AgentTreeBuilder(liveHostRows).forThread(null) };
     }
 
     const rootRows = rows.filter(row => row.rootThreadId === threadId);
-    if (rootRows.length) return { scope: 'root', roots: builder.forThread(threadId) };
+    if (rootRows.length) return { scope: 'root', ownerThreadId: threadId, roots: builder.forThread(threadId) };
 
     const matches = rows.filter(row => row.threadId === threadId && row.rootThreadId !== null);
     const rootIds = [...new Set(matches.map(row => row.rootThreadId!))];
@@ -85,7 +100,7 @@ export class ThreadAgentActivityPresenter {
     if (rootIds.length !== 1 || matches.length === 0) return { scope: 'empty', roots: [] };
     const allRoots = builder.forThread(rootIds[0]);
     const matchKeys = new Set(matches.map(row => row.key));
-    return { scope: 'child', roots: this.matchedSubtrees(allRoots, matchKeys) };
+    return { scope: 'child', ownerThreadId: rootIds[0], roots: this.matchedSubtrees(allRoots, matchKeys) };
   }
 
   private matchedSubtrees(nodes: readonly AgentTreeNode[], matches: ReadonlySet<string>): AgentTreeNode[] {
@@ -100,7 +115,7 @@ export class ThreadAgentActivityPresenter {
 
   private observe(row: AgentStateRow, now: number): void {
     const at = row.lastCheckinAt;
-    if (at && row.lastCheckinSummary?.trim() && this.isRecent(at, now, ThreadAgentActivityPresenter.activityWindowMs)) {
+    if (at && row.lastCheckinSummary?.trim() && this.isValidNonFuture(at, now)) {
       const history = this.checkins.get(row.key) ?? [];
       if (!history.some(item => item.at === at && item.summary === row.lastCheckinSummary)) {
         history.push({ at, summary: row.lastCheckinSummary.trim() });
@@ -119,7 +134,7 @@ export class ThreadAgentActivityPresenter {
 
   private prune(now: number, scopedKeys: ReadonlySet<string>): void {
     for (const [key, entries] of this.checkins) {
-      const retained = scopedKeys.has(key) ? entries.filter(item => this.isRecent(item.at, now, ThreadAgentActivityPresenter.activityWindowMs)).slice(-ThreadAgentActivityPresenter.maxCheckinsPerAgent) : [];
+      const retained = scopedKeys.has(key) ? entries.slice(-ThreadAgentActivityPresenter.maxCheckinsPerAgent) : [];
       if (retained.length) this.checkins.set(key, retained); else this.checkins.delete(key);
     }
     for (const [key, entries] of this.activity) {
@@ -128,10 +143,10 @@ export class ThreadAgentActivityPresenter {
     }
   }
 
-  private present(row: AgentStateRow): PresentedThreadAgent {
-    const stableName = row.agentId?.trim() || row.label.trim() || row.key;
+  private present(row: AgentStateRow, hasPendingDecision: boolean): PresentedThreadAgent {
+    const stableName = row.agentId?.trim() || row.key;
     const initials = stableName.split(/[\s._/-]+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join('') || 'S';
-    const urgency: ThreadAgentUrgency = row.state === 'failed' ? 'failed' : row.state === 'blocked' ? 'needs-you' : 'normal';
+    const urgency: ThreadAgentUrgency = row.state === 'failed' ? 'failed' : row.state === 'blocked' || hasPendingDecision ? 'needs-you' : 'normal';
     return {
       row,
       agentId: row.agentId,
@@ -151,5 +166,10 @@ export class ThreadAgentActivityPresenter {
   private isRecent(value: string, now: number, windowMs: number): boolean {
     const timestamp = Date.parse(value);
     return Number.isFinite(timestamp) && timestamp <= now && now - timestamp <= windowMs;
+  }
+
+  private isValidNonFuture(value: string, now: number): boolean {
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) && timestamp <= now;
   }
 }

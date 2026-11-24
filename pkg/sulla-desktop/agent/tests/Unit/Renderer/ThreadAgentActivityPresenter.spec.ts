@@ -115,4 +115,56 @@ describe('ThreadAgentActivityPresenter', () => {
     expect(projection.agents[0].urgency).toBe('needs-you');
     expect(projection.agents[0].initials).toBe('CS');
   });
+
+  it('keeps the last six check-ins independent of the 150-second activity window and stable marker', () => {
+    // risk: losing useful status history or changing the chart/status marker when a label changes
+    const row = new RowFactory().create('stable:0', 'root');
+    row.agentId = null;
+    row.lastCheckinAt = new Date(at - 300_000).toISOString();
+    row.lastCheckinSummary = 'earlier check-in';
+    const presenter = new ThreadAgentActivityPresenter();
+    const first = presenter.project(snapshot(1, [row]), 'root', at).agents[0];
+
+    row.label = 'renamed label';
+    const second = presenter.project(snapshot(2, [row]), 'root', at).agents[0];
+
+    expect(second.checkins).toEqual([{ at: row.lastCheckinAt, summary: 'earlier check-in' }]);
+    expect(second.initials).toBe(first.initials);
+  });
+
+  it('preserves every source state while prioritizing only blocked and failed rows', () => {
+    // risk: incorrect worker state or urgency in the chart/status line
+    const states: AgentStateRow['state'][] = ['working', 'queued', 'quiet', 'parked', 'blocked', 'failed', 'lost', 'stopped', 'done'];
+    const rows = states.map((state, index) => {
+      const row = new RowFactory().create(`state-${ index }:0`, 'root');
+      row.state = state;
+      return row;
+    });
+    const projection = new ThreadAgentActivityPresenter().project(snapshot(1, rows), 'root', at);
+
+    expect(projection.agents.map(agent => agent.state)).toEqual(states);
+    expect(projection.agents.map(agent => agent.urgency)).toEqual(['normal', 'normal', 'normal', 'normal', 'needs-you', 'failed', 'normal', 'normal', 'normal']);
+  });
+
+  it('prioritizes only pending decisions tied to an in-scope agent thread or explicit owner link', () => {
+    // risk: urgent status from another chat or an expired/resolved decision
+    const linked = new RowFactory().create('linked:0', 'root');
+    linked.threadId = 'agent-tab';
+    linked.decisionIds = ['owner-decision', 'expired-decision'];
+    const unlinked = new RowFactory().create('unlinked:0', 'root');
+    const decision = (id: string, conversationId: string, status: 'pending' | 'expired', expiresAt = at + 60_000) => ({
+      id, conversationId, channel: 'agent', title: id, kind: 'question' as const, status, createdAt: at - 1_000, expiresAt,
+    });
+    const decisions = [
+      decision('owner-decision', 'root', 'pending'),
+      decision('agent-thread-decision', 'agent-tab', 'pending'),
+      decision('foreign-decision', 'other-root', 'pending'),
+      decision('expired-decision', 'root', 'expired', at),
+    ];
+    const projection = new ThreadAgentActivityPresenter().project(snapshot(1, [linked, unlinked]), 'root', at, decisions);
+
+    expect(projection.pendingDecisionIds).toEqual(['owner-decision', 'agent-thread-decision']);
+    expect(projection.agents.find(agent => agent.row.key === 'linked:0')?.urgency).toBe('needs-you');
+    expect(projection.agents.find(agent => agent.row.key === 'unlinked:0')?.urgency).toBe('normal');
+  });
 });
