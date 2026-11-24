@@ -21,6 +21,7 @@
       class="html-lightbox"
       :aria-label="'Full-screen preview of ' + name"
       @close="restoreFocus"
+      @cancel="handleCancel"
       @click.self="closeFullscreen"
     >
       <header class="lightbox-header">
@@ -81,6 +82,14 @@ function closeFullscreen(): void {
     element.removeAttribute('open');
     restoreFocus();
   }
+}
+
+function handleCancel(event: Event): void {
+  // Keep restoration in the close event, after the native dialog has finished
+  // closing. Otherwise Escape can focus the trigger while the modal is still
+  // active, and the browser will move focus away again.
+  event.preventDefault();
+  closeFullscreen();
 }
 
 function restoreFocus(): void {

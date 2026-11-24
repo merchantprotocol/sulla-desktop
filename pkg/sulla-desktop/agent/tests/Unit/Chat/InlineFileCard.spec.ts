@@ -90,6 +90,14 @@ describe('InlineFileCard', () => {
     await nextTick();
 
     expect(document.activeElement).toBe(fullScreenButton.element);
+
+    // Native Escape/cancel follows the same focus-return path as the close
+    // event, rather than restoring focus while the modal is still active.
+    await fullScreenButton.trigger('click');
+    nativeDialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+    await nextTick();
+    expect(document.activeElement).toBe(fullScreenButton.element);
+
     wrapper.unmount();
   });
 
