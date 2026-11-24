@@ -97,7 +97,7 @@ async function open(source: CitationMessage['sources'][number], index: number): 
 .report-location summary { cursor: pointer; width: fit-content; }
 .report-location p { overflow-wrap: anywhere; }
 .report-row > button, .report-row > a { flex: none; padding: 5px 8px; border: 1px solid var(--border-default); border-radius: 6px; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; text-decoration: none; }
-.report-row > button:hover, .report-row > a:hover { border-color: var(--accent); color: var(--accent); }
+.report-row > button:hover, .report-row > a:hover { border-color: var(--accent); color: var(--primary-color-text-override, var(--accent)); }
 button:disabled { opacity: .6; cursor: wait; }
 summary:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .report-error { color: var(--status-error); margin: 8px 0 0; line-height: 1.5; }

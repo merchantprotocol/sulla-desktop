@@ -113,7 +113,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', placeIndicator));
   color: var(--text-primary);
 }
 .sd-panel-tab[aria-selected='true'] {
-  color: var(--accent-primary);
+  color: var(--primary-color-text-override, var(--accent-primary));
   font-weight: 500;
 }
 .sd-tab-dot {

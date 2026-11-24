@@ -159,7 +159,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer));
 .tact-btn:hover { background: color-mix(in srgb, var(--text-primary) 9%, transparent); color: var(--text-primary); }
 .tact-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tact-btn.tact-done { color: var(--status-success); }
-.tact-btn.tact-on { color: var(--accent); }
+.tact-btn.tact-on { color: var(--primary-color-text-override, var(--accent)); }
 /* The newest reply's row is always there, so it stays quiet until hovered. */
 .chat-turn:not(:hover) > .tact-latest:not(:focus-within) .tact-btn:not(.tact-done):not(.tact-on) { color: var(--tact-ink-quiet); }
 @media (prefers-reduced-motion: reduce) { .tact, .tact-btn { transition: none; } }

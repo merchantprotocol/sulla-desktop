@@ -87,12 +87,12 @@ function openLegacy(): void {
 }
 .head {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   margin-bottom: 8px;
   display: flex; align-items: center; gap: 10px;
 }
 .head::before {
-  content: "◇"; color: var(--accent-hover); font-size: 14px;
+  content: "◇"; color: var(--primary-color-text-override, var(--accent-hover)); font-size: 14px;
   filter: drop-shadow(0 0 6px var(--accent-hover));
 }
 .body {

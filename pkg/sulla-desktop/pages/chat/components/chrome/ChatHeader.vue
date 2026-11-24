@@ -104,7 +104,7 @@ function cancelTitle(): void {
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
   color: color-mix(in srgb, var(--text-primary) 72%, var(--bg-surface)); font: 11px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em; cursor: pointer;
 }
-.ch-origin:hover { color: var(--accent); border-color: var(--accent); }
+.ch-origin:hover { color: var(--primary-color-text-override, var(--accent)); border-color: var(--accent); }
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ch-reporting {

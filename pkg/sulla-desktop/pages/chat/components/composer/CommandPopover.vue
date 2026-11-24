@@ -47,7 +47,7 @@ const popover = computed(() => controller.popover.value);
 .phead {
   padding: 8px 14px;
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.25em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   border-bottom: 1px solid var(--accent-dim);
 }
 .pitem {
@@ -59,7 +59,7 @@ const popover = computed(() => controller.popover.value);
 .pitem.selected { background: var(--accent-dim); }
 .pitem .cmd {
   font-family: var(--font-mono); font-size: 12px;
-  color: var(--accent-hover); font-weight: 600;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-weight: 600;
   min-width: 92px;
 }
 .pitem .desc {
@@ -80,7 +80,7 @@ const popover = computed(() => controller.popover.value);
 }
 .popover { background: color-mix(in srgb, var(--bg-surface) 98%, transparent); box-shadow: var(--elev-float); }
 .phead {
-  padding: 6px 10px; border: 0; color: var(--accent-hover); font-size: 10px; letter-spacing: 0.14em;
+  padding: 6px 10px; border: 0; color: var(--primary-color-text-override, var(--accent-hover)); font-size: 10px; letter-spacing: 0.14em;
 }
 .pitem { gap: 10px; margin: 0; padding: 8px 10px; border-radius: 12px; }
 .pitem:hover,
