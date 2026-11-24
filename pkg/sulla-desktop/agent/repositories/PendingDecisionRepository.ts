@@ -165,4 +165,12 @@ export class PendingDecisionRepository {
       ORDER BY updated_at DESC LIMIT 1`, [sessionId, key, value, now]);
     return rows[0]?.record;
   }
+
+  /** Find a prior approval outcome from this Desktop session for an explicit retry. */
+  async findApprovalOutcome(sessionId: string, key: string, value: string): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE session_id=$1 AND record->>'kind'='approval' AND record->'payload'->>$2=$3
+      ORDER BY updated_at DESC LIMIT 1`, [sessionId, key, value]);
+    return rows[0]?.record;
+  }
 }

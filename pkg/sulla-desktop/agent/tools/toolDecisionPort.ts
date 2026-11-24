@@ -16,6 +16,8 @@ export interface ToolDecisionHandle {
 export interface ToolDecisionPort {
   requiresApproval(toolName: string): Promise<boolean>;
   request(input: ToolDecisionRequest, timeoutMs?: number, signal?: AbortSignal): Promise<ToolDecisionHandle>;
+  /** Look up a scoped existing decision by opaque local payload; never used to dispatch on its own. */
+  findApprovalForPayload?(key: string, value: string): Promise<DecisionRecord | undefined>;
 }
 
 /**
@@ -29,6 +31,10 @@ export class UnavailableToolDecisionPort implements ToolDecisionPort {
 
   async request(): Promise<ToolDecisionHandle> {
     throw new Error('Approval is unavailable in this runtime. Nothing was executed.');
+  }
+
+  async findApprovalForPayload(): Promise<undefined> {
+    return undefined;
   }
 }
 
