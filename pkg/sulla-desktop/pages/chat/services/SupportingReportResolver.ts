@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { DURABLE_FILE_ID_PATTERN } from '@pkg/shared/filesReferences';
+
 import type { CitationMessage } from '../models/Message';
 
 type Source = CitationMessage['sources'][number];
 export interface SupportingReportFile { fileId: string; path: string; collectionId: string; }
 interface FilesIpc { invoke(channel: string, input?: unknown): Promise<any>; }
 
-/** Resolves a cited Files path to one exact saved document, never a host path or guessed link. */
+/** Resolves a cited Files link, path, or folder + file name to one exact saved document, never a host path or guessed link. */
 export class SupportingReportResolver {
   constructor(private readonly ipc: FilesIpc) {}
 
@@ -20,10 +22,36 @@ export class SupportingReportResolver {
   }
 
   async file(source: Source): Promise<SupportingReportFile> {
-    const path = source.origin.replaceAll('\\', '/');
-    if (!path || path.startsWith('/') || /^[a-z]+:/i.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) {
-      throw new Error('This reference has no saved Files document to open.');
+    const linked = await this.linkedFile(source.url);
+    if (linked) return linked;
+    const origin = SupportingReportResolver.safePath(source.origin);
+    if (!origin) throw new Error('This reference has no saved Files document to open.');
+    const exact = await this.matches(origin);
+    if (exact.length) return SupportingReportResolver.one(exact);
+    const title = String(source.title ?? '');
+    const candidate = SupportingReportResolver.isPlainName(title) ? SupportingReportResolver.safePath(`${ origin }/${ title }`) : undefined;
+    if (candidate) return SupportingReportResolver.one(await this.matches(candidate));
+    throw new Error('This report is not available in Files. Ask Sulla to save it again.');
+  }
+
+  /** A `sulla-file://<id>` link resolves to that file only when Files still has it; otherwise the path rules apply. */
+  private async linkedFile(url: string | undefined): Promise<SupportingReportFile | undefined> {
+    const match = /^sulla-file:\/\/([^?#/]*)(?:\?[^#]*)?$/.exec(String(url ?? '').trim());
+    if (!match || !DURABLE_FILE_ID_PATTERN.test(match[1])) return undefined;
+    let record: any;
+    try {
+      record = await this.ipc.invoke('sulla-files:metadata', { fileId: match[1] });
+    } catch (error) {
+      // Only a confirmed missing file falls back; a timeout must not let the path rules open a different file.
+      if (/file not found/i.test(error instanceof Error ? error.message : String(error))) return undefined;
+      throw new Error('Files could not load this report. Please retry.');
     }
+    if (record?.id !== match[1] || record.deleted_at || typeof record.collection_id !== 'string' || !record.collection_id) return undefined;
+    const path = SupportingReportResolver.safePath(record.path);
+    return path === record.path ? { fileId: record.id, path, collectionId: record.collection_id } : undefined;
+  }
+
+  private async matches(path: string): Promise<SupportingReportFile[]> {
     const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
     const collections = await this.ipc.invoke('sulla-files:collections') as { id: string }[];
     if (!Array.isArray(collections)) throw new Error('Files could not load this report. Please retry.');
@@ -32,7 +60,7 @@ export class SupportingReportResolver {
       let cursor: string | undefined;
       const cursors = new Set<string>();
       for (let page = 0; page < 100; page++) {
-        const listing = await this.ipc.invoke('sulla-files:list-page', { collectionId: collection.id, path: folder, ...(cursor ? { cursor } : {}) });
+        const listing = await this.ipc.invoke('sulla-files:list-page', { collectionId: collection.id, path: folder, children: true, ...(cursor ? { cursor } : {}) });
         if (!Array.isArray(listing.files)) throw new Error('Files could not load this report. Please retry.');
         for (const file of listing.files) {
           if (file.path === path && !file.deleted_at) matches.push({ fileId: file.id, path, collectionId: collection.id });
@@ -42,9 +70,24 @@ export class SupportingReportResolver {
         cursors.add(listing.nextCursor); cursor = listing.nextCursor;
       }
     }
+    return matches;
+  }
+
+  private static one(matches: SupportingReportFile[]): SupportingReportFile {
     if (!matches.length) throw new Error('This report is not available in Files. Ask Sulla to save it again.');
     if (matches.length !== 1) throw new Error('More than one saved file matches this reference. Choose the report in Files.');
     return matches[0];
+  }
+
+  /** A relative Files path with no empty, `.` or `..` segment and no scheme; anything else is refused. */
+  private static safePath(value: unknown): string | undefined {
+    const path = String(value ?? '').replaceAll('\\', '/');
+    if (!path || path.startsWith('/') || /^[a-z]+:/i.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) return undefined;
+    return path;
+  }
+
+  private static isPlainName(title: string): boolean {
+    return Boolean(title) && title !== '.' && title !== '..' && !/[\\/]/.test(title) && !/^[a-z]+:/i.test(title);
   }
 
   async verify(file: SupportingReportFile): Promise<void> {
