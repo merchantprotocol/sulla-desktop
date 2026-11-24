@@ -83,7 +83,8 @@ function fixture(creation: BrowserPreviewNewTabCreation | null = tabCreation()) 
   const contexts = new FakeContextAuthority();
   const tabs = new FakeTabLifecycleAuthority();
   if (creation) tabs.registerNewTab(creation);
-  const service = new BrowserPreviewGrantService(contexts, tabs, () => 'synthetic-opaque-preview-handle-01');
+  let handleCounter = 0;
+  const service = new BrowserPreviewGrantService(contexts, tabs, () => `synthetic-opaque-preview-handle-${String(++handleCounter).padStart(2, '0')}`);
   return { contexts, tabs, service };
 }
 
