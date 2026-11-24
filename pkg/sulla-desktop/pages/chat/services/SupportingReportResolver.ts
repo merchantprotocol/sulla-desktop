@@ -26,12 +26,11 @@ export class SupportingReportResolver {
     if (linked) return linked;
     const origin = SupportingReportResolver.safePath(source.origin);
     if (!origin) throw new Error('This reference has no saved Files document to open.');
-    const exact = await this.matches(origin);
-    if (exact.length) return SupportingReportResolver.one(exact);
     const title = String(source.title ?? '');
     const candidate = SupportingReportResolver.isPlainName(title) ? SupportingReportResolver.safePath(`${ origin }/${ title }`) : undefined;
-    if (candidate) return SupportingReportResolver.one(await this.matches(candidate));
-    throw new Error('This report is not available in Files. Ask Sulla to save it again.');
+    // With a plain file name, the exact origin and origin + title are equal candidates: one distinct file in total, or refuse.
+    const found = [...await this.matches(origin), ...(candidate ? await this.matches(candidate) : [])];
+    return SupportingReportResolver.one([...new Map(found.map(file => [`${ file.collectionId }\u0000${ file.fileId }`, file])).values()]);
   }
 
   /** A `sulla-file://<id>` link resolves to that file only when Files still has it; otherwise the path rules apply. */
@@ -48,7 +47,7 @@ export class SupportingReportResolver {
     }
     if (record?.id !== match[1] || record.deleted_at || typeof record.collection_id !== 'string' || !record.collection_id) return undefined;
     const path = SupportingReportResolver.safePath(record.path);
-    return path === record.path ? { fileId: record.id, path, collectionId: record.collection_id } : undefined;
+    return path && path === record.path ? { fileId: record.id, path, collectionId: record.collection_id } : undefined;
   }
 
   private async matches(path: string): Promise<SupportingReportFile[]> {

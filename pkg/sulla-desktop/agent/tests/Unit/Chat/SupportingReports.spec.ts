@@ -36,7 +36,7 @@ describe('supporting report resolution', () => {
 
   it('refuses ambiguous, absent and moved reports rather than opening another file', async() => {
     const resolver = new SupportingReportResolver({ invoke: f.invoke });
-    f.invoke.mockResolvedValueOnce([{ id: 'files' }, { id: 'other' }]).mockResolvedValue({ files: [file], hasMore: false });
+    f.invoke.mockImplementation((channel: string) => Promise.resolve(channel === 'sulla-files:collections' ? [{ id: 'files' }, { id: 'other' }] : { files: [file], hasMore: false }));
     await expect(resolver.file(source)).rejects.toThrow('More than one');
     f.invoke.mockImplementation((channel: string) => Promise.resolve(channel === 'sulla-files:collections' ? [{ id: 'files' }] : { files: [], hasMore: false }));
     await expect(resolver.file(source)).rejects.toThrow('not available');
@@ -87,9 +87,27 @@ describe('supporting report citation formats', () => {
     expect(await resolver.file({ ...folderSource, title: 'BRIEF-admin-speed.md' })).toEqual({ fileId: 'brief', path: 'Projects/ripplecore-performance-audit/BRIEF-admin-speed.md', collectionId: 'files' });
   });
 
-  it('still opens the old full-path origin, preferring it over folder plus title', async() => {
-    const resolver = files({ files: [{ id: 'pm', path: report }, { id: 'nested', path: `${ report }/${ folderSource.title }` }] });
-    expect(await resolver.file({ ...folderSource, origin: report })).toMatchObject({ fileId: 'pm' });
+  it('still opens the old full-path origin, but refuses when origin plus title also matches', async() => {
+    expect(await files({ files: [{ id: 'pm', path: report }] }).file({ ...folderSource, origin: report })).toMatchObject({ fileId: 'pm' });
+    const both = files({ files: [{ id: 'pm', path: report }, { id: 'nested', path: `${ report }/${ folderSource.title }` }] });
+    await expect(both.file({ ...folderSource, origin: report })).rejects.toThrow('More than one');
+  });
+
+  it('refuses rather than opening another collection\'s file that sits at the folder path', async() => {
+    const folder = 'Projects/ripplecore-performance-audit';
+    await expect(files({ a: [{ id: 'pm', path: report }], b: [{ id: 'unrelated', path: folder }] }).file(folderSource)).rejects.toThrow('More than one');
+    expect(await files({ a: [{ id: 'pm', path: report }], b: [{ id: 'unrelated', path: `${ folder }-old` }] }).file(folderSource)).toEqual({ fileId: 'pm', path: report, collectionId: 'a' });
+    expect(f.openTab).not.toHaveBeenCalled();
+  });
+
+  it('opens origin plus title in the same collection when only that path matches', async() => {
+    const resolver = files({ files: [{ id: 'pm', path: report }, { id: 'sibling', path: 'Projects/ripplecore-performance-audit.md' }] });
+    expect(await resolver.file(folderSource)).toEqual({ fileId: 'pm', path: report, collectionId: 'files' });
+  });
+
+  it('keeps origin-only matching when the title is not a plain file name', async() => {
+    const resolver = files({ a: [{ id: 'pm', path: report }], b: [{ id: 'folder-file', path: 'Projects/ripplecore-performance-audit' }] });
+    expect(await resolver.file({ ...folderSource, title: 'Audit / postmortem' })).toEqual({ fileId: 'folder-file', path: 'Projects/ripplecore-performance-audit', collectionId: 'b' });
   });
 
   it('opens a sulla-file link by id, and falls back to the path rules when the id is missing or deleted', async() => {
