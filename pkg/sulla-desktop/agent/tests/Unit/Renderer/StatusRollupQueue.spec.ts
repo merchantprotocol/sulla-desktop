@@ -36,7 +36,7 @@ class StatusRollupQueueFixture {
 
 describe('StatusRollupQueue', () => {
   // risk: data accuracy — queued progress should not flicker faster than one new line per second.
-  it('enforces the one-second minimum gap', () => {
+  it('keeps the last shown item after its hold and replaces it only with the next item', () => {
     const fixture = new StatusRollupQueueFixture();
     fixture.queue.observe([
       fixture.item('first', 'agent-a', 'First update', 0),
@@ -46,7 +46,7 @@ describe('StatusRollupQueue', () => {
     expect(fixture.queue.pump(0)?.key).toBe('first');
     expect(fixture.queue.pump(749)).toBeNull();
     expect(fixture.queue.pump(750)).toBeNull();
-    expect(fixture.queue.current).toBeNull();
+    expect(fixture.queue.current?.key).toBe('first');
     expect(fixture.queue.pump(999)).toBeNull();
     expect(fixture.queue.pump(1_000)?.key).toBe('second');
   });

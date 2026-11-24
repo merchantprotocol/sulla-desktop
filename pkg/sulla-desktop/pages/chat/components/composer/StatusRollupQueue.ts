@@ -35,7 +35,7 @@ interface QueuedStatusRollupItem {
 
 interface VisibleStatusRollupItem {
   readonly item: StatusRollupItem;
-  readonly expiresAt: number;
+  readonly replaceableAt: number;
 }
 
 /**
@@ -143,14 +143,30 @@ export class StatusRollupQueue {
     }
   }
 
+  /** Seeds an idle/thread-switched roll-up from its newest scoped check-in, regardless of age. */
+  seed(items: readonly StatusRollupItem[], threadId: string, now: number): StatusRollupItem | null {
+    if (this.visible || !threadId) return this.current;
+    const newest = [...items]
+      .filter(item => item.threadId === threadId)
+      .sort((left, right) => right.observedAt - left.observedAt)[0];
+    const item = this.present(newest, threadId, now);
+    if (!item) return null;
+    this.queued = this.queued.filter(entry => entry.item.key !== item.key);
+    const holdMs = this.isUrgent(item) ? StatusRollupQueue.urgentHoldMs : StatusRollupQueue.normalHoldMs;
+    this.visible = { item, replaceableAt: now + holdMs };
+    this.lastShownAt = now;
+    return item;
+  }
+
   /**
-   * Advances the queue by fakeable epoch time. Expiry continues while paused;
-   * pause only prevents a new item from becoming visible.
+   * Advances the queue by fakeable epoch time. The displayed item persists;
+   * its hold only gates replacement, and pausing freezes replacement.
    */
   pump(now: number, paused = false): StatusRollupItem | null {
+    if (paused) return null;
     this.expireQueued(now);
-    if (this.visible && now >= this.visible.expiresAt) this.visible = null;
-    if (paused || this.visible || this.queued.length === 0) return null;
+    if (this.visible && now < this.visible.replaceableAt) return null;
+    if (this.queued.length === 0) return null;
     if (this.lastShownAt !== null && now - this.lastShownAt < StatusRollupQueue.minGapMs) return null;
 
     const urgentIndex = this.queued.findIndex(entry => this.isUrgent(entry.item));
@@ -158,7 +174,7 @@ export class StatusRollupQueue {
     if (!next) return null;
 
     const holdMs = this.isUrgent(next.item) ? StatusRollupQueue.urgentHoldMs : StatusRollupQueue.normalHoldMs;
-    this.visible = { item: next.item, expiresAt: now + holdMs };
+    this.visible = { item: next.item, replaceableAt: now + holdMs };
     this.lastShownAt = now;
     return next.item;
   }
