@@ -97,7 +97,8 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const secret = 'sk-proj-synthetic-secret-token';
-    const providerMessage = `${ secret } rate limit details ${ 'for the selected model '.repeat(30) } Bearer ${ secret }`;
+    const orgId = 'org-SyntheticOrgId1234567890';
+    const providerMessage = `${ secret } rate limit details in organization ${ orgId } ${ 'for the selected model '.repeat(30) } Bearer ${ secret }`;
     const broker = new FakeBroker(async() => new Response(JSON.stringify({ error: { message: providerMessage } }), {
       status,
       headers: { 'retry-after': '9' },
@@ -119,6 +120,7 @@ describe('provider bridge never falsely denies a healthy container job', () => {
       expect(timing).toContain('…');
       expect(timing).not.toContain(secret);
       expect(timing).not.toContain(`Bearer ${ secret }`);
+      expect(timing).not.toContain(orgId);
       expect(statuses[0]).toMatchObject({ status, retryAfterSeconds: 9 });
       expect(statuses.at(-1)).toMatchObject({ status, retryAfterSeconds: 9 });
       expect(statuses.at(-1)?.reason).toContain('rate limit details');

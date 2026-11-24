@@ -90,7 +90,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   it('redelivers an ordinary completion after graph execution fails, then acknowledges it exactly once after success', async() => {
     // risk: ordinary dispatch acknowledges a child completion before the graph
     // consumes it, so an exception loses the only durable wake permanently.
-    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', run_location: 'vm' } as any);
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', enabled: true, status: 'production', run_location: 'vm' } as any);
     const childThread = `ordinary-ack-child-${ Date.now() }`;
     const parentThread = `ordinary-ack-parent-${ Date.now() }`;
     const child = await registry.createJob(
@@ -128,7 +128,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
 
   it('requeues a stranded steer consumed by a delegated turn that fails, then durably acknowledges one successful retry', async() => {
     // risk: durable alert loss -- a live delegated turn removes the notice from the inbox before graph execution can fail
-    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', run_location: 'vm' } as any);
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', enabled: true, status: 'production', run_location: 'vm' } as any);
     const managerJobId = `stranded-steer-${ Date.now() }`;
     const parentThread = `${ managerJobId }-parent`;
     const stateKey = `stranded:${ managerJobId }:0:parked-without-live-children:1:0:`;
@@ -172,7 +172,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
 
   it('does not resurrect an aborted parent and leaves its stranded notice pending for an explicit retry', async() => {
     // risk: user stop -- aborting a parent must not auto-launch another turn merely because its durable alert is retryable
-    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', run_location: 'vm' } as any);
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', enabled: true, status: 'production', run_location: 'vm' } as any);
     const managerJobId = `stranded-abort-${ Date.now() }`; const parentThread = `${ managerJobId }-parent`;
     const stateKey = `stranded:${ managerJobId }:0:parked-without-live-children:1:0:`;
     await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, parent_channel, parent_thread_id, tasks, visibility)
@@ -223,7 +223,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
     // never reaches 'completed' and its parent never hears back, while the
     // original Promise and in-process waiter leak forever
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (['coding-manager', 'codex-sol-worker'].includes(slug) ? { slug, run_location: 'vm' } as any : null));
+      (['coding-manager', 'codex-sol-worker'].includes(slug) ? { slug, enabled: true, status: 'production', run_location: 'vm' } as any : null));
 
     let managerThreadId = '';
     let workerJobId = '';
@@ -345,7 +345,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   it('reports a specific internal lifecycle error when a completion wake is still unconsumed after its retry', async() => {
     // risk: a stale/no-op wake is mislabeled as a provider failure, hiding the
     // job and completion input needed to diagnose the lifecycle defect.
-    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', run_location: 'vm' } as any);
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'coding-manager', enabled: true, status: 'production', run_location: 'vm' } as any);
     let managerThreadId = '';
     let workerJobId = '';
     const fakeState: any = { metadata: { wsChannel: 'coding-manager', options: {}, agent: {}, cycleComplete: false }, messages: [] };
@@ -401,7 +401,7 @@ dbDescribe('a parked manager wakes itself through its own in-process loop (real 
   it('routes the real settleTask path above a manager that becomes terminal before its child settles', async() => {
     // risk: production settleTask bypasses orphan classification and wakes a
     // terminal manager even though compatibility delivery tests pass.
-    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'codex-sol-worker', run_location: 'vm' } as any);
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockResolvedValue({ slug: 'codex-sol-worker', enabled: true, status: 'production', run_location: 'vm' } as any);
     const managerThreadId = 'real-settle-orphan-manager';
     const manager = await registry.createJob(
       [{ agentId: 'coding-manager', label: 'manager', prompt: 'own', status: 'running', threadId: managerThreadId, depth: 1 }],

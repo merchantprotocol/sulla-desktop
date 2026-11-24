@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PoolClient } from 'pg';
 import type { MarketplaceTemplateDetail } from '@pkg/main/marketplace/client';
 
-import { installPackageManifest, installStandaloneArtifact } from './databaseInstaller';
+import { installPackageManifest, installStandaloneArtifact } from '../../../../main/marketplace/databaseInstaller';
 
 class MarketplaceDatabaseStub {
   readonly queries: string[] = [];

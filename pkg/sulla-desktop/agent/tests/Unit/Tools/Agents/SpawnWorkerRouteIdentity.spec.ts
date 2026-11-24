@@ -65,7 +65,7 @@ describe('spawn_agent worker mapping identity', () => {
     const { worker, launch } = harness();
     const result = await worker.call({ tasks: [{ prompt: 'synthetic work', ...override }] });
     expect(result.success).toBe(false);
-    expect(result.responseString).toContain('Requested model');
+    expect(result.result).toContain('Requested model');
     expect(launch).not.toHaveBeenCalled();
   });
 
