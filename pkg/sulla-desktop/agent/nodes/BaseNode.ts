@@ -55,6 +55,7 @@ import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
 import Logging from '@pkg/utils/logging';
 import { TurnHopTiming } from '../utils/turnHopTiming';
+import { MEMORY_CHAR_BUDGET, MemoryBudgetLog, measureInjectedMemoryBlocks } from '../memory/MemoryBudget';
 
 // ============================================================================
 // DEFAULT SETTINGS
@@ -987,6 +988,43 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     this.stripInjectedContextBlocks(state);
 
     const metadata = state.metadata as any;
+    const observations = typeof metadata.observationalMemoryContext === 'string' ? metadata.observationalMemoryContext : '';
+    let brain = typeof metadata.brainMemoryContext === 'string' ? metadata.brainMemoryContext : '';
+    let latestUserIndex = -1;
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      if (state.messages[i]?.role === 'user') { latestUserIndex = i; break; }
+    }
+    const turnMarker = String(metadata.turnId || metadata.requestId || `${ latestUserIndex }:${ state.messages.length }`);
+    const measured = measureInjectedMemoryBlocks(observations, brain);
+    if (measured > MEMORY_CHAR_BUDGET) {
+      if (metadata.memoryBudgetGuardTurnMarker !== turnMarker) {
+        console.warn(`[MemoryBudgetGuard] thread=${ metadata.threadId || 'unknown' } observations=${ observations.trim().length } brain=${ brain.trim().length } total=${ measured } cap=${ MEMORY_CHAR_BUDGET }; dropping whole brain block`);
+        metadata.memoryBudgetGuardTurnMarker = turnMarker;
+      }
+      brain = '';
+      metadata.brainMemoryContext = '';
+      const priorStats = metadata.brainMemoryStats || {};
+      metadata.brainMemoryStats = {
+        ...priorStats,
+        sections: Object.fromEntries(Object.keys(priorStats.sections || {}).map((section) => [section, 0])),
+        brainCharacters: 0,
+        measuredCharacters: measureInjectedMemoryBlocks(observations, ''),
+      };
+    }
+
+    if (metadata.memoryBudgetLogTurnMarker !== turnMarker) {
+      new MemoryBudgetLog((line) => console.log(line)).write({
+        threadId: String(metadata.threadId || 'unknown'),
+        observations,
+        brain,
+        stats: metadata.brainMemoryStats,
+        teamDirectory: String(metadata.teamDirectoryContext || ''),
+        installedSkills: String(metadata.skillRecallContext || ''),
+        subagentDirectory: String(metadata.subagentDirectoryContext || ''),
+      });
+      metadata.memoryBudgetLogTurnMarker = turnMarker;
+    }
+
     const fields: [string, string][] = [
       ['human_identity_context', 'humanIdentityContext'],
       ['observational_memory', 'observationalMemoryContext'],
