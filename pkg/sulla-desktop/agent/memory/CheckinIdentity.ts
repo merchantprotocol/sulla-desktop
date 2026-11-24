@@ -8,13 +8,17 @@ export interface CheckinEpisodeIdentityInput {
   text: string;
   source?: string;
   keys?: string[];
+  conversationId?: string | null;
+  conversation_id?: string | null;
+  sentiment?: string | null;
 }
 
 /** Builds stable identities only for explicit, non-human status check-ins. */
 export class CheckinIdentity {
-  private static readonly agentJobPattern = /\b(agent-job-\d+-\d+)\b/i;
-  private static readonly threadPattern = /\b(thread_\w+)\b/i;
-  private static readonly pullRequestPattern = /\b(?:pr|pull request|draft)\s*#\s*(\d+)\b/i;
+  private static readonly agentJobPattern = /\b(agent-job-\d+-\d+)\b/gi;
+  private static readonly spawnAgentThreadPattern = /\b(spawn-agent-[a-z0-9][a-z0-9_-]*)\b/gi;
+  private static readonly pullRequestPattern = /\b(?:pull\s+request|pr|draft(?:\s+pr)?)\s*[:#-]?\s*#?\s*(\d+)\b/gi;
+  private static readonly hashNumberPattern = /#(\d+)\b/g;
   private static readonly statusPattern =
     /\b(?:detailed chat trace|chat trace|check[ -]?in|status(?: update| report)?|progress(?: update| report)?|orchestrator wake[- ]?up|wake[- ]?up|sub[- ]agent result|agent result|worker report|heartbeat status|resume[ds]?|resuming|working on|currently working|next step|pushed|merged|blocked|completed|finished)\b/i;
   private static readonly roleStatusPattern =
@@ -22,26 +26,66 @@ export class CheckinIdentity {
   private static readonly statusRolePattern =
     /\b(?:turn|check[ -]?in|status|progress|report|result|update|wake[- ]?up)\b.{0,60}\b(?:manager|coding[- ]manager|agent|worker|heartbeat|orchestrator)\b/i;
   private static readonly humanDecisionPattern =
-    /\b(?:rule|decision|approval|approved|correction)\b|\b(?:jonathon|the user|user|human|owner)\b.{0,80}\b(?:said|asked|approved|decided|confirmed|corrected|requested|chose|wrote)\b|(?:^|\n)\s*>?\s*(?:jonathon|the user|user|human)\s*:\s*["“]?/i;
+    /\b(?:rule|decision|decided|approval|approved|correction|do\s+not|don['’]?t|prefer|must|never|always)\b|\b(?:jonathon|the user|user|human|owner)\b.{0,80}\b(?:said|asked|approved|decided|confirmed|corrected|requested|chose|wrote)\b|(?:^|\n)\s*>?\s*(?:jonathon|the user|user|human)\s*:\s*["“]?/i;
   private static readonly attributedQuotePattern =
     /\b(?:jonathon|the user|user|human|owner)\b.{0,80}\b(?:said|asked|quoted|wrote)\b.{0,30}["“]/i;
 
   static keyFor(episode: CheckinEpisodeIdentityInput): string | null {
     if (episode.source?.toLowerCase() === 'user') return null;
+    if (episode.sentiment != null && episode.sentiment.toLowerCase() !== 'neutral') return null;
     if (this.recordsHumanDecision(episode.text)) return null;
     if (!this.isStatusCheckin(episode.text)) return null;
 
-    const identityText = [episode.id, episode.text, ...(episode.keys ?? [])].join('\n');
-    const jobId = identityText.match(this.agentJobPattern)?.[1];
-    if (jobId) return `job:${jobId.toLowerCase()}`;
+    const conversationId = this.conversationIdFor(episode);
+    const identityText = [
+      episode.id,
+      episode.text,
+      ...(episode.keys ?? []),
+      conversationId ?? '',
+    ].join('\n');
+    const jobIds = this.uniqueMatches(this.agentJobPattern, identityText);
+    const pullRequestNumbers = this.uniqueMatches(this.pullRequestPattern, identityText);
+    for (const match of identityText.matchAll(this.hashNumberPattern)) {
+      const number = match[1];
+      if (number && !pullRequestNumbers.includes(number)) pullRequestNumbers.push(number);
+    }
 
-    const threadId = identityText.match(this.threadPattern)?.[1];
-    if (threadId) return `thread:${threadId.toLowerCase()}`;
+    if (jobIds.length > 1 || pullRequestNumbers.length > 1) return null;
+    if (jobIds.length === 1) return this.identityKey('job', jobIds[0], conversationId);
 
-    const pullRequest = identityText.match(this.pullRequestPattern)?.[1];
-    if (pullRequest && /\bepic\b/i.test(identityText)) return `pr:${pullRequest}`;
+    const spawnAgentThreads = this.uniqueMatches(this.spawnAgentThreadPattern, identityText);
+    if (spawnAgentThreads.length > 1) return null;
+    if (spawnAgentThreads.length === 1)
+      return this.identityKey('thread', spawnAgentThreads[0], conversationId);
+
+    const pullRequestNumber = pullRequestNumbers[0];
+    if (pullRequestNumber) {
+      if (!conversationId && !/\bepic\b/i.test(identityText)) return null;
+      return this.identityKey('pr', pullRequestNumber, conversationId);
+    }
 
     return null;
+  }
+
+  private static uniqueMatches(pattern: RegExp, text: string): string[] {
+    return [...new Set([...text.matchAll(pattern)].map(match => match[1].toLowerCase()))];
+  }
+
+  private static conversationIdFor(episode: CheckinEpisodeIdentityInput): string | null {
+    const conversationId = episode.conversationId ?? episode.conversation_id ?? null;
+    return typeof conversationId === 'string' && conversationId.trim()
+      ? conversationId.trim()
+      : null;
+  }
+
+  private static identityKey(
+    kind: 'job' | 'thread' | 'pr',
+    identity: string,
+    conversationId: string | null
+  ): string {
+    return conversationId
+      ? `conversation:${encodeURIComponent(conversationId)}:${kind}:${identity}`
+      : `${kind}:${identity}`;
   }
 
   private static isStatusCheckin(text: string): boolean {
