@@ -3,13 +3,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
 import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 import type { AgentRowState, AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { AgentJobCheckin } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import type { Message, ProactiveMessage, SubAgentExchangeMessage, SubAgentMessage } from '../../models/Message';
+import { TracePayload } from './TracePayloadSerializer';
 import type { TraceRow, SubAgentTraceStatus, SubAgentTraceDetails } from './traceTypes';
 
 export interface SubAgentTraceInput {
@@ -145,7 +145,9 @@ export class SubAgentTraceProjection {
         (ended ? note || 'No report recorded.' : 'Not returned yet.'),
     };
     return { id: `subagent:${ job.key }`, kind: 'subagent', verb: '', target: label, targetIsCode: false, status,
-      at: first.createdAt, anchorEntryId: '', note, rawPayload: this.disclosure(details, status),
+      at: first.createdAt, anchorEntryId: '', note,
+      payload: new TracePayload([status, details.brief, details.briefAt, details.checkinAt, details.checkinSummary,
+        details.endedAt, details.report], history => this.disclosure(details, status, history)),
       durationLabel: !reopened && result?.durationMs !== undefined ? this.duration(result.durationMs) : undefined,
       subagent: details,
     };

@@ -12,6 +12,7 @@ import { createMessageDispatcher } from '@pkg/agent/database/models/MessageDispa
 import type { ChatMessage } from '@pkg/agent/database/registry/AgentPersonaRegistry';
 import Transcript from '@pkg/pages/chat/components/transcript/Transcript.vue';
 import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
+import { TracePayloadSerializer } from '@pkg/pages/chat/components/transcript/TracePayloadSerializer';
 import { TranscriptReporting } from '@pkg/pages/chat/components/transcript/toolGroups';
 import ToolApproval from '@pkg/pages/chat/components/tool/ToolApproval.vue';
 import { ChatController } from '@pkg/pages/chat/controller/ChatController';
@@ -195,12 +196,13 @@ it('keeps the original actionable cards and terminal failure at every level', as
 it('ignores an old page if the active thread changes while loading', async() => {
   const live = new ReportingFixture();
   let finishPage!: (data: unknown) => void;
-  vi.mocked(ipcRenderer.invoke).mockImplementation((channel: string) => {
+  vi.mocked(ipcRenderer.invoke).mockImplementation((...args) => {
+    const [channel] = args;
     if (channel === 'chat-messages:message-count') return Promise.resolve({ success: true, count: 5 });
     if (channel === 'chat-messages:load-before') return new Promise(resolve => { finishPage = resolve; });
     return Promise.resolve(undefined);
   });
-  onTestFinished(() => vi.mocked(ipcRenderer.invoke).mockReset());
+  onTestFinished(() => { vi.mocked(ipcRenderer.invoke).mockReset(); });
   live.chat.appendMessage({ id: asMessageId('original'), kind: 'user', createdAt: 1, text: 'Original chat' });
   const wrapper = live.mount('debug');
   await wrapper.get('.scroller').trigger('scroll');
@@ -437,7 +439,7 @@ it('retains exact tool data and recorded timestamps through Detailed projection 
     const rows = turns.flatMap(turn => turn.rows);
     const trace = rows.find(row => row.kind === 'tool')!;
     expect(trace).toMatchObject({ target: 'exec', status: 'ok', at: tool.createdAt });
-    expect(JSON.parse(trace.rawPayload!)).toMatchObject({ input: tool.input, output: 'FIXTURE_OUTPUT' });
+    expect(JSON.parse(trace.payload!.serialize())).toMatchObject({ input: tool.input, output: 'FIXTURE_OUTPUT' });
     expect(rows).toContainEqual(expect.objectContaining({ at: 0, target: 'Preparing your turn…' }));
     expect(JSON.stringify(fixture.chat.messages.value)).toBe(originalRecords);
   }
@@ -578,11 +580,113 @@ it('uses the recorded tool name and full payload through Detailed projection and
     ]);
     const raw = projection.project(messages, standard).flatMap(turn => turn.rows)
       .filter(row => row.kind === 'tool')
-      .map(row => JSON.parse(row.rawPayload!));
+      .map(row => JSON.parse(row.payload!.serialize()));
     expect(raw.map(row => [row.tool, row.status])).toEqual(calls.map(([name]) => [name, 'ok']));
     raw.forEach((row, index) => {
       expect(JSON.parse(row.input)).toEqual(calls[index][1]);
       expect(row.output).toBe(index === 0 ? output : 'fixture-result');
     });
+  }
+});
+
+
+// risk: the stale waiting row offers to stop a healthy run before any visible reply.
+it.each(['thinking', 'tool', 'subagent'] as const)('ends the wait on %s work at both levels', async(kind) => {
+  const fixture = new ReportingFixture();
+  const userId = asMessageId('waiting-user');
+  const createdAt = Date.now();
+  fixture.chat.appendMessage({ id: userId, kind: 'user', text: 'Start', createdAt });
+  fixture.chat.transitionRun({ type: 'send', messageId: userId });
+  const wrapper = fixture.mount('info');
+  const waiting = () => wrapper.find('.chat-turn.waiting').exists();
+  expect(waiting()).toBe(true);
+  await wrapper.setProps({ reportingLevel: 'debug' });
+  expect(waiting()).toBe(true);
+
+  const base = { id: asMessageId('work'), createdAt: createdAt + 1 };
+  fixture.chat.appendMessage(kind === 'thinking'
+    ? { ...base, kind, thoughts: ['Working'], startedAt: base.createdAt, completed: false }
+    : kind === 'tool'
+      ? { ...base, kind, tool: 'exec', desc: '', status: 'running' }
+      : { ...base, kind, name: 'Worker', desc: 'Working', status: 'running', steps: [] });
+  await flushPromises();
+  expect(fixture.chat.isRunning.value).toBe(true);
+  expect(waiting()).toBe(false);
+  await wrapper.setProps({ reportingLevel: 'info' });
+  expect(waiting()).toBe(false);
+});
+
+// risk: closed retained tool payloads consume CPU on every projection; open rows must show full current data.
+it('serializes a tool only on disclosure, caches it across re-projections and refreshes changed data', async() => {
+  const fixture = new ReportingFixture();
+  const serialize = vi.spyOn(TracePayloadSerializer.prototype, 'serialize');
+  onTestFinished(() => serialize.mockRestore());
+  const serializedTools = () => serialize.mock.calls.filter(([value]) => value && typeof value === 'object' && 'tool' in value);
+  const tool = { id: asMessageId('lazy-tool'), createdAt: 1, kind: 'tool', tool: 'exec', desc: '',
+    status: 'running', input: 'head\n' + 'x'.repeat(50_000) + 'input-tail' } as const;
+  fixture.chat.appendMessage(tool);
+  const wrapper = fixture.mount('debug');
+  const row = () => wrapper.get('article.dtr-row-tool');
+  const toggle = () => row().get('button').trigger('click');
+  const preview = row().get('.dtr-args').text();
+  expect(serializedTools()).toHaveLength(0);
+  expect(preview).toMatch(/^head x/);
+  expect(preview.length).toBeLessThanOrEqual(300);
+
+  await toggle();
+  expect(JSON.parse(row().get('pre').text()).input).toBe(tool.input);
+  expect(serializedTools()).toHaveLength(1);
+  await toggle();
+  fixture.chat.appendMessage({ id: asMessageId('more-work'), kind: 'thinking', createdAt: 2,
+    thoughts: ['Still working'], startedAt: 2, completed: false });
+  await flushPromises();
+  await toggle();
+  expect(serializedTools()).toHaveLength(1);
+
+  const output = 'x'.repeat(50_000) + 'output-tail';
+  fixture.chat.updateMessage(tool.id, { ...tool, status: 'ok', output });
+  await flushPromises();
+  expect(JSON.parse(row().get('pre').text()).output).toBe(output);
+  expect(serializedTools()).toHaveLength(2);
+});
+
+
+// risk: stale elapsed work time or a live timer left behind after work pauses or the row unmounts.
+it('ticks only a mounted working sub-agent and stops ticking when it settles', async() => {
+  vi.useFakeTimers();
+  const startTicker = vi.spyOn(globalThis, 'setInterval');
+  const stopTicker = vi.spyOn(globalThis, 'clearInterval');
+  try {
+    vi.setSystemTime(new Date(10_000));
+    const fixture = new ReportingFixture();
+    const agent = { id: asMessageId('ticking-agent'), kind: 'subagent', createdAt: 9_000,
+      name: 'Worker', desc: 'Working', status: 'running', steps: [] } as const;
+    fixture.chat.appendMessage({ ...agent, steps: [] });
+    const wrapper = fixture.mount('info');
+    const baseline = startTicker.mock.calls.length;
+    await wrapper.setProps({ reportingLevel: 'debug' });
+    const elapsed = () => wrapper.get('.dtr-agent .dtr-duration').text();
+    expect(elapsed()).toBe('1s');
+    expect(startTicker).toHaveBeenCalledTimes(baseline + 1);
+    vi.advanceTimersByTime(1_000);
+    await wrapper.vm.$nextTick();
+    expect(elapsed()).toBe('2s');
+    const firstTicker = startTicker.mock.results.at(-1)?.value;
+    await wrapper.setProps({ reportingLevel: 'info' });
+    expect(stopTicker).toHaveBeenCalledWith(firstTicker);
+    await wrapper.setProps({ reportingLevel: 'debug' });
+    expect(startTicker).toHaveBeenCalledTimes(baseline + 2);
+    const secondTicker = startTicker.mock.results.at(-1)?.value;
+    fixture.chat.updateMessage(agent.id, { status: 'done' });
+    await wrapper.vm.$nextTick();
+    expect(stopTicker).toHaveBeenCalledWith(secondTicker);
+    const settled = elapsed();
+    vi.advanceTimersByTime(3_000);
+    await wrapper.vm.$nextTick();
+    expect(elapsed()).toBe(settled);
+  } finally {
+    startTicker.mockRestore();
+    stopTicker.mockRestore();
+    vi.useRealTimers();
   }
 });

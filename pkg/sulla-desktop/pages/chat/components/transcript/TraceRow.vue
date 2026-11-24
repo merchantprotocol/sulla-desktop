@@ -29,11 +29,11 @@
       <button v-if="row.subagent.brief" type="button" :aria-expanded="open" @click="toggle">Brief</button>
     </div>
     <p v-if="open && historyError" class="dtr-agent-note" role="status">Check-in history could not be loaded.</p>
-    <pre v-if="open" class="dtr-payload dtr-agent-report" tabindex="0">{{ report }}</pre>
+    <pre v-if="open" class="dtr-payload dtr-agent-report" tabindex="0">{{ payloadText }}</pre>
   </article>
   <article v-else class="dtr-row" :class="`dtr-row-${row.kind}`">
     <div class="dtr-icon" aria-hidden="true">{{ icon }}</div>
-    <button v-if="row.rawPayload" class="dtr-main dtr-disclosure" type="button" :aria-expanded="open" @click="toggle" @keydown.enter.prevent="toggle" @keydown.space.prevent="toggle">
+    <button v-if="row.payload" class="dtr-main dtr-disclosure" type="button" :aria-expanded="open" @click="toggle" @keydown.enter.prevent="toggle" @keydown.space.prevent="toggle">
       <span class="dtr-summary"><span class="dtr-verb">{{ row.verb }}</span><span class="dtr-target" :class="{ 'dtr-code': row.targetIsCode }">{{ row.target }}</span><span v-if="row.keyArgs" class="dtr-args dtr-code">{{ row.keyArgs }}</span></span>
       <span class="dtr-meta"><span v-if="row.durationLabel" class="dtr-duration">{{ row.durationLabel }}</span><span class="dtr-status" :class="`dtr-status-${row.status}`">{{ row.status }}</span><span class="dtr-chevron" aria-hidden="true">{{ open ? '⌄' : '›' }}</span></span>
       <span v-if="row.note" class="dtr-note">{{ row.note }}</span>
@@ -43,7 +43,7 @@
       <div class="dtr-meta"><span v-if="row.durationLabel" class="dtr-duration">{{ row.durationLabel }}</span><span class="dtr-status" :class="`dtr-status-${row.status}`">{{ row.status }}</span></div>
       <div v-if="row.note" class="dtr-note">{{ row.note }}</div>
     </div>
-    <pre v-if="open && row.rawPayload" class="dtr-payload">{{ row.rawPayload }}</pre>
+    <pre v-if="open && row.payload" class="dtr-payload">{{ payloadText }}</pre>
   </article>
 </template>
 
@@ -53,16 +53,16 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
-import type { SubAgentTraceStatus, TraceRow as TraceRowModel } from './traceTypes';
+import type { TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
 
-const props = defineProps<{ row: TraceRowModel; now?: number }>();
+const props = defineProps<{ row: TraceRowModel }>();
 const disclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 const open = computed(() => disclosure.isOpen(props.row.id));
 const icon = computed(() => ({ thought: '·', tool: '◆', memory: '◈', heartbeat: '◌', activity: '•', handoff: '↗', retry: '↻', approval: '!', usage: '◫', source: '↗', subagent: '•' }[props.row.kind] ?? '•'));
 const openConversation = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
 const agentProjection = new SubAgentTraceProjection();
-const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context');
+const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', undefined);
 const history = shallowRef<AgentTraceHistoryData | null>(null);
 const historyError = ref(false);
 watch([() => context?.backendThreadId.value, () => props.row.subagent?.jobId, () => props.row.subagent?.taskIndex ?? 0], () => {
@@ -88,12 +88,14 @@ watch([
     if (current) historyError.value = true;
   }
 }, { immediate: true });
-const report = computed(() => {
-  const agent = props.row.subagent;
-  return agent && history.value
-    ? agentProjection.disclosure(agent, props.row.status as SubAgentTraceStatus, history.value.checkins)
-    : props.row.rawPayload;
+// Do not reserialize unchanged data when the surrounding trace is reprojected.
+const payloadSource = computed<{ id: string; payload?: TraceRowModel['payload'] }>(previous => {
+  const { id, payload } = props.row;
+  if (previous?.id === id && (previous.payload === payload || (payload && previous.payload?.matches(payload)))) return previous;
+  return { id, payload };
 });
+// Only the open disclosure reads this computed.
+const payloadText = computed(() => payloadSource.value.payload?.serialize(history.value?.checkins));
 const initial = computed(() => (props.row.subagent?.agentId || props.row.target || '?')[0].toUpperCase());
 const statusLabel = computed(() => props.row.status === 'quiet' ? 'no check-in' : props.row.status);
 const agentMeta = computed(() => {
@@ -104,12 +106,23 @@ const agentMeta = computed(() => {
 });
 const noteTime = computed(() => props.row.subagent?.noteAt !== undefined
   ? new Date(props.row.subagent.noteAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
+const rowNow = ref(Date.now());
+const ticking = computed(() => {
+  const agent = props.row.subagent;
+  return agent?.startedAt !== undefined && agent.endedAt === undefined &&
+    (props.row.status === 'working' || props.row.status === 'running');
+});
+watch(ticking, (active, _, onCleanup) => {
+  rowNow.value = Date.now();
+  if (!active) return;
+  const timer = setInterval(() => { rowNow.value = Date.now(); }, 1_000);
+  onCleanup(() => clearInterval(timer));
+}, { immediate: true });
 const duration = computed(() => {
   const agent = props.row.subagent;
   if (props.row.durationLabel) return props.row.durationLabel;
   if (agent?.startedAt === undefined) return '';
-  const end = agent.endedAt ?? props.now;
-  return end !== undefined ? agentProjection.duration(end - agent.startedAt) : '';
+  return agentProjection.duration((agent.endedAt ?? rowNow.value) - agent.startedAt);
 });
 function openAgent(): void {
   const agent = props.row.subagent;

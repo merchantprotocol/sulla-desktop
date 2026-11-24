@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
 import type { CitationMessage } from '../../models/Message';
 import type { TranscriptEntry } from './toolGroups';
 

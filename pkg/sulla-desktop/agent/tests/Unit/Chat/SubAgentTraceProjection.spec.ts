@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 
 import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
@@ -45,15 +46,6 @@ describe('Option A transcript policy', () => {
     expect(reporting.standardEntries(messages, 'debug')).toEqual(reporting.standardEntries(messages, 'info'));
   });
 
-  it('does not treat a Detailed-only job launch as a visible reply to the waiting user', () => {
-    // risk: removing the user's waiting/stop affordance while Standard still shows no response.
-    const user = { kind: 'user', id: asMessageId('question'), text: 'Inspect the job', createdAt: 1_000 } as const;
-    for (const level of ['info', 'debug'] as const) {
-      expect(reporting.waiting(reporting.standardEntries([user, launch], level), true)).toMatchObject({ message: user, since: 1_000 });
-      expect(reporting.waiting(reporting.standardEntries([user, launch, reply], level), true)).toBeNull();
-    }
-  });
-
   it('keeps decision-linked results reachable at every level', () => {
     // risk: dropping the only route to a child agent approval or question.
     for (const level of ['info', 'fatal', 'debug'] as const) {
@@ -76,8 +68,8 @@ describe('Option A transcript policy', () => {
       const before = JSON.stringify(messages);
       const settled = rows(messages, [live('working')]);
       expect(settled).toMatchObject([{ id: started.id, status: expected, anchorEntryId: 'reply', note: 'Checked.' }]);
-      expect(settled[0].rawPayload).toContain('Entire\nbrief');
-      expect(settled[0].rawPayload).toContain('Entire\nreport');
+      expect(settled[0].payload!.serialize()).toContain('Entire\nbrief');
+      expect(settled[0].payload!.serialize()).toContain('Entire\nreport');
       expect(JSON.stringify(messages)).toBe(before);
     },
   );

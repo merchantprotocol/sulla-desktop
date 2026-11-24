@@ -32,9 +32,9 @@
 
         <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
           <TraceTurn
-            v-for="turn in traceTurns.filter(item => item.anchorEntryId === entry.id)"
+            v-for="turn in traceTurnsByAnchor?.get(entry.id)"
             :key="turn.id"
-            :turn="turn" :now="traceNow"
+            :turn="turn"
           />
         <div
           :ref="el => jumper.register(entry.id, el)"
@@ -67,7 +67,7 @@
           </div>
         </div>
         </template>
-        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" :now="traceNow" />
+        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" />
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
           <TurnWaiting
@@ -111,6 +111,7 @@ import { useResultActivity } from '../../composables/useResultActivity';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
+import { waitingOn } from '../../messages/waitingStatus';
 import { TranscriptJump } from '../../messages/transcriptJump';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
@@ -121,22 +122,15 @@ const reporting = new TranscriptReporting();
 const traceProjection = new DetailedTraceProjection();
 const citationProjection = new ReplyCitationProjection();
 const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
-const traceNow = ref(Date.now());
-watch(() => props.reportingLevel === 'debug', (detailed, _, onCleanup) => {
-  if (!detailed) return;
-  traceNow.value = Date.now();
-  const timer = setInterval(() => { traceNow.value = Date.now() }, 1_000);
-  onCleanup(() => clearInterval(timer));
-}, { immediate: true });
 const { activity: resultActivity } = useResultActivity();
 const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
 const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel, item => !!resultActivity(item).decision));
 const replyCitations = computed(() => citationProjection.project(transcriptEntries.value));
-const traceTurns = computed(() => props.reportingLevel === 'debug'
-  ? traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows })
-  : []);
-const trailingTraceTurns = computed(() => traceTurns.value.filter(turn => !transcriptEntries.value.some(entry => entry.id === turn.anchorEntryId)));
+const traceTurnsByAnchor = computed(() => props.reportingLevel === 'debug'
+  ? traceProjection.byAnchor(traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows }))
+  : undefined);
+const trailingTraceTurns = computed(() => traceTurnsByAnchor.value?.get(DetailedTraceProjection.trailingAnchor));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
@@ -197,7 +191,7 @@ onMounted(() => { window.addEventListener('chat:jump-to-message', onJump); scrol
 onBeforeUnmount(() => { pageEpoch++; window.removeEventListener('chat:jump-to-message', onJump); scroller.value?.removeEventListener('scroll', loadOlderOnScroll); });
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
-const waiting = computed(() => reporting.waiting(transcriptEntries.value, controller.isRunning.value));
+const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
 function resend(): void {
   const text = waiting.value?.message.text;
   controller.stop();

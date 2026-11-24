@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { DetailedTraceProjection } from './DetailedTraceProjection';
 import { TranscriptReporting } from './toolGroups';
@@ -33,8 +34,8 @@ describe('DetailedTraceProjection', () => {
     ] satisfies Message[];
     const [turn] = new DetailedTraceProjection().project(messages, new TranscriptReporting().entries(messages, 'info'));
     expect(turn.rows[0]).toMatchObject({ target: 'vault/read', keyArgs: 'Authorization: Bearer FAKE' });
-    expect(turn.rows[0].rawPayload).toContain('Bearer FAKE');
-    expect(turn.rows[0].rawPayload).toContain('vault output');
-    expect(turn.rows[0].rawPayload).toContain('vault error');
+    expect(turn.rows[0].payload!.serialize()).toContain('Bearer FAKE');
+    expect(turn.rows[0].payload!.serialize()).toContain('vault output');
+    expect(turn.rows[0].payload!.serialize()).toContain('vault error');
   });
 });

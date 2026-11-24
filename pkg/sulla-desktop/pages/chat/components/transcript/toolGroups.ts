@@ -7,8 +7,7 @@ import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
-import { waitingOn } from '../../messages/waitingStatus';
-import type { Message, ToolMessage, UserMessage } from '../../models/Message';
+import type { Message, ToolMessage } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
 export type CardMessage = Exclude<Message, { kind: 'thinking' | 'tool' }>;
@@ -113,18 +112,6 @@ export class TranscriptReporting {
   /** Stable Standard projection shared by Standard and Detailed; Brief remains filtered. */
   standardEntries(messages: readonly Message[], level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): TranscriptEntry[] {
     return this.entries(messages, level === 'fatal' ? 'fatal' : 'info', needsHumanDecision);
-  }
-
-  /** Trace-only events are not visible replies and must not hide Standard's wait row. */
-  waiting(entries: readonly TranscriptEntry[], running: boolean): ReturnType<typeof waitingOn> {
-    if (!running) return null;
-    const users: UserMessage[] = [];
-    for (let index = entries.length - 1; index >= 0; index--) {
-      const entry = entries[index];
-      if (entry.kind !== 'card' || entry.message.kind !== 'user') break;
-      users.push(entry.message);
-    }
-    return waitingOn(users.reverse(), running);
   }
 
   /** Insert a paragraph gap before streamed text only when its nearest text
