@@ -14,7 +14,11 @@ export interface SubAgentTraceDetails {
   model?: string;
   runLocation?: string;
   isReviewer?: boolean;
-  hasBrief: boolean;
+  brief?: string;
+  briefAt?: number;
+  checkinAt?: number;
+  checkinSummary?: string;
+  report: string;
   startedAt?: number;
   endedAt?: number;
   noteAt?: number;

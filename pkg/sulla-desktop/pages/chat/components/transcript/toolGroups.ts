@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
+import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import type { Message, ToolMessage } from '../../models/Message';
@@ -95,13 +96,13 @@ const toolStatuses = new Map([['running', 'Running'], ['ok', 'Completed'], ['err
 
 export class TranscriptReporting {
   /** Project one active thread, never reorder or change its retained messages. */
-  entries(messages: readonly Message[], level: ReportingLevel): TranscriptEntry[] {
+  entries(messages: readonly Message[], level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): TranscriptEntry[] {
     const entries: TranscriptEntry[] = [];
     const seen = new Set<string>();
     for (const message of messages) {
       if (seen.has(message.id)) continue;
       seen.add(message.id);
-      for (const entry of this.project(message, level)) {
+      for (const entry of this.project(message, level, needsHumanDecision)) {
         if (entry.essential || rank[entry.level] <= rank[level]) entries.push(entry);
       }
     }
@@ -109,8 +110,8 @@ export class TranscriptReporting {
   }
 
   /** Stable Standard projection shared by Standard and Detailed; Brief remains filtered. */
-  standardEntries(messages: readonly Message[], level: ReportingLevel): TranscriptEntry[] {
-    return this.entries(messages, level === 'fatal' ? 'fatal' : 'info');
+  standardEntries(messages: readonly Message[], level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): TranscriptEntry[] {
+    return this.entries(messages, level === 'fatal' ? 'fatal' : 'info', needsHumanDecision);
   }
 
   /** Insert a paragraph gap before streamed text only when its nearest text
@@ -131,7 +132,7 @@ export class TranscriptReporting {
     return false;
   }
 
-  private *project(message: Message, level: ReportingLevel): Iterable<TranscriptEntry> {
+  private *project(message: Message, level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
     if (message.kind === 'thinking') {
       if (message.chatToolActivity) {
@@ -183,7 +184,7 @@ export class TranscriptReporting {
       if (message.result) {
         // Preserve a path to child approvals/questions, but never keep unrelated
         // tasks from the same result batch in the Standard transcript.
-        const items = message.result.items.filter(item => item.decisionIds?.length);
+        const items = message.result.items.filter(item => item.decisionIds?.length || needsHumanDecision?.(item));
         if (items.length) yield { ...base, kind: 'card', label: 'Result', level: 'fatal',
           message: { ...message, result: { ...message.result, items } } };
         return;

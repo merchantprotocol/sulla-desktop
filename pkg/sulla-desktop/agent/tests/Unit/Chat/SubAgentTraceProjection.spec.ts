@@ -47,7 +47,11 @@ describe('Option A transcript policy', () => {
   it('keeps decision-linked results reachable at every level', () => {
     // risk: dropping the only route to a child agent approval or question.
     for (const level of ['info', 'fatal', 'debug'] as const) {
-      expect(reporting.standardEntries([card(result('blocked', { decisionIds: ['pending-approval'] }))], level).map(entry => entry.id)).toEqual(['result']);
+      const linked = result('blocked', { decisionIds: ['pending-approval'] });
+      const lateLinked = result('blocked', { taskIndex: 1 });
+      const unrelated = result('error', { taskIndex: 2 });
+      const [entry] = reporting.standardEntries([card(linked, lateLinked, unrelated)], level, item => item === lateLinked);
+      expect(entry).toMatchObject({ id: 'result', message: { result: { items: [linked, lateLinked] } } });
     }
   });
 
@@ -67,6 +71,16 @@ describe('Option A transcript policy', () => {
       expect(JSON.stringify(messages)).toBe(before);
     },
   );
+
+  it('uses a structured blocker rather than its coarse failed exchange, then recognizes a reopened run', () => {
+    // risk: calling for the wrong corrective action on a cooperative blocker or a live retry.
+    const exchange = { ...launch, id: 'coarse-return', createdAt: 7_100,
+      direction: 'from_agent', status: 'failed' } as const;
+    const messages = [launch, exchange, card(result('blocked', { problem: 'Waiting for a decision' }))];
+    expect(rows(messages)).toMatchObject([{ status: 'blocked', note: 'Waiting for a decision' }]);
+    const restarted = { ...live('working'), startedAt: new Date(7_200).toISOString() };
+    expect(rows(messages, [restarted])).toMatchObject([{ status: 'working' }]);
+  });
 
   it('joins a thread-only exchange without collapsing two tasks in the same spawn batch', () => {
     // risk: attributing the wrong outcome to a parallel worker.

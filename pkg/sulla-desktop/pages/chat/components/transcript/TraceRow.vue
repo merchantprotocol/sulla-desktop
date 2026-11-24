@@ -23,12 +23,13 @@
     <p v-if="row.note" class="dtr-agent-note">
       <time v-if="noteTime" class="dtr-agent-time">{{ noteTime }}</time>{{ row.note }}
     </p>
-    <div v-if="agentMeta || row.subagent.conversationId || row.subagent.hasBrief" class="dtr-agent-meta">
+    <div v-if="agentMeta || row.subagent.conversationId || row.subagent.brief" class="dtr-agent-meta">
       <span v-if="agentMeta">{{ agentMeta }}</span>
       <button v-if="row.subagent.conversationId && openConversation" type="button" @click="openAgent">Open agent</button>
-      <button v-if="row.subagent.hasBrief" type="button" :aria-expanded="open" @click="toggle">Brief</button>
+      <button v-if="row.subagent.brief" type="button" :aria-expanded="open" @click="toggle">Brief</button>
     </div>
-    <pre v-if="open" class="dtr-payload dtr-agent-report" tabindex="0">{{ row.rawPayload }}</pre>
+    <p v-if="open && historyError" class="dtr-agent-note" role="status">Check-in history could not be loaded.</p>
+    <pre v-if="open" class="dtr-payload dtr-agent-report" tabindex="0">{{ report }}</pre>
   </article>
   <article v-else class="dtr-row" :class="`dtr-row-${row.kind}`">
     <div class="dtr-icon" aria-hidden="true">{{ icon }}</div>
@@ -47,10 +48,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject } from 'vue';
+import { computed, inject, shallowRef, ref, watch, type Ref } from 'vue';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
-import type { TraceRow as TraceRowModel } from './traceTypes';
+import type { SubAgentTraceStatus, TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
 
 const props = defineProps<{ row: TraceRowModel; now?: number }>();
@@ -59,12 +62,44 @@ const open = computed(() => disclosure.isOpen(props.row.id));
 const icon = computed(() => ({ thought: '·', tool: '◆', memory: '◈', heartbeat: '◌', activity: '•', handoff: '↗', retry: '↻', approval: '!', usage: '◫', source: '↗', subagent: '•' }[props.row.kind] ?? '•'));
 const openConversation = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
 const agentProjection = new SubAgentTraceProjection();
+const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context');
+const history = shallowRef<AgentTraceHistoryData | null>(null);
+const historyError = ref(false);
+watch([() => context?.backendThreadId.value, () => props.row.subagent?.jobId, () => props.row.subagent?.taskIndex ?? 0], () => {
+  history.value = null;
+  historyError.value = false;
+}, { flush: 'sync' });
+watch([
+  open,
+  () => context?.backendThreadId.value,
+  () => props.row.subagent?.jobId,
+  () => props.row.subagent?.taskIndex ?? 0,
+  () => props.row.subagent?.checkinAt,
+  () => props.row.subagent?.endedAt,
+], async([expanded, parent, jobId, taskIndex], _, onCleanup) => {
+  if (!expanded || !parent || !jobId) return;
+  let current = true;
+  onCleanup(() => { current = false; });
+  historyError.value = false;
+  try {
+    const data = await ipcRenderer.invoke('agents:trace-history', parent, jobId, taskIndex);
+    if (current) history.value = data;
+  } catch {
+    if (current) historyError.value = true;
+  }
+}, { immediate: true });
+const report = computed(() => {
+  const agent = props.row.subagent;
+  return agent && history.value
+    ? agentProjection.disclosure(agent, props.row.status as SubAgentTraceStatus, history.value.checkins)
+    : props.row.rawPayload;
+});
 const initial = computed(() => (props.row.subagent?.agentId || props.row.target || '?')[0].toUpperCase());
 const statusLabel = computed(() => props.row.status === 'quiet' ? 'no check-in' : props.row.status);
 const agentMeta = computed(() => {
   const agent = props.row.subagent;
   if (!agent) return '';
-  return [agent.model, agent.runLocation, agent.jobId ? `job ${agent.jobId}` : undefined,
+  return [agent.model, agent.runLocation ?? history.value?.runLocation, agent.jobId ? `job ${agent.jobId}` : undefined,
     agent.taskIndex !== undefined ? `task ${agent.taskIndex}` : undefined].filter(Boolean).join(' · ');
 });
 const noteTime = computed(() => props.row.subagent?.noteAt !== undefined

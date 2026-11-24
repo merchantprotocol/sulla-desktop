@@ -107,6 +107,7 @@ import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
+import { useResultActivity } from '../../composables/useResultActivity';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
@@ -128,9 +129,10 @@ watch(() => props.reportingLevel === 'debug', (detailed, _, onCleanup) => {
   const timer = setInterval(() => { traceNow.value = Date.now() }, 1_000);
   onCleanup(() => clearInterval(timer));
 }, { immediate: true });
+const { activity: resultActivity } = useResultActivity();
 const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
-const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel));
+const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel, item => !!resultActivity(item).decision));
 const replyCitations = computed(() => citationProjection.project(transcriptEntries.value));
 const traceTurns = computed(() => props.reportingLevel === 'debug'
   ? traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows })

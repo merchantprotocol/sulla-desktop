@@ -6,22 +6,14 @@
 export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
 import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 import type { AgentRowState, AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
+import type { AgentJobCheckin } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import type { Message, ProactiveMessage, SubAgentExchangeMessage, SubAgentMessage } from '../../models/Message';
-import type { TraceRow, SubAgentTraceStatus } from './traceTypes';
-
-export interface SubAgentTraceCheckin {
-  at: number;
-  summary: string;
-  percent?: number;
-  blockers?: readonly string[];
-  filesTouched?: readonly string[];
-}
+import type { TraceRow, SubAgentTraceStatus, SubAgentTraceDetails } from './traceTypes';
 
 export interface SubAgentTraceInput {
   agents?: readonly AgentStateRow[];
-  checkins?: ReadonlyMap<string, readonly SubAgentTraceCheckin[]>;
 }
 
 interface JobTrace {
@@ -100,7 +92,7 @@ export class SubAgentTraceProjection {
     const result = new Map<string, TraceRow[]>();
     for (const job of jobs.values()) {
       const rows = result.get(job.first.id) ?? [];
-      rows.push(this.row(job, input.checkins?.get(job.key) ?? []));
+      rows.push(this.row(job));
       result.set(job.first.id, rows);
     }
     return result;
@@ -108,62 +100,76 @@ export class SubAgentTraceProjection {
 
   private taskKey(jobId: string, index = 0): string { return `${ jobId }:${ index }`; }
 
-  private row(job: JobTrace, history: readonly SubAgentTraceCheckin[]): TraceRow {
+  private row(job: JobTrace): TraceRow {
     const { first, live, launch, exchange, legacy, native } = job;
     const result = job.result?.item;
     const old = legacy && LegacyAgentNotices.parseLegacyAgentNotice(legacy.headline, legacy.body);
     const label = launch?.label ?? result?.label ?? exchange?.label ?? live?.label ?? native?.name ?? old?.label ?? 'Sub-agent';
     const agentId = launch?.agentId ?? result?.agentId ?? exchange?.agentId ?? live?.agentId ?? native?.name;
-    const latest = history.at(-1);
     const endedLiveAt = this.timestamp(live?.endedAt);
-    const transitions: { at: number; status: SubAgentTraceStatus; note?: string }[] = [];
-    if (old && legacy) transitions.push({ at: legacy.createdAt, status: legacyStates[old.verdict], note: legacy.headline });
-    if (exchange && exchange.status !== 'running') transitions.push({ at: exchange.createdAt, status: exchangeStates[exchange.status], note: exchange.summary });
-    if (live && endedLiveAt !== undefined) transitions.push({ at: endedLiveAt, status: states[live.state], note: live.stateReason ?? undefined });
-    if (result && job.result) transitions.push({ at: job.result.at, status: resultStates[result.status], note: result.problem || result.outcome });
-    // A terminal event trumps a stale running snapshot; newer terminal events
-    // win over earlier ones, with structured result data preferred on ties.
-    const settled = transitions.reduce<typeof transitions[number] | undefined>((latest, candidate) => !latest || candidate.at >= latest.at ? candidate : latest, undefined);
+    const startedLiveAt = this.timestamp(live?.startedAt);
+    const reopened = startedLiveAt !== undefined && job.result !== undefined && startedLiveAt > job.result.at;
+    // The exchange uses a coarse status (contract blockers are emitted as
+    // failed). Prefer the structured settlement over its transport envelope.
+    const settled = result && job.result && !reopened
+      ? { at: job.result.at, status: resultStates[result.status], note: result.problem || result.outcome }
+      : live && endedLiveAt !== undefined
+        ? { at: endedLiveAt, status: states[live.state], note: live.stopReason || live.stateReason }
+        : exchange && !reopened && exchange.status !== 'running'
+          ? { at: exchange.createdAt, status: exchangeStates[exchange.status], note: exchange.summary }
+          : old && legacy && !reopened
+            ? { at: legacy.createdAt, status: legacyStates[old.verdict], note: legacy.headline }
+            : undefined;
     const status = settled?.status ?? (live ? states[live.state] :
       exchange ? exchangeStates[exchange.status] :
       native ? ({ running: 'working', done: 'returned', error: 'failed' } as const)[native.status] :
       launch?.status && launch.status !== 'running' ? exchangeStates[launch.status] : 'starting');
     const ended = status === 'returned' || status === 'failed' || status === 'stopped';
-    const note = settled?.note ?? (live ? live.stateReason || live.lastCheckinSummary || latest?.summary || launch?.summary :
-      native?.desc ?? exchange?.summary ?? latest?.summary ?? launch?.summary ?? legacy?.headline);
+    const note = settled?.note ?? (live ? live.stateReason || live.lastCheckinSummary || launch?.summary :
+      native?.desc ?? exchange?.summary ?? launch?.summary ?? legacy?.headline);
     const modelStatus = live?.modelStatus ?? result?.modelStatus;
-    const startedAt = result?.startedAt ?? this.timestamp(live?.startedAt) ?? launch?.createdAt ?? native?.createdAt;
+    const startedAt = (reopened ? startedLiveAt : result?.startedAt ?? startedLiveAt) ?? launch?.createdAt ?? native?.createdAt;
     const endedAt = settled?.at ?? (ended ? native?.createdAt ?? this.timestamp(live?.lastActivityAt) ?? launch?.createdAt : undefined);
-    const brief = launch?.detail;
-    const checkins = [...history];
     const lastCheckinAt = this.timestamp(live?.lastCheckinAt);
-    if (lastCheckinAt !== undefined && live?.lastCheckinSummary && !checkins.some(entry => entry.at === lastCheckinAt && entry.summary === live.lastCheckinSummary)) {
-      checkins.push({ at: lastCheckinAt, summary: live.lastCheckinSummary });
-      checkins.sort((a, b) => a.at - b.at);
-    }
-    const formattedCheckins = checkins.map(entry => [
-      `${ this.timeLabel(entry.at) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
-      ...(entry.blockers ?? []), ...(entry.filesTouched ?? []),
-    ].join('\n')).join('\n');
     const report = [exchange?.detail, result?.report].filter((value, index, values) => value && values.indexOf(value) === index).join('\n\n');
-    const rawPayload = [
-      launch && brief && `BRIEF · sent ${ this.timeLabel(launch.createdAt) }\n${ brief }`,
-      `CHECK-INS\n${ formattedCheckins || 'None recorded.' }`,
-      `REPORT${ endedAt !== undefined ? ` · ${ status } ${ this.timeLabel(endedAt) }` : '' }\n${ report || legacy?.body || native?.steps.map(step => `${ step.tag }  ${ step.text }`).join('\n') || (ended ? note : 'Not returned yet.') || 'No report recorded.' }`,
-    ].filter(Boolean).join('\n\n');
-
-    return { id: `subagent:${ job.key }`, kind: 'subagent', verb: '', target: label, targetIsCode: false, status,
-      at: first.createdAt, anchorEntryId: '', note, rawPayload,
-      durationLabel: result?.durationMs !== undefined ? this.duration(result.durationMs) : undefined,
-      subagent: {
-        agentId, conversationId: launch?.conversationId ?? result?.threadId ?? exchange?.conversationId ?? live?.threadId ?? undefined,
-        jobId: launch?.jobId ?? result?.jobId ?? exchange?.jobId ?? live?.jobId ?? old?.jobId,
-        taskIndex: launch?.taskIndex ?? result?.taskIndex ?? exchange?.taskIndex ?? live?.taskIndex,
-        model: modelStatus ? AgentModelStatus.label(modelStatus) : result?.model,
-        runLocation: result?.runLocation, isReviewer: result?.purpose === 'review', hasBrief: !!brief,
-        startedAt, endedAt, noteAt: settled || ended ? undefined : lastCheckinAt ?? latest?.at,
-      },
+    const details: SubAgentTraceDetails = {
+      agentId, conversationId: launch?.conversationId ?? result?.threadId ?? exchange?.conversationId ?? live?.threadId ?? undefined,
+      jobId: launch?.jobId ?? result?.jobId ?? exchange?.jobId ?? live?.jobId ?? old?.jobId,
+      taskIndex: launch?.taskIndex ?? result?.taskIndex ?? exchange?.taskIndex ?? live?.taskIndex,
+      model: modelStatus ? AgentModelStatus.label(modelStatus) : result?.model,
+      runLocation: result?.runLocation, isReviewer: result?.purpose === 'review',
+      startedAt, endedAt, noteAt: settled || ended ? undefined : lastCheckinAt,
+      brief: launch?.detail, briefAt: launch?.createdAt,
+      checkinAt: lastCheckinAt, checkinSummary: live?.lastCheckinSummary ?? undefined,
+      report: report || legacy?.body || native?.steps.map(step => `${ step.tag }  ${ step.text }`).join('\n') ||
+        (ended ? note || 'No report recorded.' : 'Not returned yet.'),
     };
+    return { id: `subagent:${ job.key }`, kind: 'subagent', verb: '', target: label, targetIsCode: false, status,
+      at: first.createdAt, anchorEntryId: '', note, rawPayload: this.disclosure(details, status),
+      durationLabel: !reopened && result?.durationMs !== undefined ? this.duration(result.durationMs) : undefined,
+      subagent: details,
+    };
+  }
+
+  disclosure(details: SubAgentTraceDetails, status: SubAgentTraceStatus, history: readonly AgentJobCheckin[] = []): string {
+    const checkins = [...history];
+    const { checkinAt, checkinSummary, briefAt, brief, endedAt } = details;
+    if (checkinAt !== undefined && checkinSummary && !history.some(entry => entry.createdAt === checkinAt && entry.summary === checkinSummary)) {
+      checkins.push({ createdAt: checkinAt, summary: checkinSummary, step: '', blockers: [], filesTouched: [] });
+    }
+    checkins.sort((a, b) => a.createdAt - b.createdAt);
+    const formattedCheckins = checkins.map(entry => [
+      `${ this.timeLabel(entry.createdAt) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
+      ...(entry.step ? [entry.step] : []), ...entry.blockers, ...entry.filesTouched,
+    ].join('\n')).join('\n');
+    return [
+      brief && `BRIEF${ briefAt !== undefined ? ` · sent ${ this.timeLabel(briefAt) }` : '' }
+${ brief }`,
+      `CHECK-INS
+${ formattedCheckins || 'None recorded.' }`,
+      `REPORT${ endedAt !== undefined ? ` · ${ status } ${ this.timeLabel(endedAt) }` : '' }
+${ details.report }`,
+    ].filter(Boolean).join('\n\n');
   }
 
   duration(ms: number): string {
