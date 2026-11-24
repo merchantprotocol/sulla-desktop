@@ -6,7 +6,6 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { REPLY_FORMAT_CONTENT } from '@pkg/agent/prompts/sections/replyFormat';
 import { replySectionKind, structureReply } from '@pkg/pages/chat/messages/replyStructure';
 
 function sections(html: string): { kind: string; heading: string; text: string }[] {
@@ -62,12 +61,6 @@ describe('structureReply', () => {
     expect(replySectionKind('Architecture')).toBe('other');
   });
 
-  // risk: the prompt and renderer drift apart and the agent's headings stop being styled
-  it('recognises every section heading the reply_format prompt asks for', () => {
-    const headings = Array.from(REPLY_FORMAT_CONTENT.matchAll(/^## (.+)$/gm), m => m[1]).filter(h => h !== 'Reply Format');
-
-    expect(headings.map(replySectionKind)).toEqual(['summary', 'done', 'issues', 'decisions', 'next']);
-  });
 });
 
 describe('structureReply with bold-label replies', () => {

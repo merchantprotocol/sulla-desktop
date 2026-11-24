@@ -294,21 +294,6 @@ export async function getTemplateVariables(threadId = 'unknown'): Promise<Record
     }
   } catch { /* registry not available */ }
 
-  // Compact, DB-backed Files placement guide. Failure is non-fatal while Files is locked.
-  let folderMap = '';
-  const folderMapStarted = Date.now();
-  try {
-    folderMap = await templateSnapshotCache.get('filesFolderMap', async () => {
-    const { filesContainerJson } = await import('../files/containerClient');
-    const folders=await filesContainerJson<Array<{collectionName:string;path:string;description:string;namingHint?:string;needsDescription?:boolean}>>('/v1/folders/map?limit=38',{});
-    if (folders.length) return `## Folder map
-Check \`files_where\` before saving. Prefer described folders; if none fits, create a sensible folder with a description.
-${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`:''}: ${folder.description}${folder.namingHint?` (names: ${folder.namingHint})`:''}${folder.needsDescription?' [needs description]':''}`).join('\n')}`;
-    return '';
-    });
-    timing.filesFolderMap = Date.now() - folderMapStarted;
-  } catch { /* Files may be locked during bootstrap */ }
-
   // Installed extensions
   let installedExtensions = '';
   const extensionsStarted = Date.now();
@@ -332,7 +317,7 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
   } catch { /* extension service not available */ }
   timing.extensions = Date.now() - extensionsStarted;
 
-  perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables settings=${ timing.settings || 0 }ms skills=${ timing.skills || 0 }ms filesFolderMap=${ timing.filesFolderMap || 0 }ms extensions=${ timing.extensions || 0 }ms extensionsInitialize=${ timing.extensionsInitialize || 0 }ms total=${ Date.now() - startedAt }ms`);
+  perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables settings=${ timing.settings || 0 }ms skills=${ timing.skills || 0 }ms extensions=${ timing.extensions || 0 }ms extensionsInitialize=${ timing.extensionsInitialize || 0 }ms total=${ Date.now() - startedAt }ms`);
 
   return {
     '{{formattedTime}}':        formattedTime,
@@ -351,7 +336,6 @@ ${folders.map(folder=>`- ${folder.collectionName}${folder.path?`/${folder.path}`
     '{{skills_index}}':         skillsIndex,
     '{{tool_categories}}':      categoriesText,
     '{{installed_extensions}}':  installedExtensions,
-    '{{folder_map}}':             folderMap,
   };
   } catch (err) {
     perf.log(`[PreModelSubTiming] threadId=${ threadId } getTemplateVariables total=${ Date.now() - startedAt }ms failed=true`);

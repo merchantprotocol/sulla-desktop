@@ -124,10 +124,13 @@ const syncInput = (): void => {
     currentItem.value = null;
     historyItems.value = [];
     pinned.value = false;
+    hovered.value = false;
   }
 
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
   queue.observe(props.checkIns, props.threadId, now, visible);
+  queue.seed(props.checkIns, props.threadId, now);
+  currentItem.value = queue.current ?? fallbackItem.value;
   historyItems.value = queue.history;
   if (mounted.value) refresh();
 };
@@ -173,6 +176,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   mounted.value = false;
+  hovered.value = false;
   if (timer !== undefined) window.clearInterval(timer);
   document.removeEventListener('visibilitychange', syncVisibility);
   motionQuery?.removeEventListener('change', syncReducedMotion);
