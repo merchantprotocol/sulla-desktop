@@ -13,7 +13,6 @@
     • Stop / limit-continue through the Send button (no separate run row)
     • Either the textarea OR the voice panel, mutually exclusive
     • Mic + paperclip buttons
-    • Keyboard hints row below the input underline
 
   Reads everything from the controller. The only "logic" here is:
     1. send() / queue()   on Enter
@@ -229,53 +228,6 @@
         </div>
       </div>
 
-      <div
-        v-if="reportingLevel !== 'info'"
-        class="hints"
-        :class="{ 'hints-contextual': contextualHints }"
-      >
-        <div class="classic-guide">
-          <span><kbd>⏎</kbd> send</span>
-          <span><kbd>hold ␣</kbd> talk</span>
-          <span><kbd>⌘/</kbd> voice</span>
-          <span><kbd>?</kbd> help</span>
-        </div>
-        <div class="noir-guide">
-          <template v-if="isRecording">
-            <span><kbd>⌘/</kbd> stop listening</span>
-          </template>
-          <template v-else-if="controller.popover.value.open">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> run</span>
-            <span><kbd>esc</kbd> close</span>
-          </template>
-          <template v-else-if="useCases.intent.value">
-            <span><kbd>⏎</kbd> {{ intentSendHint }}</span>
-            <span><kbd>⌫</kbd> remove chip (empty draft)</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else-if="useCases.open.value && useCases.strip.active >= 0">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> pick</span>
-            <span><kbd>esc</kbd> back to typing</span>
-          </template>
-          <template v-else-if="useCases.open.value">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>↓</kbd> suggestions</span>
-            <span><kbd>{{ modKey }}1–5</kbd> pick</span>
-            <span><kbd>esc</kbd> hide</span>
-          </template>
-          <template v-else-if="draft.trim()">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else>
-            <span><kbd>/</kbd> commands</span>
-            <span><kbd>@</kbd> context</span>
-            <span><kbd>⌘/</kbd> voice</span>
-          </template>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -321,11 +273,6 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { ReportingLevel } from '../../models/ReportingLevel';
-
-const props = defineProps<{ reportingLevel: ReportingLevel }>();
-const reportingLevel = computed(() => props.reportingLevel);
-
 const controller = useChatController();
 
 // Injected by ChatPage when nested inside a browser tab — lets us open the
@@ -520,7 +467,7 @@ function onScreenRecordingState(_event:unknown, state:{ recording?:boolean }):vo
 const filesImporting = ref(false);
 const filesImportError = ref('');
 
-// ─── Placeholder + keyboard hints ──────────────────────────────────
+// ─── Placeholder ────────────────────────────────────────────────────
 const placeholder = computed(() => {
   return controller.isRunning.value
     ? 'send while Sulla is working — queued'
@@ -553,16 +500,6 @@ const useCases = useUseCaseSuggestions({
   isNarrow: () => window.matchMedia?.('(max-width: 640px)').matches ?? false,
 });
 const intentLabel = computed(() => useCases.intent.value ? useCases.directive.label(useCases.intent.value) : { verb: '', title: '' });
-const intentSendHint = computed(() => {
-  const picked = useCases.intent.value?.item;
-  if (!picked) return 'send';
-  if (picked.type === 'agent') return `send to ${ picked.title }`;
-  if (picked.type === 'skill') return 'send with skill';
-
-  return `send + run ${ picked.title }`;
-});
-/** The hint row says something beyond the placeholder: recording, a menu, a draft or a use case. */
-const contextualHints = computed(() => isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
 function pickUseCase(item: SuggestedUseCase): void {
   useCases.pick(item);
   inputRef.value?.focus();
@@ -1072,12 +1009,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 :global(.dark) .composer { box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07); }
 .composer.recording .glyph, .glyph { display: none; }
 .composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
-.hints { position: relative; display: flex; justify-content: center; gap: 0; min-height: 14px; margin-top: 9px; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
-.classic-guide { display: none; }
-.noir-guide { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
-.noir-guide span::before { display: none; }
-.hints kbd { margin: 0; padding: 0; border: 0; color: var(--text-muted); background: transparent; font-size: inherit; font-weight: 500; }
-.noir-guide span:not(:last-child)::after { content: " ·"; color: var(--text-dim); }
 .hidden-file-input { display: none; }
 .composer-wrap :deep(button:focus-visible), .composer-wrap :deep(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
 .composer-top .usecase-strip { margin: 0; }
