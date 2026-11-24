@@ -20,46 +20,28 @@ function agent(
 }
 
 describe('WorkerChartLayout', () => {
-  it('keeps needs-you and failed siblings visible, fills the collapsed view to two, and expands the full branch', () => {
-    // risk: agent visibility — urgent workers must never be hidden by the sibling cap
+  it('gives every child agent its own row when a parent has more than three children, in order and at any depth', () => {
+    // risk: agent visibility — no agent may ever be hidden behind a "+N" group
     const layout = new WorkerChartLayout();
     const root = agent('root', 'working', [
       agent('first', 'parked'),
       agent('urgent', 'needs-you'),
       agent('failed', 'failed'),
-      agent('fourth', 'working'),
+      agent('fourth', 'working', [
+        agent('nested-1'), agent('nested-2'), agent('nested-3'), agent('nested-4'), agent('nested-5'),
+      ]),
       agent('fifth', 'parked'),
+      agent('sixth', 'working'),
     ]);
 
-    const collapsed = layout.layout(root, new Set(), false, new Set());
-    expect(collapsed.rows.filter(row => row.kind === 'agent').map(row => row.agent.id)).toEqual([
-      'root', 'urgent', 'failed',
+    const rows = layout.layout(root, false, new Set()).rows;
+    expect(rows.map(row => row.agent.id)).toEqual([
+      'root', 'first', 'urgent', 'failed', 'fourth',
+      'nested-1', 'nested-2', 'nested-3', 'nested-4', 'nested-5',
+      'fifth', 'sixth',
     ]);
-    expect(collapsed.rows.at(-1)).toMatchObject({ kind: 'group', parentId: 'root', hiddenCount: 3, expanded: false });
-
-    const expanded = layout.layout(root, new Set(['root']), false, new Set());
-    expect(expanded.rows.filter(row => row.kind === 'agent').map(row => row.agent.id)).toEqual([
-      'root', 'first', 'urgent', 'failed', 'fourth', 'fifth',
-    ]);
-    expect(expanded.rows.at(-1)).toMatchObject({ kind: 'group', hiddenCount: 0, expanded: true });
-  });
-
-  it('does not truncate urgent siblings when more than two need attention', () => {
-    // risk: agent visibility — urgent count may exceed the normal two-sibling preview
-    const layout = new WorkerChartLayout();
-    const root = agent('root', 'working', [
-      agent('urgent-1', 'needs-you'),
-      agent('urgent-2', 'failed'),
-      agent('urgent-3', 'needs-you'),
-      agent('ordinary-1'),
-      agent('ordinary-2'),
-    ]);
-
-    const rows = layout.layout(root, new Set(), false, new Set()).rows;
-    expect(rows.filter(row => row.kind === 'agent').map(row => row.agent.id)).toEqual([
-      'root', 'urgent-1', 'urgent-2', 'urgent-3',
-    ]);
-    expect(rows.at(-1)).toMatchObject({ kind: 'group', hiddenCount: 2 });
+    expect(rows.every(row => row.kind === 'agent')).toBe(true);
+    expect(layout.layout(root, true, new Set()).rows).toHaveLength(12);
   });
 
   it('collapses completed descendants into the parent while retaining a completed root marker', () => {
@@ -67,12 +49,12 @@ describe('WorkerChartLayout', () => {
     const layout = new WorkerChartLayout();
     const root = agent('root', 'done', [agent('finished-child', 'done'), agent('active-child', 'working')]);
 
-    const beforeCollapse = layout.layout(root, new Set(), false, new Set());
-    expect(beforeCollapse.rows.filter(row => row.kind === 'agent').map(row => row.agent.id)).toEqual([
+    const beforeCollapse = layout.layout(root, false, new Set());
+    expect(beforeCollapse.rows.map(row => row.agent.id)).toEqual([
       'root', 'finished-child', 'active-child',
     ]);
-    expect(layout.layout(root, new Set(), false, new Set(['finished-child'])).rows
-      .filter(row => row.kind === 'agent').map(row => row.agent.id)).toEqual(['root', 'active-child']);
+    expect(layout.layout(root, false, new Set(['finished-child'])).rows
+      .map(row => row.agent.id)).toEqual(['root', 'active-child']);
   });
 });
 
