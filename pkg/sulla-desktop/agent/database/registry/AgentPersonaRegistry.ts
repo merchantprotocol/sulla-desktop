@@ -122,9 +122,7 @@ export interface ChatMessage {
   toolApproval?: {
     approvalId: string;
     reason:     string;
-    command:    string;
-    title?:     string;
-    expiresAt?: number;
+    command:    string; title?: string; expiresAt?: number;
     origin?:    { kind: string; [field: string]: unknown };
   };
   /** Multiple-choice question surfaced as an interactive ToolQuestion card.
