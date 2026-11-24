@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { ensureChatHeartbeatJobLifecycle, getChatHeartbeatService } from '../../services/ChatHeartbeatService';
+import { chatHeartbeatProvider } from '../../app/Providers/ChatHeartbeatServiceProvider';
 import { getJob } from '../agents/jobRegistry';
 import { BaseTool, ToolResponse } from '../base';
 
@@ -28,8 +28,8 @@ export class SetChatHeartbeatWorker extends BaseTool {
       return { successBoolean: false, responseString: 'This delegated task is no longer open; its heartbeat cannot be changed.' };
     }
 
-    const service = getChatHeartbeatService();
-    await ensureChatHeartbeatJobLifecycle();
+    const service = chatHeartbeatProvider.scheduler();
+    await chatHeartbeatProvider.ensureJobLifecycleSubscription();
     // Tool calls can come from hidden or tabbed delegated jobs that have no
     // renderer registration. Keep the scheduler keyed by the backend thread;
     // binding the job identity routes its beats through the parked-job wake path.

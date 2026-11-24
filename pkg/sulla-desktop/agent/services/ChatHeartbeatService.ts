@@ -11,9 +11,5 @@ export function getChatHeartbeatService(): ChatHeartbeatScheduler {
   return chatHeartbeatProvider.scheduler();
 }
 
-export async function ensureChatHeartbeatJobLifecycle(): Promise<void> {
-  chatHeartbeatProvider.scheduler();
-  await chatHeartbeatProvider.ensureJobLifecycleSubscription();
-}
 
 export { ChatHeartbeatScheduler } from './ChatHeartbeatScheduler';

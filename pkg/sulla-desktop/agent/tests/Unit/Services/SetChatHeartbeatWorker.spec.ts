@@ -4,10 +4,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ getService: vi.fn(), ensureLifecycle: vi.fn(async() => undefined), getJob: vi.fn() }));
-vi.mock('@pkg/agent/services/ChatHeartbeatService', () => ({
-  getChatHeartbeatService: mocks.getService,
-  ensureChatHeartbeatJobLifecycle: mocks.ensureLifecycle,
+const mocks = vi.hoisted(() => ({ getScheduler: vi.fn(), ensureLifecycle: vi.fn(async() => undefined), getJob: vi.fn() }));
+vi.mock('@pkg/agent/app/Providers/ChatHeartbeatServiceProvider', () => ({
+  chatHeartbeatProvider: { scheduler: mocks.getScheduler, ensureJobLifecycleSubscription: mocks.ensureLifecycle },
 }));
 vi.mock('@pkg/agent/tools/agents/jobRegistry', () => ({ getJob: mocks.getJob }));
 
@@ -27,7 +26,7 @@ describe('SetChatHeartbeatWorker', () => {
     vi.setSystemTime(Date.UTC(2026, 10, 24, 20, 0));
     deliver.mockClear();
     scheduler = new ChatHeartbeatScheduler({ now: () => Date.now(), isGraphBusy: () => false, deliver });
-    mocks.getService.mockReturnValue(scheduler);
+    mocks.getScheduler.mockReturnValue(scheduler);
     mocks.getJob.mockResolvedValue({
       jobId: 'job-1', status: 'parked', parentChannel: 'sulla-desktop',
       tasks: [{ threadId: 'job-thread', agentId: 'codex-sol-worker', status: 'parked' }],
