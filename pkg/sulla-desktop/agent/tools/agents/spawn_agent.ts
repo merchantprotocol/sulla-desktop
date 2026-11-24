@@ -75,6 +75,7 @@ import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
 import type { AgentJobResult, AgentJobTask, AgentJobVisibility } from './jobRegistry';
 import type { ResultReference } from '../../../shared/agentResults/AgentResultCard';
 import type { WorkerModelRoute } from '../../languagemodels/workerModelBindings';
+import type { ModelDecision } from '../../languagemodels/modelPrecedence';
 import type { RoutableAgent } from '../../services/ChatAgentRouting';
 
 export function childAbortForJob(asyncJob: boolean, parentAbort: any, taskAbortSignal?: AbortSignal) {
@@ -115,6 +116,9 @@ interface SpawnTask {
   visibility?: AgentJobVisibility;
   /** Tab only: focus the new tab. */
   focus?:      boolean;
+  /** Internal launch metadata populated during validation. */
+  modelDecision?: ModelDecision;
+  modelOverride?: { provider: string; model: string; connections?: Record<string, string> };
 }
 
 interface LaunchedTab {
@@ -154,6 +158,8 @@ interface TabPlan {
 // the downgrade is recorded on the response and the task, never silent.
 export class SpawnAgentWorker extends BaseTool {
   private readonly workerRoutes = new WeakMap<SpawnTask, WorkerModelRoute>();
+  private readonly modelDecisions = new WeakMap<SpawnTask, ModelDecision>();
+  private readonly modelOverrides = new WeakMap<SpawnTask, { provider: string; model: string; connections?: Record<string, string> }>();
   name = '';
   description = '';
 
@@ -249,26 +255,55 @@ export class SpawnAgentWorker extends BaseTool {
         };
       }
 
-      const workerRoute = await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
-      if (workerRoute) this.workerRoutes.set(tasks[i], workerRoute);
-      if (tasks[i].effort !== undefined && !workerRoute) {
-        try {
-          const { effectiveModelChoice } = await import('../../languagemodels/threadModelChoice');
-          const { modelRouter } = await import('../../languagemodels/modelRouter');
-          const choice = effectiveModelChoice({ model: tasks[i].model, provider: tasks[i].provider, effort: tasks[i].effort });
-          await modelRouter.resolve('agents', choice);
-          tasks[i].provider = 'codex'; // Same provider inference as the explicit model pin.
-        } catch (error) {
-          return { successBoolean: false, responseString: `Task ${ i }: ${ (error as Error).message }` };
+      for (const key of ['model', 'provider'] as const) {
+        if (tasks[i][key] !== undefined && (typeof tasks[i][key] !== 'string' || !tasks[i][key]!.trim())) {
+          return { successBoolean: false, responseString: `Task ${ i }: ${ key } must be a non-empty string.` };
         }
       }
       if (tasks[i].runLocation !== undefined && !['vm', 'container'].includes(tasks[i].runLocation!)) {
         return { successBoolean: false, responseString: `Task ${ i }: runLocation must be vm or container.` };
       }
-      for (const key of ['model', 'provider'] as const) {
-        if (tasks[i][key] !== undefined && (typeof tasks[i][key] !== 'string' || !tasks[i][key]!.trim())) {
-          return { successBoolean: false, responseString: `Task ${ i }: ${ key } must be a non-empty string.` };
+      try {
+        const hasOverride = Boolean(tasks[i].model?.trim() || tasks[i].provider?.trim());
+        // An explicit launch choice is a hard boundary: never read or attach a worker mapping.
+        const workerRoute = hasOverride ? undefined : await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
+        if (workerRoute) this.workerRoutes.set(tasks[i], workerRoute);
+        const selector = taskAgentSelector(tasks[i]) || parentChannel;
+        const currentDefinition = selector ? await agentDefinitionService.findBySlug(selector) : null;
+        const { resolveLaunchModelPrecedence } = await import('../../languagemodels/modelPrecedence');
+        const precedence = resolveLaunchModelPrecedence({
+          override: { provider: tasks[i].provider, model: tasks[i].model, effort: tasks[i].effort },
+          workerModelRoute: workerRoute,
+          agentChoice: currentDefinition?.model_choice,
+        });
+        const modelDecision: ModelDecision = {
+          requested: precedence.requested,
+          ran: null,
+          step: precedence.step,
+          ...(precedence.reason ? { reason: precedence.reason } : {}),
+        };
+        if (tasks[i].effort !== undefined && workerRoute && precedence.step === 'agent-mapping') {
+          modelDecision.reason = 'Per-run effort was ignored because the saved agent mapping takes precedence.';
         }
+        if (precedence.step === 'override') {
+          const { modelRouter } = await import('../../languagemodels/modelRouter');
+          const requested = precedence.requested!;
+          try { await modelRouter.resolve('agents', precedence.choice); } catch {
+            throw new Error(`Requested model ${ requested.provider }/${ requested.model } is not available (not connected or unknown); refusing to run a different model.`);
+          }
+          tasks[i].provider = requested.provider;
+          tasks[i].model = requested.model;
+          const modelOverride: { provider: string; model: string; connections?: Record<string, string> } = { provider: requested.provider, model: requested.model };
+          if (requested.provider === 'grok') modelOverride.connections = await workerModelRouting.subscriptionConnections([{ provider: requested.provider, model: requested.model }]);
+          this.modelOverrides.set(tasks[i], modelOverride);
+        } else if (tasks[i].effort !== undefined && !workerRoute) {
+          const { effectiveModelChoice } = await import('../../languagemodels/threadModelChoice');
+          const { modelRouter } = await import('../../languagemodels/modelRouter');
+          await modelRouter.resolve('agents', effectiveModelChoice({ effort: tasks[i].effort }));
+        }
+        this.modelDecisions.set(tasks[i], modelDecision);
+      } catch (error) {
+        return { successBoolean: false, responseString: `Task ${ i }: ${ (error as Error).message }` };
       }
       const projectTaskId = tasks[i].projectTaskId;
       if (projectTaskId !== undefined && (typeof projectTaskId !== 'string' || !projectTaskId.trim())) {
@@ -403,7 +438,14 @@ export class SpawnAgentWorker extends BaseTool {
    * (the root human chat, when the caller is a hidden child).
    */
   private async launchTab(task: SpawnTask, childAgent: RoutableAgent, parentDepth: number, decision: TabVisibilityDecision): Promise<LaunchedTab> {
-    const workerRoute = await workerModelRouting.newRoute(childAgent.graphAgentId);
+    const { resolveLaunchModelPrecedence } = await import('../../languagemodels/modelPrecedence');
+    const launchPrecedence = resolveLaunchModelPrecedence({
+      override: { provider: task.provider, model: task.model, effort: task.effort },
+      workerModelRoute: this.workerRoutes.get(task),
+    });
+    const workerRoute = launchPrecedence.workerModelRoute;
+    const modelDecision = this.modelDecisions.get(task);
+    const modelOverride = this.modelOverrides.get(task);
     const { captureProviderCliSnapshot } = await import('../../../backend/providerCliUpdates');
     const providerCliSnapshot = await captureProviderCliSnapshot();
     const metadata = (this.state as any)?.metadata;
@@ -428,6 +470,8 @@ export class SpawnAgentWorker extends BaseTool {
       followUpOf:       task.followUpOf,
       provider: task.provider, model: task.model, effort:           task.effort,
       workerModelRoute: workerRoute,
+      modelDecision,
+      modelOverride,
       providerCliSnapshot,
       prompt:     task.prompt,
       taskId:     task.projectTaskId?.trim(),
@@ -486,6 +530,8 @@ export class SpawnAgentWorker extends BaseTool {
         prompt:           `[Agent tab launched by ${ parentName }]\n\n${ task.prompt }\n\n${ contractFooter({ jobId: job.jobId, contract, visibility: 'tab' }) }`,
         activityKeys:     RunActivity.inherit(metadata, job.jobId, `${ job.jobId }#0`),
         workerModelRoute: workerRoute,
+        modelDecision,
+        modelOverride,
         providerCliSnapshot,
         runOverrides: { model: task.model, provider: task.provider, effort: task.effort, runLocation: task.runLocation },
       });
@@ -533,6 +579,8 @@ export class SpawnAgentWorker extends BaseTool {
         label:      task.label || agentId || `task-${ index }`,
         prompt:           task.prompt,
         workerModelRoute: this.workerRoutes.get(task),
+        modelDecision: this.modelDecisions.get(task),
+        modelOverride: this.modelOverrides.get(task),
         providerCliSnapshot,
         provider:         task.provider?.trim() || undefined,
         model:      task.model?.trim() || undefined,
@@ -610,6 +658,11 @@ export class SpawnAgentWorker extends BaseTool {
         ) as { graph: any; state: any };
         subStateRef = subState;
         installWorkerRoute(subState, input.task.workerModelRoute, activityJobId ? { jobId: activityJobId, taskIndex: index, generation: input.generation } : undefined);
+        subState.metadata.modelDecision = input.task.modelDecision;
+        if (input.task.modelOverride) subState.metadata.modelOverride = input.task.modelOverride;
+        else delete subState.metadata.modelOverride;
+        if (activityJobId) subState.metadata.modelDecisionTask = { jobId: activityJobId, taskIndex: index, generation: input.generation ?? 1, threadId };
+        else delete subState.metadata.modelDecisionTask;
         if (input.task.providerCliSnapshot) subState.metadata.providerCliSnapshot = input.task.providerCliSnapshot;
         // Cached/saved thread metadata may predate a run-location migration.
         // The current agent row is canonical; an explicit task override below
@@ -624,8 +677,13 @@ export class SpawnAgentWorker extends BaseTool {
           ...(task.runLocation ? { runLocation: task.runLocation } : {}),
         };
         if (!input.task.workerModelRoute && (task.model || task.provider)) {
-          const { getAgentOverrideService } = await import('../../languagemodels');
-          if (!await getAgentOverrideService(subState.metadata.agent)) throw new Error('Requested provider/model could not be resolved; refusing fallback');
+          const { resolveLaunchModelPrecedence } = await import('../../languagemodels/modelPrecedence');
+          const { modelRouter } = await import('../../languagemodels/modelRouter');
+          const precedence = resolveLaunchModelPrecedence({ override: { provider: task.provider, model: task.model, effort: task.effort } });
+          const requested = precedence.requested!;
+          await modelRouter.resolve('agents', precedence.choice).catch(() => {
+            throw new Error(`Requested model ${ requested.provider }/${ requested.model } is not available (not connected or unknown); refusing to run a different model.`);
+          });
         }
 
         // Inject the brief and its return contract.

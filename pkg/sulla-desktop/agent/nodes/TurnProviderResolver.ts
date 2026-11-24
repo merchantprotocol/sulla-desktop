@@ -25,9 +25,10 @@ export class TurnProviderResolver {
     const target = resolveModelSlot(state.metadata as any) === 'subconscious' ? 'subconscious' : 'agents';
     const explicitProvider = String((state.metadata as any).agent?.provider || '').trim();
     const explicitModel = String((state.metadata as any).agent?.model || '').trim();
+    const explicitEffort = (state.metadata as any).agent?.effort;
     const agentId = resolveAgentIdentity(state.metadata);
     const definition = agentId ? await turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId)).catch(() => null) : null;
-    const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, metadata: state.metadata, agentChoice: definition?.model_choice });
+    const choice: AgentModelChoice = effectiveModelChoice({ provider: explicitProvider, model: explicitModel, effort: explicitEffort, metadata: state.metadata, agentChoice: definition?.model_choice });
     const routed = await modelRouteService.resolve(target, choice);
     const candidates = routed ? [...routed.candidates] : [];
     const provider = routed?.service ?? (target === 'subconscious' ? await getSubconsciousService() : await getPrimaryService());

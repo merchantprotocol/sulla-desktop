@@ -66,11 +66,12 @@ describe('durable worker model selection', () => {
   });
   it('detaches a terminal human follow-up without changing durable work, workspace or permissions', () => {
     const run = state(); const job = structuredClone(fixture.job);
-    Object.assign(run.metadata, { delegatedJobId: 'job', managerThreadId: 'parent', activityKeys: ['ancestor'], isSubAgent: true, containerPersistenceKey: 'workspace', agent: { provider: 'codex', model: 'old', effort: 'max' } });
+    Object.assign(run.metadata, { delegatedJobId: 'job', managerThreadId: 'parent', activityKeys: ['ancestor'], modelDecisionTask: { jobId: 'job', taskIndex: 0 }, modelDecision: { requested: null, ran: null, step: 'category' }, modelOverride: { provider: 'grok', model: 'grok-4.6' }, isSubAgent: true, containerPersistenceKey: 'workspace', agent: { provider: 'codex', model: 'old', effort: 'max' } });
     detachTerminalWorkerChat(run);
     expect(fixture.job).toEqual(job);
     expect(run.metadata).toMatchObject({ isSubAgent: true, containerPersistenceKey: 'workspace', agent: {} });
     expect(run.metadata.workerModelTask).toBeUndefined(); expect(run.metadata.activityKeys).toBeUndefined();
+    expect(run.metadata.modelDecisionTask).toBeUndefined(); expect(run.metadata.modelDecision).toBeUndefined(); expect(run.metadata.modelOverride).toBeUndefined();
     run.metadata.workerModelChatOverride = true; run.metadata.agent = { model: 'human-pin' };
     detachTerminalWorkerChat(run); expect(run.metadata.agent.model).toBe('human-pin');
   });

@@ -7,7 +7,6 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 
 import { ProviderBridgeIdentityError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
-import { ProviderModelPin } from './ProviderModelPin';
 import type { BrokerInjection, ToolExecutionContext } from './index';
 import type { LocalVaultBrokerClient } from './index';
 
@@ -107,8 +106,6 @@ export interface ProviderCliBridgeIdentity {
   accountId: string;
   /** Required for Claude Code because API-key and subscription OAuth accounts share one integration. */
   authMode?: ProviderCliAuthMode;
-  /** Optional exact model allowlist supplied by the lifecycle capability. */
-  models?:   readonly string[];
 }
 
 export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
@@ -174,10 +171,6 @@ static sameIdentity(left: ToolExecutionContext, right: ToolExecutionContext): bo
   return left.sub === right.sub && left.agent_id === right.agent_id && left.pod_id === right.pod_id &&
     left.device_id === right.device_id && left.org_id === right.org_id && left.thread_id === right.thread_id &&
     left.job_id === right.job_id;
-}
-
-static modelAllowed(body: unknown, models: readonly string[] | undefined): boolean {
-  return ProviderModelPin.allows(ProviderModelPin.requested(body), models);
 }
 
 static async liveContext(

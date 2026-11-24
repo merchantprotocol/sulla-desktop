@@ -35,7 +35,7 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
     };
 
     run(parentThreadId: string, input: unknown) {
-      this.setState({ metadata: { threadId: parentThreadId, wsChannel: 'coding-manager-sol', routedAgentId: 'coding-manager-sol' } } as any);
+      this.setState({ metadata: { threadId: parentThreadId, wsChannel: 'coding-manager', routedAgentId: 'coding-manager' } } as any);
       return this.call(input);
     }
   }
@@ -96,12 +96,12 @@ dbDescribe('spawn_agent records a tab downgrade instead of hiding it (real tool 
   });
   it('snapshots the named worker mapping instead of a stale caller model and effort', async() => {
     const route = { agentId: 'worker-definition', revision: 2, editToken: 'fixture-owner-edit', connections: { codex: 'fixture-subscription' }, candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'max' }] };
-    vi.mocked(modelRouter.getEditableState).mockResolvedValue({ ...recommendedState(), workerBindings: { 'coding-manager-sol': route } });
+    vi.mocked(modelRouter.getEditableState).mockResolvedValue({ ...recommendedState(), workerBindings: { 'coding-manager': route } });
     vi.spyOn(modelRouter, 'workerLaunchCandidates').mockImplementation(rows => Promise.resolve(rows));
-    const response = await new SpawnHarness().run(`mapped-${ Date.now() }`, { tasks: [{ agentId: 'coding-manager-sol', label: 'mapped-worker', prompt: 'do the work', model: 'obsolete-model', effort: 'unsupported-old-effort' }] });
+    const response = await new SpawnHarness().run(`mapped-${ Date.now() }`, { tasks: [{ agentId: 'coding-manager', label: 'mapped-worker', prompt: 'do the work', model: 'obsolete-model', effort: 'unsupported-old-effort' }] });
     expect(response.success, JSON.stringify(response)).toBe(true);
     const stored = await registry.getJob((response.result as { jobId: string }).jobId);
-    expect(stored?.tasks[0]).toMatchObject({ agentId: 'coding-manager-sol', workerModelRoute: { ...route, slug: 'coding-manager-sol', version: 1, selected: 0 } });
+    expect(stored?.tasks[0]).toMatchObject({ agentId: 'coding-manager', workerModelRoute: { ...route, slug: 'coding-manager', version: 1, selected: 0 } });
     route.candidates[0].effort = 'high';
     expect((await registry.getJob(stored!.jobId))?.tasks[0].workerModelRoute?.candidates[0].effort).toBe('max');
   });
