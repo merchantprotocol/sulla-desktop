@@ -977,7 +977,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-halo {
   position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none; border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--accent) 56%, transparent), color-mix(in srgb, var(--accent) 22%, transparent) 55%, transparent);
-  filter: blur(10px); opacity: 0; transform: scale(1.03, 1.2); transition: opacity .8s ease, transform .8s ease; will-change: opacity, transform;
+  filter: blur(10px); opacity: 0; transform: scale(1.03, 1.2); transition: opacity .32s ease, transform .32s ease; will-change: opacity, transform;
 }
 .composer-capsule.is-running .composer-halo { opacity: .72; animation: composer-capsule-breathe 4.8s ease-in-out infinite; }
 .composer-capsule.document-hidden .composer-halo { visibility: hidden; animation-play-state: paused; transition: none; }
@@ -1029,7 +1029,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 @media (prefers-reduced-motion: reduce) {
   .composer-capsule.is-running .composer-halo { opacity: .68; animation: none; }
-  .composer-halo { transition-duration: .8s; }
+  .composer-halo { transition-duration: .32s; }
 }
 @keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
