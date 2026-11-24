@@ -6,11 +6,13 @@
 import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMessage, ToolApprovalMessage, CitationMessage, SullaMessage } from '../../models/Message';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
-import { TracePayloadSerializer } from './TracePayloadSerializer';
+import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
 import type { TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
+  static readonly trailingAnchor = '__trace-trailing__';
+
   constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection()) {}
 
   project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
@@ -29,6 +31,16 @@ export class DetailedTraceProjection {
       const usage = this.usage(group);
       return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows, ...(usage ? { usage } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));
+  }
+
+  byAnchor(turns: readonly TraceTurn[]): Map<string, TraceTurn[]> {
+    const anchors = new Map<string, TraceTurn[]>();
+    for (const turn of turns) {
+      const siblings = anchors.get(turn.anchorEntryId);
+      if (siblings) siblings.push(turn);
+      else anchors.set(turn.anchorEntryId, [turn]);
+    }
+    return anchors;
   }
 
   private groups(messages: readonly Message[]): Message[][] {
@@ -58,7 +70,7 @@ export class DetailedTraceProjection {
     const own = reply && entries.find(entry => entry.sourceId === reply.id);
     if (own) return own.id;
     const next = entries.find(entry => entry.createdAt >= groupLastCreatedAt);
-    return next?.id ?? '__trace-trailing__';
+    return next?.id ?? DetailedTraceProjection.trailingAnchor;
   }
 
   private rowsFor(message: Message, anchor: string, activities?: readonly string[]): TraceRow[] {
@@ -79,35 +91,39 @@ export class DetailedTraceProjection {
   }
 
   private rowsForThinking(message: ThinkingMessage, anchor: string): TraceRow[] {
-    return message.thoughts.map((thought, index) => this.row(`${message.id}:thought:${index}`, 'thought', 'Thought', thought, 'ok', anchor, message.createdAt, undefined, undefined, this.serializer.serialize({ thoughts: message.thoughts, summary: message.summary })));
+    return message.thoughts.map((thought, index) => this.row(`${message.id}:thought:${index}`, 'thought', 'Thought', thought, 'ok', anchor, message.createdAt, undefined, undefined, new TracePayload([message.thoughts, message.summary], () => this.serializer.serialize({ thoughts: message.thoughts, summary: message.summary }))));
   }
 
   private rowsForTool(message: ToolMessage, anchor: string): TraceRow[] {
     const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
     const target = message.recordedToolName ?? message.tool;
-    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status, anchor, message.createdAt, this.duration(message.meta), this.serializer.summary(message.input), this.serializer.serialize({ tool: target, status: message.status, input: message.input, output: message.output, error: message.error, description: message.desc, meta: message.meta }))];
+    const { input, output, error, desc, meta } = message;
+    const payload = new TracePayload([target, message.status, input, output, error, desc, meta], () =>
+      this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }));
+    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
+      anchor, message.createdAt, this.duration(meta), this.serializer.preview(input), payload)];
   }
 
   private rowsForMemory(message: MemoryMessage, anchor: string): TraceRow[] {
-    return [this.row(message.id, 'memory', message.action, message.memId, 'ok', anchor, message.createdAt, undefined, this.serializer.summary(message.summary), this.serializer.serialize(message))];
+    return [this.row(message.id, 'memory', message.action, message.memId, 'ok', anchor, message.createdAt, undefined, this.serializer.preview(message.summary), this.serializer.lazy(message))];
   }
 
   private rowsForHeartbeat(message: HeartbeatMessage, anchor: string): TraceRow[] {
-    return [this.row(message.id, 'heartbeat', 'Heartbeat', `${message.intervalMinutes} minute interval`, 'ok', anchor, message.createdAt, undefined, this.serializer.summary(message.text), this.serializer.serialize(message))];
+    return [this.row(message.id, 'heartbeat', 'Heartbeat', `${message.intervalMinutes} minute interval`, 'ok', anchor, message.createdAt, undefined, this.serializer.preview(message.text), this.serializer.lazy(message))];
   }
 
   private rowsForApproval(message: ToolApprovalMessage, anchor: string): TraceRow[] {
     const status: TraceRowStatus = message.decision === 'pending' ? 'waiting' : message.decision === 'approved' ? 'approved' : 'failed';
-    return [this.row(message.id, 'approval', 'Approval', message.command, status, anchor, message.createdAt, undefined, message.reason, this.serializer.serialize(message))];
+    return [this.row(message.id, 'approval', 'Approval', message.command, status, anchor, message.createdAt, undefined, message.reason, this.serializer.lazy(message))];
   }
 
   private rowsForCitation(message: CitationMessage, anchor: string): TraceRow[] {
-    return message.sources.map((source, index) => this.row(`${message.id}:${index}`, 'source', 'Source', source.title, 'ok', anchor, message.createdAt, undefined, source.origin, this.serializer.serialize(source)));
+    return message.sources.map((source, index) => this.row(`${message.id}:${index}`, 'source', 'Source', source.title, 'ok', anchor, message.createdAt, undefined, source.origin, this.serializer.lazy(source)));
   }
 
-  private row(id: string, kind: TraceRowKind, verb: string, target: string, status: TraceRowStatus, anchorEntryId: string, at: number, durationLabel?: string, keyArgs?: string, rawPayload?: string): TraceRow {
+  private row(id: string, kind: TraceRowKind, verb: string, target: string, status: TraceRowStatus, anchorEntryId: string, at: number, durationLabel?: string, keyArgs?: string, payload?: TracePayload): TraceRow {
     const safeTarget = this.serializer.summary(target);
-    return { id, kind, verb: this.serializer.summary(verb), target: safeTarget, targetIsCode: /(?:[/$\\]|\.(?:ts|js|json|sh)\b|\s--?[a-z])/i.test(safeTarget), status, ...(keyArgs ? { keyArgs: this.serializer.summary(keyArgs) } : {}), ...(durationLabel ? { durationLabel } : {}), ...(rawPayload ? { rawPayload } : {}), anchorEntryId, at };
+    return { id, kind, verb: this.serializer.summary(verb), target: safeTarget, targetIsCode: /(?:[/$\\]|\.(?:ts|js|json|sh)\b|\s--?[a-z])/i.test(safeTarget), status, ...(keyArgs ? { keyArgs: this.serializer.summary(keyArgs) } : {}), ...(durationLabel ? { durationLabel } : {}), ...(payload ? { payload } : {}), anchorEntryId, at };
   }
 
   private duration(meta?: string): string | undefined {

@@ -14,7 +14,7 @@
     </div>
     <div v-for="row in turn.rows" :key="row.id" :class="{ 'dtr-thought': row.kind === 'thought' }">
       <p v-if="row.kind === 'thought'" class="dtr-thought-text">{{ row.note || row.target }}</p>
-      <TraceRow v-else :row="row" :now="now" />
+      <TraceRow v-else :row="row" />
     </div>
   </section>
 </template>
@@ -22,7 +22,7 @@
 <script setup lang="ts">
 import TraceRow from './TraceRow.vue';
 import type { TraceTurn as TraceTurnModel } from './traceTypes';
-defineProps<{ turn: TraceTurnModel; now?: number }>();
+defineProps<{ turn: TraceTurnModel }>();
 </script>
 
 <style scoped>

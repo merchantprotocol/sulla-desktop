@@ -13,7 +13,7 @@ describe('TraceDisclosureController', () => {
     expect(first.isOpen('a')).toBe(false);
   });
 
-  it('toggles one row without mutating the all-open state unexpectedly', () => {
+  it('keeps the other rows open when closing one payload in all-open mode', () => {
     const controller = new TraceDisclosureController();
     controller.toggle('a');
     expect(controller.isOpen('a')).toBe(true);
@@ -22,6 +22,7 @@ describe('TraceDisclosureController', () => {
     controller.openAll();
     controller.toggle('a');
     expect(controller.isOpen('a')).toBe(false);
-    expect(controller.isOpen('b')).toBe(false);
+    expect(controller.isOpen('b')).toBe(true);
+    expect(controller.isAllOpen).toBe(true);
   });
 });

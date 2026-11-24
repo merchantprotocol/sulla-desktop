@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { TracePayload } from './TracePayloadSerializer';
+
 export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
 export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'waiting' | 'blocked' | 'returned' | 'failed' | 'stopped';
 
@@ -37,7 +39,7 @@ export interface TraceRow {
   status: TraceRowStatus;
   note?: string;
   subagent?: SubAgentTraceDetails;
-  rawPayload?: string;
+  payload?: TracePayload;
   anchorEntryId: string;
   at?: number;
 }

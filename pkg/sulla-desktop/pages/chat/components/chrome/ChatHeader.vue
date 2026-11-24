@@ -188,11 +188,11 @@ function cancelTitle(): void {
 .ch-reporting-option {
   flex: none; min-width: 0; padding: 3px 10px; border: 0; border-radius: 7px;
   background: transparent; color: var(--text-secondary);
-  font: inherit; font-size: 12px; line-height: 1.25; white-space: nowrap; cursor: pointer;
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 1.25; white-space: nowrap; cursor: pointer;
 }
 .ch-reporting-option:hover { color: var(--text-primary); }
 .ch-reporting-option[aria-checked="true"] {
-  background: var(--accent-dim); color: var(--text-primary); font-weight: 500;
+  background: var(--accent-dim); color: var(--text-primary);
 }
 .ch-reporting-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-reporting-short { display: none; }
