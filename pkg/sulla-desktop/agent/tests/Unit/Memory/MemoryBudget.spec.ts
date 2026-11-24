@@ -12,6 +12,7 @@ import {
   type MemoryCandidate,
 } from '../../../memory/MemoryBudget';
 import { recallV7SubjectMemory } from '../../../memory/V7SubjectMemory';
+import { CheckinIdentity } from '../../../memory/CheckinIdentity';
 
 const candidate = (overrides: Partial<MemoryCandidate> = {}): MemoryCandidate => ({
   page: 'human',
@@ -270,9 +271,18 @@ describe('MemoryBudgetPacker', () => {
   it('keeps only the newest check-in per identity and drops a sent winner with its older group', () => {
     // risk: stale check-ins reappear across turns and crowd out current task state
     const packer = new MemoryBudgetPacker();
-    const checkins = Array.from({ length: 20 }, (_, index) => ({ id: `checkin-${index}`, ts: index, identity: 'epic-1' }));
-    const newest = packer.collapseCheckinGroups(checkins, (entry) => entry.identity, new Set());
-    const sent = packer.collapseCheckinGroups(checkins, (entry) => entry.identity, new Set(['e:checkin-19']));
+    const checkins = Array.from({ length: 20 }, (_, index) => ({
+      id: `checkin-${index}`,
+      ts: index,
+      source: 'observed',
+      keys: [],
+      conversationId: 'thread-memory-epic',
+      sentiment: 'neutral',
+      text: `Detailed chat trace in epic #2816. Check-in update ${index}.`,
+    }));
+    const identityFor = (entry: typeof checkins[number]) => CheckinIdentity.keyFor(entry);
+    const newest = packer.collapseCheckinGroups(checkins, identityFor, new Set());
+    const sent = packer.collapseCheckinGroups(checkins, identityFor, new Set(['e:checkin-19']));
 
     expect(newest.entries.map((entry) => entry.id)).toEqual(['checkin-19']);
     expect(newest.collapsed).toBe(19);
