@@ -65,17 +65,22 @@ describe('ThreadAgentActivityPresenter', () => {
     expect(projection.agents).toEqual([]);
   });
 
-  it('returns an empty projection for an undefined thread even when host and chat rows exist', () => {
+  it('returns an empty projection for an undefined thread with multiple shared null-root rows', () => {
     // risk: displaying unowned or cross-chat agent data without a selected thread
     const factory = new RowFactory();
     const host = factory.create('host:0', null);
+    host.decisionIds = ['host-decision'];
+    const sharedHost = factory.create('shared-host:0', null);
+    sharedHost.decisionIds = ['shared-host-decision'];
     const chat = factory.create('chat:0', 'root');
     const otherChat = factory.create('other:0', 'other-root');
-    const projection = new ThreadAgentActivityPresenter().project(snapshot(1, [host, chat, otherChat]), undefined, at);
+    const projection = new ThreadAgentActivityPresenter().project(snapshot(1, [host, sharedHost, chat, otherChat]), undefined, at);
 
     expect(projection.scope).toBe('empty');
     expect(projection.roots).toEqual([]);
     expect(projection.agents).toEqual([]);
+    expect(projection.decisionIds).toEqual([]);
+    expect(projection.pendingDecisionIds).toEqual([]);
   });
 
   it('clears observations on thread switch and rejects stale snapshots', () => {
