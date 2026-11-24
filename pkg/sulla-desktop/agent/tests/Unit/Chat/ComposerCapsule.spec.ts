@@ -23,17 +23,17 @@ const fixture = vi.hoisted(() => ({
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: fixture.ipc }));
 vi.mock('@pkg/composables/useBrowserTabs', () => ({ useBrowserTabs: () => ({ createTab: vi.fn(() => ({ id: 'fixture-tab' })) }) }));
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: vi.fn(async(_key: string, fallback: unknown) => fallback), set: vi.fn() } }));
-vi.mock('../../composables/useArtifactMentions', () => ({ useArtifactMentions: () => ({ prefetch: vi.fn(), list: vi.fn(async() => []) }) }));
-vi.mock('../../composables/useCommandPopover', () => ({ useCommandPopover: vi.fn() }));
-vi.mock('../../composables/useDockPosition', async() => {
+vi.mock('@pkg/pages/chat/composables/useArtifactMentions', () => ({ useArtifactMentions: () => ({ prefetch: vi.fn(), list: vi.fn(async() => []) }) }));
+vi.mock('@pkg/pages/chat/composables/useCommandPopover', () => ({ useCommandPopover: vi.fn() }));
+vi.mock('@pkg/pages/chat/composables/useDockPosition', async() => {
   const { ref } = await import('vue');
   return { DockPositions: { use: () => ({ position: ref('bottom'), setPosition: vi.fn() }) } };
 });
-vi.mock('../../composables/useSelectionLabel', async() => {
+vi.mock('@pkg/pages/chat/composables/useSelectionLabel', async() => {
   const { computed } = await import('vue');
   return { useSelectionLabel: () => ({ label: computed(() => 'Fixture model'), title: computed(() => 'Fixture model') }) };
 });
-vi.mock('../../composables/useUseCaseSuggestions', async() => {
+vi.mock('@pkg/pages/chat/composables/useUseCaseSuggestions', async() => {
   const { reactive, ref } = await import('vue');
   return {
     useUseCaseSuggestions: () => {
@@ -58,7 +58,7 @@ vi.mock('../../composables/useUseCaseSuggestions', async() => {
     },
   };
 });
-vi.mock('../../services/VoiceSessionAdapter', async() => {
+vi.mock('@pkg/pages/chat/services/VoiceSessionAdapter', async() => {
   class VoiceSessionAdapter {
     constructor() { fixture.voiceAdapters.push(this); }
     toggle = vi.fn();
@@ -68,7 +68,7 @@ vi.mock('../../services/VoiceSessionAdapter', async() => {
   }
   return { VoiceSessionAdapter };
 });
-vi.mock('../../services/RemoteChatSession', async() => {
+vi.mock('@pkg/pages/chat/services/RemoteChatSession', async() => {
   const { ref } = await import('vue');
   class RemoteChatSession {
     constructor() {
@@ -98,9 +98,9 @@ vi.mock('../../services/RemoteChatSession', async() => {
 vi.mock('@pkg/composables/useFocusGuard', () => ({ useFocusGuard: vi.fn() }));
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
-import { ChatController } from '../../controller/ChatController';
-import { ChatControllerKey } from '../../controller/useChatController';
-import Composer from './Composer.vue';
+import { ChatController } from '@pkg/pages/chat/controller/ChatController';
+import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
+import Composer from '@pkg/pages/chat/components/composer/Composer.vue';
 
 describe('Capsule chat composer', () => {
   let controller: ChatController;
