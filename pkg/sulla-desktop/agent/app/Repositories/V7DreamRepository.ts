@@ -16,6 +16,7 @@ import {
 } from '../../memory/V7Dreamer';
 import type {
   DuplicateSweepStore,
+  SweepCursorValue,
   SweepEpisode,
   SweepSubject,
 } from '../../memory/V7DuplicateSweeper';
@@ -55,17 +56,21 @@ export class V7DreamRepository implements V7DreamStore, DuplicateSweepStore {
     };
   }
 
-  async loadSweepEpisodes(limit: number, beforeTs?: number): Promise<SweepEpisode[]> {
+  async loadSweepEpisodes(limit: number, before?: SweepCursorValue): Promise<SweepEpisode[]> {
+    const beforeTs = before === undefined ? null : typeof before === 'number' ? before : before.ts;
+    const beforeId = before !== undefined && typeof before !== 'number' ? before.id : null;
     const rows = await this.client.query<SweepEpisodeRow>(
       `SELECT e.id, e.ts, e.conversation_id, e.source, e.sentiment, e.text, e.keys,
               e.checkin_key, e.superseded_by,
               EXISTS (SELECT 1 FROM subject_memory.evidence evidence WHERE evidence.episode_id = e.id) AS "hasEvidence"
          FROM subject_memory.episodes e
         WHERE e.superseded_by IS NULL
-          AND ($2::bigint IS NULL OR e.ts < $2::bigint)
+          AND ($2::bigint IS NULL
+            OR ($3::text IS NULL AND e.ts < $2::bigint)
+            OR (e.ts, e.id) < ($2::bigint, $3::text))
         ORDER BY e.ts DESC, e.id DESC
         LIMIT $1`,
-      [limit, beforeTs ?? null],
+      [limit, beforeTs, beforeId],
     );
 
     return rows.map(row => ({

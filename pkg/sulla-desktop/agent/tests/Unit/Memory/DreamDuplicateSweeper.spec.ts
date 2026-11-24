@@ -9,6 +9,7 @@ import {
   MAX_SWEEP_EPISODES,
   type DuplicateSweepCursor,
   type DuplicateSweepStore,
+  type SweepCursorValue,
   type SweepEpisode,
   type SweepSubject,
 } from '../../../memory/V7DuplicateSweeper';
@@ -29,15 +30,20 @@ const NOW = Date.UTC(2026, 10, 23, 20, 22, 0);
 
 class FakeSweepStore implements DuplicateSweepStore {
   readonly calls: Array<{ oldId: string; keepId: string; runId: string; nowTs: number }> = [];
-  readonly queries: Array<{ limit: number; beforeTs?: number }> = [];
+  readonly queries: Array<{ limit: number; before?: SweepCursorValue }> = [];
   subjectLoads = 0;
 
   constructor(public readonly episodes: SweepEpisode[], public readonly subjects: SweepSubject[] = []) {}
 
-  async loadSweepEpisodes(limit: number, beforeTs?: number): Promise<SweepEpisode[]> {
-    this.queries.push({ limit, beforeTs });
+  async loadSweepEpisodes(limit: number, before?: SweepCursorValue): Promise<SweepEpisode[]> {
+    this.queries.push({ limit, before });
     return this.episodes
-      .filter(episode => episode.superseded_by === null && (beforeTs === undefined || episode.ts < beforeTs))
+      .filter(episode => {
+        if (episode.superseded_by !== null || before === undefined) return episode.superseded_by === null;
+        if (typeof before === 'number') return episode.ts < before;
+
+        return episode.ts < before.ts || (episode.ts === before.ts && episode.id < before.id);
+      })
       .sort((a, b) => b.ts - a.ts || b.id.localeCompare(a.id))
       .slice(0, limit);
   }
@@ -58,9 +64,9 @@ class FakeSweepStore implements DuplicateSweepStore {
 }
 
 class FakeSweepCursor implements DuplicateSweepCursor {
-  constructor(public beforeTs: number | null = null) {}
-  async getBeforeTs() { return this.beforeTs }
-  async setBeforeTs(beforeTs: number | null) { this.beforeTs = beforeTs }
+  constructor(public before: SweepCursorValue | null = null) {}
+  async getBeforeCursor() { return this.before }
+  async setBeforeCursor(before: SweepCursorValue | null) { this.before = before }
 }
 
 class FakeDreamStore implements V7DreamStore {
@@ -152,15 +158,30 @@ describe('DreamDuplicateSweeper', () => {
   it('does not cross-supersede identical status templates from different job identities', async() => {
     // risk: one agent job's status is incorrectly used as another job's latest state
     const template = 'Worker progress update: the work is still active.';
-    const first = episode(JOB_A, template, { keys: ['agent-ops'], ts: NOW });
-    const second = episode(JOB_B, template, { keys: ['desktop'], ts: NOW + 1 });
-    const store = new FakeSweepStore([first, second]);
+    const otherConversationOld = episode('ep-1', template, { keys: ['agent-ops'], ts: NOW, conversation_id: 'conversation-a' });
+    const otherConversationNew = episode('ep-2', template, { keys: ['desktop'], ts: NOW + 1, conversation_id: 'conversation-b' });
+    const missingConversationOld = episode('ep-3', template, { keys: ['agent-ops'], ts: NOW, conversation_id: null });
+    const missingConversationNew = episode('ep-4', template, { keys: ['desktop'], ts: NOW + 1, conversation_id: null });
+    const sameConversationOld = episode('ep-5', template, { keys: ['agent-ops'], ts: NOW, conversation_id: 'conversation-c' });
+    const sameConversationNew = episode('ep-6', template, { keys: ['desktop'], ts: NOW + 1, conversation_id: 'conversation-c' });
+    const store = new FakeSweepStore([
+      otherConversationOld,
+      otherConversationNew,
+      missingConversationOld,
+      missingConversationNew,
+      sameConversationOld,
+      sameConversationNew,
+    ]);
 
     await sweeper(store).sweep();
 
-    expect(store.calls).toHaveLength(0);
-    expect(first.superseded_by).toBeNull();
-    expect(second.superseded_by).toBeNull();
+    expect(store.calls).toEqual([expect.objectContaining({ oldId: 'ep-5', keepId: 'ep-6' })]);
+    expect(otherConversationOld.superseded_by).toBeNull();
+    expect(otherConversationNew.superseded_by).toBeNull();
+    expect(missingConversationOld.superseded_by).toBeNull();
+    expect(missingConversationNew.superseded_by).toBeNull();
+    expect(sameConversationOld.superseded_by).toBe('ep-6');
+    expect(sameConversationNew.superseded_by).toBeNull();
   });
 
   it('never supersedes or targets user-source and evidence-backed episodes', async() => {
@@ -236,24 +257,24 @@ describe('DreamDuplicateSweeper', () => {
   it('walks older episodes in bounded pages with a persisted backward cursor', async() => {
     // risk: old duplicate history is never cleaned or a sweep reads an unbounded backlog
     const episodes = Array.from({ length: MAX_SWEEP_EPISODES + 1 }, (_, index) => episode(
-      `unique-${ index + 1 }`,
+      `unique-${ String(index + 1).padStart(5, '0') }`,
       `Unique archived memory fact ${ index + 1 }.`,
-      { ts: index + 1 },
+      { ts: 1 },
     ));
     const store = new FakeSweepStore(episodes);
     const cursor = new FakeSweepCursor();
     const subject = sweeper(store, cursor);
 
     await subject.sweep();
-    expect(store.queries).toEqual([{ limit: MAX_SWEEP_EPISODES, beforeTs: undefined }]);
-    expect(cursor.beforeTs).toBe(2);
+    expect(store.queries).toEqual([{ limit: MAX_SWEEP_EPISODES, before: undefined }]);
+    expect(cursor.before).toEqual({ ts: 1, id: 'unique-00002' });
 
     await subject.sweep();
     expect(store.queries.slice(1)).toEqual([
-      { limit: MAX_SWEEP_EPISODES, beforeTs: undefined },
-      { limit: MAX_SWEEP_EPISODES, beforeTs: 2 },
+      { limit: MAX_SWEEP_EPISODES, before: undefined },
+      { limit: MAX_SWEEP_EPISODES, before: { ts: 1, id: 'unique-00002' } },
     ]);
-    expect(cursor.beforeTs).toBeNull();
+    expect(cursor.before).toBeNull();
   });
 
   it('has no item reads or writes in the sweeper store surface', () => {

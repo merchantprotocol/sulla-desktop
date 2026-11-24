@@ -8,8 +8,15 @@ import { randomUUID } from 'node:crypto';
 import { CheckinIdentity } from './CheckinIdentity';
 
 export const MAX_SWEEP_EPISODES = 5_000;
-export const MAX_SWEEP_SUPERSEDES = 1_000;
+export const MAX_SWEEP_SUPERSEDES = 250;
 export const MAX_CROSS_SUBJECT_DELTA_MS = 24 * 60 * 60 * 1_000;
+
+export interface SweepEpisodeCursor {
+  ts: number;
+  id: string;
+}
+
+export type SweepCursorValue = SweepEpisodeCursor | number;
 
 export interface SweepEpisode {
   id: string;
@@ -32,14 +39,14 @@ export interface SweepSubject {
 
 /** Intentionally episode-only: the sweeper cannot read or mutate memory items. */
 export interface DuplicateSweepStore {
-  loadSweepEpisodes(limit: number, beforeTs?: number): Promise<SweepEpisode[]>;
+  loadSweepEpisodes(limit: number, before?: SweepCursorValue): Promise<SweepEpisode[]>;
   loadSubjects(): Promise<SweepSubject[]>;
   supersedeEpisode(oldId: string, keepId: string, runId: string, nowTs: number): Promise<boolean>;
 }
 
 export interface DuplicateSweepCursor {
-  getBeforeTs(): Promise<number | null>;
-  setBeforeTs(beforeTs: number | null): Promise<void>;
+  getBeforeCursor(): Promise<SweepCursorValue | null>;
+  setBeforeCursor(before: SweepCursorValue | null): Promise<void>;
 }
 
 export interface DreamDuplicateSweeperOptions {
@@ -81,10 +88,10 @@ export class DreamDuplicateSweeper {
   async sweep(): Promise<void> {
     const runId = this.runId();
     const newest = await this.store.loadSweepEpisodes(MAX_SWEEP_EPISODES);
-    const beforeTs = await this.cursor.getBeforeTs();
-    const backlog = beforeTs === null
+    const before = await this.cursor.getBeforeCursor();
+    const backlog = before === null
       ? []
-      : await this.store.loadSweepEpisodes(MAX_SWEEP_EPISODES, beforeTs);
+      : await this.store.loadSweepEpisodes(MAX_SWEEP_EPISODES, before);
     const subjects = await this.store.loadSubjects();
     const episodes = this.uniqueEpisodes([...newest, ...backlog]);
     const ranks = this.subjectRanks(subjects);
@@ -137,11 +144,13 @@ export class DreamDuplicateSweeper {
       const crossGroups = new Map<string, SweepEpisode[]>();
       for (const episode of eligible) {
         if (!activeIds.has(episode.id) || checkinKeys.get(episode.id)) continue;
+        if (episode.conversation_id === null) continue;
         const normalized = this.normalizeText(episode.text);
         if (!normalized) continue;
-        const group = crossGroups.get(normalized) ?? [];
+        const groupKey = JSON.stringify([episode.conversation_id, normalized]);
+        const group = crossGroups.get(groupKey) ?? [];
         group.push(episode);
-        crossGroups.set(normalized, group);
+        crossGroups.set(groupKey, group);
       }
 
       for (const group of crossGroups.values()) {
@@ -152,10 +161,10 @@ export class DreamDuplicateSweeper {
 
     // Do not move the backlog cursor when capped: the same page is retried after this run's writes.
     if (!stats.capHit) {
-      if (beforeTs === null) {
-        await this.cursor.setBeforeTs(newest.length === MAX_SWEEP_EPISODES ? this.oldestTs(newest) : null);
+      if (before === null) {
+        await this.cursor.setBeforeCursor(newest.length === MAX_SWEEP_EPISODES ? this.oldestCursor(newest) : null);
       } else {
-        await this.cursor.setBeforeTs(backlog.length === MAX_SWEEP_EPISODES ? this.oldestTs(backlog) : null);
+        await this.cursor.setBeforeCursor(backlog.length === MAX_SWEEP_EPISODES ? this.oldestCursor(backlog) : null);
       }
     }
 
@@ -219,6 +228,8 @@ export class DreamDuplicateSweeper {
 
   private canCrossSupersede(keeper: SweepEpisode, candidate: SweepEpisode): boolean {
     return keeper.id !== candidate.id
+      && keeper.conversation_id !== null
+      && keeper.conversation_id === candidate.conversation_id
       && this.keySet(keeper.keys) !== this.keySet(candidate.keys)
       && Math.abs(keeper.ts - candidate.ts) <= MAX_CROSS_SUBJECT_DELTA_MS;
   }
@@ -303,7 +314,9 @@ export class DreamDuplicateSweeper {
     return [...byId.values()];
   }
 
-  private oldestTs(episodes: SweepEpisode[]): number | null {
-    return episodes.length ? Math.min(...episodes.map(episode => episode.ts)) : null;
+  private oldestCursor(episodes: SweepEpisode[]): SweepEpisodeCursor | null {
+    const oldest = [...episodes].sort((a, b) => b.ts - a.ts || b.id.localeCompare(a.id)).at(-1);
+
+    return oldest ? { ts: oldest.ts, id: oldest.id } : null;
   }
 }

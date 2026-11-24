@@ -19,7 +19,7 @@ import {
   type DreamCursorStore,
   type DreamModel,
 } from './V7Dreamer';
-import { DreamDuplicateSweeper, type DuplicateSweepCursor } from './V7DuplicateSweeper';
+import { DreamDuplicateSweeper, type DuplicateSweepCursor, type SweepCursorValue } from './V7DuplicateSweeper';
 
 export const DREAMER_INTERVAL_SETTING = 'dreamerIntervalMinutes';
 export const DREAMER_CURSOR_SETTING = 'dreamerLastWindowEndMs';
@@ -46,14 +46,32 @@ export class SettingsDreamCursor implements DreamCursorStore {
 
 /** Persisted backward page for the duplicate sweeper; independent from the dream window cursor. */
 export class SettingsDreamSweepCursor implements DuplicateSweepCursor {
-  async getBeforeTs(): Promise<number | null> {
-    const value = Number(await SullaSettingsModel.get(DREAMER_SWEEP_CURSOR_SETTING, 0));
+  async getBeforeCursor(): Promise<SweepCursorValue | null> {
+    const value = await SullaSettingsModel.get(DREAMER_SWEEP_CURSOR_SETTING, 0);
 
-    return Number.isFinite(value) && value > 0 ? value : null;
+    if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : null;
+    if (typeof value !== 'string') return null;
+
+    const separator = value.indexOf(':');
+    if (separator < 0) {
+      const legacyTs = Number(value);
+
+      return Number.isFinite(legacyTs) && legacyTs > 0 ? legacyTs : null;
+    }
+
+    const ts = Number(value.slice(0, separator));
+    const id = value.slice(separator + 1);
+
+    return Number.isFinite(ts) && ts > 0 && id.length > 0 ? { ts, id } : null;
   }
 
-  async setBeforeTs(beforeTs: number | null): Promise<void> {
-    await SullaSettingsModel.set(DREAMER_SWEEP_CURSOR_SETTING, beforeTs ?? 0, 'number');
+  async setBeforeCursor(before: SweepCursorValue | null): Promise<void> {
+    if (before === null || typeof before === 'number') {
+      await SullaSettingsModel.set(DREAMER_SWEEP_CURSOR_SETTING, before ?? 0, 'number');
+      return;
+    }
+
+    await SullaSettingsModel.set(DREAMER_SWEEP_CURSOR_SETTING, `${ before.ts }:${ before.id }`, 'string');
   }
 }
 

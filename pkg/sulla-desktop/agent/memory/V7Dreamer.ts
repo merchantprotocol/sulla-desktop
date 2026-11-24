@@ -289,8 +289,8 @@ export class V7Dreamer {
       if (this.deps.sweeper) {
         try {
           await this.deps.sweeper.sweep();
-        } catch {
-          this.log('[DreamDuplicateSweeper] failed');
+        } catch (err) {
+          this.log(`[DreamDuplicateSweeper] failed: ${ err instanceof Error ? err.message : String(err) }`);
         }
       }
 
