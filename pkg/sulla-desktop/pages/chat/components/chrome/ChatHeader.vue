@@ -99,10 +99,11 @@ function cancelTitle(): void {
 }
 .ch-title:hover { background-color: #fff; }
 .ch-title:focus { text-overflow: clip; background-color: #fff; box-shadow: inset 0 0 0 1px var(--accent); }
-/* Every dark Desktop theme (html.dark: default, ocean, nord, protocol, noir) gets a solid surface in all states. */
-:global(.dark) .ch-title,
-:global(.dark) .ch-title:hover,
-:global(.dark) .ch-title:focus { background: var(--bg-surface); }
+/* Every dark Desktop theme (html.dark: default, ocean, nord, protocol, noir) gets a solid surface in all states.
+   Scoped styles put the data attribute on .ch-title, so the html.dark ancestor needs no :global(). */
+.dark .ch-title,
+.dark .ch-title:hover,
+.dark .ch-title:focus { background: var(--bg-surface); }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
