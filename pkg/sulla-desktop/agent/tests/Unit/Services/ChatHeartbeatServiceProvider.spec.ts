@@ -25,4 +25,27 @@ describe('ChatHeartbeatServiceProvider', () => {
     expect(provider.scheduler()).not.toBe(chatHeartbeatProvider.scheduler());
     expect(getChatHeartbeatService().has('thread-not-registered')).toBe(false);
   });
+
+  it('clears a delegated task heartbeat when its job task settles', () => {
+    // risk: a completed/stopped hidden task remains timer-owned after the job lifecycle has ended.
+    let onJobChange: ((previous: any, next: any) => void) | undefined;
+    const provider = new ChatHeartbeatServiceProvider({
+      onJobChange: listener => { onJobChange = listener; return () => undefined },
+    });
+    const scheduler = provider.scheduler();
+    scheduler.register({
+      threadId: 'terminal-thread', channel: 'sulla-desktop', jobId: 'terminal-job', taskIndex: 0,
+      config: { intervalMinutes: 10, message: 'Keep checking.' },
+    });
+    expect(scheduler.has('terminal-thread')).toBe(true);
+
+    onJobChange?.({
+      jobId: 'terminal-job', status: 'running', tasks: [{ status: 'running' }],
+    }, {
+      jobId: 'terminal-job', status: 'completed', tasks: [{ status: 'completed', finishedAt: Date.now() }],
+    });
+
+    expect(scheduler.has('terminal-thread')).toBe(false);
+    scheduler.unregister('terminal-thread');
+  });
 });

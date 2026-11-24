@@ -16,7 +16,9 @@ export interface ChatHeartbeatStatus extends ChatHeartbeatConfig {
   enabled:  boolean;
   nextAt:   number | null;
   pending:  boolean;
-  // True while the chat's graph is running — no countdown, no ping.
+  startedAt: number | null;
+  expiresAt: number | null;
+  // True while the target graph is running — no regular countdown beat.
   paused?:  boolean;
 }
 
@@ -25,6 +27,7 @@ export interface ChatHeartbeatBeat {
   createdAt:       number;
   intervalMinutes: number;
   message:         string;
+  autoOff?:        boolean;
 }
 
 export function defaultChatHeartbeatConfig(): ChatHeartbeatConfig {

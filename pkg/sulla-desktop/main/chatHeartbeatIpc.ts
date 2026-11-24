@@ -62,7 +62,7 @@ export class ChatHeartbeatIpcController implements IpcController {
     });
 
     this.ipc.handle('chat-heartbeat:unregister', (_event, threadId: string) => {
-      service.unregister(this.cleanThreadId(threadId));
+      service.unregisterFromUi(this.cleanThreadId(threadId));
 
       return { success: true };
     });

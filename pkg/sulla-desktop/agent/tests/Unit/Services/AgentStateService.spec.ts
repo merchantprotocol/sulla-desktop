@@ -584,4 +584,19 @@ describe('authoritative live agent state', () => {
     expect(versions).toHaveLength(4); expect(versions.every((version, index) => index === 0 || version > versions[index - 1])).toBe(true);
     expect(store.durable.get('sequence')).toMatchObject({ status: 'stopped', tasks: [{ status: 'stopped' }] });
   });
+
+  it('publishes the before/after job state when a task settles so owned timers can be cancelled', async() => {
+    // risk: terminal task transitions are invisible to heartbeat cleanup and leave orphan timers.
+    const { states } = harness([job('heartbeat-owner', [task({ threadId: 'heartbeat-thread' })])]);
+    const changed = vi.fn();
+    states.onJobChange(changed);
+
+    await states.transition('heartbeat-owner', 0, { status: 'completed', finishedAt: 20_000 });
+
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledWith(
+      expect.objectContaining({ jobId: 'heartbeat-owner', tasks: [expect.objectContaining({ status: 'running' })] }),
+      expect.objectContaining({ jobId: 'heartbeat-owner', status: 'completed', tasks: [expect.objectContaining({ status: 'completed' })] }),
+    );
+  });
 });

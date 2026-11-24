@@ -129,6 +129,8 @@ const status = ref<ChatHeartbeatStatus>({
   enabled:  false,
   nextAt:   null,
   pending:  false,
+  startedAt: null,
+  expiresAt: null,
   ...defaultChatHeartbeatConfig(),
 });
 let registeredThreadId = '';
@@ -241,7 +243,15 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onStatus(_event: unknown, value: ChatHeartbeatStatus): void {
-  if (value?.threadId === registeredThreadId) status.value = value;
+  if (value?.threadId !== registeredThreadId) return;
+  status.value = value;
+  // Auto-off may arrive as a status update even if the paired config event was
+  // missed during a renderer transition. Keep the composer switch truthful.
+  if (!value.enabled && controller.heartbeat.value.intervalMinutes !== null) {
+    const config = normalizeChatHeartbeatConfig({ ...controller.heartbeat.value, intervalMinutes: null });
+    controller.setHeartbeat(config);
+    syncForm(config);
+  }
 }
 
 function onConfig(_event: unknown, value: { threadId: string; config: ChatHeartbeatConfig }): void {
