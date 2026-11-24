@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ModelRecoveryPolicy } from '../../../languagemodels/ModelRecoveryPolicy';
+import { CliFaultError, CliRecoveryExhaustedError, runWithCliFaultRecovery } from '../../../languagemodels/cliFaultRecovery';
 import { AuthRevoked, QuotaExceeded, Transient } from '../../../languagemodels/failures';
 import { classifyLLMFailure } from '../../../languagemodels/providerRecovery';
 
@@ -54,6 +55,28 @@ describe('ModelRecoveryPolicy', () => {
     const calls = policy.candidates([codex], codex);
     expect(policy.additionalAttempts(failure)).toBe(2);
     expect(calls.slice(1)).toHaveLength(0);
+  });
+
+  it('does not retry a Codex stall on the same model but permits category fallback', async() => {
+    // risk: duplicate same-model attempts stretch a three-minute stall into many minutes
+    const message = 'Codex stalled: no output for 3 minutes';
+    let attempts = 0;
+    let failure: unknown;
+    try {
+      await runWithCliFaultRecovery('Codex', async() => {
+        attempts++;
+        throw new CliFaultError('stall', message, undefined, false, false);
+      }, { canRetry: () => true, maxAttempts: 2 });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(attempts).toBe(1);
+    expect(failure).toBeInstanceOf(CliRecoveryExhaustedError);
+    expect((failure as Error).message).toBe(message);
+    const recovery = classifyLLMFailure(failure);
+    expect(policy.additionalAttempts(recovery)).toBe(0);
+    expect(policy.canAdvance(recovery)).toBe(true);
   });
 
   it('never bypasses a verified authentication denial', () => {

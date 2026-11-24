@@ -41,9 +41,10 @@ export class CliRecoveryExhaustedError extends CliExhausted {
   readonly cliRecoveryExhausted = true;
   readonly unsafeToFallback: boolean;
 
-  constructor(readonly faultKind: CliFaultKind, cause: unknown, providerId = 'cli') {
+  constructor(readonly faultKind: CliFaultKind, cause: unknown, providerId = 'cli', surfaceMessage?: string) {
     super(providerId, { cause });
     this.name = 'CliRecoveryExhaustedError';
+    if (surfaceMessage) this.message = surfaceMessage;
     this.unsafeToFallback = Boolean((cause as any)?.unsafeToFallback);
   }
 }
@@ -231,7 +232,10 @@ export async function runWithCliFaultRecovery<T>(
       lastFault = error;
       if (attempt >= maxAttempts) break;
       if (!error.retrySafe || !options.canRetry()) {
-        if (error.unsafeToFallback) break;
+        // A stall is a completed watchdog decision, not a transient CLI
+        // launch/transport fault. Wrap once so BaseNode can skip same-model
+        // retries while still allowing a later category candidate.
+        if (error.unsafeToFallback || error.kind === 'stall') break;
         throw error;
       }
       options.onRetry?.(error, attempt + 1);
@@ -241,7 +245,7 @@ export async function runWithCliFaultRecovery<T>(
 
   const fault = lastFault ?? new CliFaultError('protocol', 'unknown CLI failure');
   if (fault.sullaInternal) throw new CliHandoffFailure(fault.kind, fault);
-  throw new CliRecoveryExhaustedError(fault.kind, fault, providerName);
+  throw new CliRecoveryExhaustedError(fault.kind, fault, providerName, fault.kind === 'stall' ? fault.message : undefined);
 }
 
 function abortError(): Error {

@@ -12,7 +12,7 @@ import { ProviderBridgeDeniedFailure, classifyLLMFailure } from '../../../langua
 import { ProviderBridgeRevokedError, ProviderCliBridgeService } from '../../../../vault-broker/providerCliBridge';
 
 const policy = new ModelRecoveryPolicy();
-const denied = 'Claude Code: Failed to authenticate. API Error: 403 Provider bridge request denied (provider_model_denied)';
+const denied = 'Claude Code: Failed to authenticate. API Error: 403 Provider bridge request denied (provider_bridge_revoked: authorize_refused)';
 
 describe('provider bridge denial fails fast', () => {
   it('runs a CLI whose bridge lease was denied exactly once', async() => {

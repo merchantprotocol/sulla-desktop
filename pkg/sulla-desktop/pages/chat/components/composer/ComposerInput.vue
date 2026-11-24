@@ -10,6 +10,7 @@
     ref="taRef"
     v-model="model"
     class="input"
+    aria-label="Message Sulla"
     :placeholder="placeholder"
     :aria-activedescendant="activeDescendant"
     rows="1"
@@ -68,6 +69,7 @@ function autogrow(): void {
 function onKeydown(e: KeyboardEvent): void {
   emit('keydown', e);
   if (e.defaultPrevented) return;
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     window.dispatchEvent(new CustomEvent('sulla:send-hop-keydown', { detail: performance.now() }));
@@ -99,17 +101,17 @@ defineExpose({ el: taRef, focus: () => taRef.value?.focus() });
   font-size: 18px !important;
 }
 .input {
-  flex: 0 0 100%;
-  width: 100%; min-height: 54px; max-height: 160px;
-  margin: 0 !important; padding: 15px 18px 10px !important;
+  flex: 1 1 0;
+  width: auto; min-width: 0; min-height: 24px; max-height: 160px;
+  margin: 0 !important; padding: 0 10px !important;
   border: 0 !important; border-radius: 0 !important; outline: 0 !important;
   color: var(--text-primary) !important; background: transparent !important; box-shadow: none !important;
-  font-family: var(--font-body) !important; font-size: 15.5px !important;
-  font-style: normal !important; line-height: 1.45; letter-spacing: -0.005em;
+  font-family: var(--font-body) !important; font-size: 16px !important;
+  font-style: normal !important; line-height: 24px; letter-spacing: -0.005em;
   caret-color: var(--text-primary);
 }
 .input::placeholder {
   color: var(--text-dim) !important; opacity: 1;
-  font-family: var(--font-body) !important; font-size: 15.5px !important; font-style: normal !important;
+  font-family: var(--font-body) !important; font-size: 16px !important; font-style: normal !important;
 }
 </style>

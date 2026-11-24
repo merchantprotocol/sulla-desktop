@@ -10,6 +10,7 @@ import yaml from 'yaml';
 
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
+import { isRetiredCodingManagerSlug, RETIRED_CODING_MANAGER_SLUGS } from '@pkg/agent/builtinAgents/index';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
 import { installMemoryPackForSkill, listPacks, uninstallPack } from '@pkg/agent/memory/MemoryPackLoader';
 import { bundleToArtifact, type InstallableKind } from '@pkg/main/marketplace/databaseInstaller';
@@ -220,6 +221,7 @@ export class SullaUseCaseFiles {
    * root anchor. It never updates an existing row; a concurrent registration wins and is preserved.
    */
   private async activate(type:UseCaseType, slug:string, packageRows:FilesRow[], pending?:{ anchor:FilesRow }):Promise<void> {
+    if (kindFor(type) === 'agent' && isRetiredCodingManagerSlug(slug)) throw new Error(`agents/${ slug } is retired and cannot be activated`);
     const published = packageRows.filter(row => activePublishedVersion(row));
     if (!published.length) return;
     const files:Record<string,StoredFile> = {};
@@ -320,7 +322,7 @@ export class SullaUseCaseFiles {
   private async disableMissing(active:Set<string>):Promise<void> {
     // Read before the disable so the index hears which rows left; a failed read only loses the hint (reconcile repairs it).
     const removed = await new UseCaseRemovalRepository(postgresClient).listRemoved(active);
-    await postgresClient.query(`UPDATE agent_definitions SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7))]);
+    await postgresClient.query(`UPDATE agent_definitions SET enabled=FALSE,status='archive',updated_at=NOW() WHERE slug=ANY($1::text[]) OR (use_case_file_id IS NOT NULL AND NOT (slug=ANY($2::text[])))`, [RETIRED_CODING_MANAGER_SLUGS, [...active].filter(k=>k.startsWith('agents/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE skill_definitions SET enabled=FALSE,deleted_at=COALESCE(deleted_at,NOW()),updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('skills/')).map(k=>k.slice(7))]);
     await postgresClient.query(`UPDATE workflows SET enabled=FALSE,status='archive',updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (id=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith('workflows/')).map(k=>k.slice(10))]);
     for (const [table,type] of [['function_definitions','functions'],['recipe_definitions','recipes']] as const) await postgresClient.query(`UPDATE ${ table } SET enabled=FALSE,use_case_version_id=NULL,updated_at=NOW() WHERE use_case_file_id IS NOT NULL AND NOT (slug=ANY($1::text[]))`, [[...active].filter(k=>k.startsWith(`${type}/`)).map(k=>k.slice(type.length+1))]);
@@ -385,6 +387,7 @@ export class SullaUseCaseFiles {
     const deferred:string[] = [];
     for (const [slug, packageRows] of groups) {
       if (!packageRows.some(row => activePublishedVersion(row))) continue;
+      if (isRetiredCodingManagerSlug(slug)) continue;
       const anchor = SullaUseCaseFiles.rootAgentAnchor(slug, packageRows);
       const existing = await postgresClient.queryOne<{use_case_file_id:string|null;use_case_version_id:string|null}>('SELECT use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1', [slug]);
       // The same indexed anchor version is a permanent no-op: owner edits to it are never undone.
@@ -425,6 +428,7 @@ export class SullaUseCaseFiles {
       for (const [key, packageRows] of groups) {
         const [type,slug]=key.split('/') as [UseCaseType,string];
         if (!packageRows.some(row => activePublishedVersion(row))) continue;
+        if (type === 'agents' && isRetiredCodingManagerSlug(slug)) continue;
         // An invalid newly-published version never disables the last valid index row.
         active.add(key);
         if (type === 'skills') {

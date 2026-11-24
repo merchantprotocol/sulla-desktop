@@ -21,10 +21,6 @@
 import type { ChatMode } from '../controllers/ChatController';
 
 export interface TurnContextOptions {
-  /** Agent identifier (e.g. 'sulla-desktop', 'dreaming-protocol') */
-  agentId:     string;
-  /** WebSocket channel the agent runs on */
-  wsChannel:   string;
   /** Current chat mode — non-text modes add a condensed voice directive */
   chatMode:    ChatMode;
   /** Whether this is the heartbeat (autonomous) agent */
@@ -107,8 +103,6 @@ export async function buildTurnContext(opts: TurnContextOptions): Promise<string
   const runtimeParts = [
     `now="${ formattedTime }"`,
     `tz=${ timeZone }`,
-    `agent=${ opts.agentId || 'sulla-desktop' }`,
-    `channel=${ opts.wsChannel || 'sulla-desktop' }`,
   ];
   if (opts.isHeartbeat) runtimeParts.push('heartbeat=autonomous-cycle');
   lines.push(runtimeParts.join(' '));

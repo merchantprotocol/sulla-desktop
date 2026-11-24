@@ -84,13 +84,13 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
 
   it('wakes a parked manager but leaves its message pending until the woken turn actually consumes it', async() => {
     // risk: the ack fires at injection time, before the turn runs, so a dead-on-arrival wake silently loses the message
-    const job = await registry.createJob([{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'running', threadId: 'thread-parked-message' }], 'sulla-desktop', 'root-thread');
+    const job = await registry.createJob([{ agentId: 'coding-manager', label: 'manager', prompt: 'own', status: 'running', threadId: 'thread-parked-message' }], 'sulla-desktop', 'root-thread');
     await registry.parkJobTask(job.jobId, 0, 1);
 
     const response = await sendJobMessage({ jobId: job.jobId, message: 'continue the same goal' });
 
     expect(response.successBoolean).toBe(true);
-    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'thread-parked-message', 'continue the same goal', 'coding-manager-sol', expect.objectContaining({ jobId: job.jobId, taskIndex: 0 }));
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'thread-parked-message', 'continue the same goal', 'coding-manager', expect.objectContaining({ jobId: job.jobId, taskIndex: 0 }));
     // Ack is written by dispatchToAgent's finally block, only once the woken
     // turn consumed the message — send_job_message itself must not have
     // marked it delivered. See ParkedManagerWakeLifecycle.spec.ts scenario (c)
@@ -253,7 +253,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     ], 'sulla-desktop', root);
     const worker = await registry.createJob([
       { agentId: 'worker', label: 'worker', prompt: 'work', status: 'running', threadId: `rollup-worker-${ stamp }` },
-    ], 'coding-manager-sol', `rollup-manager-a-${ stamp }`);
+    ], 'coding-manager', `rollup-manager-a-${ stamp }`);
     await messaging.AgentJobMessagingModel.appendCheckin(`rollup-worker-${ stamp }`, { step: 'blocked', summary: 'waiting', blockers: ['dependency'] });
     const grandchild = await registry.createJob([
       { agentId: 'grandchild', label: 'grandchild', prompt: 'work', status: 'running', threadId: `rollup-grandchild-${ stamp }` },

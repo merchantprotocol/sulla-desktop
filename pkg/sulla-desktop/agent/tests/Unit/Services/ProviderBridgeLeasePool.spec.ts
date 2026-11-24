@@ -23,7 +23,7 @@ function poolFor(runModel: string | null = 'claude-opus-5-5') {
 
 describe('ProviderBridgeLeasePool', () => {
   it('pins the job bridge to the job model and reuses it across turns', async() => {
-    // risk: model-scope bypass or a new bridge per turn
+    // risk: a new bridge per turn
     const { pool, create } = poolFor();
     const first = await pool.lease('claude-code');
     const again = await pool.lease('claude-code', 'claude-opus-5-5');
@@ -33,7 +33,7 @@ describe('ProviderBridgeLeasePool', () => {
   });
 
   it('gives a graph launched on another model its own lease pinned to that model', async() => {
-    // risk: observers on the light model denied (provider_model_denied) by the job's pinned bridge
+    // risk: observers on the light model sharing the job's lease
     const { pool, create } = poolFor();
     const job = await pool.lease('claude-code');
     const observer = await pool.lease('claude-code', 'claude-haiku-5-5');
