@@ -75,7 +75,7 @@ dbDescribe('BackendGraphWebSocketService child result delivers once (real Postgr
 
   function fakeGraph(threadId: string, execute: (state: any) => Promise<void>) {
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (slug === 'coding-manager' ? { slug, run_location: 'vm' } as any : null));
+      (slug === 'coding-manager' ? { slug, enabled: true, status: 'production', run_location: 'vm' } as any : null));
     vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation(async() => {
       const state = { metadata: { threadId, wsChannel: channelId, options: {}, agent: {} }, messages: [] as any[] };
       return { graph: { execute: vi.fn(async() => execute(state)) }, state } as any;

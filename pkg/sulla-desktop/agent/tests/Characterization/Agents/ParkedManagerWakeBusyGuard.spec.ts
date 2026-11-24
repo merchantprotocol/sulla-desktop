@@ -83,7 +83,7 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     await registry.parkJobTask(manager.jobId, 0, 1); // DB-parked while "this process" still holds the thread below
 
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (slug === 'coding-manager' ? { slug, run_location: 'vm' } as any : null));
+      (slug === 'coding-manager' ? { slug, enabled: true, status: 'production', run_location: 'vm' } as any : null));
 
     const instance = bareInstance();
     const liveAbort = new AbortService();
@@ -117,7 +117,7 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     await registry.parkJobTask(manager.jobId, 0, 1); // dormant: no live waiter in THIS process
 
     vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
-      (slug === 'coding-manager' ? { slug, run_location: 'vm' } as any : null));
+      (slug === 'coding-manager' ? { slug, enabled: true, status: 'production', run_location: 'vm' } as any : null));
 
     const executeCalls: string[] = [];
     let releaseFirstExecute: (() => void) | undefined;
