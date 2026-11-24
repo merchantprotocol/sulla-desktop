@@ -124,12 +124,12 @@ export interface ThinkingMessage extends MessageBase {
 export interface ToolMessage extends MessageBase {
   kind:          'tool';
   recordedToolName?: string;
-  tool:          string;        // "Grep" | "Read" | "Bash" | …
-  desc:          string;        // short human description
+  tool:          string;        // recorded tool name
+  desc:          string;        // formatter description when available
   status:        'running' | 'ok' | 'error';
-  meta?:         string;        // "8 hits · 120ms" | "exit 0 · 94ms" | …
-  input?:        string;        // formatted invocation details
-  output?:       string;        // captured output (may be truncated)
+  meta?:         string;
+  input?:        string;        // full serialized arguments
+  output?:       string;        // full captured result
   error?:        string;        // failure detail
   outputFormat?: 'text' | 'code' | 'url' | 'json';
 }

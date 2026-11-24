@@ -3,8 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-const operations = ['open', 'navigate', 'read', 'screenshot', 'list', 'close'] as const;
-const statuses = ['Running', 'Completed', 'Failed'] as const;
 const memoryTools = new Set([
   'episodic_resolve', 'episodic_search', 'episodic_recall', 'dream_recent_memories',
   'recall_conversations', 'recall_index_lookup', 'recall_index_store',
@@ -14,17 +12,13 @@ const memoryTools = new Set([
   'list_identity_observations', 'update_identity_section',
   'pack_list', 'pack_install', 'pack_sync', 'pack_uninstall', 'pack_validate',
 ]);
-export type HiddenBrowserOperation = typeof operations[number];
-type BrowserStatus = typeof statuses[number];
-export type ChatToolActivity = 'artifact-opened' | `browser:${ HiddenBrowserOperation }:${ BrowserStatus }`;
+const browserOperations = ['open', 'navigate', 'read', 'screenshot', 'list', 'close'] as const;
+export type HiddenBrowserOperation = typeof browserOperations[number];
+export type ChatToolActivity = string;
 
 export class ChatToolReporting {
   static hiddenOperation(value: unknown): HiddenBrowserOperation | undefined {
-    return operations.find(operation => operation === value);
-  }
-
-  static isBackgroundBrowse(name: unknown): boolean {
-    return name === 'background_browse' || name === 'browser/background_browse' || name === 'browser_background_browse';
+    return browserOperations.find(operation => operation === value);
   }
 
   static isMemoryTool(value: string | undefined): boolean {
@@ -34,8 +28,6 @@ export class ChatToolReporting {
   static describe(value: unknown): { label: string; text: string } | undefined {
     if (value === 'artifact-opened') return { label: 'Artifact', text: 'Artifact opened' };
     if (typeof value !== 'string') return undefined;
-    const [kind, action, status, extra] = value.split(':');
-    if (kind !== 'browser' || extra !== undefined || !this.hiddenOperation(action) || !statuses.some(item => item === status)) return undefined;
-    return { label: 'Tool', text: `Hidden browser · ${ action } · ${ status }` };
+    return { label: 'Tool', text: value };
   }
 }

@@ -1852,7 +1852,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Tool_use/tool_result pairs run inside the provider's own CLI (Claude
     // Code, Codex) and never touch Sulla's ToolExecutor — this is the only
-    // place that sees them, so log each one directly once its result lands.
+    // place that sees them, so forward their complete call and result events.
+    const pendingToolCallReports = new Map<string, Promise<boolean>>();
     const onContextCompaction = (event: { provider: string; at: number; source: string }): void => {
       const meta = state.metadata as any;
       meta.cliCompactedAt = event.at;
@@ -1869,19 +1870,31 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
     };
-    const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
+    const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; result?: unknown; error?: string; resultChars: number; isError?: boolean }): void => {
       providerToolStarted = true;
       toolActivity.finished(event.toolUseId);
       new TurnOutputCounter(state.metadata as any).record();
-      this.logConversationToolCall(state, event.toolName, event.input, {
-        chars: event.resultChars,
-        error: event.isError || undefined,
-      });
+      const success = event.isError !== true && event.error === undefined;
+      const pendingCall = pendingToolCallReports.get(event.toolUseId) ?? this.emitToolCallEvent(
+        state, event.toolUseId, event.toolName, event.input ?? {},
+      );
+      void pendingCall.catch(() => false).then(() => this.emitToolResultEvent(
+        state, event.toolUseId, success, event.error, event.result,
+      )).catch(error => console.warn(`[${ this.name }] Failed to report provider tool result:`, error));
+      pendingToolCallReports.delete(event.toolUseId);
+      const loggedResult = event.result === undefined
+        ? event.error === undefined ? undefined : { error: event.error }
+        : event.error === undefined ? event.result : { result: event.result, error: event.error };
+      this.logConversationToolCall(state, event.toolName, event.input, loggedResult);
     };
-    const onToolStarted = (event?: { toolUseId: string; toolName: string }): void => {
+    const onToolStarted = (event?: { toolUseId: string; toolName: string; input?: unknown }): void => {
       providerToolStarted = true;
       toolActivity.started(event?.toolUseId, event?.toolName);
       new TurnOutputCounter(state.metadata as any).record();
+      if (!event?.toolUseId) return;
+      pendingToolCallReports.set(event.toolUseId, this.emitToolCallEvent(
+        state, event.toolUseId, event.toolName, event.input ?? {},
+      ));
     };
 
     let reply: NormalizedResponse | null = null;
@@ -2325,7 +2338,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     state: BaseThreadState,
     toolRunId: string,
     toolName: string,
-    args: Record<string, any>,
+    args: unknown,
     kind?: string,
   ): Promise<boolean> {
     return this.toolExecutor.emitToolCallEvent(state, toolRunId, toolName, args, kind);

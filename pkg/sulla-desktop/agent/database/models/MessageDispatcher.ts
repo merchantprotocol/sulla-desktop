@@ -19,8 +19,7 @@
  */
 
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
-import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
+import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
@@ -30,20 +29,7 @@ import { readAgentResultCard } from '@pkg/shared/agentResults/AgentResultCard';
 import type { ChatMessage, AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 import type { Ref } from 'vue';
 
-// ─── Display caps ───────────────────────────────────────────────
-// Renderer-side caps that stop a single tool result or a runaway
-// thinking bubble from blowing out the chat window's V8 heap,
-// localStorage quota, or DOM. Agent context is unaffected — these
-// caps apply only to what we store in reactive state for display.
-
-const MAX_TOOL_RESULT_CHARS = 20_000;
 const MAX_THINKING_CHARS    = 10_000;
-
-function capForDisplay(v: unknown, max = MAX_TOOL_RESULT_CHARS): unknown {
-  const s = typeof v === 'string' ? v : JSON.stringify(v ?? null);
-  if (s.length <= max) return v;
-  return `${ s.slice(0, max) }\n\n[truncated ${ s.length - max } chars]`;
-}
 
 function capText(s: string, max: number): string {
   return s.length <= max ? s : s.slice(s.length - max);
@@ -177,7 +163,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   }
   if (activity?.kind === 'chat_tool_activity') {
     if (msg.type !== 'assistant_message' || !msgThreadId || activity.thread_id !== msgThreadId ||
-      !ChatToolReporting.describe(activity.chatToolActivity)) return;
+      typeof activity.chatToolActivity !== 'string') return;
     // IPC assigns an id and timestamp once per emitted event, not per
     // dispatch. Keep that identity in the saved message id, scoped to the
     // originating chat. Never collapse distinct events by their display text.
@@ -849,7 +835,11 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
   if (phase === 'tool_call') {
     const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
     const toolName = typeof data?.toolName === 'string' ? data.toolName : 'unknown';
-    const args = data?.args && typeof data.args === 'object' ? data.args : {};
+    const args = data?.args ?? {};
+    const argsRecord = args && typeof args === 'object' && !Array.isArray(args)
+      ? args as Record<string, unknown>
+      : { value: args };
+    const fullInput = typeof args === 'string' ? args : JSON.stringify(args, null, 2) ?? String(args);
 
     ctx.currentActivity.value = toolNameToVerb(toolName);
 
@@ -867,23 +857,15 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       }
     }
 
-    // Hidden browser publishes its own payload-free lifecycle in the originating thread.
-    if (toolName === 'emit_chat_message' || toolName === 'emit_chat_image' || ChatToolReporting.isBackgroundBrowse(toolName)) {
-      return;
-    }
-
-    // Every tool call stays structured so the renderer can keep its status,
-    // input, and result inside the thinking bubble. The old allowlist turned
-    // selected calls into plain text and let generic CLI `exec` calls escape
-    // as separate transcript cards.
+    // Every tool call stays structured so the renderer can retain its exact
+    // arguments, status, result and error in the saved transcript.
 
     if (toolRunId) {
       const existingId = ctx.toolRunIdToMessageId.get(toolRunId);
       if (existingId && ctx.messages.some(message => message.id === existingId && message.threadId === msgThreadId)) return;
       const messageId = `${ Date.now() }_tool_${ toolRunId }`;
-      const safeArgs = redactToolArgs(toolName, args) as Record<string, unknown>;
-      const description = typeof safeArgs?.description === 'string' ? safeArgs.description : undefined;
-      const display = formatToolCard(toolName, safeArgs);
+      const description = typeof argsRecord.description === 'string' ? argsRecord.description : undefined;
+      const display = formatToolCard(toolName, argsRecord);
       const message: ChatMessage = {
         id:        messageId,
         channelId: agentId,
@@ -896,10 +878,11 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
           toolName,
           description,
           status:       'running',
-          args:         safeArgs,
+          args:         argsRecord,
           label:        display.label,
           summary:      display.summary,
-          input:        display.input,
+          input:        fullInput,
+          inputIsFull:  true,
           outputFormat: display.outputFormat,
         },
       };
@@ -913,7 +896,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
     const success = data?.success === true;
     const error = typeof data?.error === 'string' ? data.error : null;
-    const result = capForDisplay(data?.result);
+    const result = data?.result;
 
     if (toolRunId) {
       const messageId = ctx.toolRunIdToMessageId.get(toolRunId);
@@ -929,7 +912,12 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
             result,
             error,
           );
-          if (resultDisplay.output) message.toolCard.output = capForDisplay(resultDisplay.output) as string;
+          const fullOutput = result === undefined
+            ? resultDisplay.output
+            : typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result);
+          if (fullOutput !== undefined) {
+            message.toolCard.output = fullOutput;
+          }
           if (resultDisplay.outputFormat) message.toolCard.outputFormat = resultDisplay.outputFormat;
         }
         ctx.toolRunIdToMessageId.delete(toolRunId);

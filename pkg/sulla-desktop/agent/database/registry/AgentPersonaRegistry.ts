@@ -47,6 +47,7 @@ export interface ChatMessage {
     label?:        string;
     summary?:      string;
     input?:        string;
+    inputIsFull?:  boolean;
     output?:       string;
     outputFormat?: 'text' | 'code' | 'url' | 'json';
   };

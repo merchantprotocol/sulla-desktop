@@ -112,6 +112,8 @@ export interface StreamCallbacks {
     toolUseId:   string;
     toolName:    string;
     input?:      unknown;
+    result?:     unknown;
+    error?:      string;
     resultChars: number;
     isError?:    boolean;
   }) => void;

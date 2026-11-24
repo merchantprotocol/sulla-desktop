@@ -7,6 +7,8 @@ export interface CodexToolEvent {
   toolUseId:   string;
   toolName:    string;
   input?:      unknown;
+  result?:     unknown;
+  error?:      string;
   resultChars: number;
   isError?:    boolean;
 }
@@ -27,7 +29,11 @@ export function codexToolEventForItem(item: any): CodexToolEvent | null {
   const toolUseId = item?.id ?? item?.call_id;
   if (typeof toolUseId !== 'string' || !toolUseId) return null;
 
-  const failed = item?.status === 'failed' || item?.status === 'error' || Boolean(item?.error);
+  const failed = item?.status === 'failed' || item?.status === 'error' || Boolean(item?.error) ||
+    (typeof item?.exit_code === 'number' && item.exit_code !== 0);
+  const error = typeof item?.error === 'string'
+    ? item.error
+    : item?.error === undefined ? undefined : JSON.stringify(item.error, null, 2) ?? String(item.error);
 
   switch (kind) {
   case 'command_execution': {
@@ -36,6 +42,8 @@ export function codexToolEventForItem(item: any): CodexToolEvent | null {
       toolUseId,
       toolName:    'command_execution',
       input:       { command: item.command, cwd: item.cwd },
+      result,
+      error:       error ?? (failed && typeof item.stderr === 'string' ? item.stderr : undefined),
       resultChars: serializedLength(result),
       isError:     failed || (typeof item.exit_code === 'number' && item.exit_code !== 0) || undefined,
     };
@@ -43,30 +51,47 @@ export function codexToolEventForItem(item: any): CodexToolEvent | null {
   case 'mcp_tool_call': {
     const server = typeof item.server === 'string' && item.server ? `${ item.server }/` : '';
     const tool = typeof item.tool === 'string' && item.tool ? item.tool : 'mcp_tool_call';
+    const result = item.result ?? item.output;
     return {
       toolUseId,
       toolName:    `${ server }${ tool }`,
       input:       item.arguments ?? item.input,
-      resultChars: serializedLength(item.result ?? item.output ?? item.error),
+      result,
+      error:       error ?? (failed && result !== undefined
+        ? typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result)
+        : undefined),
+      resultChars: serializedLength(result ?? item.error),
       isError:     failed || undefined,
     };
   }
-  case 'web_search':
+  case 'web_search': {
+    const result = item.result ?? item.output;
     return {
       toolUseId,
       toolName:    'web_search',
       input:       { query: item.query },
-      resultChars: serializedLength(item.result ?? item.output),
+      result,
+      error:       error ?? (failed && result !== undefined
+        ? typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result)
+        : undefined),
+      resultChars: serializedLength(result),
       isError:     failed || undefined,
     };
-  case 'file_change':
+  }
+  case 'file_change': {
+    const result = item.changes ?? item.output ?? item.result;
     return {
       toolUseId,
       toolName:    'file_change',
       input:       { changes: item.changes },
-      resultChars: serializedLength(item.changes),
+      result,
+      error:       error ?? (failed && result !== undefined
+        ? typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result)
+        : undefined),
+      resultChars: serializedLength(result),
       isError:     failed || undefined,
     };
+  }
   default:
     return null;
   }

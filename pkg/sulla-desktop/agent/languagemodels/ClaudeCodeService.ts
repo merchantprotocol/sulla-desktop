@@ -1226,7 +1226,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           liveness.toolStarted(id, name ?? 'tool');
           callbacks.onToolStarted?.({ toolUseId: id, toolName: name ?? 'tool', input });
         };
-        const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
+        const noteToolResult = (id?: string, result: unknown = '', isError = false) => {
           if (!id) return;
           const started = toolStarts.get(id);
           if (!started) return;
@@ -1237,10 +1237,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           agg.count += 1;
           agg.ms += ms;
           toolTotals.set(started.name, agg);
+          const resultText = typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result);
+          const resultChars = typeof result === 'string' ? result.length : resultText.length;
           perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
           try {
             callbacks.onToolEvent?.({
-              toolUseId: id, toolName: started.name, input: started.input, resultChars, isError,
+              toolUseId: id, toolName: started.name, input: started.input, result, resultChars,
+              error: isError ? resultText : undefined, isError,
             });
           } catch { /* ignore */ }
         };
@@ -1319,37 +1322,35 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.once('spawn', () => { spawnedAt = Date.now(); onSpawned() });
 
         /**
-       * Summarise a tool_use block into a short activity message like
-       * "Running Bash: ls /etc" or "Reading /etc/hosts". Keep it tight so
-       * the thinking bubble stays readable on mobile.
+       * Summarise a tool_use block for the activity line. The structured
+       * tool event separately carries the complete input and result.
        */
         const activityForToolUse = (name: string, input: any): string => {
-          const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
           if (!input || typeof input !== 'object') return `Using ${ name }`;
           switch (name) {
           case 'Bash':
-            if (typeof input.command === 'string') return `$ ${ pretty(input.command) }`;
+            if (typeof input.command === 'string') return `$ ${ input.command }`;
             return 'Running a shell command';
           case 'Read':
-            if (typeof input.file_path === 'string') return `Reading ${ pretty(input.file_path) }`;
+            if (typeof input.file_path === 'string') return `Reading ${ input.file_path }`;
             return 'Reading a file';
           case 'Edit':
           case 'Write':
-            if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ pretty(input.file_path) }`;
+            if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ input.file_path }`;
             return `${ name === 'Write' ? 'Writing' : 'Editing' } a file`;
           case 'Glob':
-            if (typeof input.pattern === 'string') return `Searching for ${ pretty(input.pattern) }`;
+            if (typeof input.pattern === 'string') return `Searching for ${ input.pattern }`;
             return 'Searching files';
           case 'Grep':
-            if (typeof input.pattern === 'string') return `Grepping ${ pretty(input.pattern) }`;
+            if (typeof input.pattern === 'string') return `Grepping ${ input.pattern }`;
             return 'Grepping';
           case 'WebFetch':
           case 'WebSearch':
-            if (typeof input.url === 'string') return `Fetching ${ pretty(input.url) }`;
-            if (typeof input.query === 'string') return `Searching web: ${ pretty(input.query) }`;
+            if (typeof input.url === 'string') return `Fetching ${ input.url }`;
+            if (typeof input.query === 'string') return `Searching web: ${ input.query }`;
             return `${ name } request`;
           case 'Task':
-            if (typeof input.description === 'string') return `Task: ${ pretty(input.description) }`;
+            if (typeof input.description === 'string') return `Task: ${ input.description }`;
             return 'Spawning sub-task';
           case 'AskUserQuestion':
           case 'mcp__sulla-native__ask_user_question':
@@ -1663,13 +1664,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
             for (const b of blocks) {
               if (b?.type === 'tool_result') {
-                let chars = 0;
-                if (typeof b.content === 'string') {
-                  chars = b.content.length;
-                } else if (Array.isArray(b.content)) {
-                  chars = b.content.reduce((n: number, c: any) => n + (typeof c?.text === 'string' ? c.text.length : 0), 0);
-                }
-                noteToolResult(b.tool_use_id, chars, b.is_error === true);
+                noteToolResult(b.tool_use_id, b.content, b.is_error === true);
               }
             }
           }

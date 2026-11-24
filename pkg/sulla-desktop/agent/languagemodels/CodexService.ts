@@ -1054,8 +1054,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         else options.signal.addEventListener('abort', onAbort);
       }
 
-      const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
-
       /** Append a complete agent message, skipping it when deltas already
        *  streamed its content into textCollected. */
       const appendAgentMessage = (text: string) => {
@@ -1076,15 +1074,15 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const kind = item?.item_type ?? item?.type;
         switch (kind) {
         case 'command_execution':
-          if (typeof item.command === 'string') return `$ ${ pretty(item.command) }`;
+          if (typeof item.command === 'string') return `$ ${ item.command }`;
           return 'Running a shell command';
         case 'file_change': {
           const first = Array.isArray(item.changes) ? item.changes[0] : null;
-          if (first?.path) return `Editing ${ pretty(String(first.path)) }`;
+          if (first?.path) return `Editing ${ String(first.path) }`;
           return 'Editing files';
         }
         case 'web_search':
-          if (typeof item.query === 'string') return `Searching web: ${ pretty(item.query) }`;
+          if (typeof item.query === 'string') return `Searching web: ${ item.query }`;
           return 'Searching the web';
         case 'mcp_tool_call':
           if (typeof item.tool === 'string') return `Using ${ item.tool }`;
@@ -1128,7 +1126,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const isTool = ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(kind);
             if (isTool && itemId) {
               if (parsed.type === 'item.started') {
-                callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input: item.arguments ?? item.input });
+                const input = item.arguments ?? item.input ?? (kind === 'command_execution'
+                  ? { command: item.command, cwd: item.cwd }
+                  : kind === 'web_search' ? { query: item.query }
+                    : kind === 'file_change' ? { changes: item.changes } : undefined);
+                callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input });
                 liveness.toolStarted(itemId, String(item.tool ?? item.name ?? kind));
               } else if (parsed.type === 'item.completed') liveness.toolFinished(itemId);
             }
