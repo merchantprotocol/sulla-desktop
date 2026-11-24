@@ -66,7 +66,7 @@
               />
             </template>
           </Transcript>
-          <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
+          <Composer v-if="!props.supportSendBlocked" />
         </div>
       </main>
 
