@@ -43,6 +43,7 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 
 import type { BaseThreadState, NodeResult } from './Graph';
+import type { ModelDecision } from '../languagemodels/modelPrecedence';
 import type { StreamContext } from '../controllers/Extractor';
 import { turnAgentDefinitionMemo } from './turnAgentDefinitionMemo';
 import { turnProviderResolver } from './TurnProviderResolver';
@@ -565,19 +566,65 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.routingCandidates = await workerModelRouting.resolveRoute(workerRoute, isAbortSignal(runAbort) ? runAbort : runAbort?.signal);
       const selected = this.routingCandidates[0];
       await workerModelRouting.persistSelection(state, selected);
-      return getServiceByProvider(selected.provider, selected.model, selected.effort);
+      const service = await getServiceByProvider(selected.provider, selected.model, selected.effort);
+      await this.persistModelDecision(state, service);
+      return service;
     }
     const resolved = await turnProviderResolver.resolve(state);
     this.routingCandidates = resolved.candidates;
+    await this.persistModelDecision(state, resolved.provider);
     return resolved.provider;
   }
 
   private recordModelStatus(state: BaseThreadState, service: BaseLanguageModel): void {
-    const modelStatus = { ...((state.metadata as any).workerModelRoute && !(state.metadata as any).workerModelChatOverride ? { mapping: 'Worker mapping' } : {}), model: service.getModel(), provider: service.getProviderName(), effort: service.getEffort?.() ?? null, source: 'resolved' as const };
+    const meta = state.metadata as any;
+    const mapping = meta.modelDecision?.step === 'override' ? 'Override' : (meta.workerModelRoute && !meta.workerModelChatOverride ? 'Worker mapping' : undefined);
+    const modelStatus = { ...(mapping ? { mapping } : {}), model: service.getModel(), provider: service.getProviderName(), effort: service.getEffort?.() ?? null, source: 'resolved' as const };
     (state.metadata as any).resolvedModel = modelStatus.model;
     (state.metadata as any).resolvedProvider = modelStatus.provider;
     (state.metadata as any).resolvedModelStatus = modelStatus;
     AgentModelStatusRegistry.record(state.metadata.threadId, modelStatus);
+  }
+
+  private async persistModelDecision(state: BaseThreadState, service: BaseLanguageModel, reason?: string): Promise<void> {
+    try {
+      const meta = state.metadata as any;
+      const reference = meta.modelDecisionTask;
+      if (!reference?.jobId || !Number.isInteger(reference.taskIndex)) return;
+      const current: ModelDecision = meta.modelDecision ?? { requested: null, ran: null, step: 'category' };
+      const ran = { provider: service.getProviderName(), model: service.getModel() };
+      const sameRan = current.ran?.provider === ran.provider && current.ran?.model === ran.model;
+      const reasons = current.reason ? current.reason.split('; ') : [];
+      if (reason && !reasons.includes(reason)) reasons.push(reason);
+      const nextReason = reasons.join('; ');
+      if (sameRan && nextReason === (current.reason ?? '')) return;
+      const decision: ModelDecision = {
+        ...current,
+        ran,
+        ...(nextReason ? { reason: nextReason } : {}),
+      };
+      // Keep the live thread truthful even when durable bookkeeping is unavailable.
+      meta.modelDecision = decision;
+      try {
+        // Lazy: a top-level import creates a BaseNode <-> AgentJobServiceProvider cycle.
+        const { agentJobProvider } = await import('../app/Providers/AgentJobServiceProvider');
+        const persisted = await agentJobProvider.states.mutateJob(reference.jobId, job => {
+          const task = job.tasks[reference.taskIndex];
+          if (!['running', 'parked'].includes(job.status) || !task || !['queued', 'running', 'parked'].includes(task.status) ||
+              (reference.threadId && task.threadId !== reference.threadId) || (task.generation ?? 1) !== (reference.generation ?? 1)) {
+            throw new Error('Worker execution ownership changed; refusing to record a stale model decision.');
+          }
+          return { ...job, tasks: job.tasks.map((item, index) => index === reference.taskIndex ? { ...item, modelDecision: decision } : item) };
+        }, undefined, false);
+        if (!persisted) throw new Error('Agent job is unavailable; model-decision bookkeeping was skipped.');
+      } catch (error) {
+        console.warn(`[ModelPrecedence] Could not persist model decision for job=${ reference.jobId }; continuing model execution.`, error);
+      }
+      const requested = decision.requested ? `${ decision.requested.provider }/${ decision.requested.model }` : 'none';
+      console.info(`[ModelPrecedence] job=${ reference.jobId } requested=${ requested } ran=${ ran.provider }/${ ran.model } step=${ decision.step}`);
+    } catch (error) {
+      console.warn('[ModelPrecedence] Failed to record the resolved model; continuing model execution.', error);
+    }
   }
 
   protected recordedReplyAttribution(state: BaseThreadState, model?: string): { agent?: string; model?: string } {
@@ -1444,6 +1491,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
                 ? this.buildReducedRetryMessages(messages)
                 : messages.filter(message => ['system', 'user', 'assistant'].includes(message.role));
             await workerModelRouting.persistSelection(state, candidate);
+            if (index > 0) await this.persistModelDecision(
+              state,
+              service,
+              `Fallback after ${ failedFirst.provider }/${ failedFirst.model } failed: ${ redactLLMFailureMessage(lastErr) }`,
+            );
             this.recordModelStatus(state, service);
             const reply = await this.callLLMStreaming(state, retryMessages, {
               maxTokens: options.maxTokens, format: options.format, temperature: options.temperature,

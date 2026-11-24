@@ -47,4 +47,14 @@ describe('mapped Grok HTTP requests', () => {
     })).rejects.toThrow('does not match');
     expect(mocks.fetch).not.toHaveBeenCalled();
   });
+
+  it('checks a Grok launch override without inventing a worker route', async() => {
+    // risk: an explicit Grok override bypasses the saved-mapping OAuth subscription guard
+    const overrideState: any = { metadata: { modelOverride: { provider: 'grok', model: 'grok-4.6', connections: { grok: 'oauth' } } } };
+    await expect(providerFetch('grok', url, request(), context, {
+      streaming: true, state: overrideState, model: 'grok-4.6', authMode: 'api-key',
+    })).rejects.toThrow('launch override');
+    expect(overrideState.metadata).not.toHaveProperty('workerModelRoute');
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
 });
