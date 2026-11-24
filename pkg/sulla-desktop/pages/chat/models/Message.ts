@@ -131,8 +131,6 @@ export interface ToolMessage extends MessageBase {
   output?:       string;        // captured output (may be truncated)
   error?:        string;        // failure detail
   outputFormat?: 'text' | 'code' | 'url' | 'json';
-  /** Redacted structured arguments used only by the Detailed trace payload. */
-  traceArgs?:    Readonly<Record<string, unknown>>;
   /** Monotonic elapsed time captured when the backend tool result settles. */
   durationMs?:   number;
 }

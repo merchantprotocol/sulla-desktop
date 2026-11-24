@@ -9,38 +9,46 @@
     <div class="trace-row__line">
       <span class="trace-row__icon" aria-hidden="true">{{ icon }}</span>
       <div class="trace-row__what">
-        <span class="trace-row__verb">{{ row.verb }}</span>
-        <code class="trace-row__target">{{ row.target }}</code>
-        <code v-if="row.args" class="trace-row__args">{{ row.args }}</code>
+        <span v-if="row.kind === 'thought'" class="trace-row__thought">{{ row.target }}</span>
+        <template v-else>
+          <span class="trace-row__verb">{{ row.verb }}</span>
+          <code v-if="row.toolName" class="trace-row__tool">{{ row.toolName }}</code>
+          <code class="trace-row__target">{{ row.target }}</code>
+          <code v-if="row.args" class="trace-row__args">{{ row.args }}</code>
+        </template>
       </div>
       <span class="trace-row__meta">
         <span v-if="row.durationMs !== undefined" class="trace-row__duration">{{ durationLabel }}</span>
         <span v-if="row.status" class="trace-row__status" :data-status="row.status">{{ statusLabel }}</span>
       </span>
       <button
-        v-if="row.rawPayload"
+        v-if="hasRawPayload"
         class="trace-row__expand"
         type="button"
         :aria-expanded="expanded"
         :aria-controls="payloadId"
         :aria-label="`${expanded ? 'Hide' : 'Show'} raw payload for ${row.verb} ${row.target}`"
-        @click="expanded = !expanded"
+        @click="toggleDisclosure"
       >
         <span aria-hidden="true">›</span>
       </button>
     </div>
     <p v-if="row.note" class="trace-row__note">{{ row.note }}</p>
-    <pre v-if="row.rawPayload" :id="payloadId" class="trace-row__payload" :hidden="!expanded" tabindex="0">{{ row.rawPayload }}</pre>
+    <pre v-if="hasRawPayload" :id="payloadId" class="trace-row__payload" :hidden="!expanded" tabindex="0">{{ serializedPayload }}</pre>
   </li>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 
+import { TracePayloadRedactor } from '@pkg/agent/tools/TracePayloadRedactor';
 import type { DetailedTraceRow } from './DetailedTraceProjection';
 
-const props = defineProps<{ row: DetailedTraceRow }>();
-const expanded = ref(false);
+const props = withDefaults(defineProps<{ row: DetailedTraceRow; expandAll?: boolean }>(), { expandAll: false });
+const expanded = ref(props.expandAll);
+const serializedPayload = ref('');
+const redactor = new TracePayloadRedactor();
+const hasRawPayload = computed(() => props.row.rawPayload !== undefined);
 const payloadId = computed(() => `trace-payload-${props.row.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`);
 const icons: Record<DetailedTraceRow['kind'], string> = {
   thought: '·', tool: '›', file: '□', read: '⌕', search: '⌕', memory: '◈', handoff: '↗',
@@ -59,6 +67,21 @@ const durationLabel = computed(() => {
   const seconds = Math.round((duration % 60_000) / 1_000);
   return `${minutes}m ${seconds}s`;
 });
+
+function refreshPayload(): void {
+  if (expanded.value && hasRawPayload.value) serializedPayload.value = redactor.serialize(props.row.rawPayload);
+}
+
+function toggleDisclosure(): void {
+  expanded.value = !expanded.value;
+  refreshPayload();
+}
+
+watch(() => props.row.rawPayload, refreshPayload);
+watch(() => props.expandAll, (open) => {
+  expanded.value = open;
+  refreshPayload();
+}, { immediate: true });
 </script>
 
 <style scoped>
@@ -76,8 +99,13 @@ const durationLabel = computed(() => {
   overflow-wrap: anywhere;
 }
 .trace-row__verb { color: var(--text-primary); font-weight: 500; }
+.trace-row__tool {
+  margin-inline-start: 6px; border-radius: 5px; padding: 1px 5px; background: var(--bg-surface);
+  color: var(--text-muted); font: 12px var(--font-mono); overflow-wrap: anywhere;
+}
 .trace-row__target {
-  margin-inline-start: 5px; color: var(--text-primary); font: inherit; overflow-wrap: anywhere;
+  margin-inline-start: 5px; border-radius: 5px; padding: 1px 5px; background: var(--bg-surface);
+  color: var(--text-primary); font: 12.5px var(--font-mono); overflow-wrap: anywhere;
 }
 .trace-row__args {
   display: inline; margin-inline-start: 6px; color: var(--text-muted); font: 11.5px var(--font-mono);
@@ -103,6 +131,9 @@ const durationLabel = computed(() => {
   margin: 0 34px 2px; min-width: 0; color: var(--text-secondary); font-size: 13px; line-height: 19px;
   overflow-wrap: anywhere;
 }
+.trace-row[data-kind="thought"] { margin-top: 6px; }
+.trace-row[data-kind="thought"]:first-child { margin-top: 0; }
+.trace-row[data-kind="thought"] .trace-row__what { grid-column: 2 / -1; color: var(--text-secondary); }
 .trace-row[data-status="failed"] .trace-row__note { color: var(--text-primary); }
 .trace-row__payload {
   margin: 4px 34px 8px; min-width: 0; max-width: calc(100% - 34px); padding: 10px 12px;

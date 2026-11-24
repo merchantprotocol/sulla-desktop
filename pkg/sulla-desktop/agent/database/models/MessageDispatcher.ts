@@ -1001,7 +1001,14 @@ function handleThreadCreated(ctx: DispatchContext, _agentId: string, _threadId: 
   const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
   const threadId = data.threadId;
   if (threadId && typeof threadId === 'string') {
+    const wasUnassigned = !ctx.getThreadId();
     ctx.setThreadId(threadId);
+    // First-run messages can be queued before the backend assigns its thread.
+    // Bind only that unowned latest user anchor; never relabel another thread.
+    if (wasUnassigned) {
+      const anchor = ctx.messages.findLast(message => message.role === 'user' && !message.threadId);
+      if (anchor) anchor.threadId = threadId;
+    }
   }
 }
 
@@ -1032,7 +1039,7 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
 
 // ─── Handler: token_info ────────────────────────────────────────
 
-function handleTokenInfo(ctx: DispatchContext, _agentId: string, threadId: string, msg: WebSocketMessage): void {
+function handleTokenInfo(ctx: DispatchContext, agentId: string, threadId: string, msg: WebSocketMessage): void {
   const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
   if (typeof data.tokens_used === 'number') {
     ctx.handleTokenInfo(
@@ -1040,9 +1047,10 @@ function handleTokenInfo(ctx: DispatchContext, _agentId: string, threadId: strin
       data.time_spent, data.threadId, data.nodeId,
     );
   }
-  if (ctx.detailedTraceUsage) {
-    const anchor = ctx.messages.findLast(message => !threadId || message.threadId === threadId);
-    ctx.detailedTraceUsage.capture(data, anchor?.id);
+  if (ctx.detailedTraceUsage && !data.isSubAgent && threadId && data.threadId === threadId && ctx.getThreadId() === threadId &&
+    typeof data.runId === 'string' && data.runId.trim() && typeof data.nodeRunId === 'string' && data.nodeRunId.trim()) {
+    const anchor = ctx.messages.findLast(message => message.role === 'user' && message.channelId === agentId && message.threadId === threadId);
+    if (anchor) ctx.detailedTraceUsage.capture(data, anchor.id);
   }
 }
 

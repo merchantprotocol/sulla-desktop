@@ -596,6 +596,8 @@ export class PersonaAdapter {
     this.staticWorkflowArtifacts.clear();
     this.persistentArtifacts.clear();
     this.seen.clear();
+    this.controller.detailedTraceUsage.value = [];
+    this.controller.detailedTracePayloads.value = new Map();
     this.ci.dispose();
   }
 
@@ -1001,6 +1003,10 @@ export class PersonaAdapter {
       const tracePayloadRedactor = new TracePayloadRedactor();
       const safeResult = b.toolCard.result === undefined ? undefined : tracePayloadRedactor.redact(b.toolCard.result);
       const output = toolOutputDetail(b.toolCard.output, safeResult);
+      const safeArgs = b.toolCard.args
+        ? tracePayloadRedactor.redact(redactToolArgs(b.toolCard.toolName, b.toolCard.args)) as Readonly<Record<string, unknown>>
+        : undefined;
+      this.controller.setDetailedTracePayload(id, safeArgs || safeResult !== undefined ? { args: safeArgs, result: safeResult } : undefined);
       return {
         id,
         kind: 'tool',
@@ -1013,9 +1019,6 @@ export class PersonaAdapter {
         output:       typeof output === 'string' ? tracePayloadRedactor.redactText(output) : undefined,
         error:        typeof b.toolCard.error === 'string' ? tracePayloadRedactor.redactText(b.toolCard.error) : undefined,
         outputFormat: b.toolCard.outputFormat,
-        traceArgs:    b.toolCard.args
-          ? tracePayloadRedactor.redact(redactToolArgs(b.toolCard.toolName, b.toolCard.args)) as Readonly<Record<string, unknown>>
-          : undefined,
         durationMs:   b.toolCard.durationMs,
       } satisfies ToolMessage;
     }

@@ -22,7 +22,21 @@
           :label="todayLabel"
         />
 
-        <TraceTurn v-for="turn in detailedTraceAfter.get(undefined) ?? []" :key="turn.id" :turn="turn" />
+        <div v-if="reportingLevel === 'debug' && hasTracePayloads" class="trace-payload-controls">
+          <button
+            class="trace-payload-control"
+            type="button"
+            :aria-pressed="allTracePayloadsOpen"
+            @click="allTracePayloadsOpen = !allTracePayloadsOpen"
+          >{{ allTracePayloadsOpen ? 'Close all payloads' : 'Open all payloads' }}</button>
+        </div>
+
+        <TraceTurn
+          v-for="turn in detailedTraceAfter.get(undefined) ?? []"
+          :key="turn.id"
+          :turn="turn"
+          :expand-all="allTracePayloadsOpen"
+        />
         <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
           <div
             :ref="el => jumper.register(entry.id, el)"
@@ -52,6 +66,7 @@
             v-for="turn in detailedTraceAfter.get(entry.id) ?? []"
             :key="turn.id"
             :turn="turn"
+            :expand-all="allTracePayloadsOpen"
           />
         </template>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
@@ -108,8 +123,11 @@ const baseLevel = computed(() => props.reportingLevel === 'debug' ? 'info' : pro
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, baseLevel.value));
 const detailedTraceTurns = computed(() => props.reportingLevel === 'debug'
   ? detailedTraceProjection.project(controller.messages.value, reporting.entries(controller.messages.value, 'debug'),
-    controller.detailedTraceUsage.value, transcriptEntries.value)
+    controller.detailedTraceUsage.value, transcriptEntries.value, controller.detailedTracePayloads.value,
+    controller.thread.value.backendThreadId)
   : []);
+const hasTracePayloads = computed(() => detailedTraceTurns.value.some(turn => turn.rows.some(row => row.rawPayload !== undefined)));
+const allTracePayloadsOpen = ref(false);
 const detailedTraceAfter = computed(() => {
   const turns = new Map<string | undefined, typeof detailedTraceTurns.value>();
   for (const turn of detailedTraceTurns.value) turns.set(turn.afterId, [...(turns.get(turn.afterId) ?? []), turn]);
@@ -154,6 +172,7 @@ let loadingOlder = false;
 let historyExhausted = false;
 let pageEpoch = 0;
 watch(() => controller.thread.value.id, () => {
+  allTracePayloadsOpen.value = false;
   pageEpoch++;
   loadingOlder = false;
   historyExhausted = false;
@@ -246,6 +265,13 @@ defineExpose({ scroller, scrollToBottom });
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 112px);
 }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
+.trace-payload-controls { display: flex; justify-content: flex-end; margin: 0 0 4px; }
+.trace-payload-control {
+  border: 1px solid var(--border-muted); border-radius: 6px; padding: 4px 8px;
+  background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.trace-payload-control:hover { color: var(--text-primary); border-color: var(--border-default); }
+.trace-payload-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .report-entry-standard-evidence-after-reply { margin-top: -12px; }
 .report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
 .report-label {

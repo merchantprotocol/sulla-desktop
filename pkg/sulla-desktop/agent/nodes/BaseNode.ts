@@ -1999,7 +1999,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         time_spent:        reply.metadata.time_spent,
         model:             reply.metadata.model,
         threadId:          state.metadata.threadId,
+        runId:             this.currentNodeRunContext?.runId,
         nodeId:            this.name,
+        nodeRunId:         this.currentNodeRunContext?.nodeId ?? this.id,
+        isSubAgent:        state.metadata.isSubAgent === true,
       },
       timestamp: Date.now(),
     });

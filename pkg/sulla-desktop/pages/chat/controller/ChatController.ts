@@ -131,6 +131,8 @@ export class ChatController {
   readonly model:      Ref<ModelDescriptor>;
   /** Live diagnostics only: not part of ThreadState or serialize(). */
   readonly detailedTraceUsage = shallowRef<readonly import('@pkg/agent/database/models/DetailedTraceUsage').DetailedTraceUsageSample[]>([]);
+  /** Redacted live-only tool arguments; kept outside Message/ThreadState/export payloads. */
+  readonly detailedTracePayloads = shallowRef<ReadonlyMap<string, unknown>>(new Map());
   readonly usage:      Ref<TokenUsage>;
   readonly heartbeat:  Ref<ChatHeartbeatConfig>;
 
@@ -219,13 +221,32 @@ export class ChatController {
     this.popover.value = blank.popover;
     this.modals.value = blank.modals;
     this.heartbeat.value = blank.heartbeat ?? defaultChatHeartbeatConfig();
+    this.detailedTraceUsage.value = [];
+    this.detailedTracePayloads.value = new Map();
     this.bus.emit({ kind: 'threadHydrated', threadId: this.thread.value.id });
+  }
+
+  setDetailedTracePayload(messageId: string, payload: unknown): void {
+    const current = this.detailedTracePayloads.value;
+    if (payload === undefined) {
+      if (!current.has(messageId)) return;
+      const next = new Map(current);
+      next.delete(messageId);
+      this.detailedTracePayloads.value = next;
+      return;
+    }
+    if (current.get(messageId) === payload) return;
+    const next = new Map(current);
+    next.set(messageId, payload);
+    this.detailedTracePayloads.value = next;
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────
   dispose(): void {
     for (const t of this.timers) clearInterval(t);
     this.timers.clear();
+    this.detailedTraceUsage.value = [];
+    this.detailedTracePayloads.value = new Map();
     this.bus.clear();
   }
 
@@ -898,8 +919,13 @@ export class ChatController {
   // ─── Serialization / hydration ──────────────────────────────────
   serialize(): ThreadState {
     const thread = this.thread.value;
+    const sourceMessages = thread.remote ? thread.messages.filter(message => message.kind !== 'streaming') : thread.messages;
+    const messages = sourceMessages.map(message => this.stripLegacyTraceArgs(message));
+    const messagesUnchanged = messages.length === thread.messages.length &&
+      messages.every((message, index) => message === thread.messages[index]);
+    const serializedThread = messagesUnchanged ? thread : { ...thread, messages };
     const state: ThreadState = {
-      thread:           thread.remote ? { ...thread, messages: thread.messages.filter(message => message.kind !== 'streaming') } : thread,
+      thread:           serializedThread,
       runState:         this.runState.value,
       queue:            [...this.queue.value],
       staged:           [...this.staged.value],
@@ -935,12 +961,16 @@ export class ChatController {
   }
 
   hydrate(state: ThreadState): void {
+    this.detailedTraceUsage.value = [];
+    this.detailedTracePayloads.value = new Map();
     // The backend thread belongs to this tab's persona, not the stored blob.
     // DB-restored blobs often lack it; dropping it left per-chat features
     // (heartbeat, sub-agent cards) unable to find their backend thread.
     const backendThreadId = this.thread.value.backendThreadId ?? state.thread.backendThreadId;
-    const bounded = new MessageWindow().trim(state.thread.messages);
-    const restored = bounded.length === state.thread.messages.length ? state.thread : { ...state.thread, messages: bounded };
+    const bounded = new MessageWindow().trim(state.thread.messages).map(message => this.stripLegacyTraceArgs(message));
+    const messagesUnchanged = bounded.length === state.thread.messages.length &&
+      bounded.every((message, index) => message === state.thread.messages[index]);
+    const restored = messagesUnchanged ? state.thread : { ...state.thread, messages: bounded };
     this.thread.value = backendThreadId ? { ...restored, backendThreadId } : restored;
     // Never rehydrate a non-idle runState across a process restart.
     // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
@@ -979,6 +1009,14 @@ export class ChatController {
   private persist(): void {
     if (!this.persister) return;
     try { this.persister.save(this.serialize()) } catch (e) { console.error('[ChatController] persist failed:', e) }
+  }
+
+  /** Drop traceArgs left by older builds so restored transcripts never re-export them. */
+  private stripLegacyTraceArgs(message: Message): Message {
+    if (!Object.prototype.hasOwnProperty.call(message, 'traceArgs')) return message;
+    const safe = { ...message } as Message & { traceArgs?: unknown };
+    delete safe.traceArgs;
+    return safe;
   }
 
   private autoTitleFromFirstUserMessage(text: string): void {

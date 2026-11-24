@@ -17,7 +17,7 @@
       <span v-if="turn.metadata.failures" class="trace-turn__failure">{{ turn.metadata.failures }} {{ turn.metadata.failures === 1 ? 'failed' : 'failures' }}</span>
     </div>
     <ol class="trace-turn__rail">
-      <TraceRow v-for="row in turn.rows" :key="row.id" :row="row" />
+      <TraceRow v-for="row in turn.rows" :key="row.id" :row="row" :expand-all="expandAll" />
     </ol>
   </section>
 </template>
@@ -27,7 +27,7 @@ import { computed } from 'vue';
 import TraceRow from './TraceRow.vue';
 import type { DetailedTraceTurn } from './DetailedTraceProjection';
 
-const props = defineProps<{ turn: DetailedTraceTurn }>();
+const props = withDefaults(defineProps<{ turn: DetailedTraceTurn; expandAll?: boolean }>(), { expandAll: false });
 const startedAt = computed(() => {
   const value = props.turn.metadata.startedAt;
   const date = new Date(value ?? Number.NaN);

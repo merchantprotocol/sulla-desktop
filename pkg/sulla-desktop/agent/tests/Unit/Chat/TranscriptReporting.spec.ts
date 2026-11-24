@@ -107,6 +107,46 @@ it('keeps same-stream paragraph breaks after a completed segment and not across 
   expect(continuationFor(interveningCard)).toBe(false);
 });
 
+// risk: Standard compatibility — Detailed may add trace nodes but must not mutate shared Standard DOM.
+it('keeps every shared Standard DOM node identical when trace-only rows are removed', async() => {
+  const live = new ReportingFixture();
+  const userId = asMessageId('shared-user');
+  live.chat.thread.value = { ...live.chat.thread.value, backendThreadId: 'fixture-thread' };
+  live.chat.appendMessage({ id: userId, kind: 'user', createdAt: 1, text: 'Inspect the command' });
+  live.chat.appendMessage({ id: asMessageId('shared-memory'), kind: 'memory', createdAt: 2, memId: 'memory-1', action: 'saved', summary: 'Saved a note' });
+  live.chat.appendMessage({ id: asMessageId('shared-tool'), kind: 'tool', createdAt: 3, tool: 'Shell', desc: 'Running command', status: 'ok', input: 'echo safe', output: 'safe' });
+  live.chat.appendMessage({ id: asMessageId('shared-reply'), kind: 'sulla', createdAt: 4, text: 'Done.' });
+  live.chat.detailedTraceUsage.value = [{
+    afterId: userId, threadId: 'fixture-thread', runId: 'run-1', nodeId: 'agent-node',
+    receivedAt: 5, inputTokens: 12, outputTokens: 3,
+  }];
+
+  const wrapper = live.mount('info');
+  const sharedDomWithoutTrace = () => {
+    const dialogue = wrapper.get('.chat-dialogue').element.cloneNode(true) as HTMLElement;
+    dialogue.querySelectorAll('.trace-turn, .trace-payload-controls').forEach(node => node.remove());
+    return dialogue.innerHTML;
+  };
+  const standardDom = sharedDomWithoutTrace();
+  expect(wrapper.findAll('.trace-turn')).toHaveLength(0);
+  expect(wrapper.find('.trace-payload-controls').exists()).toBe(false);
+
+  await wrapper.setProps({ reportingLevel: 'debug' });
+
+  expect(wrapper.findAll('.trace-turn').length).toBeGreaterThan(0);
+  expect(sharedDomWithoutTrace()).toBe(standardDom);
+  expect(wrapper.text()).toContain('12 input tokens');
+
+  const toggleAll = wrapper.get('button.trace-payload-control');
+  expect(toggleAll.text()).toBe('Open all payloads');
+  await toggleAll.trigger('click');
+  expect(toggleAll.attributes('aria-pressed')).toBe('true');
+  expect(wrapper.findAll('button.trace-row__expand').every(button => button.attributes('aria-expanded') === 'true')).toBe(true);
+  await toggleAll.trigger('click');
+  expect(toggleAll.text()).toBe('Open all payloads');
+  expect(wrapper.findAll('button.trace-row__expand').every(button => button.attributes('aria-expanded') === 'false')).toBe(true);
+});
+
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
 it('projects safe individual events in source order before and after tool settlement and reload', () => {

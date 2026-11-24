@@ -26,7 +26,7 @@ export interface DetailedTraceRow {
   durationMs?: number;
   status?: TraceStatus;
   note?: string;
-  rawPayload?: string;
+  rawPayload?: unknown;
 }
 
 export interface DetailedTraceMetadata {
@@ -70,12 +70,15 @@ const safeActivities = new Set([
 /** Converts detailed-only events into one stable rail and one row grammar. */
 export class DetailedTraceProjection {
   private readonly payloadRedactor = new TracePayloadRedactor();
+  private readonly payloadCache = new WeakMap<Message, Map<string, unknown>>();
 
   project(
     messages: readonly Message[],
     entries: readonly TranscriptEntry[],
     usage: readonly DetailedTraceUsageSample[] = [],
     standardEntries: readonly TranscriptEntry[] = entries.filter(entry => entry.level !== 'debug'),
+    tracePayloads: ReadonlyMap<string, unknown> = new Map(),
+    threadId?: string,
   ): DetailedTraceTurn[] {
     const activity = new Map(entries.flatMap(entry => entry.kind === 'activity' ? [[entry.sourceId, entry.text] as const] : []));
     const visible = new Map(standardEntries.map(entry => [entry.sourceId, entry.id]));
@@ -86,38 +89,40 @@ export class DetailedTraceProjection {
     for (const message of messages) {
       if (turnByMessage.has(message.id)) continue;
       if (message.kind === 'user') {
-        turn = undefined;
+        turn = { id: `trace:${ message.id }`, afterId: visible.get(message.id) ?? lastVisible, rows: [], messages: [message], metrics: [] };
+        turns.push(turn);
+        turnByMessage.set(message.id, turn);
         lastVisible = visible.get(message.id) ?? lastVisible;
         continue;
       }
       if (!turn) {
-        turn = { id: `trace:${ message.id }`, afterId: lastVisible, rows: [], messages: [], metrics: [] };
+        turn = { id: `trace:${ message.id }`, afterId: lastVisible ?? visible.get(message.id), rows: [], messages: [], metrics: [] };
         turns.push(turn);
       }
       turnByMessage.set(message.id, turn);
       turn.messages.push(message);
-      turn.rows.push(...this.rowsFor(message, activity.get(message.id)));
+      turn.rows.push(...this.rowsFor(message, activity.get(message.id), tracePayloads));
       lastVisible = visible.get(message.id) ?? lastVisible;
     }
     for (const sample of usage) {
-      // Prefer the dispatch-time message ID (including same-millisecond events).
-      // A stream placeholder can be replaced before it reaches this projection.
-      const anchor = sample.afterId ? turnByMessage.get(sample.afterId) : undefined;
-      const nearest = anchor ?? turns.findLast(candidate => candidate.messages[0].createdAt <= sample.receivedAt);
-      nearest?.metrics.push(sample);
+      if (!sample.afterId || !sample.threadId || !sample.runId || !sample.nodeId || (threadId && sample.threadId !== threadId)) continue;
+      // Usage is attached only to the exact originating user anchor. A timestamp
+      // fallback can silently charge one turn's metrics to its neighbor.
+      turnByMessage.get(sample.afterId)?.metrics.push(sample);
     }
     return turns.filter(candidate => candidate.rows.length || candidate.metrics.length ||
       candidate.messages.some(message => message.kind === 'sulla' || message.kind === 'streaming'))
       .map(candidate => this.finish(candidate));
   }
 
-  private rowsFor(message: Message, safeActivity?: string): DetailedTraceRow[] {
+  private rowsFor(message: Message, safeActivity?: string, tracePayloads: ReadonlyMap<string, unknown> = new Map()): DetailedTraceRow[] {
     switch (message.kind) {
       case 'thinking': {
         const text = safeActivity ?? this.safeThinkingStatus(message);
         return text ? [this.row(message, 'thought', 'Considering', text)] : [];
       }
-      case 'tool': return ChatToolReporting.isBackgroundBrowse(message.recordedToolName ?? message.tool) ? [] : [this.toolRow(message)];
+      case 'tool': return ChatToolReporting.isBackgroundBrowse(message.recordedToolName ?? message.tool) ? [] :
+        [this.toolRow(message, tracePayloads.get(message.id))];
       case 'patch': {
         const diff = message.hunks.flatMap(hunk => hunk.lines.map(line => `${ line.op === 'add' ? '+' : line.op === 'remove' ? '-' : ' ' }${ line.text }`)).join('\n');
         return [this.row(message, 'file', 'Edited', message.path, `${ message.stat.added } added · ${ message.stat.removed } removed`, message.state === 'applied' ? 'ok' : 'waiting', {
@@ -125,7 +130,7 @@ export class DetailedTraceProjection {
         })];
       }
       case 'citation': return message.sources.map((source, index) => ({
-        ...this.row(message, 'read', 'Read source', source.title, source.origin, 'ok', source),
+        ...this.row(message, 'read', 'Read source', source.title, source.origin, 'ok', source, `source:${ source.num ?? index }`),
         id: `${ message.id }:source:${ source.num ?? index }`,
       }));
       case 'memory': return [this.row(message, 'memory', ({ saved: 'Saved', updated: 'Updated', removed: 'Removed' })[message.action], message.memId,
@@ -151,8 +156,11 @@ export class DetailedTraceProjection {
     }
   }
 
-  private toolRow(message: ToolMessage): DetailedTraceRow {
-    const args = message.traceArgs;
+  private toolRow(message: ToolMessage, tracePayload?: unknown): DetailedTraceRow {
+    const details = tracePayload && typeof tracePayload === 'object' && !Array.isArray(tracePayload)
+      ? tracePayload as { args?: Readonly<Record<string, unknown>>; result?: unknown }
+      : undefined;
+    const args = details?.args;
     const targetValue = args ? this.targetValue(args) : undefined;
     const target = this.safeText(targetValue || message.desc || message.tool);
     const toolName = (message.recordedToolName ?? message.tool).toLowerCase();
@@ -162,9 +170,10 @@ export class DetailedTraceProjection {
     const shownArgs = args ? this.argumentSummary(args) : this.safeText(message.input ?? '');
     const note = (status === 'failed' || status === 'cancelled') ? this.safeText(message.error ?? 'Tool call failed') :
       message.output ? this.safeText(message.output) : undefined;
-    const kind: TraceRowKind = toolName.startsWith('file_') || message.tool.toLowerCase() === 'file' ? 'file' :
-      toolName.startsWith('memory_') || message.tool.toLowerCase() === 'memory' ? 'memory' :
-        /(?:web|browser)_(?:search|read|fetch)/.test(toolName) ? /search/.test(toolName) ? 'search' : 'read' : 'tool';
+    const kind: TraceRowKind = toolName.startsWith('memory_') || message.tool.toLowerCase() === 'memory' ? 'memory' :
+      /(?:^|[_-])search(?:$|[_-])/.test(toolName) ? 'search' :
+        /(?:^|[_-])(?:read|fetch)(?:$|[_-])/.test(toolName) ? 'read' :
+          /(?:^|[_-])(?:create|write|edit|update|delete|move|copy|patch)(?:$|[_-])/.test(toolName) || message.tool.toLowerCase() === 'file' ? 'file' : 'tool';
     const verb = this.toolVerb(toolName, message.tool, status);
     return {
       id: message.id,
@@ -177,9 +186,10 @@ export class DetailedTraceProjection {
       ...(typeof message.durationMs === 'number' && Number.isFinite(message.durationMs) ? { durationMs: Math.max(0, message.durationMs) } : {}),
       status,
       ...(note ? { note } : {}),
-      rawPayload: this.payloadRedactor.serialize({
+      rawPayload: this.cachedPayload(message, 'tool', {
         tool: message.recordedToolName ?? message.tool,
         args: args ?? message.input,
+        result: details?.result,
         output: message.output,
         error: message.error,
       }),
@@ -204,6 +214,7 @@ export class DetailedTraceProjection {
     args?: string,
     status?: TraceStatus,
     payload?: unknown,
+    payloadKey = kind,
   ): DetailedTraceRow {
     const messageNote = message.kind === 'subagent_exchange' ? message.summary :
       message.kind === 'subagent' ? message.desc :
@@ -215,7 +226,7 @@ export class DetailedTraceProjection {
                   message.kind === 'notice' ? message.detail :
                     message.kind === 'tool_approval' ? message.reason :
                       message.kind === 'tool_question' ? message.questions.map(question => question.question).join(' · ') : undefined;
-    const rawPayload = payload === undefined ? undefined : this.payloadRedactor.serialize(payload);
+    const rawPayload = payload === undefined ? undefined : this.cachedPayload(message, payloadKey, payload);
     return {
       id: message.id,
       sourceId: message.id,
@@ -227,6 +238,17 @@ export class DetailedTraceProjection {
       ...(messageNote ? { note: this.safeText(messageNote) } : {}),
       ...(rawPayload ? { rawPayload } : {}),
     };
+  }
+
+  private cachedPayload(message: Message, key: string, payload: unknown): unknown {
+    let byKey = this.payloadCache.get(message);
+    if (!byKey) {
+      byKey = new Map();
+      this.payloadCache.set(message, byKey);
+    }
+    if (byKey.has(key)) return byKey.get(key);
+    byKey.set(key, payload);
+    return payload;
   }
 
   private finish(turn: MutableTurn): DetailedTraceTurn {
@@ -246,9 +268,8 @@ export class DetailedTraceProjection {
     const metricModels = [...new Set(metrics.map(metric => metric.model).filter((model): model is string => !!model?.trim()))];
     const replies = turn.messages.filter((message): message is Extract<Message, { kind: 'sulla' }> => message.kind === 'sulla');
     const agent = replies.find(reply => reply.replyAttribution?.agent)?.replyAttribution?.agent ??
-      turn.messages.find(message => message.by?.agent)?.by?.agent;
-    const replyModel = replies.find(reply => reply.replyAttribution?.model)?.replyAttribution?.model ??
-      replies.find(reply => reply.model)?.model;
+      turn.messages.find(message => message.by?.agent)?.by?.agent ?? (replies.length ? 'Sulla' : undefined);
+    const replyModel = replies.find(reply => reply.replyAttribution?.model)?.replyAttribution?.model;
     const first = turn.messages.find(message => message.createdAt > 0 && Number.isFinite(message.createdAt));
     const startedAt = first?.createdAt;
     const durations = metrics.map(metric => metric.durationMs).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
