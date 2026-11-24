@@ -9,7 +9,7 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript">
+  <div class="transcript transcript-standard">
     <div
       ref="scroller"
       class="scroller"
@@ -110,7 +110,7 @@ const reporting = new TranscriptReporting();
 const traceProjection = new DetailedTraceProjection();
 const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
-const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, 'info'));
+const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel));
 const traceTurns = computed(() => props.reportingLevel === 'debug' ? traceProjection.project(controller.messages.value, transcriptEntries.value) : []);
 const trailingTraceTurns = computed(() => traceTurns.value.filter(turn => !transcriptEntries.value.some(entry => entry.id === turn.anchorEntryId)));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
@@ -224,7 +224,7 @@ defineExpose({ scroller, scrollToBottom });
   bottom: calc(var(--composer-h, 140px) + 72px);
   mask-image: none;
 }
-.transcript .scroller {
+.transcript-standard .scroller {
   padding-top: 112px;
 }
 /*
