@@ -70,10 +70,10 @@ export const chatToolManifests: ToolManifest[] = [
   },
   {
     name:        'set_heartbeat',
-    description: 'Set a heartbeat for the current chat or delegated agent task. Every beat appends a system notice with its interval, set time, automatic shutoff time, and how to turn it off. It switches off automatically after 6 hours and sends one final beat; set intervalMinutes=0 to turn it off sooner. While a graph runs, regular beats wait until it is idle.',
+    description: 'Set a heartbeat for the current chat or delegated agent task. The minimum interval is 1 minute for chats and 5 minutes for delegated tasks. Every beat appends a system notice with its interval, set time, automatic shutoff time, and how to turn it off. It switches off automatically after 6 hours and sends one final beat; set intervalMinutes=0 to turn it off sooner. While a graph runs, regular beats wait until it is idle.',
     category:    'chat',
     schemaDef:   {
-      intervalMinutes: { type: 'number', description: 'Minutes between beats. Use 0 to turn this heartbeat off.' },
+      intervalMinutes: { type: 'number', description: 'Minutes between beats (minimum 1 minute for chats, 5 minutes for delegated tasks). Use 0 to turn this heartbeat off.' },
       message:         { type: 'string', optional: true, description: 'Message delivered to this chat or delegated agent task on every beat. Keeps the current/default message when omitted.' },
     },
     operationTypes: ['update'],

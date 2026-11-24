@@ -197,7 +197,7 @@ async function register(threadId: string): Promise<boolean> {
 }
 
 async function apply(config: ChatHeartbeatConfig): Promise<void> {
-  const normalized = normalizeChatHeartbeatConfig({ ...config, setBy: 'human' });
+  const normalized = normalizeChatHeartbeatConfig({ ...config, startedAt: null, expiresAt: null, setBy: 'human' });
   controller.setHeartbeat(normalized);
   syncForm(normalized);
   // Register on demand — the chat may not have been registered yet (thread
@@ -248,7 +248,7 @@ function onStatus(_event: unknown, value: ChatHeartbeatStatus): void {
   // Auto-off may arrive as a status update even if the paired config event was
   // missed during a renderer transition. Keep the composer switch truthful.
   if (!value.enabled && controller.heartbeat.value.intervalMinutes !== null) {
-    const config = normalizeChatHeartbeatConfig({ ...controller.heartbeat.value, intervalMinutes: null });
+    const config = normalizeChatHeartbeatConfig({ ...controller.heartbeat.value, intervalMinutes: null, startedAt: null, expiresAt: null });
     controller.setHeartbeat(config);
     syncForm(config);
   }

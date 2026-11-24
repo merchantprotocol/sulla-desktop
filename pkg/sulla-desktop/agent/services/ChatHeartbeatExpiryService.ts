@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { ChatHeartbeatStatus } from '@pkg/shared/chatHeartbeat';
+import { CHAT_HEARTBEAT_MAX_DURATION_MS, type ChatHeartbeatConfig, type ChatHeartbeatStatus } from '@pkg/shared/chatHeartbeat';
 
 import type { ChatHeartbeatDeliveryResult, ChatHeartbeatJobTarget, ChatHeartbeatRuntime } from './ChatHeartbeatScheduler';
 import { HeartbeatNoticeBuilder } from './HeartbeatNoticeBuilder';
@@ -23,6 +23,21 @@ export class ChatHeartbeatExpiryService {
     hasPendingWait?: (target: ChatHeartbeatJobTarget) => Promise<boolean>;
     noticeBuilder: HeartbeatNoticeBuilder;
   }) {}
+
+  /**
+   * The window a (re)registration runs in. A live runtime or a persisted config keeps its
+   * original deadline; nulls mean off, including a restored deadline that already passed.
+   */
+  resolveWindow(config: ChatHeartbeatConfig, existing?: { startedAt: number | null; expiresAt: number | null }): {
+    startedAt: number | null; expiresAt: number | null;
+  } {
+    if (config.intervalMinutes === null) return { startedAt: null, expiresAt: null };
+    const now = this.deps.now();
+    const expiresAt = existing?.expiresAt ?? config.expiresAt
+      ?? (existing?.startedAt ?? config.startedAt ?? now) + CHAT_HEARTBEAT_MAX_DURATION_MS;
+    if (expiresAt <= now) return { startedAt: null, expiresAt: null };
+    return { startedAt: existing?.startedAt ?? config.startedAt ?? expiresAt - CHAT_HEARTBEAT_MAX_DURATION_MS, expiresAt };
+  }
 
   schedule(runtime: ChatHeartbeatRuntime): void {
     if (runtime.expiryTimer) this.deps.clearTimer(runtime.expiryTimer);
@@ -52,7 +67,7 @@ export class ChatHeartbeatExpiryService {
     this.deps.clearTimers(runtime);
 
     // Switch off before delivery: even a slow final wake cannot leave a live timer behind.
-    runtime.config = { ...runtime.config, intervalMinutes: null };
+    runtime.config = { ...runtime.config, intervalMinutes: null, startedAt: null, expiresAt: null };
     runtime.startedAt = null;
     runtime.expiresAt = null;
     runtime.pending = false;

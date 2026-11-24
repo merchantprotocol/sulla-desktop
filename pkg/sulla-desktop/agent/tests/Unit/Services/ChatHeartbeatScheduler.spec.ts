@@ -10,8 +10,10 @@ const MINUTE = 60_000;
 const SIX_HOURS_MS = 6 * 60 * 60_000;
 const START = Date.UTC(2026, 10, 24, 20, 0, 0);
 
-function schedulerHarness(hasPendingWait?: (target: { jobId: string; taskIndex: number }) => Promise<boolean>) {
-  const deliver = vi.fn(async() => true);
+function schedulerHarness(
+  hasPendingWait?: (target: { jobId: string; taskIndex: number }) => Promise<boolean>,
+  deliver = vi.fn(async() => true),
+) {
   const beats: any[] = [];
   const configs: any[] = [];
   const statuses: any[] = [];
@@ -64,6 +66,55 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
     expect(String(deliver.mock.calls[0]?.[2])).toContain('Your agents/wait timer is still pending and will still wake you.');
   });
 
+  it('only mentions agents/wait when the durable wait lookup says one is pending', async() => {
+    // risk: a heartbeat can claim a wait exists after it was cancelled or consumed.
+    const { scheduler, deliver } = schedulerHarness(async() => false);
+    scheduler.register({
+      threadId: 'job-no-wait-thread', channel: 'sulla-desktop', jobId: 'job-no-wait', taskIndex: 0,
+      config: { intervalMinutes: 5, message: 'Check.' },
+    });
+
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+
+    expect(String(deliver.mock.calls[0]?.[2])).not.toContain('Your agents/wait timer is still pending');
+  });
+
+  it('preserves a restored deadline and starts off without a beat when it has passed', async() => {
+    // risk: renderer or process restarts silently restart the six-hour expiration window.
+    const { scheduler, deliver } = schedulerHarness();
+    scheduler.register({
+      threadId: 'expired-restore', channel: 'sulla-desktop',
+      config: {
+        intervalMinutes: 5, message: 'Resume.', setBy: 'agent',
+        startedAt: START - SIX_HOURS_MS, expiresAt: START - 1,
+      },
+    });
+
+    expect(scheduler.status('expired-restore')).toMatchObject({
+      enabled: false, intervalMinutes: null, startedAt: null, expiresAt: null, setBy: 'agent',
+    });
+    await vi.advanceTimersByTimeAsync(2 * SIX_HOURS_MS);
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('restarts the full interval after a skipped delegated beat instead of sending a retry turn', async() => {
+    // risk: busy or child-owned work causes repeated one-second wake attempts instead of a clean next interval.
+    const deliver = vi.fn(async() => ({ delivered: false, skipped: true }));
+    const { scheduler } = schedulerHarness(undefined, deliver);
+    scheduler.register({
+      threadId: 'skip-job-thread', channel: 'sulla-desktop', jobId: 'skip-job', taskIndex: 0,
+      config: { intervalMinutes: 5, message: 'Check children.' },
+    });
+
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(scheduler.status('skip-job-thread')).toMatchObject({ pending: false, nextAt: Date.now() + 5 * MINUTE });
+    await vi.advanceTimersByTimeAsync(5 * MINUTE - 1);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deliver).toHaveBeenCalledTimes(2);
+  });
+
   it('turns itself off after six hours, delivers one final notice, then stops beating', async() => {
     // risk: forgotten heartbeat timers waste tokens indefinitely or repeatedly claim to have auto-stopped.
     const { scheduler, deliver, beats, configs, statuses } = schedulerHarness();
@@ -79,9 +130,9 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
     const finalBeats = beats.filter(beat => beat.autoOff);
     expect(finalBeats).toHaveLength(1);
     expect(finalBeats[0].message).toContain('--- HEARTBEAT NOTICE ---');
-    expect(finalBeats[0].message).toContain('Turn it off as soon as the work it watches is finished');
     expect(finalBeats[0].message).toContain('System: your heartbeat was switched off automatically after 6 hours.');
-    expect(finalBeats[0].message).toContain('turn it back on with sulla chat/set_heartbeat');
+    // Registered from the composer (no setBy), so the human owns the decision to restart it.
+    expect(finalBeats[0].message).toContain('The human set this heartbeat. Leave it off unless they ask you to turn it back on.');
     expect(statuses.at(-1)?.enabled).toBe(false);
     const deliveredAtOff = deliver.mock.calls.length;
 

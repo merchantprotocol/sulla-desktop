@@ -6,7 +6,6 @@
 import { ChatHeartbeatExpiryService } from './ChatHeartbeatExpiryService';
 import { HeartbeatNoticeBuilder } from './HeartbeatNoticeBuilder';
 import {
-  CHAT_HEARTBEAT_MAX_DURATION_MS,
   normalizeChatHeartbeatConfig,
   type ChatHeartbeatBeat,
   type ChatHeartbeatConfig,
@@ -51,7 +50,10 @@ export interface ChatHeartbeatRuntime extends ChatHeartbeatRegistration {
 }
 
 export interface ChatHeartbeatJobTarget { jobId: string; taskIndex: number; }
-export type ChatHeartbeatDeliveryResult = boolean | { delivered: boolean; terminal?: boolean };
+export interface ChatHeartbeatJobSnapshot extends ChatHeartbeatJobTarget {
+  threadId: string; channel: string; config: ChatHeartbeatConfig; startedAt: number; expiresAt: number;
+}
+export type ChatHeartbeatDeliveryResult = boolean | { delivered: boolean; terminal?: boolean; skipped?: boolean };
 
 export interface ChatHeartbeatSchedulerDeps {
   now?:        () => number;
@@ -89,14 +91,13 @@ export class ChatHeartbeatScheduler {
 
   register(input: ChatHeartbeatRegistration): ChatHeartbeatStatus {
     const existing = this.runtimes.get(input.threadId);
-    if (existing?.timer) this.clearTimer(existing.timer);
-    if (existing?.watchdog) this.clearTimer(existing.watchdog);
-    if (existing?.expiryTimer) this.clearTimer(existing.expiryTimer);
-    const config = existing && existing.config.intervalMinutes !== null
+    if (existing) this.clearRuntimeTimers(existing);
+    const requested = existing && existing.config.intervalMinutes !== null
       ? existing.config
       : normalizeChatHeartbeatConfig(input.config);
-    const enabled = config.intervalMinutes !== null;
-    const startedAt = enabled ? existing?.startedAt ?? this.now() : null;
+    // A restored registration keeps its original deadline; one that already passed comes up off.
+    const { startedAt, expiresAt } = this.expiry.resolveWindow(requested, existing);
+    const config = { ...requested, intervalMinutes: expiresAt === null ? null : requested.intervalMinutes, startedAt, expiresAt };
     const runtime: ChatHeartbeatRuntime = {
       ...input,
       jobId:      input.jobId ?? existing?.jobId,
@@ -111,7 +112,7 @@ export class ChatHeartbeatScheduler {
       watchdog:   null,
       idleSince:  null,
       startedAt,
-      expiresAt:  enabled ? existing?.expiresAt ?? startedAt! + CHAT_HEARTBEAT_MAX_DURATION_MS : null,
+      expiresAt,
       expiryTimer: null,
       expirationPending: false,
       expiring:   false,
@@ -131,9 +132,7 @@ export class ChatHeartbeatScheduler {
 
   unregister(threadId: string): void {
     const runtime = this.runtimes.get(threadId);
-    if (runtime?.timer) this.clearTimer(runtime.timer);
-    if (runtime?.watchdog) this.clearTimer(runtime.watchdog);
-    if (runtime?.expiryTimer) this.clearTimer(runtime.expiryTimer);
+    if (runtime) this.clearRuntimeTimers(runtime);
     this.runtimes.delete(threadId);
     this.deps.setActive?.(threadId, false);
   }
@@ -142,23 +141,16 @@ export class ChatHeartbeatScheduler {
   unregisterFromUi(threadId: string): void {
     const runtime = this.runtimes.get(threadId);
     if (!runtime) return;
-    if (!runtime.jobId) {
-      this.unregister(threadId);
-      return;
-    }
-    runtime.onStatus = undefined;
-    runtime.onBeat = undefined;
-    runtime.onConfig = undefined;
+    if (!runtime.jobId) return this.unregister(threadId);
+    runtime.onStatus = runtime.onBeat = runtime.onConfig = undefined;
   }
 
   unregisterJobTask(jobId: string, taskIndex: number): void {
     for (const runtime of this.runtimes.values()) {
       if (runtime.jobId !== jobId || runtime.taskIndex !== taskIndex) continue;
-      const off = { ...runtime.config, intervalMinutes: null };
-      runtime.config = off;
-      runtime.startedAt = null;
-      runtime.expiresAt = null;
-      runtime.onConfig?.(off);
+      runtime.config = { ...runtime.config, intervalMinutes: null, startedAt: null, expiresAt: null };
+      runtime.startedAt = runtime.expiresAt = null;
+      runtime.onConfig?.(runtime.config);
       this.emitStatus(runtime);
       this.unregister(runtime.threadId);
     }
@@ -177,11 +169,14 @@ export class ChatHeartbeatScheduler {
     runtime.expirationPending = false;
     if (runtime.expiryTimer) this.clearTimer(runtime.expiryTimer);
     runtime.expiryTimer = null;
-    runtime.config = normalizeChatHeartbeatConfig(config);
+    // Setting a heartbeat always opens a fresh window; only register() restores an old one.
+    const fresh = { ...normalizeChatHeartbeatConfig(config), startedAt: null, expiresAt: null };
+    const window = this.expiry.resolveWindow(fresh);
+    runtime.config = { ...fresh, ...window };
+    runtime.startedAt = window.startedAt;
+    runtime.expiresAt = window.expiresAt;
     this.deps.setActive?.(threadId, runtime.config.intervalMinutes !== null);
     runtime.pending = false;
-    runtime.startedAt = runtime.config.intervalMinutes === null ? null : this.now();
-    runtime.expiresAt = runtime.startedAt === null ? null : runtime.startedAt + CHAT_HEARTBEAT_MAX_DURATION_MS;
     runtime.onConfig?.(runtime.config);
     this.expiry.schedule(runtime);
     if (runtime.busy) this.pause(runtime);
@@ -210,6 +205,22 @@ export class ChatHeartbeatScheduler {
     const runtime = this.runtimes.get(threadId);
     if (!runtime?.config.intervalMinutes || runtime.startedAt === null || runtime.expiresAt === null) return null;
     return this.expiry.activationNotice(runtime);
+  }
+
+  /** Snapshot needed by the provider's durable delegated-job repository. */
+  jobHeartbeatRecord(threadId: string): ChatHeartbeatJobSnapshot | null {
+    const runtime = this.runtimes.get(threadId);
+    const target = this.jobTarget(threadId);
+    if (!runtime || !target || runtime.config.intervalMinutes === null || runtime.startedAt === null || runtime.expiresAt === null) return null;
+    return {
+      ...target, threadId: runtime.threadId, channel: runtime.channel, config: { ...runtime.config },
+      startedAt: runtime.startedAt, expiresAt: runtime.expiresAt,
+    };
+  }
+
+  jobTarget(threadId: string): ChatHeartbeatJobTarget | undefined {
+    const runtime = this.runtimes.get(threadId);
+    return runtime ? this.expiry.targetFor(runtime) : undefined;
   }
 
   // A running graph is alive — it needs no ping. Stop the countdown and
@@ -289,12 +300,8 @@ export class ChatHeartbeatScheduler {
   }
 
   private clearRuntimeTimers(runtime: ChatHeartbeatRuntime): void {
-    if (runtime.timer) this.clearTimer(runtime.timer);
-    if (runtime.watchdog) this.clearTimer(runtime.watchdog);
-    if (runtime.expiryTimer) this.clearTimer(runtime.expiryTimer);
-    runtime.timer = null;
-    runtime.watchdog = null;
-    runtime.expiryTimer = null;
+    for (const timer of [runtime.timer, runtime.watchdog, runtime.expiryTimer]) if (timer) this.clearTimer(timer);
+    runtime.timer = runtime.watchdog = runtime.expiryTimer = null;
     runtime.nextAt = null;
   }
 
@@ -326,26 +333,22 @@ export class ChatHeartbeatScheduler {
     runtime.delivering = true;
     try {
       const content = await this.expiry.buildBeat(runtime);
-      const result = await this.deps.deliver(
-        runtime.channel,
-        runtime.threadId,
-        content,
-        runtime.config.intervalMinutes,
-        this.expiry.targetFor(runtime),
-      );
+      const result = await this.deps.deliver(runtime.channel, runtime.threadId, content,
+        runtime.config.intervalMinutes, this.expiry.targetFor(runtime));
       if (typeof result !== 'boolean' && result.terminal) {
         this.unregisterJobTask(runtime.jobId ?? '', runtime.taskIndex ?? -1);
         return;
       }
+      const skipped = typeof result !== 'boolean' && result.skipped === true;
       const delivered = typeof result === 'boolean' ? result : result.delivered;
-      if (!delivered) throw new Error('message bus rejected heartbeat');
+      if (!delivered && !skipped) throw new Error('message bus rejected heartbeat');
       runtime.pending = false;
-      runtime.onBeat?.({
-        threadId:        runtime.threadId,
-        createdAt:       this.now(),
-        intervalMinutes: runtime.config.intervalMinutes,
-        message:         content,
-      });
+      // A skipped beat (task mid-turn, or children still running) is dropped, never retried as a new turn.
+      if (!skipped) {
+        runtime.onBeat?.({
+          threadId: runtime.threadId, createdAt: this.now(), intervalMinutes: runtime.config.intervalMinutes, message: content,
+        });
+      }
       // The beat just woke the graph; if it's already running, stay paused
       // until it stops rather than counting down over the top of it.
       if (runtime.expirationPending) {
@@ -370,9 +373,8 @@ export class ChatHeartbeatScheduler {
   private toStatus(runtime: ChatHeartbeatRuntime): ChatHeartbeatStatus {
     return {
       threadId:        runtime.threadId,
+      ...runtime.config,
       enabled:         runtime.config.intervalMinutes !== null,
-      intervalMinutes: runtime.config.intervalMinutes,
-      message:         runtime.config.message,
       nextAt:          runtime.nextAt,
       pending:         runtime.pending,
       startedAt:       runtime.startedAt,

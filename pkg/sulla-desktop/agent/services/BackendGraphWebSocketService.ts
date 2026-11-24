@@ -821,6 +821,8 @@ export class BackendGraphWebSocketService {
     await awaitAgentContainerRuntimeRehydration();
     await this.subscribeToAgentChannels();
     await agentWaitProvider.scheduler.start();
+    const { chatHeartbeatProvider } = await import('../app/Providers/ChatHeartbeatServiceProvider');
+    await chatHeartbeatProvider.rehydrateJobHeartbeats();
     await recoverPendingAgentCompletions();
     await this.agentInbox.replayPending();
     this.retryDecisionAnswers();

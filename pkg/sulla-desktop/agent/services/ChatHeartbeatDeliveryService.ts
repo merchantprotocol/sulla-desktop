@@ -19,6 +19,7 @@ export interface HeartbeatJob {
 
 export interface ChatHeartbeatDeliveryPorts {
   getJob(jobId: string): Promise<HeartbeatJob | undefined>;
+  hasRunningChildren?(jobId: string, taskIndex: number): Promise<boolean>;
   wakeParkedAgent(channel: string, threadId: string, message: string, agentId: string, metadata: Record<string, unknown>): Promise<boolean>;
   send(channel: string, message: {
     type: 'user_message';
@@ -43,28 +44,32 @@ export class ChatHeartbeatDeliveryService {
       return { delivered: false, terminal: true };
     }
 
+    // A live turn will consume no injected user turn, and child completions
+    // are already a durable wake for a parent parked on their results.
+    if (task.status === 'running') return { delivered: false, skipped: true };
+    if (await this.ports.hasRunningChildren?.(target.jobId, target.taskIndex)) return { delivered: false, skipped: true };
+
     const effectiveChannel = job.parentChannel || channel;
-    if (task.status === 'parked') {
-      // Keep the existing agents/wait timer: the heartbeat is an additional wake, not a replacement.
+    // A wake race means another turn won; do not create a disconnected
+    // user_message turn or cancel the independent agents/wait timer.
+    try {
       const delivered = await this.ports.wakeParkedAgent(effectiveChannel, threadId, message, task.agentId, {
         source: 'agent_heartbeat', inputSource: 'system', intervalMinutes,
         delegatedJobId: target.jobId, delegatedTaskIndex: target.taskIndex,
       });
-      return { delivered };
+      return delivered ? { delivered: true } : { delivered: false, skipped: true };
+    } catch {
+      return { delivered: false, skipped: true };
     }
-
-    return this.send(effectiveChannel, threadId, message, intervalMinutes, target);
   }
 
-  private async send(channel: string, threadId: string, message: string, intervalMinutes: number,
-    target?: ChatHeartbeatJobTarget): Promise<ChatHeartbeatDeliveryResult> {
+  private async send(channel: string, threadId: string, message: string, intervalMinutes: number): Promise<ChatHeartbeatDeliveryResult> {
     const sent = await this.ports.send(channel, {
       type: 'user_message',
       data: {
         role: 'user', content: message, threadId,
         metadata: {
           source: 'agent_heartbeat', inputSource: 'system', intervalMinutes,
-          ...(target ? { delegatedJobId: target.jobId, delegatedTaskIndex: target.taskIndex } : {}),
         },
       },
       timestamp: this.ports.now(),

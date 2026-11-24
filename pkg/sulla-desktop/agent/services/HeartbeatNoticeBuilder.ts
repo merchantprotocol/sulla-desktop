@@ -40,12 +40,14 @@ export class HeartbeatNoticeBuilder {
       '--- HEARTBEAT NOTICE ---',
       `Heartbeat notice: This message was sent automatically by your heartbeat, not typed just now by your manager. It fires every ${ interval }; it was set at ${ this.formatLocalTime(input.startedAt) } by ${ setter } and switches itself off at ${ this.formatLocalTime(input.expiresAt) }.`,
       'Use it to check on your work and move it forward.',
-      `Turn it off as soon as the work it watches is finished: sulla chat/set_heartbeat '{"intervalMinutes":0}'.`,
     ];
+    if (!input.autoOff) lines.push(`Turn it off as soon as the work it watches is finished: sulla chat/set_heartbeat '{"intervalMinutes":0}'.`);
     if (input.pendingWait) lines.push('Your agents/wait timer is still pending and will still wake you.');
     if (input.autoOff) {
       const hours = CHAT_HEARTBEAT_MAX_DURATION_MS / 3_600_000;
-      lines.push(`System: your heartbeat was switched off automatically after ${ hours } hours. If the work it was watching is still open, turn it back on with sulla chat/set_heartbeat '{"intervalMinutes":${ input.intervalMinutes },"message":"..."}'.`);
+      lines.push(`System: your heartbeat was switched off automatically after ${ hours } hours.`);
+      if (input.setBy === 'human') lines.push('The human set this heartbeat. Leave it off unless they ask you to turn it back on.');
+      else lines.push(`Turn it back on if the work is still open: sulla chat/set_heartbeat '{"intervalMinutes":${ input.intervalMinutes },"message":"..."}'.`);
     }
     return lines.join('\n');
   }

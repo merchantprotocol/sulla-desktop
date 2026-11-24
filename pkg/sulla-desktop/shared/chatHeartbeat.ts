@@ -13,6 +13,10 @@ export type ChatHeartbeatSetBy = 'agent' | 'human' | 'manager';
 export interface ChatHeartbeatConfig {
   intervalMinutes: number | null;
   message:         string;
+  /** Original activation time; persisted in tab state and delegated-job records. */
+  startedAt?:      number | null;
+  /** Original six-hour deadline; re-registration must never extend it. */
+  expiresAt?:      number | null;
   setBy?:          ChatHeartbeatSetBy;
 }
 
@@ -39,6 +43,8 @@ export function defaultChatHeartbeatConfig(): ChatHeartbeatConfig {
   return {
     intervalMinutes: null,
     message:          DEFAULT_CHAT_HEARTBEAT_MESSAGE,
+    startedAt:        null,
+    expiresAt:        null,
     setBy:             'human',
   };
 }
@@ -53,6 +59,8 @@ export function normalizeChatHeartbeatConfig(input?: Partial<ChatHeartbeatConfig
     : DEFAULT_CHAT_HEARTBEAT_MESSAGE;
 
   const setBy = input?.setBy === 'agent' || input?.setBy === 'manager' ? input.setBy : 'human';
+  const startedAt = typeof input?.startedAt === 'number' && Number.isFinite(input.startedAt) ? input.startedAt : null;
+  const expiresAt = typeof input?.expiresAt === 'number' && Number.isFinite(input.expiresAt) ? input.expiresAt : null;
 
-  return { intervalMinutes, message, setBy };
+  return { intervalMinutes, message, startedAt, expiresAt, setBy };
 }

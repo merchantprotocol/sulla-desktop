@@ -18,7 +18,6 @@ describe('HeartbeatNoticeBuilder', () => {
       expiresAt: Date.UTC(2026, 10, 25, 2, 0),
       setBy: 'manager',
       pendingWait: true,
-      autoOff: true,
     }));
 
     expect(delivered).toContain('[Message from orchestrator]\nReview the open task and continue.\n\n--- HEARTBEAT NOTICE ---');
@@ -27,7 +26,25 @@ describe('HeartbeatNoticeBuilder', () => {
     expect(delivered).toContain('switches itself off at Nov 24, 2026, 6:00 PM PST');
     expect(delivered).toContain('sulla chat/set_heartbeat \'{"intervalMinutes":0}\'');
     expect(delivered).toContain('Your agents/wait timer is still pending and will still wake you.');
-    expect(delivered).toContain('switched off automatically after 6 hours');
-    expect(delivered).toContain('turn it back on with sulla chat/set_heartbeat');
+    expect(delivered).not.toContain('switched off automatically');
+  });
+
+  it('distinguishes agent-set and human-set final heartbeat instructions', () => {
+    // risk: a final system beat can contradict who owns the decision to restart an automatic timer.
+    const builder = new HeartbeatNoticeBuilder('America/Los_Angeles');
+    const common = {
+      message: 'Continue.', intervalMinutes: 5, startedAt: Date.UTC(2026, 10, 24, 20, 0),
+      expiresAt: Date.UTC(2026, 10, 25, 2, 0), autoOff: true,
+    };
+    const agentNotice = builder.buildMessage({ ...common, setBy: 'agent' });
+    const humanNotice = builder.buildMessage({ ...common, setBy: 'human' });
+
+    expect(agentNotice).toContain('switched off automatically after 6 hours');
+    expect(agentNotice).toContain(`Turn it back on if the work is still open: sulla chat/set_heartbeat '{"intervalMinutes":5,"message":"..."}'.`);
+    expect(agentNotice).not.toContain('The human set this heartbeat.');
+    // The heartbeat is already off, so the final beat must not tell the agent to turn it off.
+    expect(agentNotice).not.toContain('Turn it off as soon as');
+    expect(humanNotice).toContain('The human set this heartbeat. Leave it off unless they ask you to turn it back on.');
+    expect(humanNotice).not.toContain('Turn it back on if the work is still open:');
   });
 });
