@@ -97,7 +97,9 @@ export async function providerFetch(
     return response;
   };
   const meta = options.state?.metadata as any;
-  if (providerId === 'grok' && meta?.workerModelRoute && !meta.workerModelChatOverride) {
+  const workerRoute = !meta?.workerModelChatOverride && meta?.workerModelRoute;
+  const grokOverride = !meta?.workerModelChatOverride && meta?.modelOverride?.provider === 'grok' ? meta.modelOverride : undefined;
+  if (providerId === 'grok' && (workerRoute || grokOverride)) {
     const scope = ctx?.credential_scope;
     let requestedModel: string | undefined;
     if (typeof init.body === 'string') {
@@ -106,7 +108,10 @@ export async function providerFetch(
         requestedModel = typeof body?.model === 'string' ? body.model : undefined;
       } catch { /* malformed payload fails closed below */ }
     }
-    if (!requestedModel || (options.model && requestedModel !== options.model)) throw new Error('The Grok request model does not match its mapped worker model.');
+    const expectedModel = grokOverride?.model ?? workerRoute?.candidates?.[workerRoute.selected]?.model;
+    if (!requestedModel || requestedModel !== expectedModel || (options.model && requestedModel !== options.model)) {
+      throw new Error(grokOverride ? 'The Grok request model does not match its launch override.' : 'The Grok request model does not match its mapped worker model.');
+    }
     assertWorkerSubscription(options.state, providerId, scope?.integration_id ?? '', scope?.account_id ?? '', options.authMode, { model: requestedModel, url });
   }
   if (['lm-studio', 'local-server'].includes(providerId)) {

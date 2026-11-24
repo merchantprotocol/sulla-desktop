@@ -10,7 +10,7 @@ import type { AgentJob } from '../../../tools/agents/jobRegistry';
 const parkedJob = (): AgentJob => ({
   jobId: 'manager-job', status: 'parked', createdAt: 1, finishedAt: null,
   taskCount: 1, results: [], parentChannel: 'sulla-desktop', parentThreadId: 'root',
-  tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'parked', threadId: 'manager-thread', depth: 1, provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max' }],
+  tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'parked', threadId: 'manager-thread', depth: 1, provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max', workerModelRoute: { version: 1, slug: 'coding-manager-sol', agentId: 'old-id', revision: 1, selected: 0, candidates: [{ provider: 'codex', model: 'gpt-6.2-sol' }] } }],
 });
 
 describe('ParkedAgentRehydrator', () => {
@@ -18,7 +18,7 @@ describe('ParkedAgentRehydrator', () => {
     // risk: wrong persona/model/thread after graph eviction
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => parkedJob() },
-      { findBySlug: async() => ({ slug: 'coding-manager-sol' }) },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' }) },
       vi.fn(),
       vi.fn(),
     );
@@ -27,6 +27,7 @@ describe('ParkedAgentRehydrator', () => {
     const state = { metadata: {} as Record<string, unknown> };
     service.apply(state, identity!);
     expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max' } });
+    expect(state.metadata).not.toHaveProperty('workerModelRoute');
   });
 
   it('recognizes terminal delegated threads so late children cannot resurrect them', async() => {
@@ -49,7 +50,7 @@ describe('ParkedAgentRehydrator', () => {
     const lost = parkedJob();
     lost.status = 'running';
     lost.tasks[0].status = 'lost';
-    const definitions = { findBySlug: vi.fn(async() => ({ slug: 'coding-manager-sol' })) };
+    const definitions = { findBySlug: vi.fn(async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' })) };
     const service = new ParkedAgentRehydrator(
       { findByTaskThread: async() => lost },
       definitions,
@@ -71,7 +72,40 @@ describe('ParkedAgentRehydrator', () => {
       fail,
       vi.fn(),
     );
-    await expect(service.resolve('manager-thread')).rejects.toThrow('refusing default-agent fallback');
+    await expect(service.resolve('manager-thread')).rejects.toThrow('Agent "coding-manager-sol" was removed or disabled');
     expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('coding-manager-sol'));
+  });
+
+  it('reinstalls the route snapshot for a mapped task rather than re-reading edited settings', async() => {
+    // risk: editing AI Models changes a parked task's actual model while it sleeps
+    const job = parkedJob();
+    delete job.tasks[0].provider; delete job.tasks[0].model; delete job.tasks[0].effort;
+    const route = job.tasks[0].workerModelRoute!;
+    route.agentId = 'coding-manager-sol-id';
+    const service = new ParkedAgentRehydrator(
+      { findByTaskThread: async() => job },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'active' }) },
+      vi.fn(), vi.fn(),
+    );
+    const identity = await service.resolve('manager-thread');
+    const state = { metadata: { workerModelRoute: { stale: true } } as Record<string, unknown> };
+    service.apply(state, identity!);
+    expect(state.metadata.workerModelRoute).toEqual(route);
+  });
+
+  it.each([
+    { enabled: false, status: 'active' },
+    { enabled: true, status: 'archive' },
+  ])('fails a parked job when its definition is disabled or archived: %o', async definition => {
+    // risk: a removed agent wakes as another/default persona
+    const fail = vi.fn(); const notify = vi.fn();
+    const service = new ParkedAgentRehydrator(
+      { findByTaskThread: async() => parkedJob() },
+      { findBySlug: async() => ({ slug: 'coding-manager-sol', ...definition }) },
+      fail, notify,
+    );
+    await expect(service.resolve('manager-thread')).rejects.toThrow('Agent "coding-manager-sol" was removed or disabled');
+    expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('coding-manager-sol'));
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'manager-job' }), expect.stringContaining('coding-manager-sol'));
   });
 });

@@ -5,6 +5,7 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
 import { delegatedThreadPersistenceKey } from './DelegatedContainerKey';
 import { installWorkerRoute } from './WorkerModelRouting';
+import { resolveLaunchModelPrecedence } from '../languagemodels/modelPrecedence';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { failJob } from '../tools/agents/jobRegistry';
 
@@ -58,8 +59,9 @@ export class ParkedAgentRehydrator {
     const task = job.tasks[taskIndex];
     if (!task || (task.status !== 'parked' && !(task.status === 'running' && Number(job.restartResumeCount) > 0))) return null;
     const agentId = String(task.agentId || job.parentAgentId || '').trim();
-    if (!agentId || !await this.definitions.findBySlug(agentId)) {
-      const message = `Cannot rehydrate parked job ${ job.jobId }: agent definition "${ agentId || '(missing)' }" is unavailable; refusing default-agent fallback.`;
+    const definition = agentId ? await this.definitions.findBySlug(agentId) as { enabled?: boolean; status?: string } | null : null;
+    if (!agentId || !definition || !definition.enabled || definition.status === 'archive') {
+      const message = `Agent "${ agentId || '(missing)' }" was removed or disabled; this parked job cannot wake.`;
       await this.fail(job.jobId, message);
       this.notifyFailure(job, message);
       throw new Error(message);
@@ -68,11 +70,19 @@ export class ParkedAgentRehydrator {
   }
 
   apply(state: any, identity: ParkedAgentIdentity): void {
-    if (identity.task.workerModelRoute) installWorkerRoute(state, identity.task.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
+    const precedence = resolveLaunchModelPrecedence({
+      override: { provider: identity.task.provider, model: identity.task.model, effort: identity.task.effort },
+      workerModelRoute: identity.task.workerModelRoute,
+    });
+    installWorkerRoute(state, precedence.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
     state.metadata.isSubAgent = true;
     state.metadata.modelSlot = 'primary';
     state.metadata.subAgentDepth = Number(identity.task.depth) || 1;
     state.metadata.delegatedJobId = identity.job.jobId;
+    state.metadata.modelDecisionTask = { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation ?? 1, threadId: identity.task.threadId };
+    state.metadata.modelDecision = identity.task.modelDecision ?? { requested: precedence.requested, ran: null, step: precedence.step, ...(precedence.reason ? { reason: precedence.reason } : {}) };
+    if (identity.task.modelOverride) state.metadata.modelOverride = identity.task.modelOverride;
+    else delete state.metadata.modelOverride;
     state.metadata.workflowParentChannel = identity.job.parentChannel;
     state.metadata.delegatedRunActive = false;
     const persistenceKey = delegatedContainerPersistenceKey(identity);

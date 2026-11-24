@@ -143,11 +143,14 @@ dbDescribe('AgentJobRepository', () => {
       item.finishedAt = now + index;
       await repository.complete(item);
     }
-    await repository.insertJob(job('bounded-active', now + 100));
+    const active = job('bounded-active', now + 100);
+    active.tasks[0].modelDecision = { requested: { provider: 'claude-code', model: 'claude-opus-5-5' }, ran: null, step: 'override' };
+    await repository.insertJob(active);
     queryCount = 0;
     const listed = await repository.jobsForList(25, true);
     expect(queryCount).toBe(1);
     expect(listed.filter(item => ['running', 'parked'].includes(item.status)).map(item => item.jobId)).toContain('bounded-active');
+    expect(listed.find(item => item.jobId === 'bounded-active')?.tasks[0].modelDecision).toMatchObject({ step: 'override', requested: { provider: 'claude-code', model: 'claude-opus-5-5' } });
     expect(listed.filter(item => !['running', 'parked'].includes(item.status))).toHaveLength(25);
   });
 
@@ -216,13 +219,15 @@ dbDescribe('AgentJobRepository', () => {
     // risk: compact projection misreports settled task status or loses delivery freshness
     const input = job('projection-completion-rollup');
     const completion = { label: 'lane', status: 'completed' as const, output: 'synthetic', threadId: 'projection-completion-thread' };
-    input.tasks[0] = { ...input.tasks[0], status: 'error', completion };
+    input.tasks[0] = { ...input.tasks[0], status: 'error', completion,
+      modelDecision: { requested: { provider: 'codex', model: 'gpt-first' }, ran: { provider: 'claude-code', model: 'claude-fallback' }, step: 'category', reason: 'Fallback after codex/gpt-first failed.' } };
     await repository.insertJob(input);
     await repository.updateTaskCompletions(input.jobId, 0, input.tasks, [completion]);
     await repository.markTaskCompletionFirstDelivered(input.jobId, 0, 10);
     await repository.markTaskCompletionDelivered(input.jobId, 0, 20);
     const [projection] = await repository.jobsForProjection(120_000);
     expect(projection.tasks[0]).toMatchObject({ status: 'error', completion: { status: 'completed' } });
+    expect(projection.tasks[0].modelDecision).toMatchObject({ requested: { model: 'gpt-first' }, ran: { model: 'claude-fallback' }, step: 'category' });
     expect(projection.results).toEqual([]); // state rollup reads task.completion.status; state projection never reads result payloads
 
     await repository.updateTasks(input.jobId, [input.tasks[0], { ...input.tasks[0], status: 'queued' }]);

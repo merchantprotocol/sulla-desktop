@@ -11,6 +11,7 @@ import { BaseNode } from '../../../nodes/BaseNode';
 import { AbortService } from '../../../services/AbortService';
 import { agentDefinitionService } from '../../../services/AgentDefinitionService';
 import { workerModelRouting } from '../../../services/WorkerModelRouting';
+import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider';
 
 import type { BaseThreadState, NodeResult } from '../../../nodes/Graph';
 
@@ -44,6 +45,32 @@ describe('graph model resolution Stop propagation for worker routes', () => {
     await vi.waitFor(() => expect(received).toBe(run.signal));
     run.stop();
     await expect(resolving).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('resolved model decision persistence', () => {
+  it('updates the task when BaseNode advances to a fallback candidate', async() => {
+    // risk: the job audit says the failed first model ran instead of the fallback that was tried
+    const node = new RouteProbeNode();
+    const mutate = vi.spyOn(agentJobProvider.states, 'mutateJob').mockResolvedValue({} as any);
+    const state = stateWith(undefined) as any;
+    state.metadata.modelDecisionTask = { jobId: 'fallback-job', taskIndex: 0, generation: 1, threadId: 't' };
+    state.metadata.modelDecision = { requested: null, ran: { provider: 'codex', model: 'gpt-first' }, step: 'category' };
+    const service = { getProviderName: () => 'claude-code', getModel: () => 'claude-fallback' };
+    const log = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    await (node as any).persistModelDecision(state, service, 'Fallback after codex/gpt-first failed: unavailable');
+
+    expect(mutate).toHaveBeenCalledWith('fallback-job', expect.any(Function), undefined, false);
+    const update = mutate.mock.calls[0][1] as (job: any) => any;
+    const saved = update({ status: 'running', tasks: [{ status: 'running', threadId: 't', generation: 1 }] });
+    expect(saved.tasks[0].modelDecision).toEqual({
+      requested: null,
+      ran: { provider: 'claude-code', model: 'claude-fallback' },
+      step: 'category',
+      reason: 'Fallback after codex/gpt-first failed: unavailable',
+    });
+    expect(log).toHaveBeenCalledWith('[ModelPrecedence] job=fallback-job requested=none ran=claude-code/claude-fallback step=category');
   });
 });
 
