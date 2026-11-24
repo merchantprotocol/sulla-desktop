@@ -155,6 +155,22 @@ export class MessageDispatcher {
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
   if (msg.data && typeof msg.data === 'object' && AgentReadinessStatus.apply(ctx.messages, agentId, msgThreadId, msg.data as Record<string, unknown>)) return;
   const activity = msg.data as { kind?: string; thread_id?: string; chatToolActivity?: ChatMessage['chatToolActivity'] } | null;
+  const inline = msg.data && typeof msg.data === 'object' ? (msg.data as any).inlineFileReference : undefined;
+  if ((msg.data as any)?.kind === 'inline_file_reference') {
+    if (msg.type !== 'assistant_message' || !msgThreadId || !inline ||
+      inline.thread_id !== msgThreadId ||
+      ![inline.file_id, inline.collection_id, inline.tool_call_id, inline.thread_id].every((value: unknown) => typeof value === 'string' && value.trim().length > 0)) return;
+    const id = `inline-file:${agentId}:${msgThreadId}:${inline.tool_call_id}`;
+    if (ctx.messages.some(message => message.id === id)) return;
+    ctx.messages.push({
+      id, channelId: agentId, threadId: msgThreadId, role: 'assistant', content: '',
+      kind: 'inline_file_reference', inlineFileReference: {
+        file_id: inline.file_id, collection_id: inline.collection_id,
+        tool_call_id: inline.tool_call_id, thread_id: inline.thread_id,
+      },
+    });
+    return;
+  }
   if (activity?.kind === 'chat_tool_activity') {
     if (msg.type !== 'assistant_message' || !msgThreadId || activity.thread_id !== msgThreadId ||
       !ChatToolReporting.describe(activity.chatToolActivity)) return;

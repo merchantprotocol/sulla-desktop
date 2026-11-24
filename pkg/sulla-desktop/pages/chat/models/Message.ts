@@ -35,7 +35,8 @@ export type MessageKind =
   | 'interim'       // user voice transcript being drafted (transient)
   | 'error'         // error/recovery
   | 'notice'        // neutral informational notice
-  | 'html';         // rich HTML reply
+  | 'html'
+  | 'inline_file_reference';
 
 export interface MessageBase {
   readonly id:        MessageId;
@@ -312,6 +313,15 @@ export interface HtmlMessage extends MessageBase {
   artifactId?: ArtifactId;  // legacy snapshot link, never assigned to new replies
 }
 
+
+export interface InlineFileReferenceMessage extends MessageBase {
+  kind: 'inline_file_reference';
+  fileId: string;
+  collectionId: string;
+  toolCallId: string;
+  threadId: string;
+}
+
 // ─── The union ────────────────────────────────────────────────────
 export type Message =
   | UserMessage
@@ -333,7 +343,8 @@ export type Message =
   | InterimMessage
   | ErrorMessage
   | NoticeMessage
-  | HtmlMessage;
+  | HtmlMessage
+  | InlineFileReferenceMessage;
 
 export const isTransient = (m: Message): boolean =>
   m.kind === 'streaming' || m.kind === 'tts' || m.kind === 'interim';
