@@ -4,7 +4,7 @@ import type { DecisionRecord } from '@pkg/shared/decisions';
 import { AgentTreeBuilder, type AgentTreeNode } from './AgentTreeBuilder';
 
 export type ThreadAgentUrgency = 'normal' | 'needs-you' | 'failed';
-export type ThreadAgentScope = 'root' | 'child' | 'host' | 'empty';
+export type ThreadAgentScope = 'root' | 'child' | 'empty';
 
 export interface ObservedAgentCheckin { at: string; summary: string }
 export interface PresentedThreadAgent {
@@ -30,7 +30,6 @@ export interface ThreadAgentActivityProjection {
 /** Projects the shared live-agent snapshot into only the current thread's proven tree. */
 export class ThreadAgentActivityPresenter {
   static readonly activityWindowMs = 150_000;
-  static readonly orphanTtlMs = 150_000;
   static readonly maxCheckinsPerAgent = 6;
   static readonly maxActivityPerAgent = 30;
 
@@ -57,7 +56,7 @@ export class ThreadAgentActivityPresenter {
     this.lastSnapshot = snapshot;
 
     const builder = new AgentTreeBuilder(snapshot.rows);
-    const scoped = this.scopeTree(builder, snapshot.rows, threadId, now);
+    const scoped = this.scopeTree(builder, snapshot.rows, threadId);
     const flat = builder.flatten(scoped.roots);
     for (const node of flat) this.observe(node.row, now);
     this.prune(now, new Set(flat.map(node => node.row.key)));
@@ -85,11 +84,8 @@ export class ThreadAgentActivityPresenter {
     return this.current;
   }
 
-  private scopeTree(builder: AgentTreeBuilder, rows: readonly AgentStateRow[], threadId: string | undefined, now: number): { scope: ThreadAgentScope; ownerThreadId?: string; roots: AgentTreeNode[] } {
-    if (threadId === undefined) {
-      const liveHostRows = rows.filter(row => row.rootThreadId === null && this.isRecent(row.lastActivityAt, now, ThreadAgentActivityPresenter.orphanTtlMs));
-      return { scope: liveHostRows.length ? 'host' : 'empty', roots: new AgentTreeBuilder(liveHostRows).forThread(null) };
-    }
+  private scopeTree(builder: AgentTreeBuilder, rows: readonly AgentStateRow[], threadId: string | undefined): { scope: ThreadAgentScope; ownerThreadId?: string; roots: AgentTreeNode[] } {
+    if (threadId === undefined) return { scope: 'empty', roots: [] };
 
     const rootRows = rows.filter(row => row.rootThreadId === threadId);
     if (rootRows.length) return { scope: 'root', ownerThreadId: threadId, roots: builder.forThread(threadId) };

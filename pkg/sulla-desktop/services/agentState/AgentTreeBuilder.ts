@@ -7,7 +7,7 @@ export class AgentTreeBuilder {
   private readonly liveStates = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
   constructor(private readonly rows: readonly AgentStateRow[]) {}
 
-  forThread(rootThreadId: string | null): AgentTreeNode[] {
+  forThread(rootThreadId: string): AgentTreeNode[] {
     const included = this.rows.filter(row => row.rootThreadId === rootThreadId);
     const nodes = new Map(included.map(row => [row.key, { row, children: [] as AgentTreeNode[], depth: 0 }]));
     const roots: AgentTreeNode[] = [];
