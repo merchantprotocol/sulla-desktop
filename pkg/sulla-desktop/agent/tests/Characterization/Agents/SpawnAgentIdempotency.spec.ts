@@ -37,7 +37,7 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
     constructor() { super(); this.allowVisibleTabs = true; }
 
     run(parentThreadId: string, input: unknown) {
-      this.setState({ metadata: { threadId: parentThreadId, wsChannel: 'coding-manager-sol', routedAgentId: 'coding-manager-sol' } } as any);
+      this.setState({ metadata: { threadId: parentThreadId, wsChannel: 'coding-manager', routedAgentId: 'coding-manager' } } as any);
       return this.call(input);
     }
   }
@@ -71,7 +71,7 @@ dbDescribe('spawn_agent idempotent structured output (real tool and repository)'
   const seed = async(parentThreadId: string, label: string, visibility: 'hidden' | 'tab') => registry.createJob([{
     agentId: 'codex-sol-worker', label, prompt: 'existing work', status: visibility === 'tab' ? 'running' : 'queued',
     threadId: visibility === 'tab' ? `${ label }-thread` : undefined, visibility,
-  }], 'coding-manager-sol', parentThreadId, { visibility, parentAgentId: 'coding-manager-sol' });
+  }], 'coding-manager', parentThreadId, { visibility, parentAgentId: 'coding-manager' });
 
   it('returns an object after one parse for hidden dedupe and sync dedupe', async() => {
     const parent = `hidden-${ Date.now() }`;

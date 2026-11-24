@@ -65,6 +65,9 @@ export interface AgentJobTask extends ResultTracking {
   provider?: string;
   model?: string;
   effort?:                string;
+  modelDecision?: import('../../languagemodels/modelPrecedence').ModelDecision;
+  /** Route-independent exact override marker, including Grok's approved subscription identity. */
+  modelOverride?: { provider: string; model: string; connections?: Record<string, string> };
   runLocation?: 'vm' | 'container';
   workspacePath?: string;
   /** Restart recovery attempts already consumed. */

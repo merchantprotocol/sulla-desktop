@@ -650,8 +650,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
     const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
-    // Each container owns one provider bridge, so pod id scopes bridge
-    // activity to this container without letting unrelated agents keep us alive.
     const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
@@ -862,12 +860,24 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       let codexPid: number | undefined;
       const outcome = new CodexTurnOutcome();
       let errorMessage = '';
+      let latestRateLimitReason: string | undefined;
+      let unsubscribeProviderBridgeRetryStatus = () => {};
       let lastUsage: any = null;
       let sawTerminalResult = false;
       const activeToolItems = new Map<string, { startedAt: number; approval: boolean }>();
       let sawToolExecution = false;
       let unresolvedTool = false;
       let settled = false;
+      // Surface provider retry state to the job, but never refresh the watchdog clock here.
+      unsubscribeProviderBridgeRetryStatus = providerBridgeActivity.subscribeRetryStatus(providerBridgePodId, event => {
+        if (settled) return;
+        if (event.status === 429) {
+          latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
+          emitActivity('Codex is rate-limited, retrying', 'status');
+        } else {
+          emitActivity('Codex is busy, retrying', 'status');
+        }
+      });
       let terminationPromise: Promise<void> | null = null;
       const persistSession = async(): Promise<Error | null> => {
         if (!capturedSessionId) return null;
@@ -924,37 +934,30 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       };
 
       // ── Stall watchdog ──────────────────────────────────────────────
-      // A codex process whose upstream connection dies mid-run can sit
-      // silent forever — no stdout, no exit, no error — leaving the promise
-      // unsettled and the UI stuck on "Isolated environment ready" /
-      // "calling model" with no recovery. ClaudeCodeService already carries
-      // this exact protection (observed hangs up to 7.7h); codex never had
-      // it. Stdout/stderr silence also occurs during model reasoning; it
-      // does not prove the process is dead. Allow ten quiet minutes, while
-      // retaining a finite recovery bound and the active-tool guards below.
-      const STALL_TIMEOUT_MS = 10 * 60 * 1_000;
+      // Jonathon's rule (2026-11-23): Codex must not sit silent for more than
+      // three minutes. Only process spawn and actual stdout/stderr reset this
+      // clock; provider-bridge activity is not model output.
+      const STALL_TIMEOUT_MS = 3 * 60 * 1_000;
       const STALL_CHECK_MS = 30 * 1_000;
       let lastStreamActivityAt = Date.now();
       let stalled = false;
-      let lastWatchdogDeferralAt = 0;
       let stallTimer: NodeJS.Timeout | null = null;
       const stopStallWatchdog = () => {
         if (stallTimer) {
           clearInterval(stallTimer);
           stallTimer = null;
         }
+        unsubscribeProviderBridgeRetryStatus();
+        unsubscribeProviderBridgeRetryStatus = () => {};
       };
+      const stallErrorMessage = () => unresolvedTool
+        ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+        : latestRateLimitReason
+          ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
+          : 'Codex stalled: no output for 3 minutes';
       const startStallWatchdog = () => {
         lastStreamActivityAt = Date.now();
         stallTimer = setInterval(() => {
-          const upstreamActivityAt = providerBridgeActivity.lastActivityAt(providerBridgePodId);
-          if (upstreamActivityAt > lastStreamActivityAt) {
-            lastStreamActivityAt = upstreamActivityAt;
-            if (Date.now() - lastWatchdogDeferralAt >= 60_000) {
-              lastWatchdogDeferralAt = Date.now();
-              log.info(`[CodexService] Stall watchdog deferred: provider bridge active (convId=${ convId })`);
-            }
-          }
           const silentMs = Date.now() - lastStreamActivityAt;
           if (activeToolItems.size > 0) {
             const tools = [...activeToolItems.values()];
@@ -970,11 +973,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           killSpawn();
           scheduleForcedSettlement(() => new CliFaultError(
             'stall',
-            unresolvedTool
-              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
-              : `Codex stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
+            stallErrorMessage(),
             undefined,
-            !unresolvedTool,
+            false,
             unresolvedTool,
           ));
         }, STALL_CHECK_MS);
@@ -1327,17 +1328,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           return;
         }
 
-        // Stall-watchdog kill — surface a clear, retryable error instead of
+        // Stall-watchdog kill — surface the exact rule violation instead of
         // falling through to the generic no-output message.
         if (stalled) {
-          const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
           const stallError = new CliFaultError(
             'stall',
-            unresolvedTool
-              ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
-              : `Codex stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
+            stallErrorMessage(),
             undefined,
-            !unresolvedTool,
+            false,
             unresolvedTool,
           );
           failureDiagnostics.failure({ error: stallError, fault: 'stall', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });

@@ -81,18 +81,18 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
   // Known-good agent identities: resolve() refuses to rehydrate an agent it
   // cannot find a definition for, so the test double only needs to answer
   // for the two slugs these scenarios use.
-  const definitions = { findBySlug: async(slug: string) => (['coding-manager-sol', 'codex-sol-worker'].includes(slug) ? { slug } : null) };
+  const definitions = { findBySlug: async(slug: string) => (['coding-manager', 'codex-sol-worker'].includes(slug) ? { slug } : null) };
 
   it('a) wakes a parked manager as itself when its child\'s contract returns', async() => {
     // risk: a completion wakes the wrong agent, or rehydrates the manager under the default persona instead of its own identity
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'wake-a-manager-thread', depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'wake-a-manager-thread', depth: 1 }],
       'sulla-desktop', 'wake-a-root-thread',
     );
     await registry.parkJobTask(manager.jobId, 0, 1);
     const child = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'worker', prompt: 'build', status: 'running', threadId: 'wake-a-worker-thread', depth: 2 }],
-      'coding-manager-sol', 'wake-a-manager-thread',
+      'coding-manager', 'wake-a-manager-thread',
     );
 
     // The child returns its contract — the exact sequence return_result.ts runs.
@@ -107,13 +107,13 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // the only stand-in is the static agent-definition lookup.
     const rehydrator = new ParkedAgentRehydrator(agentJobProvider.jobs, definitions, registry.failJob, () => {});
     const identity = await rehydrator.resolve('wake-a-manager-thread');
-    expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 0 });
+    expect(identity).toMatchObject({ agentId: 'coding-manager', taskIndex: 0 });
     expect(identity?.job.jobId).toBe(manager.jobId);
 
     // The completion is queued under the manager's OWN identity (its agentId
     // as channel, its own threadId) — it wakes the manager as itself, not a
     // different default agent.
-    const queued = inbox.takeAgentCompletions('coding-manager-sol', 'wake-a-manager-thread');
+    const queued = inbox.takeAgentCompletions('coding-manager', 'wake-a-manager-thread');
     expect(queued).toHaveLength(1);
     expect(queued[0].jobId).toBe(child.jobId);
   });
@@ -266,14 +266,14 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
   it('c) send_job_message wakes a parked manager without acking before consumption, then its progress and return stay on the same job and wake its parent', async() => {
     // risk: the ack fires at injection time (before the woken turn ran), losing or duplicating the orchestrator instruction
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'wake-c-manager-thread', depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'wake-c-manager-thread', depth: 1 }],
       'sulla-desktop', 'wake-c-root-thread',
     );
     await registry.parkJobTask(manager.jobId, 0, 1);
 
     const response = await sendJobMessage({ jobId: manager.jobId, message: 'continue the same goal' });
     expect(response.successBoolean).toBe(true);
-    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'wake-c-manager-thread', 'continue the same goal', 'coding-manager-sol', expect.objectContaining({ jobId: manager.jobId, taskIndex: 0 }));
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'wake-c-manager-thread', 'continue the same goal', 'coding-manager', expect.objectContaining({ jobId: manager.jobId, taskIndex: 0 }));
 
     // send_job_message must NOT have acked yet — only dispatchToAgent's
     // finally block does, once the woken turn actually ran.
@@ -304,13 +304,13 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
   it('d) a simulated restart resumes the running worker (not failed), never resurrects terminal jobs, and the worker\'s later contract still wakes the parked manager', async() => {
     // risk: restart recovery marks a live worker failed, or resurrects a job that already finished
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'restart-d-manager-thread', depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'restart-d-manager-thread', depth: 1 }],
       'sulla-desktop', 'restart-d-root-thread',
     );
     await registry.parkJobTask(manager.jobId, 0, 1);
     const worker = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'worker', prompt: 'build', status: 'running', threadId: 'restart-d-worker-thread', depth: 2 }],
-      'coding-manager-sol', 'restart-d-manager-thread',
+      'coding-manager', 'restart-d-manager-thread',
     );
     const terminal = await registry.createJob(
       [{ agentId: 'worker', label: 'done-already', prompt: 'work', status: 'running' }],
@@ -351,7 +351,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const results = [{ label: 'worker', status: 'completed' as const, output: 'built', threadId: 'restart-d-worker-thread' }];
     await registry.completeJob(worker.jobId, results);
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(worker.jobId) as any, results)).toBe(true);
-    expect(inbox.takeAgentCompletions('coding-manager-sol', 'restart-d-manager-thread').map(e => e.jobId)).toContain(worker.jobId);
+    expect(inbox.takeAgentCompletions('coding-manager', 'restart-d-manager-thread').map(e => e.jobId)).toContain(worker.jobId);
   });
 
   it('e) a stale wake target does not abort send_job_message, and the other task is still woken', async() => {
@@ -361,8 +361,8 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // other target in the same send_job_message call
     const manager = await registry.createJob(
       [
-        { agentId: 'coding-manager-sol', label: 'manager-a', prompt: 'epic a', status: 'running', threadId: 'wake-e-thread-a', depth: 1 },
-        { agentId: 'coding-manager-sol', label: 'manager-b', prompt: 'epic b', status: 'parked', threadId: 'wake-e-thread-b', depth: 1 },
+        { agentId: 'coding-manager', label: 'manager-a', prompt: 'epic a', status: 'running', threadId: 'wake-e-thread-a', depth: 1 },
+        { agentId: 'coding-manager', label: 'manager-b', prompt: 'epic b', status: 'parked', threadId: 'wake-e-thread-b', depth: 1 },
       ],
       'sulla-desktop', 'wake-e-root-thread',
     );
@@ -382,7 +382,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect(parsed.deliveredLive).toBe(1);
     expect(parsed.notWoken).toEqual([{ taskIndex: 0, reason: expect.stringContaining('not a parked agent job') }]);
     expect(wakeParkedAgent).toHaveBeenCalledTimes(2);
-    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'wake-e-thread-b', 'continue the same goal', 'coding-manager-sol', expect.objectContaining({ taskIndex: 1 }));
+    expect(wakeParkedAgent).toHaveBeenCalledWith('sulla-desktop', 'wake-e-thread-b', 'continue the same goal', 'coding-manager', expect.objectContaining({ taskIndex: 1 }));
 
     // The failed target's message is untouched — still pending, job not
     // resurrected or otherwise mutated by the failure.
@@ -397,7 +397,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const job = await registry.createJob(
       [
         { agentId: 'codex-sol-worker', label: 'worker-sibling', prompt: 'build', status: 'running', threadId: 'multi-f-worker-thread', depth: 1 },
-        { agentId: 'coding-manager-sol', label: 'manager-sibling', prompt: 'own epic', status: 'running', threadId: 'multi-f-manager-thread', depth: 1 },
+        { agentId: 'coding-manager', label: 'manager-sibling', prompt: 'own epic', status: 'running', threadId: 'multi-f-manager-thread', depth: 1 },
       ],
       'sulla-desktop', 'multi-f-root-thread',
     );
@@ -431,7 +431,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const manager = await registry.createJob(
       [
         { agentId: 'codex-sol-worker', label: 'worker-sibling', prompt: 'build', status: 'running', threadId: 'multi-g-worker-sibling-thread', depth: 1 },
-        { agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'multi-g-manager-thread', depth: 1 },
+        { agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'multi-g-manager-thread', depth: 1 },
       ],
       'sulla-desktop', 'multi-g-root-thread',
     );
@@ -440,14 +440,14 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
 
     const child = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'worker', prompt: 'build', status: 'running', threadId: 'multi-g-child-thread', depth: 2 }],
-      'coding-manager-sol', 'multi-g-manager-thread',
+      'coding-manager', 'multi-g-manager-thread',
     );
 
     // The task-level rehydrator must find the manager's own task as parked,
     // independent of the job's rollup status staying 'running'.
     const rehydrator = new ParkedAgentRehydrator(agentJobProvider.jobs, definitions, registry.failJob, () => {});
     const identity = await rehydrator.resolve('multi-g-manager-thread');
-    expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 1 });
+    expect(identity).toMatchObject({ agentId: 'coding-manager', taskIndex: 1 });
     expect(identity?.job.jobId).toBe(manager.jobId);
 
     // The child's contract return must wake that exact manager thread.
@@ -455,7 +455,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const results = [{ label: 'worker', status: 'completed' as const, output: 'built', threadId: 'multi-g-child-thread' }];
     await registry.completeJob(child.jobId, results);
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
-    expect(inbox.takeAgentCompletions('coding-manager-sol', 'multi-g-manager-thread').map(e => e.jobId)).toContain(child.jobId);
+    expect(inbox.takeAgentCompletions('coding-manager', 'multi-g-manager-thread').map(e => e.jobId)).toContain(child.jobId);
   });
 
   it('h) a completed, stopped, or failed job is never reclaimed by restart recovery', async() => {
@@ -490,7 +490,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // wake the manager that is responsible for integrating them.
     const managerThreadId = 'return-i-manager-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
       'sulla-desktop', 'return-i-root-thread',
     );
     const firstChild = await registry.createJob(
@@ -499,11 +499,11 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
         { agentId: 'codex-sol-worker', label: 'worker-q', prompt: 'build q', status: 'queued', threadId: 'return-i-child-q', depth: 2 },
         { agentId: 'codex-sol-worker', label: 'worker-done', prompt: 'done', status: 'completed', threadId: 'return-i-child-done', depth: 2 },
       ],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     );
     const secondChild = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'worker-b', prompt: 'build b', status: 'parked', threadId: 'return-i-child-b', depth: 2 }],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     );
 
     const worker = new ReturnResultHarness();
@@ -526,12 +526,12 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // its result or wakes the terminal manager and duplicates its final turn.
     const managerThreadId = 'orphan-j-manager-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
       'sulla-desktop', 'orphan-j-root-thread',
     );
     const child = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'late worker', prompt: 'build', status: 'running', threadId: 'orphan-j-child-thread', depth: 2 }],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     );
     await registry.completeJob(manager.jobId, [{ label: 'manager', status: 'completed', output: 'finished early', threadId: managerThreadId }]);
 
@@ -540,7 +540,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
 
     expect((await registry.getJob(manager.jobId))?.status).toBe('completed');
-    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([]);
+    expect(inbox.takeAgentCompletions('coding-manager', managerThreadId)).toEqual([]);
     const rootNotices = inbox.takeAgentCompletions('sulla-desktop', 'orphan-j-root-thread');
     expect(rootNotices).toHaveLength(1);
     expect(rootNotices[0]).toMatchObject({ jobId: child.jobId, failureReason: expect.stringContaining('orphaned child result') });
@@ -560,19 +560,19 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // unless check_agent_jobs can surface a durable notice on the manager job.
     const managerThreadId = 'orphan-k-top-level-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'top manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'top manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
       'sulla-desktop', undefined,
     );
     const child = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'late worker', prompt: 'build', status: 'running', threadId: 'orphan-k-child-thread', depth: 2 }],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     );
     await registry.completeJob(manager.jobId, [{ label: 'top manager', status: 'completed', output: 'done', threadId: managerThreadId }]);
     const results = [{ label: 'late worker', status: 'error' as const, output: 'failed late', threadId: 'orphan-k-child-thread' }];
     await registry.completeJob(child.jobId, results);
 
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
-    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([]);
+    expect(inbox.takeAgentCompletions('coding-manager', managerThreadId)).toEqual([]);
     expect((await agentJobProvider.jobs.job(manager.jobId))?.orphanedChildNotices).toEqual([
       expect.objectContaining({ childJobId: child.jobId, managerStatus: 'completed', results }),
     ]);
@@ -582,7 +582,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // risk: a healthy parked manager looks completed or dead to its parent,
     // causing an unnecessary relaunch and duplicate ownership of the epic.
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'view-l-manager-thread', depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: 'view-l-manager-thread', depth: 1 }],
       'sulla-desktop', 'view-l-root-thread',
     );
     await registry.parkJobTask(manager.jobId, 0, 2);
@@ -600,19 +600,19 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // work invisible and the fleet parked forever.
     const managerThreadId = 'failure-m-manager-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
       'sulla-desktop', 'failure-m-root-thread',
     );
     await registry.parkJobTask(manager.jobId, 0, 1);
     const child = await registry.createJob(
       [{ agentId: 'codex-sol-worker', label: 'failed worker', prompt: 'build', status: 'running', threadId: 'failure-m-child-thread', depth: 2 }],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     );
     const results = [{ label: 'failed worker', status: 'error' as const, output: 'provider failed', threadId: 'failure-m-child-thread' }];
     await registry.completeJob(child.jobId, results);
 
     expect(await jobDelivery.deliverJobCompletion(await registry.getJob(child.jobId) as any, results)).toBe(true);
-    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId)).toEqual([
+    expect(inbox.takeAgentCompletions('coding-manager', managerThreadId)).toEqual([
       expect.objectContaining({ jobId: child.jobId, results, failureReason: undefined }),
     ]);
     expect((await registry.getJob(manager.jobId))?.status).toBe('parked');
@@ -625,7 +625,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     const job = await registry.createJob(
       [
         { agentId: 'codex-sol-worker', label: 'billing', prompt: 'build', status: 'running', threadId: 'rollup-o-billing-thread', depth: 1 },
-        { agentId: 'coding-manager-sol', label: 'qbo manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 },
+        { agentId: 'coding-manager', label: 'qbo manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 },
       ],
       'sulla-desktop', 'rollup-o-root-thread',
     );
@@ -646,7 +646,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // both wake the higher parent with the same irreversible result.
     const managerThreadId = 'orphan-n-manager-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId: managerThreadId, depth: 1 }],
       'sulla-desktop', 'orphan-n-root-thread',
     );
     const child = await registry.createJob(
@@ -655,7 +655,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
         { agentId: 'codex-sol-worker', label: 'middle', prompt: 'second', status: 'completed', threadId: 'orphan-n-child-1', depth: 2 },
         { agentId: 'codex-sol-worker', label: 'late', prompt: 'third', status: 'running', threadId: 'orphan-n-child-2', depth: 2 },
       ],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     );
     await registry.completeJob(manager.jobId, [{ label: 'manager', status: 'completed', output: 'done', threadId: managerThreadId }]);
     const results = [{ label: 'late', status: 'completed' as const, output: 'late result', threadId: 'orphan-n-child-2' }];
@@ -678,13 +678,13 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     // turns, making a manager miss either worker output or new direction.
     const managerThreadId = 'boundary-o-manager-thread';
     const manager = await registry.createJob(
-      [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'running', threadId: managerThreadId, depth: 1 }],
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own', status: 'running', threadId: managerThreadId, depth: 1 }],
       'sulla-desktop', 'boundary-o-root-thread',
     );
     await registry.parkJobTask(manager.jobId, 0, 2);
     const children = await Promise.all(['a', 'b'].map(suffix => registry.createJob(
       [{ agentId: 'codex-sol-worker', label: `worker-${ suffix }`, prompt: 'build', status: 'running', threadId: `boundary-o-child-${ suffix }`, depth: 2 }],
-      'coding-manager-sol', managerThreadId,
+      'coding-manager', managerThreadId,
     )));
     const results = children.map((child, index) => [{ label: `worker-${ index }`, status: 'completed' as const, output: `result-${ index }`, threadId: child.tasks[0].threadId! }]);
     await Promise.all(children.map((child, index) => registry.completeJob(child.jobId, results[index])));
@@ -696,7 +696,7 @@ dbDescribe('parked manager wake, replay and restart lifecycle (real Postgres)', 
     ]);
 
     expect(message.successBoolean).toBe(true);
-    expect(inbox.takeAgentCompletions('coding-manager-sol', managerThreadId).map(entry => entry.jobId).sort())
+    expect(inbox.takeAgentCompletions('coding-manager', managerThreadId).map(entry => entry.jobId).sort())
       .toEqual(children.map(child => child.jobId).sort());
     expect(await messaging.AgentJobMessagingModel.pendingMessagesForThread(managerThreadId)).toHaveLength(1);
     expect(wakeParkedAgent).toHaveBeenCalledTimes(1);

@@ -20,6 +20,8 @@ import { getWebSocketClientService } from './WebSocketClientService';
 import { installWorkerRoute } from './WorkerModelRouting';
 import { loadThreadState, saveThreadState } from '../nodes/ThreadStateStore';
 import { getJob, type AgentJob } from '../tools/agents/jobRegistry';
+import { resolveLaunchModelPrecedence, type ModelDecision } from '../languagemodels/modelPrecedence';
+import { modelRouter } from '../languagemodels/modelRouter';
 
 import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 
@@ -107,6 +109,8 @@ export interface OpenAgentTabInput {
   /** Dead-run keys the child's activity must touch. */
   activityKeys:      string[];
   workerModelRoute?: WorkerModelRoute;
+  modelDecision?: ModelDecision;
+  modelOverride?: { provider: string; model: string; connections?: Record<string, string> };
   providerCliSnapshot?: import('../../shared/providerCliSelection').ProviderCliSnapshot;
   runOverrides?: { model?: string; provider?: string; effort?: string; runLocation?: 'vm' | 'container' };
 }
@@ -116,12 +120,17 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
   const { state } = await GraphRegistry.getOrCreateAgentGraph(input.childAgent.graphAgentId, input.childThreadId);
   applyThreadAgentRoute(state, input.childAgent);
   const meta = state.metadata as any;
-  if (input.workerModelRoute) installWorkerRoute(state, input.workerModelRoute, { jobId: input.jobId, taskIndex: 0 });
+  const precedence = resolveLaunchModelPrecedence({ override: input.runOverrides, workerModelRoute: input.workerModelRoute });
+  installWorkerRoute(state, precedence.workerModelRoute, { jobId: input.jobId, taskIndex: 0 });
   meta.agent = { ...(meta.agent ?? {}), ...Object.fromEntries(Object.entries(input.runOverrides ?? {}).filter(([, value]) => value !== undefined)) };
-  if (!input.workerModelRoute && (input.runOverrides?.model || input.runOverrides?.provider)) {
-    const { getAgentOverrideService } = await import('../languagemodels');
-    if (!await getAgentOverrideService(meta.agent)) throw new Error('Requested provider/model could not be resolved; refusing fallback');
-  }
+  if (precedence.step === 'override') await modelRouter.resolve('agents', precedence.choice).catch(() => {
+    const requested = precedence.requested!;
+    throw new Error(`Requested model ${ requested.provider }/${ requested.model } is not available (not connected or unknown); refusing to run a different model.`);
+  });
+  meta.modelDecision = input.modelDecision ?? { requested: precedence.requested, ran: null, step: precedence.step, ...(precedence.reason ? { reason: precedence.reason } : {}) };
+  if (input.modelOverride) meta.modelOverride = input.modelOverride;
+  else delete meta.modelOverride;
+  meta.modelDecisionTask = { jobId: input.jobId, taskIndex: 0, generation: 1, threadId: input.childThreadId };
   meta.activityKeys = input.activityKeys;
   meta.delegatedJobId = input.jobId;
   meta.delegatedTaskIndex = 0;
