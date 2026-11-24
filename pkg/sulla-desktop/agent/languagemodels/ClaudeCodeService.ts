@@ -155,6 +155,9 @@ const CLAUDE_PROCESS_ENV = {
   DISABLE_ERROR_REPORTING: '1',
 } as const;
 
+/** Disable Claude Code's separate background memory-consolidation cycle. */
+const CLAUDE_AGENT_SETTINGS = JSON.stringify({ autoDreamEnabled: false });
+
 /**
  * How long a turn stays open after `result` waiting for Claude to start the
  * follow-up turn for a steer it hasn't consumed yet (observed: immediate).
@@ -403,6 +406,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       // Every acting agent (primary, workers, reviewers) gets the same set.
       '--disallowedTools', p.disallowedTools,
     ];
+    claudeArgs.push('--settings', shq(CLAUDE_AGENT_SETTINGS));
     // stream-json input: the prompt is fed as a JSON user message on stdin,
     // and "Send now" messages can be written into a running turn. Replay
     // echoes each stdin message back at the moment Claude consumes it — that's
@@ -444,6 +448,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
       '--disallowedTools', p.disallowedTools,
       '--input-format', 'stream-json', '--replay-user-messages',
     ];
+    args.push('--settings', CLAUDE_AGENT_SETTINGS);
     if (this.model && this.model !== 'claude-code') args.push('--model', this.model);
     if (this.effort) args.push('--effort', this.effort);
     if (p.existingSession) args.push('--resume', p.existingSession);
