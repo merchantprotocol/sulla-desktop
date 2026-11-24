@@ -26,4 +26,10 @@ if [ -n "${SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE:-}" ]; then
   chmod 0600 /run/sulla-vault-secrets/providers-token
   export SULLA_VAULT_PROVIDERS_SERVICE_TOKEN_FILE=/run/sulla-vault-secrets/providers-token
 fi
+# The audit file sink writes under this directory as $run_as. A named volume mounted there starts
+# root-owned 0755, so take ownership of the directory itself (not its contents) before dropping root.
+audit_dir="${SULLA_VAULT_AUDIT_SPOOL_DIR:-/var/lib/sulla-vault}"
+mkdir -p "$audit_dir"
+chown "$run_as" "$audit_dir"
+chmod 0700 "$audit_dir"
 exec su-exec "$run_as" "$@"
