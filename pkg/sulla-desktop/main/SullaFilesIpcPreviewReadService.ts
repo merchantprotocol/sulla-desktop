@@ -6,7 +6,8 @@
 import path from 'node:path';
 
 import { FilesApiError } from './sullaFilesClient';
-import type { SullaFilesIpcApi } from './SullaFilesIpcSupport';
+import type { SullaFilesIpcApi, SullaFilesIpcRegistrar } from './SullaFilesIpcSupport';
+import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
 
 export type SullaFilesPreviewKind = 'html' | 'markdown' | 'code' | 'csv' | 'image' | 'pdf';
 
@@ -21,6 +22,8 @@ export interface SullaFilesPreviewDocument {
 
 export type SullaFilesPreviewReadResult =
   | { state:'ready'; kind:SullaFilesPreviewKind; document:SullaFilesPreviewDocument; content:string | Uint8Array; truncated:boolean }
+  | { state:'metadata-only'; kind:'pdf'; document:SullaFilesPreviewDocument }
+  | { state:'too-large'; kind:'image' | 'pdf'; document:SullaFilesPreviewDocument }
   | { state:'unsupported'; reason:'file-type' | 'binary-text'; document:SullaFilesPreviewDocument }
   | { state:'deleted'; document:SullaFilesPreviewDocument }
   | { state:'unavailable'; reason:'not-available' | 'authority-changed' | 'invalid-metadata' | 'invalid-content' }
@@ -171,13 +174,18 @@ export class SullaFilesIpcPreviewReadService {
 
     const preview = this.classifier.classify(file);
     if (!preview) return { state:'unsupported', reason:'file-type', document:this.publicDocument(file) };
+    // PDFs are rendered by the renderer from metadata only in this epic. Never fetch PDF bytes.
+    if (preview.kind === 'pdf') return { state:'metadata-only', kind:'pdf', document:this.publicDocument(file) };
+    // Binary image previews must be complete; never issue a Range request or return a prefix.
+    if (preview.kind === 'image' && file.size > preview.maxBytes) return { state:'too-large', kind:'image', document:this.publicDocument(file) };
     if (file.size === 0) {
       const content = preview.kind === 'image' || preview.kind === 'pdf' ? new Uint8Array() : '';
       return { state:'ready', kind:preview.kind, document:this.publicDocument(file), content, truncated:false };
     }
 
     if (signal?.aborted) return { state:'cancelled' };
-    const rangeRequested = file.size > preview.maxBytes;
+    const textKind = preview.kind !== 'image' && preview.kind !== 'pdf';
+    const rangeRequested = textKind && file.size > preview.maxBytes;
     const headers = rangeRequested ? { range:`bytes=0-${ preview.maxBytes - 1 }` } : undefined;
     const endpoint = `/v1/files/${ encodeURIComponent(id) }/preview?versionId=${ encodeURIComponent(file.currentVersionId) }`;
     let response:Response;
@@ -203,7 +211,6 @@ export class SullaFilesIpcPreviewReadService {
     const bodyAuthority = await this.authorityState(principalBefore);
     if (bodyAuthority !== 'same') return bodyAuthority === 'offline' ? { state:'offline' } : { state:'unavailable', reason:'authority-changed' };
 
-    const textKind = preview.kind !== 'image' && preview.kind !== 'pdf';
     if (textKind) {
       const text = this.decodeText(bounded.bytes, bounded.truncated);
       if (text === undefined || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return { state:'unsupported', reason:'binary-text', document:this.publicDocument(file) };
@@ -211,6 +218,16 @@ export class SullaFilesIpcPreviewReadService {
     }
 
     return { state:'ready', kind:preview.kind, document:this.publicDocument(file), content:bounded.bytes, truncated:bounded.truncated };
+  }
+
+  register(ipc:SullaFilesIpcRegistrar):void {
+    ipc.handle('sulla-files:preview-read', async (event, input:unknown) => {
+      if (!isAgentWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted preview-read sender');
+      if (!input || typeof input !== 'object' || Object.keys(input).length !== 1 || typeof (input as { fileId?:unknown }).fileId !== 'string') throw new Error('Invalid preview-read input');
+      const fileId = (input as { fileId:string }).fileId;
+      if (fileId.length > 200) throw new Error('Invalid preview-read input');
+      return this.read(fileId);
+    });
   }
 
   private normalize(value:unknown, requestedId:string):NormalizedFile | undefined {

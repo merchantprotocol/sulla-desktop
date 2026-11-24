@@ -11,6 +11,7 @@ import { SullaFilesIpcNativeSourceHandlers } from './SullaFilesIpcNativeSourceHa
 import { SullaFilesIpcOpenedCopyService } from './SullaFilesIpcOpenedCopyService';
 import { SullaFilesIpcOperationHandlers } from './SullaFilesIpcOperationHandlers';
 import { SullaFilesIpcPreviewService } from './SullaFilesIpcPreviewService';
+import { SullaFilesIpcPreviewReadService } from './SullaFilesIpcPreviewReadService';
 import { SullaFilesIpcOriginalRevealService } from './SullaFilesIpcOriginalRevealService';
 import { SullaFilesIpcReferenceHandlers } from './SullaFilesIpcReferenceHandlers';
 import { SullaFilesIpcSettingsHandlers } from './SullaFilesIpcSettingsHandlers';
@@ -57,6 +58,7 @@ export class SullaFilesIpcProvider {
     const upload = new SullaFilesIpcUploadService(client);
     const media = new SullaFilesIpcMediaService(protocol, client);
     const preview = new SullaFilesIpcPreviewService(protocol, api);
+    const previewRead = new SullaFilesIpcPreviewReadService(api);
     this.deps.registerUseCaseSuggestions(watcher);
     void services.fileProvider().start();
     desktop.onceWillQuit(() => { void services.fileProvider().stop() });
@@ -81,6 +83,7 @@ export class SullaFilesIpcProvider {
 
     browse.register(ipc);
     preview.register(ipc);
+    previewRead.register(ipc);
     new SullaFilesIpcLiveHandlers(api).register(rawIpc);
     operations.register(ipc);
     sharing.register(ipc);
