@@ -119,6 +119,7 @@ export class AgentItemWriter {
       const integrationId = String(input.integrationId ?? '').trim();
       const accountId = String(input.accountId ?? 'default').trim();
       const property = String(input.property ?? '').trim();
+      if (integrationId === 'clerk') throw new LocalVaultError('policy_denied', 403, 'Clerk credentials can only be changed in Desktop Integrations.');
       if (![integrationId, accountId, property].every(value => /^[A-Za-z0-9._-]{1,128}$/.test(value))) {
         throw new LocalVaultError('invalid_operation', 400, 'Credential reference is invalid');
       }

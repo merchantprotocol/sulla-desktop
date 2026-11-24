@@ -33,6 +33,18 @@ export class BrokerAuditRecorder {
     });
   }
 
+  /** Successful Clerk credential use records only the responsible actors, item, operation and API origin. */
+  auditClerkUse(input: BrokerExecuteRequest, item: ItemRow): void {
+    this.host.outboundAudit.record({
+      actorUserId: input.claims.sub,
+      agentId: input.claims.agent_id,
+      itemId: item.id,
+      operation: input.operation,
+      destination: new URL(input.url).origin,
+      blocked: false,
+    });
+  }
+
   async auditBrokerDenial(input: BrokerExecuteRequest, reason: string): Promise<void> {
     let destination: string | undefined;
     try {
