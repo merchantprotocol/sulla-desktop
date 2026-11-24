@@ -105,9 +105,20 @@ describe('supporting report citation formats', () => {
     expect(await resolver.file(folderSource)).toEqual({ fileId: 'pm', path: report, collectionId: 'files' });
   });
 
-  it('keeps origin-only matching when the title is not a plain file name', async() => {
-    const resolver = files({ a: [{ id: 'pm', path: report }], b: [{ id: 'folder-file', path: 'Projects/ripplecore-performance-audit' }] });
-    expect(await resolver.file({ ...folderSource, title: 'Audit / postmortem' })).toEqual({ fileId: 'folder-file', path: 'Projects/ripplecore-performance-audit', collectionId: 'b' });
+  it('refuses an origin that is a file in one collection and a folder in another, whatever the title', async() => {
+    const folder = 'Projects/ripplecore-performance-audit';
+    const resolver = files({ a: [{ id: 'pm', path: report }], b: [{ id: 'folder-file', path: folder }] });
+    for (const title of ['', 'a/b', '.', '..', report, '/Users/x', 'file:///x', 'javascript:x', 'missing.md']) {
+      await expect(resolver.file({ ...folderSource, title }), title).rejects.toThrow('More than one');
+    }
+    const deletedChild = files({ a: [{ id: 'pm', path: report, deleted_at: '2026-11-01' }], b: [{ id: 'folder-file', path: folder }] });
+    expect(await deletedChild.file({ ...folderSource, title: 'a/b' })).toEqual({ fileId: 'folder-file', path: folder, collectionId: 'b' });
+    expect(f.openTab).not.toHaveBeenCalled();
+  });
+
+  it('still opens an old full-path citation with a prose title containing a slash when no folder clashes', async() => {
+    const resolver = files({ a: [{ id: 'pm', path: report }], b: [{ id: 'other', path: 'Projects/ripplecore-performance-audit-old/notes.md' }] });
+    expect(await resolver.file({ ...folderSource, origin: report, title: 'Admin speed / postmortem' })).toEqual({ fileId: 'pm', path: report, collectionId: 'a' });
   });
 
   it('opens a sulla-file link by id, and falls back to the path rules when the id is missing or deleted', async() => {
