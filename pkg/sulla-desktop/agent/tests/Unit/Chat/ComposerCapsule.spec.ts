@@ -308,22 +308,37 @@ describe('Capsule chat composer', () => {
     expect(controller.isRunning.value).toBe(false);
   });
 
-  it('keeps the RunControls stop and continue actions separate from the capsule send control', async() => {
-    // risk: execution control — Stop appears during a run; Continue is reserved for a limit pause and resumes that run.
+  it('turns the Send button into Stop during a run and into Continue only for a limit pause', async() => {
+    // risk: execution control — Stop lives in the Send button; Continue resumes a limit-paused run on click only.
     controller.send('local run');
     await flushPromises();
-    expect(capsule().get('.run-controls .stop').exists()).toBe(true);
-    await capsule().get('.run-controls .stop').trigger('click');
+    expect(capsule().find('.run-controls').exists()).toBe(false);
+    const stop = capsule().get('.composer-send');
+    expect(stop.attributes('aria-label')).toBe('Stop');
+    await stop.trigger('click');
     await flushPromises();
     expect(controller.isRunning.value).toBe(false);
-    expect(capsule().find('.run-controls .continue').exists()).toBe(false);
+    expect(capsule().get('.composer-send').attributes('aria-label')).toBe('Send message');
 
     controller.send('start a second fixture run');
     await flushPromises();
     controller.transitionRun({ type: 'hitLimit' });
     await flushPromises();
-    expect(capsule().get('.run-controls .continue').exists()).toBe(true);
-    await capsule().get('.run-controls .continue').trigger('click');
+    expect(controller.isRunning.value).toBe(false);
+    expect(capsule().get('.composer-send').attributes('aria-label')).toBe('Continue');
+
+    const enter = keydown({ key: 'Enter' });
+    await flushPromises();
+    expect(enter.defaultPrevented).toBe(true);
+    expect(controller.isRunning.value).toBe(false);
+    expect(controller.runState.value.phase).toBe('paused');
+
+    await capsule().get('textarea.input').setValue('a new question');
+    expect(capsule().get('.composer-send').attributes('aria-label')).toBe('Send message');
+    await capsule().get('textarea.input').setValue('');
+    expect(capsule().get('.composer-send').attributes('aria-label')).toBe('Continue');
+
+    await capsule().get('.composer-send').trigger('click');
     await flushPromises();
     expect(controller.isRunning.value).toBe(true);
   });

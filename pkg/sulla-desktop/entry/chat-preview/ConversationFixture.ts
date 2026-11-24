@@ -6,6 +6,7 @@ import { LocalStoragePersister } from '@pkg/pages/chat/services/LocalStoragePers
 import { asMessageId, asThreadId } from '@pkg/pages/chat/types/chat';
 
 export type FixtureName = 'long' | 'agent';
+type NewMessage = Message extends infer M ? M extends Message ? Omit<M, 'id' | 'createdAt'> : never : never;
 
 export class ConversationFixture {
   static readonly tabId = 'synthetic-chat-preview';
@@ -23,7 +24,7 @@ export class ConversationFixture {
       turnId,
     });
 
-    const add = (message: Omit<Message, 'id' | 'createdAt'>): void => {
+    const add = (message: NewMessage): void => {
       messages.push({ ...base(message.turnId ?? `preview-turn-${messages.length}`), ...message } as Message);
     };
 

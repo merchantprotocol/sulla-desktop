@@ -47,7 +47,7 @@
       :aria-hidden="activeReportingLevel !== 'debug'"
       :tabindex="activeReportingLevel === 'debug' ? 0 : -1"
       @click="traceDisclosure.toggleAll()"
-    >Open all payloads</button>
+    >{{ traceDisclosure.isAllOpen ? 'Close all payloads' : 'Open all payloads' }}</button>
 
     <div
       ref="reportingGroup"
