@@ -108,6 +108,8 @@ import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useResultActivity } from '../../composables/useResultActivity';
+import { ChatDecisions } from '../../composables/useChatDecisions';
+import { ApprovalTranscriptProjector } from '../../services/ApprovalTranscriptProjector';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
@@ -119,13 +121,20 @@ const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
+const decisions = ChatDecisions.useChatDecisions();
+const approvalProjector = new ApprovalTranscriptProjector();
 const traceProjection = new DetailedTraceProjection();
 const citationProjection = new ReplyCitationProjection();
 const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
 const { activity: resultActivity } = useResultActivity();
 const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
-const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel, item => !!resultActivity(item).decision));
+const transcriptMessages = computed(() => approvalProjector.project(
+  controller.messages.value,
+  decisions.decisions.value,
+  controller.thread.value.backendThreadId ?? controller.thread.value.id,
+));
+const transcriptEntries = computed(() => reporting.standardEntries(transcriptMessages.value, props.reportingLevel, item => !!resultActivity(item).decision));
 const replyCitations = computed(() => citationProjection.project(transcriptEntries.value));
 const traceTurnsByAnchor = computed(() => props.reportingLevel === 'debug'
   ? traceProjection.byAnchor(traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows }))

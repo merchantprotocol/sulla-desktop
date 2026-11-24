@@ -148,6 +148,7 @@ export interface ToolApprovalMessage extends MessageBase {
   approvalId?:      string;
   /** Optional origin tag — tool / workflow / vault / function / etc. */
   origin?:          { kind: string; [field: string]: unknown };
+  requestedBy?:     { agentId: string; label?: string };
 }
 
 // ─── Tool question (multiple choice) ──────────────────────────────

@@ -508,7 +508,10 @@ const hasArtifact      = computed(() => controller.artifacts.value.list.length >
 // LRU-evicted after 20 tabs, so a conversation reopened from History (its
 // transcript hydrated from the thread store / DB) would otherwise be hidden
 // behind the empty "new chat" landing.
-const hasTranscript = computed(() => adapter.hasSentMessage.value || controller.thread.value.messages.length > 0);
+const hasTranscript = computed(() => adapter.hasSentMessage.value || controller.thread.value.messages.length > 0 ||
+  chatDecisionStore.decisions.value.some(record => record.kind === 'approval' && record.payload?.filesPublishRequestId &&
+    ['pending', 'deferred'].includes(record.status) &&
+    (record.conversationId === subAgentParentThreadId.value || record.relatedConversationIds?.includes(subAgentParentThreadId.value ?? '') === true)));
 const artifactExpanded = ref(false);
 
 function onArtifactExpand(ev: Event): void {

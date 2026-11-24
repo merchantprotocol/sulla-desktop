@@ -120,10 +120,7 @@ export class DecisionService {
   }
 
   private async reconcileExpired(): Promise<void> {
-    await postgresClient.query(`UPDATE human_decisions SET status = 'expired',
-      record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
-      WHERE status IN ('pending', 'deferred') AND NOT (record->>'kind'='question' AND COALESCE(record#>>'{payload,answerRoute}','')='inbox')
-        AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)`, [this.session, Date.now()]);
+    for (const record of await this.pendingDecisions.expireOpenDecisions(this.session, Date.now())) this.changed(record);
   }
 
   async pendingAnswerTargets(locallyOwnedThreads: string[] = []) {
@@ -157,6 +154,22 @@ export class DecisionService {
         const updated = await this.pendingDecisions.findById(record.id);
         if (updated) this.changed(updated);
         return receipt;
+      }
+      // A Files publish approval has no blocked tool waiting on it, so it stays decidable after an app restart.
+      if (record?.kind === 'approval' && record.payload?.filesPublishRequestId && record.conversationId === response.conversationId && ['pending', 'deferred'].includes(record.status)) {
+        if (!['approved', 'denied', 'deferred'].includes(response.action)) throw new Error('Choose approve or deny');
+        if (Date.now() >= record.expiresAt) {
+          await this.reconcileExpired();
+          return { settled: false, reason: 'This request expired. Ask for a fresh request in the original conversation.' };
+        }
+        const next: DecisionRecord = {
+          ...record,
+          status: response.action,
+          ...(response.action !== 'deferred' ? { attention: 'answered' } : {}),
+        };
+        if (!await this.decisions.settle(response.id, response.action, next)) return { settled: false, reason: 'Request is no longer pending.' };
+        this.changed(next);
+        return { settled: true, conversationId: next.conversationId };
       }
       return { settled: false, reason: 'Request is no longer waiting.' };
     }
