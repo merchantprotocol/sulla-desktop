@@ -28,6 +28,17 @@ describe('primary color value safety and accessible palette', () => {
     expect(primaryColorContrast('#fff', '#000')).toBeNull();
   });
 
+  // risk: accessibility — arbitrary light/dark custom hues must remain readable when used as accent text.
+  it('derives a mode-aware text accent with readable contrast on the theme surface', () => {
+    for (const color of ['#ffffff', '#000000', '#ffff00', '#777777', '#2b7694', '#6b57c9']) {
+      const light = primaryColorPalette(color, 'light')!;
+      const dark = primaryColorPalette(color, 'dark')!;
+
+      expect(primaryColorContrast(light.textAccent, '#ffffff')).toBeGreaterThanOrEqual(4.5);
+      expect(primaryColorContrast(dark.textAccent, '#2e3440')).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   // risk: accessibility — dark-mode fills stay distinct from dark surfaces and select readable text for both states.
   it('derives dark-mode fills and Studio aliases from the selected hue', () => {
     for (const color of ['#000000', '#2b7694', '#6b57c9', '#ffffff']) {
@@ -43,5 +54,8 @@ describe('primary color value safety and accessible palette', () => {
     expect(vars['--mk-accent']).toBe(primaryColorPalette('#6b57c9', 'dark')?.primary);
     expect(vars['--mk-on-accent']).toBe(primaryColorPalette('#6b57c9', 'dark')?.onPrimary);
     expect(vars['--nx-accent']).toBe(primaryColorPalette('#6b57c9', 'dark')?.primary);
+    expect(vars['--primary-color-override']).toBe(primaryColorPalette('#6b57c9', 'dark')?.primary);
+    expect(vars['--primary-color-text-override']).toBe(primaryColorPalette('#6b57c9', 'dark')?.textAccent);
+    expect(vars['--primary-color-surface-override']).toContain('var(--bg-surface');
   });
 });

@@ -24,7 +24,7 @@
   --text-primary: #ffffff;
   --text-secondary: #94a3b8;
   --text-muted: #cbd5e1;
-  --text-link: #38bdf8;
+  --text-link: var(--accent-primary);
   --text-on-accent: #ffffff;
   --text-success: #4ade80;
   --text-error: #f87171;
@@ -56,8 +56,8 @@
   --border-error: rgba(248, 113, 113, 0.4);
   --border-warning: rgba(251, 191, 36, 0.4);
   --border-info: rgba(56, 189, 248, 0.4);
-  --border-accent: rgba(56, 189, 248, 0.5);
-  --border-focus: rgba(56, 189, 248, 0.5);
+  --border-accent: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  --border-focus: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Status */
   --status-success: #4ade80;
@@ -67,7 +67,7 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
-  --ring-color: rgba(56, 189, 248, 0.5);
+  --ring-color: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Editor */
   --editor-bg: #1e1e2e;
@@ -118,10 +118,10 @@
   /* Nav */
   --nav-width: 230px;
   --nav-bg: #0f172a;
-  --nav-active: rgba(56, 189, 248, 0.15);
+  --nav-active: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --nav-border: rgba(255, 255, 255, 0.1);
   --nav-hover: #334155;
-  --nav-expander-hover: rgba(56, 189, 248, 0.08);
+  --nav-expander-hover: color-mix(in srgb, var(--accent-primary) 8%, transparent);
   --nav-border-size: 1px;
 
   /* Disabled */
@@ -141,8 +141,8 @@
   --topmost-light-hover: rgba(255, 255, 255, 0.1);
 
   /* Accent Button */
-  --accent-btn: rgba(56, 189, 248, 0.15);
-  --accent-btn-hover: #38bdf8;
+  --accent-btn: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  --accent-btn-hover: var(--accent-primary);
   --accent-btn-hover-text: #0f172a;
 
   /* Modal */
@@ -158,7 +158,7 @@
   --checkbox-disabled-bg: #334155;
   --checkbox-tick-locked: #0f172a;
   --checkbox-locked-bg: #94a3b8;
-  --checkbox-ticked-bg: #38bdf8;
+  --checkbox-ticked-bg: var(--accent-primary);
   --checkbox-locked-border: #94a3b8;
   --checkbox-locked-shadow: #94a3b8;
 
@@ -166,11 +166,11 @@
   --dropdown-bg: #475569;
   --dropdown-border: #94a3b8;
   --dropdown-divider: #94a3b8;
-  --dropdown-text: #38bdf8;
+  --dropdown-text: var(--accent-primary);
   --dropdown-active-text: #ffffff;
-  --dropdown-active-bg: #0ea5e9;
+  --dropdown-active-bg: var(--accent-primary-hover);
   --dropdown-hover-text: #ffffff;
-  --dropdown-hover-bg: #38bdf8;
+  --dropdown-hover-bg: var(--accent-primary);
   --dropdown-disabled-bg: #334155;
   --dropdown-disabled-text: #94a3b8;
   --dropdown-locked-text: #ffffff;
@@ -208,7 +208,7 @@
   --sortable-table-accent-alt: #334155;
   --sortable-table-top-divider: var(--border);
   --sortable-table-hover-bg: #0f172a;
-  --sortable-table-selected-bg: rgba(56, 189, 248, 0.15);
+  --sortable-table-selected-bg: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --sortable-table-group-label: #cbd5e1;
 
   /* Tag */
@@ -278,7 +278,7 @@
   --simple-box-shadow: rgba(0, 0, 0, 0.15);
 
   /* Terminal (additional) */
-  --terminal-selection: #38bdf8;
+  --terminal-selection: var(--accent-primary);
 
   /* Logs */
   --logs-bg: var(--wm-body-bg);

@@ -11,7 +11,7 @@
 /*  hairlines, accents/glow, indicator chrome, shadow, and statuses.   */
 /* ------------------------------------------------------------------ */
 .theme-noir-dark {
-  /* Primary button: white on #2c7391 = 5.3:1, hover #245f78 = 7.0:1 (WCAG AA) */
+  /* Primary button: white on var(--primary-btn-bg) = 5.3:1, hover var(--primary-btn-hover-bg) = 7.0:1 (WCAG AA) */
   --primary-btn-bg: #2c7391;
   --primary-btn-hover-bg: #245f78;
   --primary-btn-text: #ffffff;
@@ -27,11 +27,11 @@
   --nx-read-5: #484f5a;
   --nx-hair: rgba(168, 192, 220, 0.08);
   --nx-hair-strong: rgba(168, 192, 220, 0.16);
-  --nx-accent: #5096b3;
-  --nx-accent-2: #6ab0cc;
-  --nx-glow: rgba(80, 150, 179, 0.4);
+  --nx-accent: var(--accent-primary);
+  --nx-accent-2: var(--accent-primary-hover);
+  --nx-glow: color-mix(in srgb, var(--accent-primary) 40%, transparent);
   --nx-indicator-bg: #070d1a;
-  --nx-indicator-edge: rgba(80, 150, 179, 0.45);
+  --nx-indicator-edge: color-mix(in srgb, var(--accent-primary) 45%, transparent);
   --nx-shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   --nx-success: #3fb950;
   --nx-warning: #e3b341;
@@ -67,7 +67,7 @@
   --text-secondary: #dee4ec;     /* Level 800 — body text */
   --text-muted: #a9b3c1;         /* Level 700 — captions, labels */
   --text-dim: #7a8291;           /* Level 600 — disabled, tertiary */
-  --text-link: #5096b3;
+  --text-link: var(--accent-primary);
   --text-on-accent: #f3f5f8;
   --text-success: #3fb950;
   --text-error: #f85149;
@@ -93,9 +93,9 @@
   --accent-primary: #5096b3;
   --accent-primary-hover: #6ab0cc;
   --accent: var(--accent-primary);
-  --accent-hover: rgba(80, 150, 179, 0.08);
-  --accent-dim: rgba(80, 150, 179, 0.12);
-  --accent-border: rgba(80, 150, 179, 0.45);
+  --accent-hover: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  --accent-dim: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  --accent-border: color-mix(in srgb, var(--accent-primary) 45%, transparent);
   --text-accent: #8cacc9;
 
   /* Semantic Borders */
@@ -103,13 +103,13 @@
   --border-error: rgba(248, 81, 73, 0.4);
   --border-warning: rgba(227, 179, 65, 0.4);
   --border-info: rgba(140, 172, 201, 0.4);
-  --border-accent: rgba(80, 150, 179, 0.5);
-  --border-focus: rgba(80, 150, 179, 0.5);
+  --border-accent: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  --border-focus: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Glow system */
-  --brand-glow: rgba(80, 150, 179, 0.4);
-  --brand-glow-soft: rgba(80, 150, 179, 0.15);
-  --brand-glow-strong: rgba(80, 150, 179, 0.6);
+  --brand-glow: color-mix(in srgb, var(--accent-primary) 40%, transparent);
+  --brand-glow-soft: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  --brand-glow-strong: color-mix(in srgb, var(--accent-primary) 60%, transparent);
 
   /* Status */
   --status-success: #3fb950;
@@ -121,7 +121,7 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
   --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  --ring-color: rgba(80, 150, 179, 0.5);
+  --ring-color: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Editor */
   --editor-bg: #01030a;
@@ -133,8 +133,8 @@
   /* Terminal */
   --terminal-bg: #01030a;
   --terminal-fg: #f3f5f8;
-  --terminal-cursor: #5096b3;
-  --terminal-selection-bg: rgba(80, 150, 179, 0.3);
+  --terminal-cursor: var(--accent-primary);
+  --terminal-selection-bg: color-mix(in srgb, var(--accent-primary) 30%, transparent);
   --terminal-selection-fg: #f3f5f8;
 
   /* Terminal traffic light dots */
@@ -143,7 +143,7 @@
   --terminal-dot-green: #3fb950;
 
   /* Scrollbar */
-  --scrollbar-thumb: #5096b3;
+  --scrollbar-thumb: var(--accent-primary);
   --scrollbar-track: #01030a;
 
   /* Default Colors */
@@ -180,10 +180,10 @@
   /* Nav */
   --nav-width: 230px;
   --nav-bg: #01030a;
-  --nav-active: rgba(80, 150, 179, 0.15);
+  --nav-active: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --nav-border: rgba(168, 192, 220, 0.08);
   --nav-hover: #070d1a;
-  --nav-expander-hover: rgba(80, 150, 179, 0.08);
+  --nav-expander-hover: color-mix(in srgb, var(--accent-primary) 8%, transparent);
   --nav-border-size: 1px;
 
   /* Disabled */
@@ -203,8 +203,8 @@
   --topmost-light-hover: rgba(168, 192, 220, 0.08);
 
   /* Accent Button */
-  --accent-btn: rgba(80, 150, 179, 0.15);
-  --accent-btn-hover: #5096b3;
+  --accent-btn: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  --accent-btn-hover: var(--accent-primary);
   --accent-btn-hover-text: #f3f5f8;
 
   /* Modal */
@@ -220,7 +220,7 @@
   --checkbox-disabled-bg: #484f5a;
   --checkbox-tick-locked: #01030a;
   --checkbox-locked-bg: #dee4ec;
-  --checkbox-ticked-bg: #5096b3;
+  --checkbox-ticked-bg: var(--accent-primary);
   --checkbox-locked-border: #dee4ec;
   --checkbox-locked-shadow: #dee4ec;
 
@@ -228,11 +228,11 @@
   --dropdown-bg: rgba(168, 192, 220, 0.08);
   --dropdown-border: #a9b3c1;
   --dropdown-divider: #a9b3c1;
-  --dropdown-text: #5096b3;
+  --dropdown-text: var(--accent-primary);
   --dropdown-active-text: #f3f5f8;
-  --dropdown-active-bg: #5096b3;
+  --dropdown-active-bg: var(--accent-primary);
   --dropdown-hover-text: #f3f5f8;
-  --dropdown-hover-bg: #5096b3;
+  --dropdown-hover-bg: var(--accent-primary);
   --dropdown-disabled-bg: #484f5a;
   --dropdown-disabled-text: #a9b3c1;
   --dropdown-locked-text: #f3f5f8;
@@ -270,7 +270,7 @@
   --sortable-table-accent-alt: #070d1a;
   --sortable-table-top-divider: var(--border);
   --sortable-table-hover-bg: #01030a;
-  --sortable-table-selected-bg: rgba(80, 150, 179, 0.15);
+  --sortable-table-selected-bg: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --sortable-table-group-label: #dee4ec;
 
   /* Tag */
@@ -340,7 +340,7 @@
   --simple-box-shadow: rgba(0, 0, 0, 0.15);
 
   /* Terminal (additional) */
-  --terminal-selection: #5096b3;
+  --terminal-selection: var(--accent-primary);
 
   /* Logs */
   --logs-bg: var(--wm-body-bg);
@@ -424,7 +424,7 @@
 }
 
 .theme-noir-dark ::selection {
-  background: rgba(80, 150, 179, 0.3);
+  background: color-mix(in srgb, var(--accent-primary) 30%, transparent);
   color: #f3f5f8;
 }
 
@@ -440,12 +440,12 @@
 }
 
 .theme-noir-dark ::-webkit-scrollbar-thumb {
-  background: #5096b3;
+  background: var(--accent-primary);
   border-radius: 3px;
 }
 
 .theme-noir-dark ::-webkit-scrollbar-thumb:hover {
-  background: #5096b3;
+  background: var(--accent-primary);
 }
 
 /* ── Title bar: draggable region for macOS hiddenInset ── */
@@ -486,7 +486,7 @@
 .theme-noir-dark [class*="from-sky-300"],
 .theme-noir-dark [class*="from-blue-400"] {
   background-image: none !important;
-  background: linear-gradient(to right, transparent, #5096b3, transparent) !important;
+  background: linear-gradient(to right, transparent, var(--accent-primary), transparent) !important;
   opacity: 0.7;
 }
 
@@ -500,7 +500,7 @@
 
 .theme-noir-dark .bg-surface.ring-1.ring-edge:focus-within {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 15px rgba(80, 150, 179, 0.2), 0 0 30px rgba(80, 150, 179, 0.1);
+  box-shadow: 0 0 15px color-mix(in srgb, var(--accent-primary) 20%, transparent), 0 0 30px color-mix(in srgb, var(--accent-primary) 10%, transparent);
 }
 
 /* Textarea: monospace terminal font, white text, bright glowing cursor */
@@ -518,20 +518,20 @@
 
 /* Send button: steel blue */
 .theme-noir-dark .bg-content.text-page {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
   color: #f3f5f8 !important;
   transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
 }
 
 .theme-noir-dark .bg-content.text-page:hover {
-  background: #5096b3 !important;
-  box-shadow: 0 0 15px rgba(80, 150, 179, 0.4);
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 15px color-mix(in srgb, var(--accent-primary) 40%, transparent);
   transform: translateY(-1px);
 }
 
 /* ── User message bubbles: blue tinted with white text ── */
 .theme-noir-dark .bg-surface-alt.ring-1.ring-edge-subtle {
-  background: rgba(80, 150, 179, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
   border: 1px solid var(--brand-glow-soft) !important;
   border-radius: 10px !important;
   box-shadow: none !important;
@@ -567,19 +567,19 @@
 }
 
 .theme-noir-dark .prose a {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
   text-decoration: none;
   transition: color 0.3s, text-shadow 0.3s;
 }
 
 .theme-noir-dark .prose a:hover {
   color: #f3f5f8 !important;
-  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 .theme-noir-dark .prose code {
-  background: rgba(80, 150, 179, 0.08);
-  color: #6ab0cc;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  color: var(--accent-primary-hover);
   border: 1px solid var(--border-default);
   border-radius: 4px;
   padding: 0.2rem 0.5rem;
@@ -615,7 +615,7 @@
   padding: 1.5rem 0 1.5rem 1.5rem;
   font-style: italic;
   color: #dee4ec;
-  box-shadow: -4px 0 20px rgba(80, 150, 179, 0.15);
+  box-shadow: -4px 0 20px color-mix(in srgb, var(--accent-primary) 15%, transparent);
 }
 
 .theme-noir-dark .prose hr {
@@ -624,7 +624,7 @@
 
 .theme-noir-dark .prose table th {
   background: #03060c;
-  color: #5096b3;
+  color: var(--accent-primary);
   text-transform: uppercase;
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
@@ -694,20 +694,20 @@
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: rgba(80, 150, 179, 0.12);
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   border: 1px solid var(--brand-glow-soft);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #5096b3;
+  color: var(--accent-primary);
   font-family: var(--font-mono);
   font-size: var(--fs-body);
   font-weight: 700;
 }
 
 .theme-noir-dark .sulla-name {
-  color: #5096b3;
+  color: var(--accent-primary);
   font-family: var(--font-mono);
   font-size: var(--fs-body-sm);
   font-weight: 600;
@@ -723,11 +723,11 @@
 }
 
 .theme-noir-dark .tool-card-cc-header:hover {
-  background: rgba(80, 150, 179, 0.08);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 }
 
 .theme-noir-dark .tool-card-cc-name {
-  color: #5096b3;
+  color: var(--accent-primary);
 }
 
 /* IN label + command text: terminal green */
@@ -764,37 +764,37 @@
 
 .theme-noir-dark [class*="bg-indigo-50"],
 .theme-noir-dark [class*="bg-indigo-950"] {
-  background: rgba(80, 150, 179, 0.04) !important;
+  background: color-mix(in srgb, var(--accent-primary) 4%, transparent) !important;
 }
 
 .theme-noir-dark [class*="bg-indigo-100"],
 .theme-noir-dark [class*="bg-indigo-900"] {
-  background: rgba(80, 150, 179, 0.12) !important;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent) !important;
 }
 
 .theme-noir-dark [class*="text-indigo-700"],
 .theme-noir-dark [class*="text-indigo-300"] {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* ── "Primary" badge on model selector ── */
 .theme-noir-dark .bg-sky-100,
 .theme-noir-dark [class*="bg-sky-100"] {
-  background: rgba(80, 150, 179, 0.12) !important;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent) !important;
 }
 
 .theme-noir-dark [class*="bg-sky-900"] {
-  background: rgba(80, 150, 179, 0.15) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
 }
 
 .theme-noir-dark .text-sky-700,
 .theme-noir-dark [class*="text-sky-700"] {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
 }
 
 .theme-noir-dark .text-sky-400,
 .theme-noir-dark [class*="text-sky-400"] {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* ── Composer bottom bar: edge-to-edge terminal input ── */
@@ -837,13 +837,13 @@
 
 /* ── Continue button ── */
 .theme-noir-dark .bg-content.text-page.shadow-sm {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
   color: #f3f5f8 !important;
 }
 
 .theme-noir-dark .bg-content.text-page.shadow-sm:hover {
-  background: #5096b3 !important;
-  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 /* ── Links ── */
@@ -852,7 +852,7 @@
 }
 
 .theme-noir-dark a:not([class]):hover {
-  text-shadow: 0 0 10px rgba(80, 150, 179, 0.3);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 /* ── Stroke colors: replace slate with muted gray ── */
@@ -873,7 +873,7 @@
 .theme-noir-dark .agent-model-selector-menu {
   background: #01030a;
   border-color: var(--border-default);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(80, 150, 179, 0.05);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px color-mix(in srgb, var(--accent-primary) 5%, transparent);
 }
 
 /* ── Audio player ── */
@@ -895,13 +895,13 @@
 
 /* "Add Event" button: steel blue instead of indigo */
 .theme-noir-dark .bg-indigo-600 {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
 }
 
 .theme-noir-dark .bg-indigo-600:hover,
 .theme-noir-dark .hover\:bg-indigo-700:hover {
-  background: #5096b3 !important;
-  box-shadow: 0 0 12px rgba(80, 150, 179, 0.3);
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-primary) 30%, transparent);
 }
 
 /* Focus rings: steel blue instead of indigo */
@@ -910,7 +910,7 @@
 }
 
 .theme-noir-dark .focus\:ring-indigo-500:focus {
-  --tw-ring-color: rgba(80, 150, 179, 0.4) !important;
+  --tw-ring-color: color-mix(in srgb, var(--accent-primary) 40%, transparent) !important;
 }
 
 /* ── Modals: terminal aesthetic ── */
@@ -996,7 +996,7 @@
 
 .theme-noir-dark .fixed.inset-0.z-50 h2 {
   font-family: var(--font-mono);
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
   letter-spacing: 0.05em;
 }
 
@@ -1005,14 +1005,14 @@
   background: #01030a !important;
   border: 1px solid var(--border-default) !important;
   border-radius: 12px !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(80, 150, 179, 0.05) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 20px color-mix(in srgb, var(--accent-primary) 5%, transparent) !important;
 }
 
 /* ── ScheduleX CSS variable overrides: kill purple, use steel blue ── */
 .theme-noir-dark .sx__calendar-wrapper {
-  --sx-color-primary: #5096b3 !important;
+  --sx-color-primary: var(--accent-primary) !important;
   --sx-color-on-primary: #f3f5f8 !important;
-  --sx-color-primary-container: rgba(80, 150, 179, 0.15) !important;
+  --sx-color-primary-container: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
   --sx-color-on-primary-container: #f3f5f8 !important;
   --sx-color-secondary: #a9b3c1 !important;
   --sx-color-on-secondary: #f3f5f8 !important;
@@ -1029,7 +1029,7 @@
   --sx-color-on-background: #f3f5f8 !important;
   --sx-color-outline: var(--border-default) !important;
   --sx-color-outline-variant: var(--border-subtle) !important;
-  --sx-color-surface-tint: #5096b3 !important;
+  --sx-color-surface-tint: var(--accent-primary) !important;
   --sx-color-neutral: #a9b3c1 !important;
   --sx-color-neutral-variant: #7a8291 !important;
   --sx-internal-color-text: #f3f5f8 !important;
@@ -1061,7 +1061,7 @@
 
 .theme-noir-dark .sx__calendar-header button:hover {
   color: #f3f5f8 !important;
-  background: rgba(80, 150, 179, 0.08) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
 }
 
 .theme-noir-dark .sx__calendar-header .sx__date-input {
@@ -1085,7 +1085,7 @@
 }
 
 .theme-noir-dark .sx__month-grid-day__header-date--is-today {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
   color: #f3f5f8 !important;
 }
 
@@ -1097,7 +1097,7 @@
 
 /* Events in calendar */
 .theme-noir-dark .sx__event {
-  background: rgba(80, 150, 179, 0.15) !important;
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent) !important;
   border-left: 3px solid var(--accent-primary) !important;
   color: #f3f5f8 !important;
   font-family: var(--font-mono) !important;
@@ -1105,7 +1105,7 @@
 }
 
 .theme-noir-dark .sx__event:hover {
-  background: rgba(80, 150, 179, 0.25) !important;
+  background: color-mix(in srgb, var(--accent-primary) 25%, transparent) !important;
 }
 
 /* View switcher tabs */
@@ -1116,18 +1116,18 @@
 
 .theme-noir-dark .sx__view-selection button.sx__view-selection-item--is-selected,
 .theme-noir-dark .sx__view-selection button:hover {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* Today button */
 .theme-noir-dark .sx__today-button {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
   border-color: var(--border-default) !important;
   font-family: var(--font-mono) !important;
 }
 
 .theme-noir-dark .sx__today-button:hover {
-  background: rgba(80, 150, 179, 0.08) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
 }
 
 /* Forward/back navigation arrows */
@@ -1151,14 +1151,14 @@
 }
 
 .theme-noir-dark .sx__month-agenda-event {
-  background: rgba(80, 150, 179, 0.08) !important;
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent) !important;
   border-color: var(--border-default) !important;
   color: #f3f5f8 !important;
 }
 
 /* Current time indicator */
 .theme-noir-dark .sx__current-time-indicator {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
 }
 
 /* Date picker inputs: match terminal */
@@ -1179,7 +1179,7 @@
 /* Hero title gradient: steel blue instead of indigo */
 .theme-noir-dark .from-indigo-200.via-sky-400.to-indigo-200,
 .theme-noir-dark [class*="from-indigo-200"] {
-  background-image: linear-gradient(to right, #5096b3, #a8c0dc, #5096b3) !important;
+  background-image: linear-gradient(to right, var(--accent-primary), #a8c0dc, var(--accent-primary)) !important;
 }
 
 /* Search input */
@@ -1214,11 +1214,11 @@
 
 /* Active category: steel blue instead of sky */
 .theme-noir-dark .dark\:bg-sky-400\/10 {
-  background: rgba(80, 150, 179, 0.1) !important;
+  background: color-mix(in srgb, var(--accent-primary) 10%, transparent) !important;
 }
 
 .theme-noir-dark .dark\:text-sky-400 {
-  color: #5096b3 !important;
+  color: var(--accent-primary) !important;
 }
 
 /* Sidebar hover states */
@@ -1255,18 +1255,18 @@
 
 /* Connect/Manage buttons: steel blue */
 .theme-noir-dark .bg-blue-600 {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
 }
 
 .theme-noir-dark .bg-blue-600:hover,
 .theme-noir-dark .hover\:bg-blue-700:hover {
-  background: #5096b3 !important;
-  box-shadow: 0 0 10px rgba(80, 150, 179, 0.2);
+  background: var(--accent-primary) !important;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-primary) 20%, transparent);
 }
 
 /* Beta badge */
 .theme-noir-dark .bg-blue-500 {
-  background: #5096b3 !important;
+  background: var(--accent-primary) !important;
 }
 
 /* Coming soon badge */

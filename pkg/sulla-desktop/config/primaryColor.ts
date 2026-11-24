@@ -18,9 +18,13 @@ export const PRIMARY_COLOR_PRESETS = [
 export interface PrimaryColorPalette {
   primary: string;
   hover: string;
+  textAccent: string;
   onPrimary: '#000000' | '#ffffff';
   onHover: '#000000' | '#ffffff';
   tint: string;
+  surfaceTint: string;
+  surfaceTintStrong: string;
+  surfaceTintHover: string;
   border: string;
   ring: string;
   glow: string;
@@ -103,6 +107,24 @@ function ensureDarkSurfaceContrast(value: string): string {
   return result;
 }
 
+/** Keep link and accent text readable on a light or dark theme surface. */
+function ensureTextContrast(value: string, mode: PrimaryColorMode): string {
+  const surface = mode === 'dark' ? '#2e3440' : '#ffffff';
+  const surfaceLuminance = primaryColorLuminance(surface)!;
+  const colorLuminance = primaryColorLuminance(value)!;
+  let amount = 0;
+  let result = value;
+
+  while ((primaryColorContrast(result, surface) ?? 0) < 4.5 && amount < 1) {
+    amount = Math.min(1, amount + 0.05);
+    result = surfaceLuminance > colorLuminance
+      ? mixWithBlack(value, amount)
+      : mixWithWhite(value, amount);
+  }
+
+  return result;
+}
+
 /** Derive mode-specific fills plus tints and focus/glow colors. */
 export function primaryColorPalette(value: unknown, mode: PrimaryColorMode = 'light'): PrimaryColorPalette | null {
   const selected = sanitizePrimaryColor(value);
@@ -113,13 +135,18 @@ export function primaryColorPalette(value: unknown, mode: PrimaryColorMode = 'li
   const hover = mode === 'dark'
     ? ensureDarkSurfaceContrast(mixWithWhite(selected, 0.50))
     : mixWithBlack(primary, 0.13);
+  const textAccent = ensureTextContrast(selected, mode);
 
   return {
     primary,
     hover,
+    textAccent,
     onPrimary: readableText(primary),
     onHover: readableText(hover),
     tint: `color-mix(in srgb, ${ primary } 12%, transparent)`,
+    surfaceTint: `color-mix(in srgb, ${ primary } 10%, var(--bg-surface, #ffffff))`,
+    surfaceTintStrong: `color-mix(in srgb, ${ primary } 22%, var(--bg-surface, #ffffff))`,
+    surfaceTintHover: `color-mix(in srgb, ${ hover } 34%, var(--bg-surface, #ffffff))`,
     border: `color-mix(in srgb, ${ primary } 44%, transparent)`,
     ring: `color-mix(in srgb, ${ primary } 38%, transparent)`,
     glow: `color-mix(in srgb, ${ primary } 38%, transparent)`,
@@ -137,10 +164,17 @@ export function primaryColorCssVars(value: unknown, mode: PrimaryColorMode = 'li
   if (!palette) return {};
 
   const {
-    primary, hover, onPrimary, onHover, tint, border, ring, glow, glowSoft, glowStrong,
+    primary, hover, textAccent, onPrimary, onHover, tint, surfaceTint, surfaceTintStrong, surfaceTintHover,
+    border, ring, glow, glowSoft, glowStrong,
   } = palette;
 
   return {
+    '--primary-color-override': primary,
+    '--primary-color-hover-override': hover,
+    '--primary-color-text-override': textAccent,
+    '--primary-color-surface-override': surfaceTint,
+    '--primary-color-surface-strong-override': surfaceTintStrong,
+    '--primary-color-surface-hover-override': surfaceTintHover,
     '--accent-primary': primary,
     '--accent-primary-hover': hover,
     '--accent': primary,
@@ -156,8 +190,8 @@ export function primaryColorCssVars(value: unknown, mode: PrimaryColorMode = 'li
     '--text-on-accent-hover': onHover,
     '--on-accent': onPrimary,
     '--on-accent-hover': onHover,
-    '--text-accent': primary,
-    '--text-link': primary,
+    '--text-accent': textAccent,
+    '--text-link': textAccent,
     '--bg-accent': tint,
     '--brand-glow': glow,
     '--brand-glow-soft': glowSoft,
