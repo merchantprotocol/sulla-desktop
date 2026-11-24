@@ -617,11 +617,13 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
   top: var(--chat-header-height, 52px);
   z-index: 2;
   display: block;
-  flex: 0 0 100px;
-  width: 100px;
-  min-width: 100px;
+  box-sizing: border-box;
+  flex: 0 0 116px;
+  width: 116px;
+  min-width: 116px;
   height: 100%;
   min-height: 0;
+  padding: 16px 16px 0 0;
   color: var(--text-primary);
 }
 .worker-chart--narrow {
@@ -633,6 +635,7 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
   width: 24px;
   min-width: 24px;
   height: auto;
+  padding: 0;
   flex: none;
   pointer-events: none;
 }
@@ -649,15 +652,19 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
   flex: 1 1 auto;
   width: 100%;
   min-height: 0;
-  max-height: calc(100vh - var(--chat-header-height, 52px));
+  max-height: calc(100vh - var(--chat-header-height, 52px) - 16px);
   margin: 0;
   padding: 0;
   overflow: hidden auto;
+  direction: ltr;
   list-style: none;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
   overscroll-behavior: contain;
 }
+.worker-chart__tree::-webkit-scrollbar { width: 6px; background: transparent; }
+.worker-chart__tree::-webkit-scrollbar-track { background: transparent; }
+.worker-chart__tree::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 99px; }
 .worker-chart__rows { position: relative; display: block; flex: none; min-height: 100%; margin: 0; padding: 0; list-style: none; }
 .worker-chart__row {
   position: absolute;
