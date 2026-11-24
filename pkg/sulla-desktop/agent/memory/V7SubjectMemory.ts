@@ -61,6 +61,7 @@ export interface V7SubjectMemoryCache {
   signature: string;
   subjects: Map<string, Subject>;
   episodes: Episode[];
+  checkinIdentities: Map<string, string | null>;
   items: Item[];
   evidence: Map<string, string[]>;
   overviews: Map<string, { ts: number; text: string }[]>;
@@ -135,7 +136,7 @@ function embedder(): PotionEmbedder | null {
 
 async function signature(): Promise<string> {
   const r = await postgresClient.query<{ sig: string }>(
-    `SELECT concat_ws('|',(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.episodes),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.items),(SELECT count(*)||':'||coalesce(max(version_ts),0) FROM subject_memory.skills),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.overviews),(SELECT count(*)||':'||coalesce(max(updated_ts),0) FROM subject_memory.subjects)) sig`
+    `SELECT concat_ws('|',(SELECT count(*)||':'||coalesce(max(ts),0)||':'||count(*) FILTER (WHERE superseded_by IS NOT NULL) FROM subject_memory.episodes),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.items),(SELECT count(*)||':'||coalesce(max(version_ts),0) FROM subject_memory.skills),(SELECT count(*)||':'||coalesce(max(ts),0) FROM subject_memory.overviews),(SELECT count(*)||':'||coalesce(max(updated_ts),0) FROM subject_memory.subjects)) sig`
   );
   return r[0]?.sig || '';
 }
@@ -151,7 +152,7 @@ async function load(): Promise<Cache> {
           'SELECT slug,kind,name,parent,aliases FROM subject_memory.subjects'
         ),
         postgresClient.query<Episode>(
-          'SELECT id,ts,conversation_id AS "conversationId",source,text,keys,sentiment FROM subject_memory.episodes ORDER BY id'
+          'SELECT id,ts,conversation_id AS "conversationId",source,text,keys,sentiment FROM subject_memory.episodes WHERE superseded_by IS NULL ORDER BY id'
         ),
         postgresClient.query<Item>(
           'SELECT * FROM subject_memory.current_items()'
@@ -172,6 +173,17 @@ async function load(): Promise<Cache> {
       signature: sig,
       subjects: new Map(subjects.map((x) => [x.slug, x])),
       episodes,
+      checkinIdentities: new Map(episodes.map((episode) => [
+        episode.id,
+        CheckinIdentity.keyFor({
+          id: episode.id,
+          text: episode.text,
+          source: episode.source,
+          keys: episode.keys,
+          conversationId: episode.conversationId,
+          sentiment: episode.sentiment,
+        }),
+      ] as const)),
       items,
       evidence: new Map(),
       overviews: new Map(),
@@ -287,14 +299,7 @@ export async function recallV7SubjectMemory(
       .reduce((n, x) => n + (lexical.has(x) ? 1 : 0), 0);
   const episodes = packer.collapseCheckinGroups(
     c.episodes,
-    (episode) => CheckinIdentity.keyFor({
-      id: episode.id,
-      text: episode.text,
-      source: episode.source,
-      keys: episode.keys,
-      conversationId: episode.conversationId,
-      sentiment: episode.sentiment,
-    }),
+    (episode) => c.checkinIdentities.get(episode.id),
     sent,
   );
   const hits = episodes.entries

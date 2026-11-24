@@ -468,9 +468,8 @@ export class V7SubjectMemoryWriter {
 
         for (const row of orderedEpisodes) {
           const checkinKey = checkinKeys.get(row.id) ?? null;
-          const keys = checkinKey
-            ? subjectSelector?.select(row.keys) ?? []
-            : row.keys;
+          const primaryKeys = checkinKey ? subjectSelector?.select(row.keys) : null;
+          const keys = primaryKeys?.length ? primaryKeys : row.keys;
           const result = await client.query(
             `
             INSERT INTO subject_memory.episodes
@@ -501,7 +500,13 @@ export class V7SubjectMemoryWriter {
                WHERE checkin_key = $2
                  AND superseded_by IS NULL
                  AND id <> $1
-                 AND ts <= $3`,
+                 AND ts <= $3
+                 AND source <> 'user'
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM subject_memory.evidence ev
+                    WHERE ev.episode_id = subject_memory.episodes.id
+                 )`,
               [row.id, checkinKey, row.ts, row.ts, 'newer_checkin']
             );
           }
