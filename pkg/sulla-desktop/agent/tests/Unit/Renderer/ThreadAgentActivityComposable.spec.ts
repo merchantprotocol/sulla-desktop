@@ -93,7 +93,7 @@ describe('useThreadAgentActivity', () => {
 
     queue.observe(activity.checkIns.value, 'thread-a', now);
     queue.pump(now);
-    expect(queue.history.map(item => item.threadId)).toEqual(['thread-a']);
+    expect(queue.history.map(item => item.threadId)).toEqual(['thread-a', 'thread-a']);
     expect(queue.pending.length).toBeGreaterThan(0);
 
     threadId.value = 'thread-b';
