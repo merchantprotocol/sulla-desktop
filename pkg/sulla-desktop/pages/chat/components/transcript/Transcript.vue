@@ -22,8 +22,13 @@
           :label="todayLabel"
         />
 
+        <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
+          <TraceTurn
+            v-for="turn in traceTurns.filter(item => item.anchorEntryId === entry.id)"
+            :key="turn.id"
+            :turn="turn"
+          />
         <div
-          v-for="(entry, index) in transcriptEntries"
           :key="entry.id"
           :ref="el => jumper.register(entry.id, el)"
           class="report-entry"
@@ -39,7 +44,6 @@
           <MessageRouter
             v-if="entry.kind === 'card'"
             :msg="entry.message"
-            :latest-reply="entry.id === latestReplyId"
             :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
           />
           <div v-else class="report-activity">
@@ -47,6 +51,7 @@
 
           </div>
         </div>
+        </template>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
           <TurnWaiting
@@ -72,10 +77,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import MessageRouter from './MessageRouter.vue';
+import TraceTurn from './TraceTurn.vue';
+import { DetailedTraceProjection } from './DetailedTraceProjection';
+import { TraceDisclosureController } from './traceDisclosure';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
@@ -91,8 +99,11 @@ const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
+const traceProjection = new DetailedTraceProjection();
+const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
 const transcriptEntries = computed(() => reporting.standardEntries(controller.messages.value, props.reportingLevel));
+const traceTurns = computed(() => props.reportingLevel === 'debug' ? traceProjection.project(controller.messages.value, transcriptEntries.value) : []);
 function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
@@ -109,8 +120,6 @@ function isStandardEvidenceAfterReply(index: number): boolean {
   }
   return false;
 }
-const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
-  entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
 // Detailed activity has its own timestamps; only cards participate in

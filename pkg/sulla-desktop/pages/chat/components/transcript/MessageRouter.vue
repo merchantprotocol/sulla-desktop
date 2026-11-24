@@ -18,7 +18,7 @@
 <template>
   <InlineFileMessage v-if="msg.kind === 'inline_file_reference'" :reference="{ fileId: msg.fileId, collectionId: msg.collectionId, toolCallId: msg.toolCallId, threadId: msg.threadId }" />
   <TurnUser        v-else-if="msg.kind === 'user'"          :msg="msg" @edit="onEdit" />
-  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg" :latest="false"
+  <TurnSulla       v-else-if="msg.kind === 'sulla'"    :msg="msg"
     @regenerate="controller.regenerate(msg.id)"
     @pin="controller.togglePin(msg.id)"
   />
@@ -100,7 +100,7 @@ import ToolTask        from '../tool/ToolTask.vue';
 import type { CardMessage } from './toolGroups';
 import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 
-const props = defineProps<{ msg: CardMessage; latestReply?: boolean; streamingParagraphBreak?: boolean }>();
+const props = defineProps<{ msg: CardMessage; streamingParagraphBreak?: boolean }>();
 const streamingParagraphBreak = computed(() => props.streamingParagraphBreak ?? false);
 const controller = useChatController();
 const decisions = ChatDecisions.useChatDecisions();

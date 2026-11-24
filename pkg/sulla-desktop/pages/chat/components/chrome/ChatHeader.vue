@@ -40,6 +40,15 @@
       >{{ controller.thread.value.title }}</span>
     </div>
 
+    <button
+      class="ch-payloads"
+      :class="{ open: activeReportingLevel === 'debug' }"
+      type="button"
+      :aria-hidden="activeReportingLevel !== 'debug'"
+      :tabindex="activeReportingLevel === 'debug' ? 0 : -1"
+      @click="traceDisclosure.toggleAll()"
+    >Open all payloads</button>
+
     <div
       ref="reportingGroup"
       class="ch-reporting"
@@ -73,8 +82,10 @@ import { computed, inject, nextTick, ref, type Ref } from 'vue';
 import { useChatController } from '../../controller/useChatController';
 
 import type { ReportingLevel } from '../../models/ReportingLevel';
+import { TraceDisclosureController } from '../transcript/traceDisclosure';
 
 const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { default: 'info' });
+const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 const controller = useChatController();
 const reportingModes: Array<{ value: ReportingLevel; label: string; shortLabel: string }> = [
   { value: 'fatal', label: 'Brief', shortLabel: 'B' },
@@ -134,7 +145,7 @@ function cancelTitle(): void {
 .chat-header {
   container: chat-header / inline-size;
   position: absolute; top: 0; left: 0; right: 0; z-index: 21;
-  display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto; align-items: center;
+  display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto auto; align-items: center;
   /* Keep the previous 52px outer height and content alignment without the 1px border. */
   box-sizing: border-box; height: 52px; padding: 0 20px 1px;
   background: transparent;
@@ -164,6 +175,10 @@ function cancelTitle(): void {
 .ch-origin:hover { color: var(--accent); border-color: var(--accent); }
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-payloads {
+  justify-self: end; margin-left: 8px; padding: 4px 8px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+.ch-payloads:not(.open) { visibility: hidden; }
+.ch-payloads:hover { color: var(--text-primary); }
 .ch-reporting {
   display: flex; align-items: center; gap: 2px; min-width: 0; padding: 2px;
   justify-self: end; margin-left: 8px;

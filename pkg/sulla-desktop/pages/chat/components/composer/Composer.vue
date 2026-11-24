@@ -427,16 +427,6 @@ const useCases = useUseCaseSuggestions({
   isNarrow: () => window.matchMedia?.('(max-width: 640px)').matches ?? false,
 });
 const intentLabel = computed(() => useCases.intent.value ? useCases.directive.label(useCases.intent.value) : { verb: '', title: '' });
-const intentSendHint = computed(() => {
-  const picked = useCases.intent.value?.item;
-  if (!picked) return 'send';
-  if (picked.type === 'agent') return `send to ${ picked.title }`;
-  if (picked.type === 'skill') return 'send with skill';
-
-  return `send + run ${ picked.title }`;
-});
-/** The hint row says something beyond the placeholder: recording, a menu, a draft or a use case. */
-const contextualHints = computed(() => isRecording.value || controller.popover.value.open || !!useCases.intent.value || useCases.open.value || !!draft.value.trim());
 function pickUseCase(item: SuggestedUseCase): void {
   useCases.pick(item);
   inputRef.value?.focus();
@@ -931,12 +921,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 :global(.dark) .composer { box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07); }
 .composer.recording .glyph, .glyph { display: none; }
 .composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
-.hints { position: relative; display: flex; justify-content: center; gap: 0; min-height: 14px; margin-top: 9px; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
-.classic-guide { display: none; }
-.noir-guide { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
-.noir-guide span::before { display: none; }
-.hints kbd { margin: 0; padding: 0; border: 0; color: var(--text-muted); background: transparent; font-size: inherit; font-weight: 500; }
-.noir-guide span:not(:last-child)::after { content: " ·"; color: var(--text-dim); }
 .hidden-file-input { display: none; }
 .composer-wrap :deep(button:focus-visible), .composer-wrap :deep(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
 .composer-top .usecase-strip { margin: 0; }
