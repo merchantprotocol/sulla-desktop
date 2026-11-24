@@ -1360,6 +1360,7 @@ export interface IpcMainInvokeEvents {
 export interface IpcRendererEvents {
   'remote-chat:frame': (frame: Record<string, unknown>) => void;
   'sulla:theme-changed': (theme: string) => void;
+  'sulla:primary-color-changed': (color: string | null) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
