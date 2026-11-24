@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import crypto from 'node:crypto';
+
 import { RunActivity } from './RunActivity';
 import { runTools, type RunToolTracker } from './RunToolTracker';
 
@@ -14,9 +16,15 @@ type ActivityToucher = Pick<typeof RunActivity, 'touch'>;
  * activity (Jonathon, 2026-11-24), so the dead-run reaper, the No-progress
  * alerts and the subagent directory see a busy agent as alive even when it
  * sends no chat message. `close()` releases anything the turn left open.
+ *
+ * Provider call ids are not unique across a job: Codex numbers items per
+ * process (item_0, item_1, …), and parallel tasks and child agents share the
+ * job's activity keys. Each turn therefore registers its calls under its own
+ * scope, so one task finishing item_3 never clears another task's item_3.
  */
 export class TurnToolActivity {
   private readonly open = new Set<string>();
+  private readonly scope = crypto.randomUUID();
 
   constructor(
     private readonly metadata: any,
@@ -28,18 +36,22 @@ export class TurnToolActivity {
     this.activity.touch(this.metadata);
     if (!callId || this.open.has(callId)) return;
     this.open.add(callId);
-    this.tools.started(this.metadata, callId, name || 'a tool');
+    this.tools.started(this.metadata, this.scoped(callId), name || 'a tool');
   }
 
   finished(callId: string | undefined): void {
     this.activity.touch(this.metadata);
     if (!callId || !this.open.delete(callId)) return;
-    this.tools.finished(this.metadata, callId);
+    this.tools.finished(this.metadata, this.scoped(callId));
   }
 
   /** The turn ended: nothing it started is still running. */
   close(): void {
-    for (const callId of this.open) this.tools.finished(this.metadata, callId);
+    for (const callId of this.open) this.tools.finished(this.metadata, this.scoped(callId));
     this.open.clear();
+  }
+
+  private scoped(callId: string): string {
+    return `${ this.scope }:${ callId }`;
   }
 }

@@ -642,7 +642,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
     const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
-    const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -859,6 +858,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Whole-loop liveness: stdout/stderr, every JSONL event, tool start and
       // result, and provider stream chunks relayed by the bridge (reasoning
       // tokens arrive there long before `codex exec --json` prints the item).
+      // Container runs record bridge activity under the runtime pod; VM runs on a
+      // bridge lease (vault authority, first-run pending bridge) under the lease's pod.
+      const providerBridgePodId = currentAgentContainerRuntime()?.podId ?? executionAuth?.podId;
       const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, () => Date.now(),
         () => providerBridgeActivity.lastModelOutputAt(providerBridgePodId));
       let hungTool: RunToolInFlight | undefined;

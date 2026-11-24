@@ -394,6 +394,7 @@ export class ProviderCliBridgeService {
   return {
     config,
     signal: lifetime.signal,
+    podId:  identity.context.pod_id,
     revoke,
     async close() {
       if (closed) return;
