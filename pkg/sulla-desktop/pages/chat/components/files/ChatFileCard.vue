@@ -12,7 +12,7 @@
       @keyup.space.prevent="navigate('detail')"
     >
       <FileGlyph :name="reference.name" :mime="reference.mime" />
-      <span class="meta"><b>{{ reference.name }}</b><small>{{ provenance }}</small></span>
+      <span class="meta"><b :title="reference.name">{{ reference.name }}</b><small :title="provenance">{{ provenance }}</small></span>
       <FileStatusIcon />
     </button>
     <div class="actions">
@@ -113,8 +113,9 @@ async function navigate(section: WorkspaceFilesSection) {
 
 <style scoped>
 .file-card { display:flex; flex-wrap:wrap; align-items:center; gap:10px; max-width:480px; margin:8px 0; padding:10px; border:1px solid var(--border-subtle); border-radius:10px; background:var(--bg-surface); color:var(--text-primary); box-sizing:border-box; }
-.file-card :deep(.file-glyph){width:40px;height:40px}.file-card :deep(.file-glyph svg){width:21px;height:21px}.meta{min-width:0;flex:1}.meta b,.meta small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta b{font:600 12.5px var(--font-body)}.meta small{margin-top:3px;color:var(--text-dim);font:11px var(--font-body)}.actions{display:flex;gap:4px;flex:none}.actions button{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);border-radius:6px;padding:3px 7px;background:transparent;color:var(--text-secondary);font:500 11.5px var(--font-body)}.actions button svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.actions button:hover{color:var(--accent-hover);border-color:var(--accent)}
-.file-card-open{display:flex;align-items:center;gap:10px;flex:1;min-width:0;text-align:left;padding:0;border:0;background:none;color:inherit}.navigation-error{flex-basis:100%;color:var(--status-error);font-size:11px}
+.file-card :deep(.file-glyph){width:40px;height:40px}.file-card :deep(.file-glyph svg){width:21px;height:21px}.meta{min-width:0;flex:1}.meta b,.meta small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta b{font:600 12.5px var(--font-body)}.meta small{margin-top:3px;color:var(--text-dim);font:11px var(--font-body)}.actions{display:flex;flex-wrap:wrap;gap:4px;flex:0 1 auto;max-width:100%}.actions button{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border-default);border-radius:6px;padding:3px 7px;background:transparent;color:var(--text-secondary);font:500 11.5px var(--font-body)}.actions button svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.actions button:hover{color:var(--accent-hover);border-color:var(--accent)}
+/* The open button holds the glyph (40px), status icon (18px) and two 10px gaps; the rest keeps the name at least 9.5rem before the actions wrap. */
+.file-card-open{display:flex;align-items:center;gap:10px;flex:1 1 calc(9.5rem + 78px);min-width:0;text-align:left;padding:0;border:0;background:none;color:inherit}.navigation-error{flex-basis:100%;color:var(--status-error);font-size:11px}
 .file-card-open:focus-visible,.actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .inline-editor{flex:0 0 100%;display:grid;gap:7px}.inline-editor textarea{width:100%;min-height:220px;box-sizing:border-box;padding:10px;border:1px solid var(--border-default);border-radius:7px;background:var(--bg-page);color:var(--text-primary);font:12px/1.55 var(--font-mono)}.inline-editor>div{display:flex;justify-content:flex-end;align-items:center;gap:7px}.inline-editor>div span{margin-right:auto;color:var(--status-error);font-size:11px}
 @media(max-width:480px){.file-card{flex-wrap:wrap}.actions{margin-left:auto}}
