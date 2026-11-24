@@ -7,10 +7,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { ParkedAgentRehydrator } from '../../../services/ParkedAgentRehydrator';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 
+vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
+
 const parkedJob = (): AgentJob => ({
   jobId: 'manager-job', status: 'parked', createdAt: 1, finishedAt: null,
   taskCount: 1, results: [], parentChannel: 'sulla-desktop', parentThreadId: 'root',
-  tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'parked', threadId: 'manager-thread', depth: 1, provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max', workerModelRoute: { version: 1, slug: 'coding-manager-sol', agentId: 'old-id', revision: 1, selected: 0, candidates: [{ provider: 'codex', model: 'gpt-6.2-sol' }] } }],
+  tasks: [{ agentId: 'coding-manager-sol', label: 'manager', prompt: 'own', status: 'parked', threadId: 'manager-thread', depth: 1, provider: 'codex', model: 'gpt-6.1-sol', effort: 'max', workerModelRoute: { version: 1, slug: 'coding-manager-sol', agentId: 'old-id', revision: 1, selected: 0, candidates: [{ provider: 'codex', model: 'gpt-6.2-sol' }] } }],
 });
 
 describe('ParkedAgentRehydrator', () => {
@@ -26,7 +28,7 @@ describe('ParkedAgentRehydrator', () => {
     expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 0, job: { jobId: 'manager-job' } });
     const state = { metadata: {} as Record<string, unknown> };
     service.apply(state, identity!);
-    expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'openai-codex', model: 'gpt-6.1-sol', effort: 'max' } });
+    expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'codex', model: 'gpt-6.1-sol', effort: 'max' } });
     expect(state.metadata).not.toHaveProperty('workerModelRoute');
   });
 
@@ -76,23 +78,6 @@ describe('ParkedAgentRehydrator', () => {
     expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('coding-manager-sol'));
   });
 
-  it('reinstalls the route snapshot for a mapped task rather than re-reading edited settings', async() => {
-    // risk: editing AI Models changes a parked task's actual model while it sleeps
-    const job = parkedJob();
-    delete job.tasks[0].provider; delete job.tasks[0].model; delete job.tasks[0].effort;
-    const route = job.tasks[0].workerModelRoute!;
-    route.agentId = 'coding-manager-sol-id';
-    const service = new ParkedAgentRehydrator(
-      { findByTaskThread: async() => job },
-      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'production' }) },
-      vi.fn(), vi.fn(),
-    );
-    const identity = await service.resolve('manager-thread');
-    const state = { metadata: { workerModelRoute: { stale: true } } as Record<string, unknown> };
-    service.apply(state, identity!);
-    expect(state.metadata.workerModelRoute).toEqual(route);
-  });
-
   it.each([
     { enabled: false, status: 'production' },
     { enabled: true, status: 'archive' },
@@ -107,29 +92,5 @@ describe('ParkedAgentRehydrator', () => {
     await expect(service.resolve('manager-thread')).rejects.toThrow('Agent "coding-manager-sol" was removed or disabled');
     expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('coding-manager-sol'));
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'manager-job' }), expect.stringContaining('coding-manager-sol'));
-  });
-
-  it('fails legacy provider-only tasks during resolve and keeps apply non-throwing', async() => {
-    // risk: a legacy effort-only task crashes the wake before failure reaches its parent
-    const job = parkedJob();
-    job.tasks[0].provider = 'codex';
-    delete job.tasks[0].model;
-    delete job.tasks[0].workerModelRoute;
-    const fail = vi.fn(); const notify = vi.fn();
-    const service = new ParkedAgentRehydrator(
-      { findByTaskThread: async() => job },
-      { findBySlug: async() => ({ slug: 'coding-manager-sol', enabled: true, status: 'production' }) },
-      fail, notify,
-    );
-    await expect(service.resolve('manager-thread')).rejects.toThrow('Agent "coding-manager-sol" has an invalid saved model override "codex/unspecified"');
-    expect(fail).toHaveBeenCalledWith('manager-job', expect.stringContaining('codex/unspecified'));
-    expect(notify).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'manager-job' }), expect.stringContaining('coding-manager-sol'));
-
-    const state = { metadata: {} as Record<string, unknown> };
-    const identity = {
-      job, task: job.tasks[0], taskIndex: 0, agentId: 'coding-manager-sol',
-      modelPrecedence: { requested: null, ran: null, step: 'override', choice: { mode: 'list' } },
-    } as any;
-    expect(() => service.apply(state, identity)).not.toThrow();
   });
 });

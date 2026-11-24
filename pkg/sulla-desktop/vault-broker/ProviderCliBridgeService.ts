@@ -64,6 +64,7 @@ export class ProviderCliBridgeService {
       .replace(/[\r\n\t]+/g, ' ')
       .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
       .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/gi, '[redacted]')
+      .replace(/\borg-[A-Za-z0-9]{8,}\b/g, '[redacted]')
       .replace(/\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[redacted]')
       .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, '[redacted]')
       .replace(/\s+/g, ' ')

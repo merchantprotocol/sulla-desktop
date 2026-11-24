@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCodexService } from '../../../languagemodels/CodexService';
 import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
-import { providerBridgeActivity } from '../../../vault-broker/ProviderBridgeActivity';
+import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
@@ -73,7 +73,7 @@ describe('Codex quiet stream watchdog', () => {
       await run.finished;
       expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
       expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
-      expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
+      expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
     } finally {
       clearInterval(bridgeHeartbeat);
     }
@@ -88,7 +88,7 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
   });
 
   it('resets the silence clock when stdout arrives at 2:59', async() => {
@@ -101,6 +101,6 @@ describe('Codex quiet stream watchdog', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
   });
 });
