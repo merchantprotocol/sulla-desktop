@@ -56,6 +56,9 @@ describe('primary color value safety and accessible palette', () => {
     expect(vars['--nx-accent']).toBe(primaryColorPalette('#6b57c9', 'dark')?.primary);
     expect(vars['--primary-color-override']).toBe(primaryColorPalette('#6b57c9', 'dark')?.primary);
     expect(vars['--primary-color-text-override']).toBe(primaryColorPalette('#6b57c9', 'dark')?.textAccent);
+    // Send/Stop and primary chat buttons read this for their label on the picked fill.
+    expect(vars['--primary-color-on-override']).toBe(primaryColorPalette('#6b57c9', 'dark')?.onPrimary);
+    expect(primaryColorCssVars('#ffff00', 'light')['--primary-color-on-override']).toBe('#000000');
     expect(vars['--primary-color-surface-override']).toContain('var(--bg-surface');
   });
 });

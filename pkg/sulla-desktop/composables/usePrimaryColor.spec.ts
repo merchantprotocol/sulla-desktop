@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+// The store receives its settings and IPC through the constructor; these keep the Electron and database modules out of the import graph.
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { on: vi.fn() } }));
+vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: vi.fn(), set: vi.fn(), delete: vi.fn() } }));
+
 import { PRIMARY_COLOR_SETTING_KEY, PRIMARY_COLOR_STORAGE_KEY } from '@pkg/config/primaryColor';
 import { PrimaryColorStore } from './usePrimaryColor';
 

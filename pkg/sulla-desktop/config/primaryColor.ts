@@ -107,19 +107,20 @@ function ensureDarkSurfaceContrast(value: string): string {
   return result;
 }
 
-/** Keep link and accent text readable on a light or dark theme surface. */
+/**
+ * Keep link and accent text readable on a light or dark theme surface. Light
+ * themes darken and dark themes lighten, so a pick that matches the surface
+ * (white on light, black on dark) still moves toward readable text.
+ */
 function ensureTextContrast(value: string, mode: PrimaryColorMode): string {
   const surface = mode === 'dark' ? '#2e3440' : '#ffffff';
-  const surfaceLuminance = primaryColorLuminance(surface)!;
-  const colorLuminance = primaryColorLuminance(value)!;
+  const mix = mode === 'dark' ? mixWithWhite : mixWithBlack;
   let amount = 0;
   let result = value;
 
   while ((primaryColorContrast(result, surface) ?? 0) < 4.5 && amount < 1) {
     amount = Math.min(1, amount + 0.05);
-    result = surfaceLuminance > colorLuminance
-      ? mixWithBlack(value, amount)
-      : mixWithWhite(value, amount);
+    result = mix(value, amount);
   }
 
   return result;
@@ -171,6 +172,7 @@ export function primaryColorCssVars(value: unknown, mode: PrimaryColorMode = 'li
   return {
     '--primary-color-override': primary,
     '--primary-color-hover-override': hover,
+    '--primary-color-on-override': onPrimary,
     '--primary-color-text-override': textAccent,
     '--primary-color-surface-override': surfaceTint,
     '--primary-color-surface-strong-override': surfaceTintStrong,
