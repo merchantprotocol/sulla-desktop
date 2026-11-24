@@ -147,6 +147,14 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     return { target, checkin: this.rowToCheckin(rows[0]), blockersChanged: Boolean(rows[0].blockers_changed) };
   }
 
+  async checkinsForTask(jobId: string, taskIndex: number): Promise<AgentJobCheckin[]> {
+    const rows = await this.connection.select<any>(
+      'SELECT * FROM agent_job_checkins WHERE job_id = $1 AND task_index = $2 ORDER BY created_at ASC',
+      [jobId, taskIndex],
+    );
+    return (rows ?? []).map(row => this.rowToCheckin(row));
+  }
+
   async telemetryForJob(jobId: string): Promise<Record<number, AgentJobTaskTelemetry>> {
     const [checkinRows, messageRows] = await Promise.all([
       this.connection.select<any>(

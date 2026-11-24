@@ -45,21 +45,22 @@
       ><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z" /></svg>
     </button>
     <ChatFileCard v-for="file in fileReferences" :key="`${file.fileId}:${file.versionId}`" :reference="file" />
+    <slot name="sources" />
     <TurnActions
       role="sulla"
       :pinned="msg.pinned"
-      :latest="reportingLevel !== 'info' && latest"
+      :latest="false"
       @copy="copy"
       @regenerate="onRegenerate"
       @quote="onQuote"
       @pin="onPin"
       @fork="onFork"
     >
-      <span :class="['reply-metadata', { 'reply-metadata-standard': reportingLevel === 'info' }]">
+      <span :class="['reply-metadata', 'reply-metadata-standard']">
         <time v-if="replyTime" :datetime="replyTime.iso">{{ replyTime.label }}</time>
         <span v-else>Time not recorded</span>
         <span>{{ msg.replyAttribution?.agent || 'Agent not recorded' }}</span>
-        <span v-if="reportingLevel !== 'info'">{{ msg.replyAttribution?.model || 'Model not recorded' }}</span>
+
       </span>
     </TurnActions>
 
@@ -81,11 +82,8 @@ import { useChatController } from '../../controller/useChatController';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 
 import type { SullaMessage } from '../../models/Message';
-import type { ReportingLevel } from '../../models/ReportingLevel';
 
-const props = withDefaults(defineProps<{ msg: SullaMessage; latest?: boolean; reportingLevel?: ReportingLevel }>(), {
-  reportingLevel: 'debug',
-});
+const props = defineProps<{ msg: SullaMessage; latest?: boolean }>();
 // Kept for back-compat with any parents that still listen.
 defineEmits<{
   (e: 'regenerate'): void; (e: 'quote'): void; (e: 'pin'): void; (e: 'fork'): void;
