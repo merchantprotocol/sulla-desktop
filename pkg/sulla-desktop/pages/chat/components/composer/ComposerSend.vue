@@ -163,16 +163,9 @@ function activate(): void {
 }
 .composer-send.running .send-arrow { opacity: 0; transform: translateY(-10px); }
 .composer-send.running .stop-square { opacity: 1; transform: none; }
-.composer-send.running .continue-glyph {
-  position: absolute;
-  width: 15px;
-  height: 15px;
-  fill: currentColor;
-  opacity: 0;
-  transform: scale(0.4);
-  transition: opacity 0.2s, transform 0.5s cubic-bezier(.22, 1, .36, 1);
-}
-.run-ring { opacity: 1; }
+.composer-send.running .run-ring { opacity: 1; }
+.composer-send.continue .send-arrow { opacity: 0; transform: translateX(8px); }
+.composer-send.continue .continue-glyph { opacity: 1; transform: none; }
 
 @keyframes composer-run-spin { to { transform: rotate(1turn); } }
 
@@ -180,15 +173,7 @@ function activate(): void {
   .composer-send,
   .send-arrow,
   .stop-square,
-  .continue-glyph {
-  position: absolute;
-  width: 15px;
-  height: 15px;
-  fill: currentColor;
-  opacity: 0;
-  transform: scale(0.4);
-  transition: opacity 0.2s, transform 0.5s cubic-bezier(.22, 1, .36, 1);
-}
-.run-ring { animation: none; transition: none; }
+  .continue-glyph,
+  .run-ring { animation: none; transition: none; }
 }
 </style>
