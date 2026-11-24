@@ -444,7 +444,14 @@ export class V7SubjectMemoryWriter {
         const checkinKeys = new Map<string, string>();
 
         for (const episode of orderedEpisodes) {
-          const identity = CheckinIdentity.keyFor(episode);
+          const identity = CheckinIdentity.keyFor({
+            id: episode.id,
+            text: episode.text,
+            source: episode.source,
+            keys: episode.keys,
+            conversationId: episode.conversation_id,
+            sentiment: episode.sentiment,
+          });
           const checkinKey = evidenceEpisodeIds.has(episode.id) ? null : identity;
           if (checkinKey) checkinKeys.set(episode.id, checkinKey);
         }
@@ -488,12 +495,14 @@ export class V7SubjectMemoryWriter {
             await client.query(
               `
               UPDATE subject_memory.episodes
-                 SET superseded_by = $1
+                 SET superseded_by = $1,
+                     superseded_ts = $4,
+                     superseded_reason = $5
                WHERE checkin_key = $2
                  AND superseded_by IS NULL
                  AND id <> $1
                  AND ts <= $3`,
-              [row.id, checkinKey, row.ts]
+              [row.id, checkinKey, row.ts, row.ts, 'newer_checkin']
             );
           }
         }

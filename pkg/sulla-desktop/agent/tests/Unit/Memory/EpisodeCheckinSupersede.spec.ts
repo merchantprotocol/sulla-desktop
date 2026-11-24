@@ -16,8 +16,12 @@ interface StoredEpisode {
   id: string;
   ts: number;
   keys: string[];
+  conversation_id: string | null;
+  sentiment: string | null;
   checkin_key: string | null;
   superseded_by: string | null;
+  superseded_ts: number | null;
+  superseded_reason: string | null;
 }
 
 interface SubjectRow {
@@ -70,17 +74,23 @@ class FakeSubjectMemoryDatabase {
           this.episodes.push({
             id,
             ts: Number(params[1]),
+            conversation_id: params[2] === null ? null : String(params[2]),
+            sentiment: params[6] === null ? null : String(params[6]),
             keys: Array.isArray(params[5]) ? params[5].map(String) : [],
             checkin_key: params[8] === null ? null : String(params[8]),
             superseded_by: null,
+            superseded_ts: null,
+            superseded_reason: null,
           });
           return { rows: [], rowCount: 1 };
         }
         if (sql.includes('UPDATE subject_memory.episodes')) {
-          const [newIdValue, keyValue, tsValue] = params;
+          const [newIdValue, keyValue, tsValue, supersededTsValue, reasonValue] = params;
           const newId = String(newIdValue);
           const key = String(keyValue);
           const ts = Number(tsValue);
+          const supersededTs = Number(supersededTsValue);
+          const reason = String(reasonValue);
           let rowCount = 0;
           for (const episode of this.episodes) {
             if (
@@ -90,6 +100,8 @@ class FakeSubjectMemoryDatabase {
               episode.ts <= ts
             ) {
               episode.superseded_by = newId;
+              episode.superseded_ts = supersededTs;
+              episode.superseded_reason = reason;
               rowCount += 1;
             }
           }
@@ -107,15 +119,17 @@ const episode = (
   suffix: number,
   text: string,
   source = 'observed',
-  keys = ['project', 'beta']
+  keys = ['project', 'beta'],
+  conversationId: string | null = null,
+  sentiment: string | null = null
 ): WriteEpisode => ({
   id: `${ts}-${source}-${suffix}`,
   ts,
-  conversation_id: null,
+  conversation_id: conversationId,
   source,
   text,
   keys,
-  sentiment: null,
+  sentiment,
   refs: [],
 });
 
@@ -148,7 +162,11 @@ const stored = (
   ts: number,
   checkinKey: string,
   supersededBy: string | null = null
-): StoredEpisode => ({ id, ts, keys: ['project'], checkin_key: checkinKey, superseded_by: supersededBy });
+): StoredEpisode => ({
+  id, ts, conversation_id: null, sentiment: null, keys: ['project'],
+  checkin_key: checkinKey, superseded_by: supersededBy,
+  superseded_ts: supersededBy ? ts : null, superseded_reason: supersededBy ? 'legacy' : null,
+});
 
 const writerFor = (database: FakeSubjectMemoryDatabase): V7SubjectMemoryWriter =>
   new V7SubjectMemoryWriter(database as unknown as V7SubjectMemoryDatabase);
@@ -170,8 +188,16 @@ describe('Episode check-in superseding', () => {
 
     expect(result).toMatchObject({ accepted: true, episodes: 2 });
     expect(database.transactions).toBe(1);
-    expect(database.episodes.find(row => row.id === old.id)?.superseded_by).toBe(earlier.id);
-    expect(database.episodes.find(row => row.id === earlier.id)?.superseded_by).toBe(later.id);
+    expect(database.episodes.find(row => row.id === old.id)).toMatchObject({
+      superseded_by: earlier.id,
+      superseded_ts: earlier.ts,
+      superseded_reason: 'newer_checkin',
+    });
+    expect(database.episodes.find(row => row.id === earlier.id)).toMatchObject({
+      superseded_by: later.id,
+      superseded_ts: later.ts,
+      superseded_reason: 'newer_checkin',
+    });
     expect(database.episodes.find(row => row.id === historic.id)?.superseded_by).toBe('already-replaced');
     expect(database.episodes.find(row => row.id === future.id)?.superseded_by).toBeNull();
     expect(database.episodes.find(row => row.id === unrelated.id)?.superseded_by).toBeNull();
@@ -228,6 +254,44 @@ describe('Episode check-in superseding', () => {
     expect(database.episodes.find(row => row.id === older.id)?.superseded_by).toBeNull();
     expect(database.episodes.find(row => row.id === duplicate.id)?.superseded_by).toBeNull();
     expect(database.statements.some(statement => statement.sql.includes('UPDATE subject_memory.episodes'))).toBe(false);
+  });
+
+  it('combines conversation identity with PR identity and respects sentiment', async () => {
+    // risk: cross-conversation reports collide or human corrections are marked as check-ins
+    const ts = 1_700_000_000_350;
+    const neutral = episode(
+      ts,
+      7,
+      'PR #2816 status update.',
+      'observed',
+      ['project', 'beta'],
+      'thread_writer_conversation',
+      'neutral'
+    );
+    const correction = episode(
+      ts + 1,
+      8,
+      'PR #2816 status update.',
+      'observed',
+      ['project', 'beta'],
+      'thread_writer_conversation',
+      'correction'
+    );
+    const database = new FakeSubjectMemoryDatabase();
+
+    await writerFor(database).append(write([neutral, correction]));
+
+    expect(database.episodes.find(row => row.id === neutral.id)).toMatchObject({
+      conversation_id: 'thread_writer_conversation',
+      sentiment: 'neutral',
+      checkin_key: 'conv:thread_writer_conversation|pr:2816',
+    });
+    expect(database.episodes.find(row => row.id === correction.id)).toMatchObject({
+      conversation_id: 'thread_writer_conversation',
+      sentiment: 'correction',
+      checkin_key: null,
+      keys: correction.keys,
+    });
   });
 
   it('stores one deepest eligible primary subject and preserves first-listed ties', async () => {
