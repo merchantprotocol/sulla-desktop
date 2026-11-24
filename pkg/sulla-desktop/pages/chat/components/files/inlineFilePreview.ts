@@ -41,7 +41,6 @@ export interface InlineFileCardViewModel {
   status?: InlineFileStatus;
   message?: string;
   cap?: InlineFilePreviewCap;
-  updatedLabel?: string;
   preview?: InlineFilePreview;
   canOpenInTab?: boolean;
 }

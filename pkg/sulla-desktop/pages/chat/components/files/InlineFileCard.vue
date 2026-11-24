@@ -11,10 +11,6 @@
       <span class="file-name" :title="file.name">{{ file.name }}</span>
       <span class="file-path" :title="file.path">{{ file.path }}</span>
       <span v-if="file.sizeLabel" class="file-size">{{ file.sizeLabel }}</span>
-      <span v-if="file.updatedLabel" class="file-updated" role="status">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-6" /></svg>
-        <span>{{ file.updatedLabel }}</span>
-      </span>
       <span class="header-spacer" />
 
       <div v-if="isReady" class="file-actions">
@@ -203,8 +199,6 @@ function openHtmlFullscreen(event: MouseEvent): void {
 .file-path { min-width: 0; flex: 0 20 auto; overflow: hidden; color: var(--text-muted); font: 11.5px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .file-size { flex: none; color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .file-size::before { margin-right: 8px; content: '·'; }
-.file-updated { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--status-success); font-size: 11.5px; font-weight: 550; white-space: nowrap; }
-.file-updated svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .header-spacer { flex: 1; }
 .file-actions { display: flex; flex: none; align-items: center; gap: 2px; }
 .file-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 28px; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
@@ -219,7 +213,7 @@ function openHtmlFullscreen(event: MouseEvent): void {
 .file-status { margin: 0; padding: 12px; color: var(--text-muted); font-size: 12px; }
 .file-status.file-error { border-top: 1px solid var(--border-subtle); color: var(--status-error); }
 @container (max-width: 600px) {
-  .file-path, .file-size, .file-action span, .file-updated span { display: none; }
+  .file-path, .file-size, .file-action span { display: none; }
   .file-action { width: 28px; padding: 0; }
 }
 </style>
