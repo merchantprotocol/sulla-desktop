@@ -612,16 +612,16 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
 </script>
 
 <style scoped>
+/* Placed in the transcript's sticky aside layer: pinned below the chat header on the right. */
 .worker-chart {
-  position: sticky;
+  position: absolute;
   top: var(--chat-header-height, 52px);
+  right: 0;
+  bottom: 0;
   z-index: 2;
   display: block;
   box-sizing: border-box;
-  flex: 0 0 116px;
   width: 116px;
-  min-width: 116px;
-  height: 100%;
   min-height: 0;
   padding: 16px 16px 0 0;
   color: var(--text-primary);
