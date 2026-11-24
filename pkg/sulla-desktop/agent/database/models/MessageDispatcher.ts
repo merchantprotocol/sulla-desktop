@@ -607,10 +607,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (m.kind !== 'streaming' || m.threadId !== msgThreadId || !belongsToReply(m)) continue;
       const prev = (m.content || '').trim();
       if (!prev) continue;
-      if (trimmedIncoming.startsWith(prev) || prev.startsWith(trimmedIncoming)) {
-        resurrectedIdx = i;
-        break;
-      }
+      // Only a chunk that extends the latest segment continues it. A shorter
+      // chunk that the old text merely starts with is a new paragraph opening
+      // with the same word ("The…"), and an older segment sits above tool
+      // cards that came after it; reopening either would overwrite it.
+      if (trimmedIncoming.startsWith(prev)) resurrectedIdx = i;
+      break;
     }
     if (resurrectedIdx !== -1) {
       const existing = ctx.messages[resurrectedIdx];
@@ -711,10 +713,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         .join('');
       const incoming = finalContent.trim();
       const streamed = streamedConcat.trim();
-      const alreadyShown = streamed.length > 0 && (
-        streamed === incoming ||
-        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed)) ||
-        streamed.startsWith(incoming)
+      // Segments are trimmed one by one and joined with nothing, while the
+      // full reply keeps the paragraph breaks between them: compare without whitespace.
+      const flatIncoming = incoming.replace(/\s+/g, '');
+      const flatStreamed = streamed.replace(/\s+/g, '');
+      const alreadyShown = flatStreamed.length > 0 && (
+        flatStreamed === flatIncoming ||
+        (flatStreamed.length >= Math.max(1, flatIncoming.length * 0.6) && flatIncoming.startsWith(flatStreamed)) ||
+        flatStreamed.startsWith(flatIncoming)
       );
       if (alreadyShown) {
         // A final dump can carry the last part of a formatted block after
