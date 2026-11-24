@@ -652,6 +652,7 @@ export class ChatCompletionsServer {
 
     try {
       state.metadata.wsChannel = agentId;
+      (state.metadata as any).desktopChatVisible = false;
 
       // Append new user messages
       for (const msg of messages) {
