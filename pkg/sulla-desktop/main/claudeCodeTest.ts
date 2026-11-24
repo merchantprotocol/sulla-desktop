@@ -93,7 +93,7 @@ export function initClaudeCodeTestEvents(): void {
       };
     }
 
-    const envAssignments: string[] = [];
+    const envAssignments: string[] = ['CLAUDE_CODE_DISABLE_AUTO_MEMORY=1'];
     if (oauthToken) envAssignments.push(`CLAUDE_CODE_OAUTH_TOKEN=${ JSON.stringify(oauthToken) }`);
     if (apiKey) envAssignments.push(`ANTHROPIC_API_KEY=${ JSON.stringify(apiKey) }`);
     if (baseUrl) envAssignments.push(`ANTHROPIC_BASE_URL=${ JSON.stringify(baseUrl) }`);

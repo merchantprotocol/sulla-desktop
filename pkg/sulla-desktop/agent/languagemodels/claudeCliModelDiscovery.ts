@@ -63,6 +63,7 @@ export async function fetchClaudeCliModels(expectedAccountId?: string): Promise<
     if (!credential.oauthToken) return null;
     const environment = {
       CLAUDE_CODE_OAUTH_TOKEN: credential.oauthToken, ANTHROPIC_API_KEY: '',
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
       ...('baseUrl' in credential && credential.baseUrl ? { ANTHROPIC_BASE_URL: credential.baseUrl } : {}),
       DISABLE_AUTOUPDATER: '1', DISABLE_TELEMETRY: '1', DISABLE_ERROR_REPORTING: '1',
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
