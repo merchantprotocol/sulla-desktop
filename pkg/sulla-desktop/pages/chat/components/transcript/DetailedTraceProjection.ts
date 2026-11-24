@@ -4,10 +4,11 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { TracePayloadRedactor } from '@pkg/agent/tools/TracePayloadRedactor';
+import type { DetailedTraceUsageSample } from '@pkg/agent/database/models/DetailedTraceUsage';
 import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 
 import type {
-  Message, ToolMessage, TraceMetricsMessage,
+  Message, ToolMessage,
 } from '../../models/Message';
 import type { TranscriptEntry } from './toolGroups';
 
@@ -20,6 +21,7 @@ export interface DetailedTraceRow {
   kind: TraceRowKind;
   verb: string;
   target: string;
+  toolName?: string;
   args?: string;
   durationMs?: number;
   status?: TraceStatus;
@@ -41,17 +43,17 @@ export interface DetailedTraceMetadata {
 
 export interface DetailedTraceTurn {
   id: string;
-  afterId: string;
+  afterId?: string;
   rows: DetailedTraceRow[];
   metadata: DetailedTraceMetadata;
 }
 
 interface MutableTurn {
   id: string;
-  afterId: string;
+  afterId?: string;
   rows: DetailedTraceRow[];
   messages: Message[];
-  metrics: TraceMetricsMessage[];
+  metrics: DetailedTraceUsageSample[];
 }
 
 const targetKeys = ['command', 'cmd', 'url', 'path', 'file', 'query', 'name', 'slug'] as const;
@@ -69,34 +71,44 @@ const safeActivities = new Set([
 export class DetailedTraceProjection {
   private readonly payloadRedactor = new TracePayloadRedactor();
 
-  project(messages: readonly Message[], entries: readonly TranscriptEntry[]): DetailedTraceTurn[] {
-    const safeActivity = new Map<string, string>();
-    for (const entry of entries) {
-      if (entry.kind === 'activity') safeActivity.set(entry.sourceId, entry.text);
-    }
-
-    const turns = new Map<string, MutableTurn>();
-    let currentAnchor: string | undefined;
+  project(
+    messages: readonly Message[],
+    entries: readonly TranscriptEntry[],
+    usage: readonly DetailedTraceUsageSample[] = [],
+    standardEntries: readonly TranscriptEntry[] = entries.filter(entry => entry.level !== 'debug'),
+  ): DetailedTraceTurn[] {
+    const activity = new Map(entries.flatMap(entry => entry.kind === 'activity' ? [[entry.sourceId, entry.text] as const] : []));
+    const visible = new Map(standardEntries.map(entry => [entry.sourceId, entry.id]));
+    const turnByMessage = new Map<string, MutableTurn>();
+    const turns: MutableTurn[] = [];
+    let turn: MutableTurn | undefined;
+    let lastVisible: string | undefined;
     for (const message of messages) {
-      if (message.kind === 'user') currentAnchor = message.id;
-      const rows = this.rowsFor(message, safeActivity.get(message.id));
-      const hasMetrics = message.kind === 'trace_metrics';
-      if (rows.length || hasMetrics) {
-        const afterId = currentAnchor ?? message.id;
-        let turn = turns.get(afterId);
-        if (!turn) {
-          turn = { id: `trace:${ afterId }`, afterId, rows: [], messages: [], metrics: [] };
-          turns.set(afterId, turn);
-        }
-        turn.messages.push(message);
-        turn.rows.push(...rows);
-        if (message.kind === 'trace_metrics') turn.metrics.push(message);
+      if (turnByMessage.has(message.id)) continue;
+      if (message.kind === 'user') {
+        turn = undefined;
+        lastVisible = visible.get(message.id) ?? lastVisible;
+        continue;
       }
-
-      if (message.kind === 'sulla' || message.kind === 'streaming') currentAnchor = message.id;
+      if (!turn) {
+        turn = { id: `trace:${ message.id }`, afterId: lastVisible, rows: [], messages: [], metrics: [] };
+        turns.push(turn);
+      }
+      turnByMessage.set(message.id, turn);
+      turn.messages.push(message);
+      turn.rows.push(...this.rowsFor(message, activity.get(message.id)));
+      lastVisible = visible.get(message.id) ?? lastVisible;
     }
-
-    return [...turns.values()].map(turn => this.finish(turn));
+    for (const sample of usage) {
+      // Prefer the dispatch-time message ID (including same-millisecond events).
+      // A stream placeholder can be replaced before it reaches this projection.
+      const anchor = sample.afterId ? turnByMessage.get(sample.afterId) : undefined;
+      const nearest = anchor ?? turns.findLast(candidate => candidate.messages[0].createdAt <= sample.receivedAt);
+      nearest?.metrics.push(sample);
+    }
+    return turns.filter(candidate => candidate.rows.length || candidate.metrics.length ||
+      candidate.messages.some(message => message.kind === 'sulla' || message.kind === 'streaming'))
+      .map(candidate => this.finish(candidate));
   }
 
   private rowsFor(message: Message, safeActivity?: string): DetailedTraceRow[] {
@@ -106,10 +118,9 @@ export class DetailedTraceProjection {
         return text ? [this.row(message, 'thought', 'Considering', text)] : [];
       }
       case 'tool': return ChatToolReporting.isBackgroundBrowse(message.recordedToolName ?? message.tool) ? [] : [this.toolRow(message)];
-      case 'trace_metrics': return [];
       case 'patch': {
         const diff = message.hunks.flatMap(hunk => hunk.lines.map(line => `${ line.op === 'add' ? '+' : line.op === 'remove' ? '-' : ' ' }${ line.text }`)).join('\n');
-        return [this.row(message, 'file', 'Edited', message.path, `${ message.stat.added } added · ${ message.stat.removed } removed`, 'ok', {
+        return [this.row(message, 'file', 'Edited', message.path, `${ message.stat.added } added · ${ message.stat.removed } removed`, message.state === 'applied' ? 'ok' : 'waiting', {
           file: message.path, state: message.state, diff,
         })];
       }
@@ -125,7 +136,7 @@ export class DetailedTraceProjection {
       case 'tool_question': return [this.row(message, 'question', 'Asked', message.questions[0]?.question ?? 'User input',
         message.questions.length > 1 ? `${ message.questions.length } questions` : undefined,
         ({ pending: 'waiting', answered: 'ok', timed_out: 'cancelled' })[message.status], message)];
-      case 'subagent_exchange': return [this.row(message, 'handoff', message.direction === 'to_agent' ? 'Handed off to' : 'Result from',
+      case 'subagent_exchange': return [this.row(message, message.direction === 'to_agent' ? 'handoff' : 'result', message.direction === 'to_agent' ? 'Handed off to' : 'Result from',
         message.label || message.agentId, message.jobId ? `job ${ message.jobId }` : undefined,
         ({ running: 'running', done: 'ok', failed: 'failed', stopped: 'stopped' })[message.status], message)];
       case 'subagent': return [this.row(message, 'result', message.status === 'running' ? 'Working with' : 'Result from', message.name,
@@ -143,13 +154,13 @@ export class DetailedTraceProjection {
   private toolRow(message: ToolMessage): DetailedTraceRow {
     const args = message.traceArgs;
     const targetValue = args ? this.targetValue(args) : undefined;
-    const target = this.safeText(targetValue ?? message.desc ?? message.tool);
+    const target = this.safeText(targetValue || message.desc || message.tool);
     const toolName = (message.recordedToolName ?? message.tool).toLowerCase();
     const status: TraceStatus = message.status === 'error'
       ? /cancel(?:led|ed)?/i.test(message.error ?? '') ? 'cancelled' : 'failed'
       : message.status === 'ok' ? 'ok' : 'running';
     const shownArgs = args ? this.argumentSummary(args) : this.safeText(message.input ?? '');
-    const note = status === 'failed' ? this.safeText(message.error ?? 'Tool call failed') :
+    const note = (status === 'failed' || status === 'cancelled') ? this.safeText(message.error ?? 'Tool call failed') :
       message.output ? this.safeText(message.output) : undefined;
     const kind: TraceRowKind = toolName.startsWith('file_') || message.tool.toLowerCase() === 'file' ? 'file' :
       toolName.startsWith('memory_') || message.tool.toLowerCase() === 'memory' ? 'memory' :
@@ -161,6 +172,7 @@ export class DetailedTraceProjection {
       kind,
       verb,
       target,
+      toolName: this.safeText(message.recordedToolName ?? message.tool),
       ...(shownArgs ? { args: shownArgs } : {}),
       ...(typeof message.durationMs === 'number' && Number.isFinite(message.durationMs) ? { durationMs: Math.max(0, message.durationMs) } : {}),
       status,
@@ -219,31 +231,33 @@ export class DetailedTraceProjection {
 
   private finish(turn: MutableTurn): DetailedTraceTurn {
     const orderedRows = [...turn.rows];
-    for (let index = 0; index < orderedRows.length; index++) {
+    let next: DetailedTraceRow | undefined;
+    for (let index = orderedRows.length - 1; index >= 0; index--) {
       const row = orderedRows[index];
-      if (row.status !== 'failed') continue;
-      const next = orderedRows.slice(index + 1).find(candidate => candidate.kind !== 'thought');
-      if (next) {
-        if (row.kind === 'tool' && next.kind === 'tool' && row.target === next.target) next.verb = 'Retried';
-        row.note = `${ row.note ? `${ row.note }. ` : '' }Next: ${ next.verb } ${ next.target }.`;
+      if (row.kind === 'thought') continue;
+      if (row.status === 'failed' && next) {
+        if (row.toolName && row.toolName === next.toolName && row.target === next.target) next.verb = 'Retried';
+        row.note = `${ row.note ? `${ row.note } · ` : '' }Next: ${ next.verb } ${ next.target }.`;
       }
+      next = row;
     }
 
     const metrics = turn.metrics;
     const metricModels = [...new Set(metrics.map(metric => metric.model).filter((model): model is string => !!model?.trim()))];
     const replies = turn.messages.filter((message): message is Extract<Message, { kind: 'sulla' }> => message.kind === 'sulla');
     const agent = replies.find(reply => reply.replyAttribution?.agent)?.replyAttribution?.agent ??
-      turn.messages.find(message => message.by?.agent)?.by?.agent ?? (turn.rows.length ? 'Sulla' : undefined);
+      turn.messages.find(message => message.by?.agent)?.by?.agent;
     const replyModel = replies.find(reply => reply.replyAttribution?.model)?.replyAttribution?.model ??
       replies.find(reply => reply.model)?.model;
-    const startedAt = Math.min(...turn.messages.map(message => message.createdAt).filter(Number.isFinite));
+    const first = turn.messages.find(message => message.createdAt > 0 && Number.isFinite(message.createdAt));
+    const startedAt = first?.createdAt;
     const durations = metrics.map(metric => metric.durationMs).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     const toolDurations = orderedRows.map(row => row.durationMs).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     const inputTokens = metrics.reduce((sum, metric) => sum + (metric.inputTokens ?? 0), 0);
     const outputTokens = metrics.reduce((sum, metric) => sum + (metric.outputTokens ?? 0), 0);
     const metadata: DetailedTraceMetadata = {
       ...(agent ? { agent: this.safeText(agent) } : {}),
-      ...(Number.isFinite(startedAt) ? { startedAt } : {}),
+      ...(startedAt !== undefined ? { startedAt } : {}),
       ...((replyModel ?? metricModels.join(' · ')) ? { model: this.safeText(replyModel ?? metricModels.join(' · ')) } : {}),
       ...(durations.length ? { durationMs: durations.reduce((sum, duration) => sum + Math.max(0, duration), 0) } :
         toolDurations.length ? { durationMs: toolDurations.reduce((sum, duration) => sum + Math.max(0, duration), 0) } : {}),

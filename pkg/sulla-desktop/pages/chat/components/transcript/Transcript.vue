@@ -9,7 +9,7 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript" :class="{ 'transcript-standard': reportingLevel === 'info' }">
+  <div class="transcript" :class="{ 'transcript-standard': baseLevel === 'info' }">
     <div
       ref="scroller"
       class="scroller"
@@ -22,13 +22,13 @@
           :label="todayLabel"
         />
 
+        <TraceTurn v-for="turn in detailedTraceAfter.get(undefined) ?? []" :key="turn.id" :turn="turn" />
         <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
           <div
-            v-if="!isTraceEntry(entry)"
             :ref="el => jumper.register(entry.id, el)"
             class="report-entry"
             :class="{
-              'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
+              'report-entry-standard-intermediate': baseLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
               'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
             }"
           >
@@ -41,7 +41,7 @@
               v-if="entry.kind === 'card'"
               :msg="entry.message"
               :latest-reply="entry.id === latestReplyId"
-              :reporting-level="reportingLevel"
+              :reporting-level="baseLevel"
               :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
             />
             <div v-else class="report-activity">
@@ -49,7 +49,7 @@
             </div>
           </div>
           <TraceTurn
-            v-for="turn in detailedTraceAfter.get(entry.sourceId) ?? []"
+            v-for="turn in detailedTraceAfter.get(entry.id) ?? []"
             :key="turn.id"
             :turn="turn"
           />
@@ -72,7 +72,7 @@
     -->
     <ScrollPill
       :visible="showPill"
-      :standard="reportingLevel === 'info'"
+      :standard="baseLevel === 'info'"
       @jump="scrollToBottom"
     />
   </div>
@@ -102,28 +102,26 @@ const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 const detailedTraceProjection = new DetailedTraceProjection();
 
-const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+// Detailed is an overlay; keep the exact Standard projection, router props,
+// timing, streaming continuation, and DOM keys for every shared entry.
+const baseLevel = computed(() => props.reportingLevel === 'debug' ? 'info' : props.reportingLevel);
+const transcriptEntries = computed(() => reporting.entries(controller.messages.value, baseLevel.value));
 const detailedTraceTurns = computed(() => props.reportingLevel === 'debug'
-  ? detailedTraceProjection.project(controller.messages.value, reporting.entries(controller.messages.value, 'debug'))
+  ? detailedTraceProjection.project(controller.messages.value, reporting.entries(controller.messages.value, 'debug'),
+    controller.detailedTraceUsage.value, transcriptEntries.value)
   : []);
 const detailedTraceAfter = computed(() => {
-  const turns = new Map<string, typeof detailedTraceTurns.value>();
+  const turns = new Map<string | undefined, typeof detailedTraceTurns.value>();
   for (const turn of detailedTraceTurns.value) turns.set(turn.afterId, [...(turns.get(turn.afterId) ?? []), turn]);
   return turns;
 });
-const traceOnlyKinds = new Set(['patch', 'channel', 'subagent', 'subagent_exchange', 'citation', 'memory', 'proactive', 'heartbeat']);
-function isTraceEntry(entry: TranscriptEntry): boolean {
-  if (props.reportingLevel !== 'debug') return false;
-  if (entry.kind === 'activity') return true;
-  return entry.kind === 'card' && traceOnlyKinds.has(entry.message.kind);
-}
 function reportLabelVisible(entry: TranscriptEntry): boolean {
-  if (entry.kind !== 'card') return true;
+  if (baseLevel.value !== 'info' || entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
   return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
 }
 function isStandardEvidenceAfterReply(index: number): boolean {
-  if (props.reportingLevel !== 'info') return false;
+  if (baseLevel.value !== 'info') return false;
   const entry = transcriptEntries.value[index];
   if (entry?.kind !== 'card' || entry.message.kind !== 'citation') return false;
   for (let i = index - 1; i >= 0; i--) {

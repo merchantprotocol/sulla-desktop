@@ -19,7 +19,7 @@
   controllers so multiple threads can live in the same window.
 */
 
-import { reactive, ref, computed, type Ref, type ComputedRef } from 'vue';
+import { reactive, ref, shallowRef, computed, type Ref, type ComputedRef } from 'vue';
 import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
 
 import { EventBus, type ChatEvent, type Unsubscribe, type VoiceCommand } from './events';
@@ -129,6 +129,8 @@ export class ChatController {
   readonly sidebar:    Ref<SidebarState>;
   readonly connection: Ref<ConnectionState>;
   readonly model:      Ref<ModelDescriptor>;
+  /** Live diagnostics only: not part of ThreadState or serialize(). */
+  readonly detailedTraceUsage = shallowRef<readonly import('@pkg/agent/database/models/DetailedTraceUsage').DetailedTraceUsageSample[]>([]);
   readonly usage:      Ref<TokenUsage>;
   readonly heartbeat:  Ref<ChatHeartbeatConfig>;
 

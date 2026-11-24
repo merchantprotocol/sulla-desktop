@@ -5,14 +5,21 @@
 
 /** Sanitizes tool payloads before they cross into the Detailed transcript. */
 export class TracePayloadRedactor {
-  private readonly secretKey = /(?:secret|token|password|credential|api[_-]?key|private[_-]?key|authorization|cookie)/i;
+  private readonly secretField = '(?:access_token|refresh_token|id_token|auth_token|[a-z0-9_]+_secret|password|api_key|private_key|authorization|cookie|set-cookie)';
+  private readonly secretKey = new RegExp(`^${ this.secretField }$`, 'i');
   private readonly secretTextPatterns: readonly [RegExp, string][] = [
+    [/-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----/g, '[REDACTED]'],
+    [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED]'],
+    [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]'],
+    [/\bAIza[A-Za-z0-9_-]{35}(?![A-Za-z0-9_-])/g, '[REDACTED]'],
     [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
-    [/\bsk-[A-Za-z0-9_-]{8,}/g, '[REDACTED]'],
+    [/\bsk-(?:ant-)?[A-Za-z0-9_-]{8,}/g, '[REDACTED]'],
     [/\bgithub_pat_[A-Za-z0-9_]{8,}/g, '[REDACTED]'],
     [/\bgh[pousr]_[A-Za-z0-9]{8,}/g, '[REDACTED]'],
     [/\bxox[abprse]-[A-Za-z0-9-]{8,}/g, '[REDACTED]'],
-    [/((?:["']?(?:token|secret|password|api[_-]?key|access[_-]?token|authorization|cookie)["']?)\s*[:=]\s*)(["']?)([^"'\s,;&}]+)(["']?)/gi, '$1$2[REDACTED]$4'],
+    [/^([ \t]*(?:authorization|cookie|set-cookie)[ \t]*:[ \t]*)[^\r\n]*/gim, '$1[REDACTED]'],
+    [new RegExp(String.raw`(^|[^\w-])(["']?${ this.secretField }["']?\s*[:=]\s*)(["'])(?:\\.|(?!\3)[^\\])*\3`, 'gi'), '$1$2$3[REDACTED]$3'],
+    [new RegExp(String.raw`(^|[^\w-])(["']?${ this.secretField }["']?\s*[:=]\s*)([^"'\s,;&}]+)`, 'gi'), '$1$2[REDACTED]'],
     [/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@'],
   ];
 
@@ -32,7 +39,7 @@ export class TracePayloadRedactor {
     } catch {
       text = '[Payload unavailable]';
     }
-    const redacted = this.redactText(text);
+    const redacted = text;
     return redacted.length <= maxChars
       ? redacted
       : `${ redacted.slice(0, maxChars) }\n\n[truncated ${ redacted.length - maxChars } chars]`;
@@ -43,10 +50,12 @@ export class TracePayloadRedactor {
     if (!value || typeof value !== 'object') return value;
     if (seen.has(value)) return '[Circular]';
     seen.add(value);
-    if (Array.isArray(value)) return value.map(item => this.redactValue(item, seen));
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-      key,
-      this.secretKey.test(key) ? '[REDACTED]' : this.redactValue(item, seen),
-    ]));
+    const safe = Array.isArray(value) ? value.map(item => this.redactValue(item, seen)) :
+      Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        this.redactText(key),
+        this.secretKey.test(key) ? '[REDACTED]' : this.redactValue(item, seen),
+      ]));
+    seen.delete(value);
+    return safe;
   }
 }

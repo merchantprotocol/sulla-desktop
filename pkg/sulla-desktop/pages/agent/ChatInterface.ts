@@ -49,6 +49,7 @@ export class ChatInterface {
 
   readonly messages = ref<ChatMessage[]>([]);
   readonly messagesRevision: ComputedRef<number>;
+  readonly detailedTraceUsage = computed(() => this.persona.detailedTraceUsage.value);
 
   /**
    * @param channelId  WebSocket channel (shared across tabs, e.g. 'sulla-desktop')

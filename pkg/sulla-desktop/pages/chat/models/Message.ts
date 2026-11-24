@@ -21,7 +21,6 @@ export type MessageKind =
   | 'streaming'     // Sulla response still arriving
   | 'thinking'
   | 'tool'
-  | 'trace_metrics' // detailed-only per-response usage; never a standard transcript card
   | 'tool_approval'
   | 'tool_question'
   | 'patch'
@@ -139,15 +138,6 @@ export interface ToolMessage extends MessageBase {
 }
 
 /** Hidden from the Standard projection; consumed only by DetailedTraceProjection. */
-export interface TraceMetricsMessage extends MessageBase {
-  kind: 'trace_metrics';
-  inputTokens?:  number;
-  outputTokens?: number;
-  durationMs?:   number;
-  model?:        string;
-  nodeId?:       string;
-}
-
 // ─── Tool approval ────────────────────────────────────────────────
 export interface ToolApprovalMessage extends MessageBase {
   resolutionError?: string;
@@ -334,7 +324,6 @@ export type Message =
   | StreamingMessage
   | ThinkingMessage
   | ToolMessage
-  | TraceMetricsMessage
   | ToolApprovalMessage
   | ToolQuestionMessage
   | PatchMessage

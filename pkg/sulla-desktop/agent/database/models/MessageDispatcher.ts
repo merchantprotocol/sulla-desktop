@@ -96,6 +96,7 @@ export type SpeakListener = (text: string, threadId: string, pipelineSequence: n
  * Constructed once and passed to all handlers.
  */
 export interface DispatchContext {
+  detailedTraceUsage?: import('./DetailedTraceUsage').DetailedTraceUsage;
   messages:             ChatMessage[];
   graphRunning:         Ref<boolean>;
   waitingForUser:       Ref<boolean>;
@@ -898,7 +899,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     const success = data?.success === true;
     const payloadRedactor = new TracePayloadRedactor();
     const error = typeof data?.error === 'string' ? payloadRedactor.redactText(data.error) : null;
-    const result = capForDisplay(data?.result);
+    const result = capForDisplay(payloadRedactor.redact(data?.result));
 
     if (toolRunId) {
       const messageId = ctx.toolRunIdToMessageId.get(toolRunId);
@@ -908,7 +909,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
           const completedAt = Date.now();
           message.toolCard.status = success ? 'success' : 'failed';
           message.toolCard.error = error;
-          message.toolCard.result = payloadRedactor.redact(result);
+          message.toolCard.result = result;
           message.toolCard.completedAt = completedAt;
           if (typeof message.toolCard.startedAt === 'number' && Number.isFinite(message.toolCard.startedAt)) {
             message.toolCard.durationMs = Math.max(0, completedAt - message.toolCard.startedAt);
@@ -1031,7 +1032,7 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
 
 // ─── Handler: token_info ────────────────────────────────────────
 
-function handleTokenInfo(ctx: DispatchContext, agentId: string, threadId: string, msg: WebSocketMessage): void {
+function handleTokenInfo(ctx: DispatchContext, _agentId: string, threadId: string, msg: WebSocketMessage): void {
   const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
   if (typeof data.tokens_used === 'number') {
     ctx.handleTokenInfo(
@@ -1039,24 +1040,9 @@ function handleTokenInfo(ctx: DispatchContext, agentId: string, threadId: string
       data.time_spent, data.threadId, data.nodeId,
     );
   }
-  const traceMetrics = {
-    ...(typeof data.prompt_tokens === 'number' && Number.isFinite(data.prompt_tokens) && data.prompt_tokens >= 0 ? { promptTokens: data.prompt_tokens } : {}),
-    ...(typeof data.completion_tokens === 'number' && Number.isFinite(data.completion_tokens) && data.completion_tokens >= 0 ? { completionTokens: data.completion_tokens } : {}),
-    ...(typeof data.time_spent === 'number' && Number.isFinite(data.time_spent) ? { durationMs: Math.max(0, data.time_spent) } : {}),
-    ...(typeof data.model === 'string' && data.model.trim() ? { model: data.model } : {}),
-    ...(typeof data.nodeId === 'string' && data.nodeId.trim() ? { nodeId: data.nodeId } : {}),
-  };
-  if (Object.keys(traceMetrics).length > 0) {
-    const createdAt = Date.now();
-    ctx.messages.push({
-      id: uniqueMessageId(ctx, `${ createdAt }_trace_metrics`),
-      channelId: agentId,
-      threadId,
-      role: 'system',
-      content: '',
-      kind: 'trace_metrics',
-      traceMetrics,
-    });
+  if (ctx.detailedTraceUsage) {
+    const anchor = ctx.messages.findLast(message => !threadId || message.threadId === threadId);
+    ctx.detailedTraceUsage.capture(data, anchor?.id);
   }
 }
 

@@ -6,6 +6,7 @@
 // AgentPersonaService.ts
 import { computed, reactive, ref } from 'vue';
 
+import { DetailedTraceUsage } from './DetailedTraceUsage';
 import { createMessageDispatcher, type DispatchContext, type SpeakListener } from './MessageDispatcher';
 import { AgentPersonaRegistry } from '../registry/AgentPersonaRegistry';
 
@@ -92,6 +93,7 @@ export class AgentPersonaService {
    * deep traversal of the entire reactive transcript on every stream delta.
    */
   readonly messagesRevision = ref(0);
+  readonly detailedTraceUsage = new DetailedTraceUsage();
   private readonly toolRunIdToMessageId = new Map<string, string>();
 
   /**
@@ -332,6 +334,7 @@ export class AgentPersonaService {
   }
 
   setThreadId(threadId: string): void {
+    if (this.state.threadId !== threadId) this.detailedTraceUsage.clear();
     this.state.threadId = threadId;
     try {
       localStorage.setItem(this.threadStorageKey(), threadId);
@@ -375,6 +378,7 @@ export class AgentPersonaService {
   }
 
   clearMessages(): void {
+    this.detailedTraceUsage.clear();
     this.messages.splice(0, this.messages.length);
     this.toolRunIdToMessageId.clear();
     this.markMessagesChanged();
@@ -534,7 +538,7 @@ export class AgentPersonaService {
     }
 
     this.dispatcher.dispatch(this.getDispatchContext(), agentId, msgThreadId ?? '', msg);
-    this.markMessagesChanged();
+    if (msg.type !== 'token_info') this.markMessagesChanged();
   }
 
   private markMessagesChanged(): void {
@@ -549,6 +553,7 @@ export class AgentPersonaService {
   private getDispatchContext(): DispatchContext {
     return {
       messages:                  this.messages,
+      detailedTraceUsage:        this.detailedTraceUsage,
       graphRunning:              this.graphRunning,
       waitingForUser:            this.waitingForUser,
       stopReason:                this.stopReason,
