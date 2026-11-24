@@ -230,12 +230,6 @@ defineExpose({ scroller, scrollToBottom });
 }
 .transcript-standard .scroller {
   padding-top: 112px;
-  mask-image:
-    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
-  mask-composite: intersect;
-  -webkit-mask-image:
-    linear-gradient(to top, transparent var(--tr-fade-end), #000 calc(var(--tr-fade-end) + 56px));
-  -webkit-mask-composite: source-in;
 }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
 .report-entry-standard-evidence-after-reply { margin-top: -12px; }
