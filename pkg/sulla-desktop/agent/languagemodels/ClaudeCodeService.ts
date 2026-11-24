@@ -1147,6 +1147,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         let stdoutBuffer = '';
         let stderrBuffer = '';
         let textCollected = '';
+        // A tool call ran since the last text block; the next text block is a new paragraph.
+        let toolSinceText = false;
         let capturedSessionId: string | undefined = existingSession;
         let lastUsage: any;
         let errored = false;
@@ -1589,10 +1591,24 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               return;
             }
 
+            // A text block that follows a tool call is a new narration
+            // paragraph. Keep a paragraph break so the collected reply and
+            // any bubble that spans both don't read "…for Files:The cause…".
+            // Text blocks split for other reasons (citations, thinking) stay joined.
+            if (ev.type === 'content_block_start' && ev.content_block?.type === 'text') {
+              if (toolSinceText && promptConsumed && textCollected.trim() && !/\n\s*\n\s*$/.test(textCollected)) {
+                textCollected += '\n\n';
+                try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
+              }
+              toolSinceText = false;
+              return;
+            }
+
             // Tool use block starting → emit a short activity message. Input
             // isn't filled in yet here for partial streaming, so the message
             // starts generic and content_block_stop below refines it.
             if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+              toolSinceText = true;
               stopHeartbeat();
               if (!firstContentAt) firstContentAt = Date.now();
               const name = ev.content_block.name ?? 'tool';
@@ -1640,6 +1656,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
                 // Fallback start for CLI versions that batch the whole assistant
                 // message instead of emitting streamed content_block_stop events.
                 // Idempotent — won't override an earlier stream-path start.
+                toolSinceText = true;
                 toolEvents.noteStart(b.id, b.name, b.input);
                 emitToolActivity(b.id, b.name, b.input);
                 emitFilePatch(b.name, b.input);

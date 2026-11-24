@@ -12,6 +12,7 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getServiceByProvider } from '../languagemodels';
+import { ReplyStreamThrottle } from './ReplyStreamThrottle';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
@@ -1691,7 +1692,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Text streaming state — throttle at ~50ms to avoid flooding the WebSocket
     let contentBuffer = '';
     let displayBuffer = '';
-    let lastStreamFlush = 0;
     let streamingWsSent = false;
     let streamingOpen = false;
     let thinkingOpen = false;
@@ -1713,8 +1713,45 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
-      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
+      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution })
+        .catch(error => console.warn(`[${ this.name }] live reply send failed:`, error));
       streamingOpen = true;
+    };
+    // Leading update at once, then at most one per window. The held tail of a
+    // burst is published when the window ends instead of waiting for the next
+    // token, which during a long tool run could be minutes away.
+    // Runs from a timer for the held tail, outside the provider's onToken
+    // try/catch, so it must not throw.
+    const streamThrottle = new ReplyStreamThrottle(() => {
+      try {
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
+        if (!stripped.trim()) return false;
+        sendStreamingUpdate(stripped);
+        streamingWsSent = true;
+
+        return true;
+      } catch (error) {
+        console.warn(`[${ this.name }] live reply update failed:`, error);
+
+        return false;
+      }
+    }, STREAM_THROTTLE_MS);
+    // Publish the open text segment, close its bubble and start a fresh one.
+    // Returns whether there was text to close.
+    const closeTextSegment = (): boolean => {
+      streamThrottle.reset();
+      if (isVoiceMode || !contentBuffer.trim()) return false;
+      const stripped = stripProtocolTagsStreaming(displayBuffer);
+      if (stripped.trim()) {
+        sendStreamingUpdate(stripped);
+        streamingWsSent = true;
+      }
+      if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
+      streamingOpen = false;
+      contentBuffer = '';
+      displayBuffer = '';
+
+      return true;
     };
 
     const onToken = (token: string): void => {
@@ -1745,17 +1782,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // like `<AGENT_DONE` (closing tag hasn't arrived yet) is truncated
       // immediately instead of leaking into the bubble.
       if (!cleaned) suppressedDeltaCount++;
-      if (!isVoiceMode && cleaned) {
-        const now = Date.now();
-        if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
-          lastStreamFlush = now;
-          const stripped = stripProtocolTagsStreaming(displayBuffer);
-          if (stripped.trim()) {
-            sendStreamingUpdate(stripped);
-            streamingWsSent = true;
-          }
-        }
-      }
+      if (!isVoiceMode && cleaned) streamThrottle.changed();
     };
 
     // Activity channel for providers that emit rich events (e.g. Claude Code
@@ -1770,7 +1797,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // think → message → think → message instead of merging everything.
     let lastActivity = '';
     const onActivity = (message: string, reportingActivity?: 'status' | 'tool'): void => {
-      if (!message || message === lastActivity) return;
+      if (!message) return;
+      // Back-to-back tools of one kind report the same line ("Running a shell
+      // command"). When narration ran between them, that is still a boundary:
+      // skipping it left the bubble on its first update and glued the next
+      // paragraph onto it. Other repeated lines (status heartbeats) stay
+      // suppressed and don't split the reply.
+      const hasText = !isVoiceMode && stripProtocolTagsStreaming(displayBuffer).trim().length > 0;
+      if (message === lastActivity && !(reportingActivity === 'tool' && hasText)) return;
+      const flushedStreaming = closeTextSegment();
       if (!firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
       lastActivity = message;
 
@@ -1778,19 +1813,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // is happening even if raw tokens are sparse (long Claude Code turns).
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
-
-      const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
-      if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(displayBuffer);
-        if (stripped.trim()) {
-          sendStreamingUpdate(stripped);
-          streamingWsSent = true;
-        }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
-        streamingOpen = false;
-        contentBuffer = '';
-        displayBuffer = '';
-      }
 
       const parentWsCh = (state.metadata as any).parentWsChannel;
       const willForward = !!(parentWsCh && (state.metadata as any).isSubAgent);
@@ -1820,17 +1842,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       new TurnOutputCounter(state.metadata as any).record();
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
-      if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(displayBuffer);
-        if (stripped.trim()) {
-          sendStreamingUpdate(stripped);
-          streamingWsSent = true;
-        }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
-        streamingOpen = false;
-        contentBuffer = '';
-        displayBuffer = '';
-      }
+      closeTextSegment();
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
@@ -1918,6 +1930,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       //
       // Close only bubbles opened by this attempt; a suppressed stale wake
       // must not emit a completion sentinel into someone else's stream.
+      streamThrottle.stop();
       if (!isVoiceMode) {
         if (contentBuffer.trim()) {
           const stripped = stripProtocolTagsStreaming(displayBuffer);
