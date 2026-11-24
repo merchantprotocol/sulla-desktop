@@ -86,14 +86,14 @@ describe('CheckinIdentity', () => {
       'Pull Request 2816 progress report.',
       'draft PR #2816 check-in.',
       'draft #2816 check-in.',
-      '#2816 check-in.',
-      '#2816 status update.',
+      'PR #2816 check-in.',
+      'PR #2816 status update.',
       'PR #2816 is blocked.',
       'currently working on PR #2816.',
       'manager status turn for PR #2816.',
-      'worker progress report: #2816.',
+      'worker progress report on PR #2816.',
       'sub-agent result on PR #2816.',
-      'orchestrator wake-up mentions #2816.',
+      'orchestrator wake-up mentions PR #2816.',
       'heartbeat status update for PR #2816.',
       'detailed chat trace in epic #2816.',
       'draft pull request #2816 complete.',
@@ -116,6 +116,11 @@ describe('CheckinIdentity', () => {
     expect(identity('pull request #2816 progress report.')).toBe('pr:2816');
     expect(identity('PR #2816 status update.', { conversationId: 'thread_2816' }))
       .toBe('conv:thread_2816|pr:2816');
+  });
+
+  it('does not treat a bare numbered step as a PR identity inside a conversation', () => {
+    // risk: unrelated numbered work is merged into PR check-in history
+    expect(identity('Step #1 completed.', { conversationId: 'thread_chat' })).toBeNull();
   });
 
   it.each(['approval', 'correction'])('returns null for non-neutral sentiment %s', sentiment => {
