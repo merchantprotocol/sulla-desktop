@@ -9,6 +9,7 @@
   <button
     :class="['mic-btn', { live }]"
     type="button"
+    :aria-label="live ? 'Stop recording' : 'Start voice input'"
     :title="live ? 'Stop recording' : 'Start voice input (⌘/)'"
     @click="$emit('toggle')"
   >
@@ -46,7 +47,7 @@ defineEmits<{ (e: 'toggle'): void }>();
 }
 .noir-mic { display: none; width: 17px; height: 17px; }
 .mic-btn {
-  width: 34px; height: 34px; border: 0; color: var(--text-muted); background: transparent;
+  width: 44px; height: 44px; border: 0; color: var(--text-muted); background: transparent;
   transition: background 0.16s, color 0.16s, box-shadow 0.16s;
 }
 .classic-mic { display: none; }
@@ -55,6 +56,9 @@ defineEmits<{ (e: 'toggle'): void }>();
 .mic-btn.live {
   color: var(--text-primary); background: color-mix(in srgb, var(--accent) 30%, transparent); border: 0;
   animation: noir-mic-pulse 1.6s cubic-bezier(.22, 1, .36, 1) infinite;
+}
+@media (max-width: 540px) {
+  .mic-btn { width: 38px; height: 38px; }
 }
 @keyframes noir-mic-pulse {
   from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-hover) 45%, transparent); }
