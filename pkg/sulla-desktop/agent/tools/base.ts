@@ -337,6 +337,19 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
   // ─────────────────────────────────────────────────────────────
 
   /** Bind activity to the invocation's trusted originating thread, never a selected chat or tool argument. */
+  /** Emit a file reference to the originating visible chat, preserving delivery failures. */
+  protected async emitInlineFileReference(record: unknown): Promise<void> {
+    const metadata = this.state?.metadata;
+    const threadId = metadata?.threadId;
+    const send = this.sendChatMessage;
+    const authorized = !!threadId && (!this.executionContext?.thread_id || this.executionContext.thread_id === threadId)
+      && !metadata?._muteWsChat && !metadata?.subconsciousSilent;
+    if (!authorized) throw new Error('Inline file references require an authorized chat thread');
+    if (!send) throw new Error('Inline file reference chat transport is unavailable');
+    const sent = await send('', 'inline_file_reference', { inlineFileReference: record });
+    if (sent !== true) throw new Error('Inline file reference was not delivered');
+  }
+
   protected bindChatToolActivity(): (activity: ChatToolActivity) => Promise<void> {
     const metadata = this.state?.metadata;
     const threadId = metadata?.threadId;

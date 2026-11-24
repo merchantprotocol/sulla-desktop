@@ -1475,6 +1475,13 @@ export class BackendGraphWebSocketService {
 
       // Route responses back to the originating channel
       state.metadata.wsChannel = channelId;
+      // Only turns initiated by the Desktop renderer's visible chat may emit
+      // inline file cards. This is a trusted server-side signal; mobile relay,
+      // relayed turns, chat-completions API calls, and sub-agents never qualify.
+      (state.metadata as any).desktopChatVisible = channelId === SULLA_DESKTOP_CHANNEL_ID
+        && triggerType === 'sulla-desktop'
+        && metadata?.relayed !== true
+        && (state.metadata as any).isSubAgent !== true;
       // Relayed organization turns are explicitly marked so BaseTool can
       // require approval for writes while still running as this Desktop's user.
       (state.metadata as any).relayed = metadata?.relayed === true;

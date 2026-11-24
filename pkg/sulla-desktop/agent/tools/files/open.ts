@@ -8,6 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { ipcMain } from 'electron';
 
 import { FilesTool } from './common';
+import { AgentFileOpenRoutePolicy } from './AgentFileOpenRoutePolicy';
+import { InlineFileReferenceMessageFactory } from './InlineFileReferenceMessage';
 
 import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 
@@ -15,6 +17,9 @@ import type { ToolResponse } from '../base';
 
 interface FilesRecord { file: { id:string; collection_id:string; path:string } }
 interface OpenResult { opened:boolean; tabId:string; path:string; how:string }
+
+const fileOpenRoutePolicy = new AgentFileOpenRoutePolicy();
+const inlineFileReferenceFactory = new InlineFileReferenceMessageFactory();
 
 export function normalizeOpenPath(value:string):string {
   const trimmed = value.trim().replaceAll('\\', '/');
@@ -56,6 +61,28 @@ export class FilesOpenWorker extends FilesTool {
       fileId = record.file.id;
       collectionId = record.file.collection_id;
       resolvedPath = record.file.path;
+    }
+
+    const metadata = (this as any).state?.metadata as Record<string, any> | undefined;
+    const decision = kind === 'folder' ? { kind: 'legacy-tab' as const } : fileOpenRoutePolicy.route(input.placement, {
+      threadId: metadata?.threadId,
+      executionThreadId: this.executionContext?.thread_id,
+      hasChatTransport: typeof this.sendChatMessage === 'function',
+      isHumanVisibleChatEligible: metadata?.desktopChatVisible === true,
+      isChatMuted: !!metadata?._muteWsChat,
+      isSubconsciousSilent: !!metadata?.subconsciousSilent,
+    });
+    if (decision.kind === 'reject') throw new Error('Invalid file open placement');
+    if (decision.kind === 'inline') {
+      const record = inlineFileReferenceFactory.create({
+        threadId: decision.threadId,
+        toolCallId: randomUUID(),
+        fileId,
+        collectionId,
+      });
+      await this.emitInlineFileReference(record);
+      const name = resolvedPath.slice(resolvedPath.lastIndexOf('/') + 1);
+      return { successBoolean: true, responseString: JSON.stringify({ opened: true, placement: 'inline', fileId, path: resolvedPath, name }) };
     }
 
     const agentWindow = getActiveAgentWindow();
