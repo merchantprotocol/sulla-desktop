@@ -27,8 +27,10 @@ describe('CheckinIdentity', () => {
     // risk: unrelated conversation threads are merged as duplicate status reports
     expect(identity('Heartbeat status update in thread_heartbeat42: resumed.', { conversationId: 'thread_main' }))
       .toBeNull();
+    expect(identity('Heartbeat status update: resumed.', { id: 'thread_abc' }))
+      .toBeNull();
     expect(identity('Sub-agent result from spawn-agent-memory-cap-worker completed.', { conversationId: 'thread_main' }))
-      .toBe('conversation:thread_main:thread:spawn-agent-memory-cap-worker');
+      .toBe('conv:thread_main|thread:spawn-agent-memory-cap-worker');
   });
 
   it('keeps two same-template jobs in one conversation separate by job id', () => {
@@ -37,6 +39,16 @@ describe('CheckinIdentity', () => {
     const first = identity('Sub-agent result agent-job-1795493855725-88 completed the research task.', { conversationId });
     const second = identity('Sub-agent result agent-job-1795493855725-89 completed the research task.', { conversationId });
     expect(first).not.toBeNull();
+    expect(second).not.toBe(first);
+  });
+
+  it('scopes the same job identity to each conversation', () => {
+    // risk: identical job reports from separate chats supersede each other
+    const text = 'Sub-agent result agent-job-1795493855725-88 completed the research task.';
+    const first = identity(text, { conversationId: 'thread_chat_a' });
+    const second = identity(text, { conversationId: 'thread_chat_b' });
+    expect(first).toBe('conv:thread_chat_a|job:agent-job-1795493855725-88');
+    expect(second).toBe('conv:thread_chat_b|job:agent-job-1795493855725-88');
     expect(second).not.toBe(first);
   });
 
@@ -81,21 +93,22 @@ describe('CheckinIdentity', () => {
     expect(recognized.length).toBeGreaterThanOrEqual(18);
     expect(new Set(recognized).size).toBe(1);
     expect(identity('PR #2817 status update.', { conversationId: 'thread_chat_2816' }))
-      .not.toBe(recognized[0]);
+      .toBe('conv:thread_chat_2816|pr:2817');
   });
 
-  it('requires an epic when PR identity has no conversation context', () => {
-    // risk: unrelated issue numbers are mistaken for an epic-wide check-in
-    expect(identity('PR #2816 status update.')).toBeNull();
+  it('requires an explicit PR or draft prefix without conversation context', () => {
+    // risk: unqualified issue numbers are mistaken for a PR status identity
+    expect(identity('PR #2816 status update.')).toBe('pr:2816');
     expect(identity('#2816 status update.')).toBeNull();
-    expect(identity('PR #2816 status update for the memory cap epic.')).toBe('pr:2816');
+    expect(identity('draft #2816 check-in.')).toBe('pr:2816');
+    expect(identity('pull request #2816 progress report.')).toBe('pr:2816');
     expect(identity('PR #2816 status update.', { conversationId: 'thread_2816' }))
-      .toBe('conversation:thread_2816:pr:2816');
+      .toBe('conv:thread_2816|pr:2816');
   });
 
-  it('returns null for non-neutral sentiment', () => {
+  it.each(['approval', 'correction'])('returns null for non-neutral sentiment %s', sentiment => {
     // risk: corrections, approvals, or frustrations are hidden by check-in superseding
-    expect(identity('Worker progress update: agent-job-1795493855725-88.', { sentiment: 'correction' })).toBeNull();
+    expect(identity('Worker progress update: agent-job-1795493855725-88.', { sentiment })).toBeNull();
   });
 
   it.each([
