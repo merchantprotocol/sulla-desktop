@@ -21,6 +21,8 @@ const RETRY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'x-should-retry': 'true',
 });
 const UNAVAILABLE_MESSAGE = 'Sulla provider bridge is temporarily unavailable';
+const MAX_PROVIDER_ERROR_BODY_BYTES = 8 * 1024;
+const MAX_PROVIDER_REASON_CHARS = 240;
 
 /**
  * Create one process-scoped HTTP adapter. The returned environment contains
@@ -29,6 +31,49 @@ const UNAVAILABLE_MESSAGE = 'Sulla provider bridge is temporarily unavailable';
  */
 export class ProviderCliBridgeService {
   constructor(private readonly requireBroker = () => configuredVaultBrokerProvider.requireConfiguredCredentialBroker()) {}
+
+  private retryAfterSeconds(header: string | null): number | undefined {
+    const value = header?.trim();
+    if (!value) return undefined;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(Math.ceil(seconds), 24 * 60 * 60);
+    const date = Date.parse(value);
+    if (!Number.isFinite(date)) return undefined;
+    return Math.min(Math.max(Math.ceil((date - Date.now()) / 1000), 0), 24 * 60 * 60);
+  }
+
+  private openAIErrorReason(chunks: readonly Buffer[], byteCount: number): string | undefined {
+    if (byteCount === 0) return undefined;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(Buffer.concat([...chunks], byteCount).toString('utf8')) as unknown;
+    } catch {
+      return undefined;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const body = parsed as Record<string, unknown>;
+    const providerError = body.error;
+    const message = providerError && typeof providerError === 'object' && !Array.isArray(providerError)
+      ? (providerError as Record<string, unknown>).message
+      : body.message;
+    if (typeof message !== 'string' || !message.trim()) return undefined;
+    return this.safeOpenAIReason(message);
+  }
+
+  private safeOpenAIReason(reason: string): string | undefined {
+    const safe = reason
+      .replace(/[\r\n\t]+/g, ' ')
+      .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+      .replace(/\bsk-(?:proj-)?[A-Za-z0-9_-]{8,}\b/gi, '[redacted]')
+      .replace(/\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[redacted]')
+      .replace(/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g, '[redacted]')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!safe) return undefined;
+    return safe.length > MAX_PROVIDER_REASON_CHARS
+      ? `${ safe.slice(0, MAX_PROVIDER_REASON_CHARS - 1) }…`
+      : safe;
+  }
 
   async create(options: ProviderCliBridgeOptions): Promise<ProviderCliBridgeLease> {
   const definition = ProviderCliBridgeTools.assertIdentity(options);
@@ -79,6 +124,8 @@ export class ProviderCliBridgeService {
     let upstreamHeadersMs = 0;
     let firstChunkMs = 0;
     let status = 500;
+    let retryAfterSeconds: number | undefined;
+    let openAIReason: string | undefined;
     let timingPath = 'unknown';
     let failureNote = '';
     // Where the request was when it failed; part of the logged reason code.
@@ -210,6 +257,14 @@ export class ProviderCliBridgeService {
       upstreamHeadersMs = performance.now() - upstreamStartedAt;
       providerBridgeActivity.mark(identity.context.pod_id);
       status = upstream.status;
+      const captureProviderReason = definition.cli === 'codex' && (status === 429 || status === 503);
+      if (captureProviderReason) {
+        retryAfterSeconds = this.retryAfterSeconds(upstream.headers.get('retry-after'));
+        providerBridgeActivity.publishRetryStatus(identity.context.pod_id, {
+          status: status as 429 | 503,
+          ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+        });
+      }
       if (upstream.status === 423) vaultHealthMonitor.record('locked'); else vaultHealthMonitor.recordSuccess();
       if (upstream.status >= 400) {
         console.warn(`[ProviderCliBridge] upstream ${ definition.integration } ${ upstreamPath } returned ${ upstream.status }`);
@@ -222,11 +277,19 @@ export class ProviderCliBridgeService {
         // client that disconnects mid-stream must not leave us waiting on a
         // drain that never comes, so back-pressure also settles on close.
         const reader = upstream.body.getReader();
+        const providerErrorChunks: Buffer[] = [];
+        let providerErrorBytes = 0;
         try {
           for (;;) {
             const { done, value } = await reader.read();
             if (done || response.destroyed) break;
             providerBridgeActivity.mark(identity.context.pod_id);
+            if (captureProviderReason && providerErrorBytes < MAX_PROVIDER_ERROR_BODY_BYTES) {
+              const availableBytes = MAX_PROVIDER_ERROR_BODY_BYTES - providerErrorBytes;
+              const captured = Buffer.from(value.subarray(0, availableBytes));
+              providerErrorChunks.push(captured);
+              providerErrorBytes += captured.byteLength;
+            }
             if (!firstChunkMs) firstChunkMs = performance.now() - startedAt;
             if (!response.write(value)) {
               await new Promise<void>(resolve => {
@@ -238,6 +301,14 @@ export class ProviderCliBridgeService {
           }
         } finally {
           if (response.destroyed) await reader.cancel().catch(() => {});
+        }
+        if (captureProviderReason) {
+          openAIReason = this.openAIErrorReason(providerErrorChunks, providerErrorBytes);
+          if (openAIReason) providerBridgeActivity.publishRetryStatus(identity.context.pod_id, {
+            status: status as 429 | 503,
+            reason: openAIReason,
+            ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
+          });
         }
       }
       response.end();
@@ -280,7 +351,7 @@ export class ProviderCliBridgeService {
     } finally {
       lifetime.signal.removeEventListener('abort', abort);
       const ms = (value: number) => value.toFixed(1);
-      options.logTiming?.(`[BridgeTiming] provider=${ definition.cli } path=${ timingPath } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ failureNote }`);
+      options.logTiming?.(`[BridgeTiming] provider=${ definition.cli } path=${ timingPath } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ retryAfterSeconds !== undefined ? ` retry_after=${ retryAfterSeconds }s` : '' }${ openAIReason ? ` openai_reason=${ JSON.stringify(openAIReason) }` : '' }${ failureNote }`);
     }
   });
   try {
