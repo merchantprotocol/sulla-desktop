@@ -66,8 +66,7 @@
             class="model-btn"
             type="button"
             :aria-label="`Choose model: ${selectionLabel}`"
-            :title="side ? `${selectionTitle} · ${usagePercent}% of context used` : selectionTitle"
-            :style="{ '--usage': `${usagePercent}%` }"
+            :title="selectionTitle"
             @click="controller.openModal('model')"
           >
             <span class="model-avatar">{{ modelInitial }}</span>
@@ -218,16 +217,6 @@
 
           <div class="composer-tools" :class="{ 'remote-enabled': remoteChat.available.value || remoteChat.remote.value }">
             <HeartbeatControl />
-            <button
-              class="usage-meter"
-              type="button"
-              :aria-label="`Context usage: ${usagePercent}%`"
-              title="Context usage"
-              @click="controller.openModal('tokens')"
-            >
-              <span class="usage-ring" :style="{ '--usage': `${usagePercent}%` }" />
-              <span class="usage-value">{{ usagePercent }}%</span>
-            </button>
             <ComposerMic :live="isRecording" @toggle="toggleVoice" />
             <ComposerSend
               :running="remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value"
@@ -472,23 +461,10 @@ const canSendDraft = computed(() => !filesImporting.value && (remoteChat.remote.
   : (draft.value.trim().length > 0 || controller.staged.value.length > 0 || !!useCases.intent.value)));
 const { label: selectionLabel, title: selectionTitle } = useSelectionLabel();
 const modelInitial = computed(() => selectionLabel.value.trim().charAt(0).toUpperCase() || 'S');
-const contextLimit = computed(() => {
-  const raw = controller.model.value.ctx.toLowerCase().replace(/\s*ctx\s*/, '');
-  const amount = Number.parseFloat(raw);
-  if (!Number.isFinite(amount) || amount <= 0) return 0;
-  if (raw.endsWith('m')) return amount * 1_000_000;
-  if (raw.endsWith('k')) return amount * 1_000;
-  return amount;
-});
-const usagePercent = computed(() => {
-  if (!contextLimit.value) return 0;
-  return Math.min(100, Math.round((controller.usage.value.totalTokens / contextLimit.value) * 100));
-});
 
 // ─── Right drawer (side dock): the status row's button opens or closes it ───
 const { position: dockPosition, setPosition } = DockPositions.use();
 const drawerOpen = computed(() => dockPosition.value === 'side');
-const side = computed(() => dockPosition.value === 'side');
 
 // ─── Voice state bridge ────────────────────────────────────────────
 const isRecording  = computed(() => controller.voice.value.phase === 'recording');
@@ -953,7 +929,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 <style scoped>
 .composer-wrap {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 15;
-  box-sizing: border-box; padding: 0 20px 14px;
+  box-sizing: border-box; padding: 0 20px 48px;
 }
 .composer-inner { position: relative; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
@@ -1007,9 +983,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 :global(.dark) .composer { box-shadow: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07); }
 .composer.recording .glyph, .glyph { display: none; }
 .composer-tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; width: auto; min-width: 0; min-height: 0; padding: 0; border: 0; }
-.usage-meter { display: flex; align-items: center; justify-content: center; gap: 5px; flex: 0 0 44px; width: 44px; height: 44px; padding: 0 4px; border: 0; border-radius: 50%; color: var(--text-dim); background: transparent; font: 11px var(--font-mono); cursor: pointer; }
-.usage-meter:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.usage-ring { width: 18px; height: 18px; flex: 0 0 18px; border-radius: 50%; background: conic-gradient(var(--accent) 0 var(--usage), color-mix(in srgb, var(--border-default) 75%, transparent) var(--usage) 100%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), var(--bg-page) calc(100% - 2.5px)); }
 .hints { position: relative; display: flex; justify-content: center; gap: 0; min-height: 14px; margin-top: 9px; color: var(--text-dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
 .classic-guide { display: none; }
 .noir-guide { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
@@ -1025,7 +998,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-wrap { padding-right: 10px; padding-left: 10px; }
   .composer-agent-picker { gap: 6px; }
   .composer-agent-picker .model-btn { padding-right: 8px; }
-  .model-name, .model-caret, .usage-value { display: none; }
+  .model-name, .model-caret { display: none; }
   .composer-agent-picker :deep(.environment-pill span:first-of-type) { display: none; }
 }
 @media (max-width: 540px) {
@@ -1037,7 +1010,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   .composer-agent-picker :deep(.environment-pill span:last-child) { display: none; }
   .composer-run-row { margin: 0 4px 8px; }
   .composer { gap: 2px; padding: 0 6px; }
-  .usage-meter { flex-basis: 38px; width: 38px; height: 38px; }
   .composer-top { margin: 0 4px 8px; }
   .composer-top .usecase-strip { max-width: 100%; overflow: hidden; }
 }

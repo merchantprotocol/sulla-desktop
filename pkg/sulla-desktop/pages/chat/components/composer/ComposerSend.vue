@@ -96,16 +96,12 @@ function activate(): void {
   transition: background 0.25s, color 0.25s, box-shadow 0.25s,
     transform 0.58s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
-.composer-send.ready {
-  color: var(--text-primary);
-  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
-  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 50%, transparent), inset 0 1px 0 var(--bg-overlay);
+.composer-send.ready, .composer-send.ready:hover {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 35%, transparent);
   cursor: pointer;
   transform: scale(1.05);
-}
-.composer-send.ready {
-  color: var(--text-on-accent);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .composer-send.running {
   color: var(--text-primary);
