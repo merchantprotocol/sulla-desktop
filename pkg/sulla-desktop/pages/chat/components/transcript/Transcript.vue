@@ -9,7 +9,7 @@
   hands each to MessageRouter. Owns scroll behavior.
 -->
 <template>
-  <div class="transcript" :class="{ 'transcript-standard': reportingLevel === 'info' }">
+  <div class="transcript" :class="{ 'transcript-standard': true }">
     <div
       ref="scroller"
       class="scroller"
@@ -28,7 +28,6 @@
           :ref="el => jumper.register(entry.id, el)"
           class="report-entry"
           :class="{
-            'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
             'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
           }"
         >
@@ -41,17 +40,11 @@
             v-if="entry.kind === 'card'"
             :msg="entry.message"
             :latest-reply="entry.id === latestReplyId"
-            :reporting-level="reportingLevel"
             :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
           />
           <div v-else class="report-activity">
             <span class="report-activity-text">{{ entry.text }}</span>
-            <template v-if="reportingLevel === 'debug'">
-              <time v-if="activityTimes.get(entry.id)" class="report-activity-time" :datetime="activityTimes.get(entry.id)?.iso">
-                {{ activityTimes.get(entry.id)?.label }}
-              </time>
-              <span v-else class="report-activity-time">Time unavailable</span>
-            </template>
+
           </div>
         </div>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
@@ -72,7 +65,7 @@
     -->
     <ScrollPill
       :visible="showPill"
-      :standard="reportingLevel === 'info'"
+      :standard="true"
       @jump="scrollToBottom"
     />
   </div>
@@ -99,14 +92,13 @@ const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
 
-const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+const transcriptEntries = computed(() => reporting.entries(controller.messages.value, 'info'));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
-  if (props.reportingLevel !== 'info' || entry.kind !== 'card') return true;
+  if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
   return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
 }
 function isStandardEvidenceAfterReply(index: number): boolean {
-  if (props.reportingLevel !== 'info') return false;
   const entry = transcriptEntries.value[index];
   if (entry?.kind !== 'card' || entry.message.kind !== 'citation') return false;
   for (let i = index - 1; i >= 0; i--) {
@@ -128,20 +120,6 @@ const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(
   at: LineTimes.idTime(entry.sourceId) ?? entry.createdAt,
 }))));
 provide(LineTimeKey, id => times.value.get(id));
-
-const activityTimes = computed(() => {
-  const recorded = new Map<string, { iso: string; label: string }>();
-  if (props.reportingLevel !== 'debug') return recorded;
-  for (const entry of transcriptEntries.value) {
-    if (entry.kind !== 'activity') continue;
-    const at = LineTimes.idTime(entry.sourceId) ?? entry.createdAt;
-    const date = new Date(at);
-    if (at > 0 && Number.isFinite(date.getTime())) {
-      recorded.set(entry.id, { iso: date.toISOString(), label: LineTimes.fullTime(at) });
-    }
-  }
-  return recorded;
-});
 
 // "Jump to" from the side dock, status line or quick switcher: whichever
 // transcript shows the message scrolls to it.
@@ -241,13 +219,6 @@ defineExpose({ scroller, scrollToBottom });
 }
 .report-label-user { align-self: flex-end; }
 .report-activity { color: var(--text-secondary); font-size: 13px; }
-.report-activity-time { margin-inline-start: 8px; color: var(--text-muted); }
-.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-section),
-.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-labeled),
-.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-flag) {
-  background: transparent;
-  box-shadow: none;
-}
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
 .scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }

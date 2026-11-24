@@ -10,7 +10,7 @@
     v-if="msg.result"
     :data="msg.result"
     :message-id="msg.id"
-    :standard="reportingLevel === 'info'"
+    :standard="true"
   />
   <!-- An old text notice about finished agents: one compact line, hidden once a result card covers its job. -->
   <div
@@ -52,10 +52,9 @@ import { useChatController } from '../../controller/useChatController';
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 
 import type { ProactiveMessage, SubAgentExchangeMessage } from '../../models/Message';
-import type { ReportingLevel } from '../../models/ReportingLevel';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
 
-const props = withDefaults(defineProps<{ msg: ProactiveMessage; reportingLevel?: ReportingLevel }>(), { reportingLevel: 'debug' });
+const props = defineProps<{ msg: ProactiveMessage }>();
 const open = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
 let controller: ReturnType<typeof useChatController> | undefined;
 try { controller = useChatController() } catch { /* outside a chat page */ }
