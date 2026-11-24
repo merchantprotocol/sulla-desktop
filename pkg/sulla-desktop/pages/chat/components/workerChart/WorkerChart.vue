@@ -27,10 +27,10 @@
           :key="row.key"
           class="worker-chart__rail-dot"
           :class="[
-            row.kind === 'agent' ? 'worker-chart__rail-dot--agent' : 'worker-chart__rail-dot--group',
-            { 'worker-chart__rail-dot--tick': row.kind === 'agent' && tickedAgentId === row.agent.id },
+            'worker-chart__rail-dot--agent',
+            { 'worker-chart__rail-dot--tick': tickedAgentId === row.agent.id },
           ]"
-          :data-state="row.kind === 'agent' ? row.agent.state : undefined"
+          :data-state="row.agent.state"
           :style="{ top: `${row.y}px`, left: `${row.x}px` }"
         />
       </span>
@@ -72,24 +72,12 @@
               v-for="row in chart.rows"
               :key="row.key"
               :ref="element => setRowElement(row.key, element)"
-              class="worker-chart__row"
-              :class="row.kind === 'group' ? 'worker-chart__row--group' : 'worker-chart__row--agent'"
+              class="worker-chart__row worker-chart__row--agent"
               :data-row-key="row.key"
               :data-parent-id="row.parentId ?? ''"
               :style="rowStyle(row)"
             >
               <button
-                v-if="row.kind === 'group'"
-                class="worker-chart__node worker-chart__node--group"
-                type="button"
-                :aria-label="groupLabel(row)"
-                :aria-expanded="row.expanded"
-                @click.stop="toggleGroup(row.parentId)"
-              >
-                <span class="worker-chart__group-count">{{ row.hiddenCount ? `+${row.hiddenCount}` : 'less' }}</span>
-              </button>
-              <button
-                v-else
                 :ref="element => setNodeButton(row.agent.id, element)"
                 class="worker-chart__node"
                 type="button"
@@ -200,8 +188,6 @@ import {
 } from './workerChartModel';
 import type {
   WorkerChartAgent,
-  WorkerChartAgentRow,
-  WorkerChartGroupRow,
   WorkerChartRow,
 } from './workerChartModel';
 
@@ -227,7 +213,6 @@ const tree = ref<HTMLElement | null>(null);
 const popover = ref<HTMLElement | null>(null);
 const nodeButtons = new Map<string, HTMLButtonElement>();
 const rowElements = new Map<string, HTMLElement>();
-const expandedParentIds = ref<Set<string>>(new Set());
 const collapsedDoneIds = ref<Set<string>>(new Set());
 const selectedAgentId = ref<string | null>(null);
 const hoveredAgentId = ref<string | null>(null);
@@ -244,7 +229,6 @@ const popoverId = `${instanceId}-popover`;
 const isNarrow = computed(() => props.chatColumnWidth < 900);
 const chart = computed(() => layout.layout(
   props.root,
-  expandedParentIds.value,
   isNarrow.value && !chartOverlayOpen.value,
   collapsedDoneIds.value,
 ));
@@ -273,14 +257,14 @@ watch(doneIds, ids => {
     doneTimers.set(id, setTimeout(() => {
       doneTimers.delete(id);
       collapsedDoneIds.value = new Set([...collapsedDoneIds.value, id]);
-    }, 620));
+    }, WorkerChartLayout.doneLingerMs));
   }
 }, { immediate: true });
 
 watch(chart, () => {
-  if (selectedAgentId.value && !chart.value.rows.some(row => row.kind === 'agent' && row.agent.id === selectedAgentId.value)) {
+  if (selectedAgentId.value && !chart.value.rows.some(row => row.agent.id === selectedAgentId.value)) {
     dismissPopover(true, true);
-  } else if (hoveredAgentId.value && !chart.value.rows.some(row => row.kind === 'agent' && row.agent.id === hoveredAgentId.value)) {
+  } else if (hoveredAgentId.value && !chart.value.rows.some(row => row.agent.id === hoveredAgentId.value)) {
     dismissPopover(false);
   }
   void nextTick(repositionPopover);
@@ -375,19 +359,6 @@ function agentLabel(agent: WorkerChartAgent): string {
   return `${agent.name}${agent.lane ? ` · ${agent.lane}` : ''} · ${stateLabel(agent.state)}`;
 }
 
-function groupLabel(row: WorkerChartGroupRow): string {
-  const parent = layout.findAgent(props.root, row.parentId);
-  if (row.expanded) return `Show fewer agents under ${parent?.name ?? 'this agent'}`;
-  return `Show ${row.hiddenCount} more agents under ${parent?.name ?? 'this agent'}`;
-}
-
-function toggleGroup(parentId: string): void {
-  const next = new Set(expandedParentIds.value);
-  if (next.has(parentId)) next.delete(parentId);
-  else next.add(parentId);
-  expandedParentIds.value = next;
-}
-
 function toggleChartOverlay(): void {
   chartOverlayOpen.value = !chartOverlayOpen.value;
   if (chartOverlayOpen.value) {
@@ -474,7 +445,7 @@ function dismissPopover(restoreFocus: boolean, fallback = false): void {
       focusWithoutTooltip(railTrigger.value);
       return;
     }
-    const firstVisible = chart.value.rows.find((row): row is WorkerChartAgentRow => row.kind === 'agent');
+    const firstVisible = chart.value.rows.at(0);
     const firstButton = firstVisible ? nodeButtons.get(firstVisible.agent.id) : null;
     if (firstButton?.isConnected) focusWithoutTooltip(firstButton);
     else if (host.value) {
@@ -550,7 +521,7 @@ function onVisibilityChange(): void {
 function beforeRowEnter(element: Element): void {
   const row = element as HTMLElement;
   const parent = layout.findAgent(props.root, row.dataset.parentId || null);
-  const parentRow = parent ? chart.value.rows.find(candidate => candidate.kind === 'agent' && candidate.agent.id === parent.id) : null;
+  const parentRow = parent ? chart.value.rows.find(candidate => candidate.agent.id === parent.id) : null;
   const key = row.dataset.rowKey;
   const thisRow = chart.value.rows.find(candidate => candidate.key === key);
   if (!thisRow) return;
@@ -563,7 +534,7 @@ function beforeRowEnter(element: Element): void {
 function beforeRowLeave(element: Element): void {
   const row = element as HTMLElement;
   const parentId = row.dataset.parentId;
-  const parentRow = chart.value.rows.find(candidate => candidate.kind === 'agent' && candidate.agent.id === parentId);
+  const parentRow = chart.value.rows.find(candidate => candidate.agent.id === parentId);
   const leavingRow = rowElements.get(row.dataset.rowKey ?? '');
   const bounds = leavingRow?.getBoundingClientRect();
   const parentButton = parentId ? nodeButtons.get(parentId) : null;
@@ -575,7 +546,7 @@ function beforeRowLeave(element: Element): void {
     row.style.setProperty('--worker-chart-leave-x', `${parentRow.x - (Number.parseFloat(row.style.left) || 0)}px`);
     row.style.setProperty('--worker-chart-leave-y', `${parentRow.y - (Number.parseFloat(row.style.top) || 0)}px`);
   }
-  if (row.dataset.rowKey && !row.dataset.rowKey.startsWith('group:')) {
+  if (row.dataset.rowKey) {
     const leavingAgent = layout.findAgent(props.root, row.dataset.rowKey);
     if (leavingAgent?.state === 'done') {
       row.querySelector('.worker-chart__dot')?.setAttribute('data-state', 'done');
@@ -612,16 +583,16 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
 </script>
 
 <style scoped>
+/* Placed in the transcript's sticky aside layer: pinned below the chat header on the right. */
 .worker-chart {
-  position: sticky;
+  position: absolute;
   top: var(--chat-header-height, 52px);
+  right: 0;
+  bottom: 0;
   z-index: 2;
   display: block;
   box-sizing: border-box;
-  flex: 0 0 116px;
   width: 116px;
-  min-width: 116px;
-  height: 100%;
   min-height: 0;
   padding: 16px 16px 0 0;
   color: var(--text-primary);
@@ -735,17 +706,6 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
 }
 .worker-chart__row--agent[data-parent-id=""] .worker-chart__name,
 .worker-chart__row--agent[data-parent-id]:not([data-parent-id=""]) .worker-chart__name { font-weight: 500; }
-.worker-chart__node--group { width: auto; max-width: 84px; padding: 0 6px; }
-.worker-chart__group-count {
-  min-width: 26px;
-  padding: 3px 5px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface));
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
-}
 .worker-chart__surface--overlay {
   position: fixed;
   top: var(--chat-header-height, 52px);
@@ -786,7 +746,6 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
 .worker-chart__rail-dot[data-state="parked"], .worker-chart__rail-dot[data-state="done"] { opacity: .4; }
 .worker-chart__rail-dot[data-state="needs-you"] { background: var(--status-warning); }
 .worker-chart__rail-dot[data-state="failed"] { background: var(--status-error); }
-.worker-chart__rail-dot--group { background: color-mix(in srgb, var(--text-secondary) 24%, transparent); }
 .worker-chart--hidden *, .worker-chart__surface--hidden *, .worker-chart__popover--hidden {
   animation-play-state: paused !important;
   transition: none !important;
