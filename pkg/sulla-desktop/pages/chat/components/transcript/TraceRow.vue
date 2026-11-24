@@ -62,7 +62,7 @@ const open = computed(() => disclosure.isOpen(props.row.id));
 const icon = computed(() => ({ thought: '·', tool: '◆', memory: '◈', heartbeat: '◌', activity: '•', handoff: '↗', retry: '↻', approval: '!', usage: '◫', source: '↗', subagent: '•' }[props.row.kind] ?? '•'));
 const openConversation = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
 const agentProjection = new SubAgentTraceProjection();
-const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', undefined);
+const context = inject<{ backendThreadId: Ref<string | undefined> } | undefined>('chat:activity-context', undefined);
 const history = shallowRef<AgentTraceHistoryData | null>(null);
 const historyError = ref(false);
 watch([() => context?.backendThreadId.value, () => props.row.subagent?.jobId, () => props.row.subagent?.taskIndex ?? 0], () => {
