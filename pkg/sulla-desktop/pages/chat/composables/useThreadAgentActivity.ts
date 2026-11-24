@@ -10,6 +10,7 @@ import {
   type ThreadAgentActivityProjection,
 } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { StatusRollupItem } from '../components/composer/StatusRollupQueue';
+import type { Message } from '../models/Message';
 import type { WorkerChartAgent, WorkerChartState } from '../components/workerChart/workerChartModel';
 
 export interface ThreadAgentActivitySources {
@@ -17,11 +18,16 @@ export interface ThreadAgentActivitySources {
   readonly threadId: Readonly<Ref<string | undefined>>;
   readonly decisions?: Readonly<Ref<readonly DecisionRecord[]>>;
   readonly now?: () => number;
+  /** This chat's own transcript (ChatController.messages): the primary agent's tool calls and steps. */
+  readonly transcript?: Readonly<Ref<readonly Message[]>>;
+  /** Display name of this chat's primary agent (persona name, or "Sulla"). */
+  readonly primaryAgentName?: Readonly<Ref<string>>;
 }
 
 /** Reactive view-model shared by ChatPage, the composer status line, and WorkerChart. */
 export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
+  /** Every activity item in this chat, oldest first: primary-agent transcript steps plus sub-agent check-ins and live tools. */
   readonly checkIns: ComputedRef<StatusRollupItem[]>;
   readonly rootFallback: ComputedRef<StatusRollupItem | null>;
   readonly chartRoot: ComputedRef<WorkerChartAgent | null>;
@@ -38,6 +44,74 @@ class ThreadAgentActivityMapper {
       if (!Number.isFinite(observedAt)) return [];
       return [this.statusItem(agent, threadId, checkin.summary, observedAt, `${agent.row.key}:${checkin.at}:${index}`)];
     }));
+  }
+
+  /** Sub-agent live activity beyond explicit check-ins: tools in flight and activity samples. */
+  liveActivity(projection: ThreadAgentActivityProjection, threadId: string | undefined): StatusRollupItem[] {
+    if (!threadId) return [];
+    return projection.agents.flatMap(agent => {
+      const items: StatusRollupItem[] = [];
+      const tool = agent.row.toolInFlight;
+      const toolAt = this.timestamp(tool?.since);
+      if (tool?.name?.trim() && toolAt !== null) {
+        items.push(this.statusItem(agent, threadId, `Running ${tool.name.trim()}`, toolAt, `${agent.row.key}:tool:${tool.since}:${tool.name}`));
+      }
+      // A check-in or tool start also bumps lastActivityAt. Only the newest sample that is
+      // later than everything already shown says something new ("still working since then").
+      const latestShown = Math.max(
+        toolAt ?? Number.NEGATIVE_INFINITY,
+        ...agent.checkins.map(checkin => this.timestamp(checkin.at) ?? Number.NEGATIVE_INFINITY),
+      );
+      const latestAt = agent.activity[agent.activity.length - 1];
+      const observedAt = this.timestamp(latestAt);
+      if (latestAt && observedAt !== null && observedAt > latestShown) {
+        const text = agent.row.stateReason?.trim() || this.stateText(agent.state);
+        items.push(this.statusItem(agent, threadId, text, observedAt, `${agent.row.key}:activity:${latestAt}`));
+      }
+      return items;
+    });
+  }
+
+  /** The primary agent's own steps, read from this chat's transcript. Keys are message ids, so each step appears once. */
+  primaryActivity(messages: readonly Message[], threadId: string | undefined, agentName: string): StatusRollupItem[] {
+    if (!threadId) return [];
+    const recent = messages.slice(-ThreadAgentActivityMapper.transcriptWindow);
+    return recent.flatMap(message => {
+      const step = this.transcriptStep(message);
+      if (!step) return [];
+      return [{
+        key: `transcript:${threadId}:${String(message.id)}`,
+        threadId,
+        agentId: `chat:${threadId}`,
+        agentName: agentName.trim() || 'Sulla',
+        text: step.text,
+        observedAt: step.at,
+        urgency: 'normal' as const,
+        role: 'root' as const,
+      }];
+    });
+  }
+
+  private static readonly transcriptWindow = 40;
+
+  private transcriptStep(message: Message): { text: string; at: number } | null {
+    switch (message.kind) {
+      case 'tool': {
+        // desc is the readable tool-card description ("Reading X"); never the raw input JSON.
+        const text = message.desc?.trim() || message.tool?.trim();
+        return text ? { text, at: message.createdAt } : null;
+      }
+      case 'thinking': {
+        // Only published status/tool activity; private reasoning thoughts stay out of the status line.
+        if (!message.reportingActivity) return null;
+        const text = message.summary?.trim() || message.thoughts[message.thoughts.length - 1]?.trim();
+        return text ? { text, at: message.startedAt || message.createdAt } : null;
+      }
+      case 'streaming':
+        return { text: 'Writing a reply', at: message.startedAt || message.createdAt };
+      default:
+        return null;
+    }
   }
 
   rootFallback(projection: ThreadAgentActivityProjection, threadId: string | undefined, now: number): StatusRollupItem | null {
@@ -163,7 +237,18 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
 
   return {
     projection,
-    checkIns: computed(() => mapper.checkIns(projection.value, sources.threadId.value)),
+    checkIns: computed(() => {
+      const threadId = sources.threadId.value;
+      const items = [
+        ...mapper.primaryActivity(sources.transcript?.value ?? [], threadId, sources.primaryAgentName?.value ?? 'Sulla'),
+        ...mapper.checkIns(projection.value, threadId),
+        ...mapper.liveActivity(projection.value, threadId),
+      ];
+      const seen = new Set<string>();
+      return items
+        .filter(item => !seen.has(item.key) && (seen.add(item.key), true))
+        .sort((left, right) => left.observedAt - right.observedAt);
+    }),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
     chartRoot: computed(() => mapper.chartRoot(projection.value, sources.threadId.value)),
   };

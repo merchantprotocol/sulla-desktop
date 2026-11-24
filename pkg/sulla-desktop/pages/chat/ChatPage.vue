@@ -473,6 +473,13 @@ const threadAgentActivity = useThreadAgentActivity({
   snapshot: agentStateClient.snapshot,
   threadId: subAgentParentThreadId,
   decisions: chatDecisionStore.decisions,
+  // The primary agent's own tool calls and steps come from this chat's transcript.
+  transcript: controller.messages,
+  primaryAgentName: computed(() => {
+    const agentId = controller.thread.value.agentId;
+    const named = agentId ? modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.name : '';
+    return named || modelSelector.chatDefaultAgentName.value || 'Sulla';
+  }),
 });
 const chartRoot = threadAgentActivity.chartRoot;
 provide(THREAD_AGENT_ACTIVITY_KEY, threadAgentActivity);

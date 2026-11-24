@@ -7,6 +7,8 @@
 export class TracePayloadRedactor {
   static readonly withheld = 'Details withheld';
   private readonly denylist = /(?:^|[\/_:. -])(vault|secrets?|credentials?|passwords?|wallet|crypto|keychain|auth|token)(?:$|[\/_:. -])/i;
+  private readonly sensitiveAssignment = /(^|[^A-Za-z0-9_])(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API[_-]?KEY|APIKEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH|SESSION|COOKIE|DSN|CONNECTION)[A-Za-z0-9_]*)[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;&}]+)/gi;
+  private readonly sensitiveCommand = /(?:^|[;&|]\s*)(?:cat\s+(?:\.env[^\s]*|~\/(?:\.aws\/credentials|\.ssh\/[^\s]*)|[^\s]*(?:\.pem|\.key)(?:\s|$))|(?:printenv|env|set)(?:\s|$)|docker\s+inspect(?:\s|$)|kubectl\s+get\s+secret(?:\s|$)|security\s+find-generic-password(?:\s|$))/i;
   private readonly patterns: readonly [RegExp, string][] = [
     [/-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*?(?:-----END(?: [A-Z0-9]+)* PRIVATE KEY-----|$)/g, '[REDACTED PRIVATE KEY]'],
     [/\bBearer\s+\S+/gi, 'Bearer [REDACTED]'],
@@ -15,17 +17,25 @@ export class TracePayloadRedactor {
     [/\b(?:sk-|ghp_|gho_|github_pat_|AKIA|ASIA|AIza)[A-Za-z0-9_\-/]{8,}/g, '[REDACTED API KEY]'],
     [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED JWT]'],
     [/(?:https?|postgres(?:ql)?|mysql|redis):\/\/[^\s/@:]+:[^\s/@]+@/gi, '[REDACTED CONNECTION]://'],
-    [/(^|\s)(?:-p|--password(?:=|\s+)|password\s*[:=]|passwd\s*[:=])[^\s,;&}]+/gi, '$1password=[REDACTED]'],
+    [/(^|\s)(?:-p|--(?:password|api[-_]?key|token|secret)(?:=|\s+)|password\s*[:=]|passwd\s*[:=])[^\s,;&}]+/gi, '$1password=[REDACTED]'],
     [/(^|[^\w-])((?:access[_ -]?token|refresh[_ -]?token|api[_ -]?key|secret|private[_ -]?key|authorization|cookie))\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/gi, '$1$2=[REDACTED]'],
+    [/(\?|&|;)\s*(?:password|token|key|sig)\s*=\s*(?:"[^"]*"|'[^']*'|[^&;\s]+)/gi, '$1[REDACTED]=[REDACTED]'],
   ];
 
   isDenied(toolName: string | undefined): boolean {
     return !!toolName && this.denylist.test(toolName);
   }
 
+  isSensitiveCommand(value: unknown, toolName?: string): boolean {
+    if (!toolName || !/\b(?:shell|exec)\b/i.test(toolName)) return false;
+    const command = typeof value === 'string' ? value : '';
+    return this.sensitiveCommand.test(command);
+  }
+
   redactText(value: string, toolName?: string): string {
     if (this.isDenied(toolName)) return TracePayloadRedactor.withheld;
-    return this.patterns.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
+    const assignmentsRedacted = value.replace(this.sensitiveAssignment, '$1[REDACTED]=[REDACTED]');
+    return this.patterns.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), assignmentsRedacted);
   }
 
   redact(value: unknown, toolName?: string): unknown {

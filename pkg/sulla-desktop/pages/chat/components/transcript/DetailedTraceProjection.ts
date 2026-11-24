@@ -75,12 +75,14 @@ export class DetailedTraceProjection {
       case 'thinking': return rows;
       case 'tool': {
         if (this.isBackgroundBrowse(message)) return rows;
-        const denied = this.redactor.isDenied(message.recordedToolName ?? message.tool);
+        const toolName = message.recordedToolName ?? message.tool;
+        const denied = this.redactor.isDenied(toolName);
+        const sensitiveOutput = this.redactor.isSensitiveCommand(message.input, toolName);
         const target = denied ? TracePayloadRedactor.withheld : (message.desc || message.tool || 'Tool');
         const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
         rows.push(this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status, anchorEntryId, message.createdAt,
-          this.duration((message as ToolMessage & { startedAt?: number }).startedAt, (message as ToolMessage & { completedAt?: number }).completedAt, message.meta), denied ? undefined : message.input,
-          denied ? TracePayloadRedactor.withheld : this.payload(message, message.recordedToolName ?? message.tool)));
+          this.duration((message as ToolMessage & { startedAt?: number }).startedAt, (message as ToolMessage & { completedAt?: number }).completedAt, message.meta), denied || sensitiveOutput ? undefined : message.input,
+          denied || sensitiveOutput ? TracePayloadRedactor.withheld : this.payload(message, toolName)));
         return rows;
       }
       case 'memory': rows.push(this.row(message.id, 'memory', message.action, message.memId, 'ok', anchorEntryId, message.createdAt, undefined, undefined, this.payload(message))); return rows;
