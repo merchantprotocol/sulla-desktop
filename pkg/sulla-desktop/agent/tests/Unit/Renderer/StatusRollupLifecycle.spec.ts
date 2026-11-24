@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { createSSRApp } from 'vue';
+import { createSSRApp, nextTick } from 'vue';
 import { renderToString } from '@vue/server-renderer';
 
 import StatusRollup from '@pkg/pages/chat/components/composer/StatusRollup.vue';
@@ -22,10 +22,13 @@ const createItem = (): StatusRollupItem => ({
 });
 
 let mountedWrapper: VueWrapper | undefined;
+const originalDocumentHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
 
 afterEach(() => {
   mountedWrapper?.unmount();
   mountedWrapper = undefined;
+  if (originalDocumentHidden) Object.defineProperty(document, 'hidden', originalDocumentHidden);
+  else Reflect.deleteProperty(document, 'hidden');
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -48,8 +51,9 @@ describe('StatusRollup lifecycle', () => {
   });
 
   // risk: resource leak — the mounted refresh interval must be released on teardown.
-  it('starts its refresh interval after mount and clears it on unmount', () => {
+  it('starts its refresh interval after mount and clears it on unmount', async () => {
     vi.useFakeTimers();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
     const setInterval = vi.spyOn(window, 'setInterval');
     const clearInterval = vi.spyOn(window, 'clearInterval');
     const checkIn = createItem();
@@ -59,6 +63,9 @@ describe('StatusRollup lifecycle', () => {
       props: { threadId: 'thread-1', checkIns: [checkIn] },
     });
     mountedWrapper = wrapper;
+
+    // onMounted emits synchronously, but its reactive DOM update is flushed on Vue's next tick.
+    await nextTick();
 
     expect(wrapper.text()).toContain(checkIn.text);
     expect(wrapper.emitted('shown')).toEqual([[
@@ -72,5 +79,31 @@ describe('StatusRollup lifecycle', () => {
     mountedWrapper = undefined;
 
     expect(clearInterval).toHaveBeenCalledWith(intervalId);
+  });
+
+  // risk: core business rule — hidden windows must not surface or announce queued check-ins.
+  it('keeps a queued check-in paused until the document becomes visible', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    const checkIn = createItem();
+    const wrapper = mount(StatusRollup, {
+      attachTo: document.body,
+      props: { threadId: 'thread-1', checkIns: [checkIn] },
+    });
+    mountedWrapper = wrapper;
+
+    await nextTick();
+
+    expect(wrapper.text()).not.toContain(checkIn.text);
+    expect(wrapper.emitted('shown')).toBeUndefined();
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await nextTick();
+
+    expect(wrapper.text()).toContain(checkIn.text);
+    expect(wrapper.emitted('shown')).toEqual([[
+      { key: checkIn.key, agentId: checkIn.agentId, threadId: checkIn.threadId },
+    ]]);
   });
 });
