@@ -40,6 +40,15 @@ export interface LocalVaultErrorResponse {
   message: string;
   /** Present only for approval_required; contains no secret or credential ref. */
   operationId?: string;
+  /** Clerk-only safe display context; contains neither a credential nor request body. */
+  approvalContext?: {
+    selectedEnvironment: 'staging' | 'production';
+    effectiveEnvironment: 'staging' | 'production';
+    instanceId: string;
+    method: string;
+    path: string;
+    options: Record<string, string | boolean>;
+  };
   /** Non-secret diagnostic reason for egress failures, e.g. `connect_ECONNREFUSED` or `dns_EAI_AGAIN`. */
   reason?: string;
   /** True when the failure is a transient egress problem the caller may retry after a pause. */
