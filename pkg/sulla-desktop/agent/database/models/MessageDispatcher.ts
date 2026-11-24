@@ -701,10 +701,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         .join('');
       const incoming = finalContent.trim();
       const streamed = streamedConcat.trim();
-      const alreadyShown = streamed.length > 0 && (
-        streamed === incoming ||
-        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed)) ||
-        streamed.startsWith(incoming)
+      // Segments are trimmed one by one and joined with nothing, while the
+      // full reply keeps the paragraph breaks between them: compare without whitespace.
+      const flatIncoming = incoming.replace(/\s+/g, '');
+      const flatStreamed = streamed.replace(/\s+/g, '');
+      const alreadyShown = flatStreamed.length > 0 && (
+        flatStreamed === flatIncoming ||
+        (flatStreamed.length >= Math.max(1, flatIncoming.length * 0.6) && flatIncoming.startsWith(flatStreamed)) ||
+        flatStreamed.startsWith(flatIncoming)
       );
       if (alreadyShown) {
         // A final dump can carry the last part of a formatted block after
