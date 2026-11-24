@@ -92,6 +92,7 @@ export class UpstreamHttpClient {
       generation: number;
       failureMessage: string;
       timeoutError: () => LocalVaultError;
+      signal?: AbortSignal;
     },
     hooks: {
       onRequest(request: ClientRequest): void;
@@ -179,6 +180,16 @@ export class UpstreamHttpClient {
           hooks.onError(request, resolveError instanceof LocalVaultError ? resolveError : failure);
         });
       });
+      const onAbort = () => request.destroy(new LocalVaultError('invalid_operation', 400, 'Broker request cancelled'));
+      const removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort);
+      if (options.signal) {
+        options.signal.addEventListener('abort', onAbort, { once: true });
+        request.once('close', removeAbortListener);
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+      }
       if (options.payload) request.write(options.payload);
       request.end();
     };
@@ -198,6 +209,7 @@ export class UpstreamHttpClient {
     maxResponseBytes = MAX_RESPONSE_BYTES,
     operation = 'broker.request',
     integrationId?: string,
+    signal?: AbortSignal,
   ): Promise<BrokerExecuteResponse> {
     const method = methodInput.toUpperCase();
     if (!['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
@@ -229,6 +241,7 @@ export class UpstreamHttpClient {
         generation,
         failureMessage: 'Broker upstream request failed',
         timeoutError: () => new LocalVaultError('upstream_timeout', 504, 'Broker request timed out'),
+        signal,
       }, {
         onRequest: () => undefined,
         onError: (_request, error) => reject(error),
@@ -302,6 +315,7 @@ export class UpstreamHttpClient {
             resolve({ status: response.statusCode ?? 502, headers: outputHeaders, body });
           });
         },
+        canRetry: () => !signal?.aborted,
       });
     });
   }

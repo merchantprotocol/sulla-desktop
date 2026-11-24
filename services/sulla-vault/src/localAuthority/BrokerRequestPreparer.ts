@@ -71,6 +71,7 @@ export class BrokerRequestPreparer {
     if (!/^[a-z][a-z0-9_.:-]{1,79}$/i.test(input.operation)) {
       throw new LocalVaultError('invalid_operation', 400, 'Broker operation is invalid');
     }
+    if (input.ref.integrationId === 'clerk') throw new LocalVaultError('policy_denied', 403, 'Use the guarded Clerk integration.');
     const keys = this.host.requireKeys();
     const generation = this.host.generation;
     if (input.claims.sub !== keys.userId) throw new LocalVaultError('invalid_caller_identity', 403, 'Broker principal is not unlocked');
@@ -104,6 +105,7 @@ export class BrokerRequestPreparer {
       keys.userKey,
       { itemId: item.id, ownerId: item.collection_id ?? item.owner_user_id ?? keys.userId },
     )) as VaultItemPlaintext;
+    if (plaintext.integration?.integrationId === 'clerk') throw new LocalVaultError('policy_denied', 403, 'Use the guarded Clerk integration.');
     const itemPolicy = item.agent_policy ?? plaintext.agentPolicy;
     if (input.operation === 'item.http') {
       const checked = validateVaultItemProxy(plaintext);

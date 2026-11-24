@@ -51,7 +51,8 @@ export interface LocalAuthorityVaultSecrets {
   readonly challengeRate:   Map<string, { count: number; resetAt: number }>;
   readonly humanSessions:   Map<string, HumanSession>;
   readonly pendingApprovals: Map<string, number>;
-  readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
+  readonly pendingClerkApprovals: Map<string, { digest: string; expiresAt: number }>;
+  readonly approvals:        Map<string, { digest: string; expiresAt: number; clerkOperationId?: string }>;
   readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
   readonly pendingVaultEnrollments: Map<string, {
     expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
