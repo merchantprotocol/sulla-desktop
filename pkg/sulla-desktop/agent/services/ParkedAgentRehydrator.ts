@@ -5,14 +5,16 @@ import { agentDefinitionService } from './AgentDefinitionService';
 import { AgentJobTaskStatusPolicy } from './AgentJobTaskStatusPolicy';
 import { delegatedThreadPersistenceKey } from './DelegatedContainerKey';
 import { installWorkerRoute } from './WorkerModelRouting';
+import { resolveLaunchModelPrecedence } from '../languagemodels/modelPrecedence';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { failJob } from '../tools/agents/jobRegistry';
 
 import type { AgentJob, AgentJobTask } from '../tools/agents/jobRegistry';
+import type { LaunchModelPrecedence } from '../languagemodels/modelPrecedence';
 
-export interface ParkedAgentIdentity { job: AgentJob; task: AgentJobTask; taskIndex: number; agentId: string; }
+export interface ParkedAgentIdentity { job: AgentJob; task: AgentJobTask; taskIndex: number; agentId: string; modelPrecedence: LaunchModelPrecedence; }
 export interface ParkedJobReader { findByTaskThread(threadId: string): Promise<AgentJob | undefined>; }
-export interface AgentDefinitionReader { findBySlug(slug: string): Promise<unknown | null>; }
+export interface AgentDefinitionReader { findBySlug(slug: string): Promise<{ enabled?: boolean; status?: string; model_choice?: import('../languagemodels/modelRoutingTypes').AgentModelChoice | null } | null>; }
 
 /**
  * The container persistence key a rehydrated thread must reuse. A hidden task
@@ -58,21 +60,42 @@ export class ParkedAgentRehydrator {
     const task = job.tasks[taskIndex];
     if (!task || (task.status !== 'parked' && !(task.status === 'running' && Number(job.restartResumeCount) > 0))) return null;
     const agentId = String(task.agentId || job.parentAgentId || '').trim();
-    if (!agentId || !await this.definitions.findBySlug(agentId)) {
-      const message = `Cannot rehydrate parked job ${ job.jobId }: agent definition "${ agentId || '(missing)' }" is unavailable; refusing default-agent fallback.`;
+    const definition = agentId ? await this.definitions.findBySlug(agentId) : null;
+    if (!agentId || !definition || !definition.enabled || definition.status === 'archive') {
+      const message = `Agent "${ agentId || '(missing)' }" was removed or disabled; this parked job cannot wake.`;
       await this.fail(job.jobId, message);
       this.notifyFailure(job, message);
       throw new Error(message);
     }
-    return { job, task, taskIndex, agentId };
+    let modelPrecedence: LaunchModelPrecedence;
+    try {
+      modelPrecedence = resolveLaunchModelPrecedence({
+        override: { provider: task.provider, model: task.model, effort: task.effort },
+        workerModelRoute: task.workerModelRoute,
+        agentChoice: definition.model_choice,
+      });
+    } catch (error) {
+      const provider = String(task.provider ?? '').trim() || 'unknown';
+      const model = String(task.model ?? '').trim() || 'unspecified';
+      const message = `Agent "${ agentId }" has an invalid saved model override "${ provider }/${ model }"; this parked job cannot wake. ${(error as Error).message}`;
+      await this.fail(job.jobId, message);
+      this.notifyFailure(job, message);
+      throw new Error(message);
+    }
+    return { job, task, taskIndex, agentId, modelPrecedence };
   }
 
   apply(state: any, identity: ParkedAgentIdentity): void {
-    if (identity.task.workerModelRoute) installWorkerRoute(state, identity.task.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
+    const precedence = identity.modelPrecedence;
+    installWorkerRoute(state, precedence.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
     state.metadata.isSubAgent = true;
     state.metadata.modelSlot = 'primary';
     state.metadata.subAgentDepth = Number(identity.task.depth) || 1;
     state.metadata.delegatedJobId = identity.job.jobId;
+    state.metadata.modelDecisionTask = { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation ?? 1, threadId: identity.task.threadId };
+    state.metadata.modelDecision = identity.task.modelDecision ?? { requested: precedence.requested, ran: null, step: precedence.step, ...(precedence.reason ? { reason: precedence.reason } : {}) };
+    if (identity.task.modelOverride) state.metadata.modelOverride = identity.task.modelOverride;
+    else delete state.metadata.modelOverride;
     state.metadata.workflowParentChannel = identity.job.parentChannel;
     state.metadata.delegatedRunActive = false;
     const persistenceKey = delegatedContainerPersistenceKey(identity);

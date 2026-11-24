@@ -10,20 +10,15 @@ export interface ProviderBridgeLeasePoolOptions {
   /** Provider and model the container job itself was launched with. */
   runProvider: string;
   runModel?:   string | null;
-  /** Maps a CLI launch model to the exact model id its bridge may serve (undefined = unpinned). */
+  /** Maps a CLI launch model to the model id that keys its lease (undefined = CLI default). */
   pinFor(provider: ProviderName, model: string | null | undefined): string | undefined;
-  /** Mints one bridge lease pinned to `pinnedModel` (or unpinned). */
+  /** Mints one bridge lease for `pinnedModel` (or the CLI default). */
   create(provider: ProviderName, pinnedModel: string | undefined): Promise<ProviderCliBridgeLease>;
 }
 
 /**
- * One bridge lease per provider and pinned model for a container lifecycle.
- *
- * A bridge is pinned to the model its CLI process is launched with. Other
- * graphs inside the same lifecycle (subconscious observers on the light
- * model, for example) launch their CLI with a different model, so they get
- * their own pinned lease instead of reusing the job's lease and having every
- * request denied with `provider_model_denied`.
+ * One bridge lease per provider and CLI launch model per container lifecycle,
+ * reused across turns.
  */
 export class ProviderBridgeLeasePool {
   private readonly leases = new Map<string, Promise<ProviderCliBridgeLease>>();

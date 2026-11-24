@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { postgresClient } from '../database/PostgresClient';
+import { CheckinIdentity } from './CheckinIdentity';
 
 const SOURCES = new Set(['user', 'model', 'software', 'observed']);
 const SENTIMENTS = new Set([
@@ -378,81 +379,197 @@ export async function validateV7ElephantOutput(response: string): Promise<V7Elep
   }
 }
 
-/** Append an already-validated write in one transaction with parameterized SQL. */
-export async function appendV7ElephantWrite(write: ElephantWrite): Promise<ElephantAppendResult> {
-  try {
-    return await postgresClient.transaction(async (client) => {
-      const inserted = { episodes: 0, items: 0, evidence: 0 };
-      for (const row of write.episodes) {
-        const result = await client.query(
-          `
-          INSERT INTO subject_memory.episodes
-            (id, ts, conversation_id, source, text, keys, sentiment, refs, worker)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'v7-elephant')
-          ON CONFLICT (id) DO NOTHING`,
-          [
-            row.id,
-            row.ts,
-            row.conversation_id,
-            row.source,
-            row.text,
-            row.keys,
-            row.sentiment,
-            row.refs,
-          ]
-        );
-        inserted.episodes += result.rowCount ?? 0;
-      }
-      for (const row of write.items) {
-        const result = await client.query(
-          `
-          INSERT INTO subject_memory.items
-            (id, kind, ptype, text, why, scope, origin, ts, supersedes, always_on, worker)
-          VALUES ($1, 'policy', $2, $3, $4, $5, 'user_stated', $6, $7, $8, 'v7-elephant')
-          ON CONFLICT (id) DO NOTHING`,
-          [
-            row.id,
-            row.ptype,
-            row.text,
-            row.why,
-            row.scope,
-            row.ts,
-            row.supersedes,
-            row.always_on,
-          ]
-        );
-        inserted.items += result.rowCount ?? 0;
-      }
-      for (const row of write.evidence) {
-        const result = await client.query(
-          `
-          INSERT INTO subject_memory.evidence (item_id, episode_id, role)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (item_id, episode_id) DO NOTHING`,
-          [row.item_id, row.episode_id, row.role]
-        );
-        inserted.evidence += result.rowCount ?? 0;
-      }
-      return { accepted: true, ...inserted };
-    });
-  } catch (error) {
-    return {
-      accepted: false,
-      episodes: 0,
-      items: 0,
-      evidence: 0,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+interface PrimarySubjectRow {
+  slug: string;
+  kind: string;
+  parent: string | null;
+}
+
+/** Picks the deepest eligible input subject; equal-depth ties retain input order. */
+class CheckinPrimarySubjectSelector {
+  private readonly subjects: Map<string, PrimarySubjectRow>;
+
+  constructor(subjects: PrimarySubjectRow[]) {
+    this.subjects = new Map(subjects.map(subject => [subject.slug, subject] as const));
   }
+
+  select(keys: string[]): string[] {
+    let selected: string | null = null;
+    let selectedDepth = -1;
+
+    for (const key of keys) {
+      const subject = this.subjects.get(key);
+      if (!subject || ['global', 'major'].includes(subject.kind.toLowerCase())) continue;
+
+      const depth = this.depthOf(subject);
+      if (depth > selectedDepth) {
+        selected = key;
+        selectedDepth = depth;
+      }
+    }
+
+    return selected ? [selected] : [];
+  }
+
+  private depthOf(subject: PrimarySubjectRow): number {
+    let depth = 0;
+    let current: PrimarySubjectRow | undefined = subject;
+    const visited = new Set<string>();
+
+    while (current && !visited.has(current.slug)) {
+      visited.add(current.slug);
+      depth += 1;
+      current = current.parent ? this.subjects.get(current.parent) : undefined;
+    }
+
+    return depth;
+  }
+}
+
+/** Injectable transaction boundary for append-path behavior specs. */
+export type V7SubjectMemoryDatabase = Pick<typeof postgresClient, 'transaction'>;
+
+/** Appends validated memory through an injected transaction boundary. */
+export class V7SubjectMemoryWriter {
+  constructor(
+    private readonly database: V7SubjectMemoryDatabase = postgresClient
+  ) {}
+
+  async append(write: ElephantWrite): Promise<ElephantAppendResult> {
+    try {
+      return await this.database.transaction(async client => {
+        const inserted = { episodes: 0, items: 0, evidence: 0 };
+        const evidenceEpisodeIds = new Set(write.evidence.map(link => link.episode_id));
+        const orderedEpisodes = [...write.episodes].sort((left, right) => left.ts - right.ts);
+        const checkinKeys = new Map<string, string>();
+
+        for (const episode of orderedEpisodes) {
+          const identity = CheckinIdentity.keyFor({
+            id: episode.id,
+            text: episode.text,
+            source: episode.source,
+            keys: episode.keys,
+            conversationId: episode.conversation_id,
+            sentiment: episode.sentiment,
+          });
+          const checkinKey = evidenceEpisodeIds.has(episode.id) ? null : identity;
+          if (checkinKey) checkinKeys.set(episode.id, checkinKey);
+        }
+
+        let subjectSelector: CheckinPrimarySubjectSelector | null = null;
+        if (checkinKeys.size) {
+          const subjects = await client.query(
+            'SELECT slug, kind, parent FROM subject_memory.subjects'
+          );
+          subjectSelector = new CheckinPrimarySubjectSelector(
+            subjects.rows as PrimarySubjectRow[]
+          );
+        }
+
+        for (const row of orderedEpisodes) {
+          const checkinKey = checkinKeys.get(row.id) ?? null;
+          const primaryKeys = checkinKey ? subjectSelector?.select(row.keys) : null;
+          const keys = primaryKeys?.length ? primaryKeys : row.keys;
+          const result = await client.query(
+            `
+            INSERT INTO subject_memory.episodes
+              (id, ts, conversation_id, source, text, keys, sentiment, refs, worker, checkin_key)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'v7-elephant', $9)
+            ON CONFLICT (id) DO NOTHING`,
+            [
+              row.id,
+              row.ts,
+              row.conversation_id,
+              row.source,
+              row.text,
+              keys,
+              row.sentiment,
+              row.refs,
+              checkinKey,
+            ]
+          );
+          inserted.episodes += result.rowCount ?? 0;
+
+          if (result.rowCount === 1 && checkinKey) {
+            await client.query(
+              `
+              UPDATE subject_memory.episodes
+                 SET superseded_by = $1,
+                     superseded_ts = $4,
+                     superseded_reason = $5
+               WHERE checkin_key = $2
+                 AND superseded_by IS NULL
+                 AND id <> $1
+                 AND ts <= $3
+                 AND source <> 'user'
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM subject_memory.evidence ev
+                    WHERE ev.episode_id = subject_memory.episodes.id
+                 )`,
+              [row.id, checkinKey, row.ts, row.ts, 'newer_checkin']
+            );
+          }
+        }
+
+        for (const row of write.items) {
+          const result = await client.query(
+            `
+            INSERT INTO subject_memory.items
+              (id, kind, ptype, text, why, scope, origin, ts, supersedes, always_on, worker)
+            VALUES ($1, 'policy', $2, $3, $4, $5, 'user_stated', $6, $7, $8, 'v7-elephant')
+            ON CONFLICT (id) DO NOTHING`,
+            [
+              row.id,
+              row.ptype,
+              row.text,
+              row.why,
+              row.scope,
+              row.ts,
+              row.supersedes,
+              row.always_on,
+            ]
+          );
+          inserted.items += result.rowCount ?? 0;
+        }
+        for (const row of write.evidence) {
+          const result = await client.query(
+            `
+            INSERT INTO subject_memory.evidence (item_id, episode_id, role)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (item_id, episode_id) DO NOTHING`,
+            [row.item_id, row.episode_id, row.role]
+          );
+          inserted.evidence += result.rowCount ?? 0;
+        }
+        return { accepted: true, ...inserted };
+      });
+    } catch (error) {
+      return {
+        accepted: false,
+        episodes: 0,
+        items: 0,
+        evidence: 0,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+}
+
+/** Backward-compatible append entry point. */
+export async function appendV7ElephantWrite(write: ElephantWrite): Promise<ElephantAppendResult> {
+  return new V7SubjectMemoryWriter().append(write);
 }
 
 /** Postgres-backed store used by the per-turn elephant/goldfish pipeline. */
 export class V7SubjectMemoryStore {
+  constructor(private readonly writer = new V7SubjectMemoryWriter()) {}
+
   validate(response: string): Promise<V7ElephantValidation> {
     return validateV7ElephantOutput(response);
   }
 
   append(write: ElephantWrite): Promise<ElephantAppendResult> {
-    return appendV7ElephantWrite(write);
+    return this.writer.append(write);
   }
 }

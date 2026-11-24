@@ -107,6 +107,18 @@ export const BUILTIN_CARD_FIELDS = ['when_to_call', 'when_not_to_call', 'send', 
 /** Explicit "front door not set" recorded on config. Absent from the managed hash. */
 export const FRONT_DOOR_CHOSEN_KEY = 'frontDoorChosen';
 
+/** Retired legacy manager identities. These were never bundle built-ins, so they do not belong
+ * in builtin-agents.json's historical "retired" list; all registration paths must reject them. */
+export const RETIRED_CODING_MANAGER_SLUGS = [
+  'coding-manager-sol',
+  'coding-manager-grok',
+  'coding-manager-gpt',
+] as const;
+
+export function isRetiredCodingManagerSlug(slug: string): boolean {
+  return (RETIRED_CODING_MANAGER_SLUGS as readonly string[]).includes(slug);
+}
+
 const MANAGED_FIELDS: (keyof BuiltinManagedContent)[] = [
   'name', 'description', 'system_prompt', 'prompt_content', 'soul_content', 'goals_content', 'prompt_files',
   'allowed_tools', 'skill_refs', 'routine_refs', 'model_priority', 'provider', 'model', 'model_slot', 'config',
