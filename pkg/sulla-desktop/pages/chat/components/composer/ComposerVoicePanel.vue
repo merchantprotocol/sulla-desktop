@@ -104,7 +104,7 @@ const speaking = computed(() => props.speaking === true);
 }
 .label {
   font-size: 10px; letter-spacing: 0.28em; text-transform: uppercase;
-  color: var(--accent-hover); font-weight: 700;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-weight: 700;
   display: inline-flex; align-items: center; gap: 9px; flex-shrink: 0;
 }
 .label::before {

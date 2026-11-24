@@ -68,6 +68,15 @@
     --paper-2: #0e1626;
     --card: rgba(11, 18, 32, .86);
   }
+  html.has-primary-color-override & {
+    --accent: var(--accent-primary);
+    --accent-2: var(--accent-primary-hover);
+    --accent-soft: var(--accent-dim);
+    --accent-line: var(--accent-border);
+    --on-accent: var(--text-on-accent);
+    --glow-1: var(--brand-glow-soft);
+    --glow-2: var(--brand-glow-soft);
+  }
 
   height: 100%;
   display: grid;

@@ -964,7 +964,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 .composer-agent-picker .model-btn:hover { background: color-mix(in srgb, var(--accent) 10%, var(--bg-surface)); }
 .composer-agent-picker .remote-model { padding: 0 10px; }
-.model-avatar { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); font-size: 11px; font-weight: 600; }
+.model-avatar { display: grid; place-items: center; width: 22px; height: 22px; flex: 0 0 22px; border-radius: 50%; color: var(--primary-color-text-override, var(--accent)); background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); font-size: 11px; font-weight: 600; }
 .model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-caret { color: var(--text-muted); font-size: 9px; }
 .composer-agent-picker :deep(.environment-pill) { height: 34px; box-shadow: var(--elev-rest, var(--shadow-sm)); }
@@ -1099,7 +1099,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   animation: usecase-strip-in 0.24s cubic-bezier(.22, 1, .36, 1) both;
 }
 .usecase-chip .usecase-type { display: none; }
-.usecase-verb { color: var(--accent-hover); }
+.usecase-verb { color: var(--primary-color-text-override, var(--accent-hover)); }
 .usecase-chip b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .usecase-inputs { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 2px; }
 .usecase-field {
@@ -1162,7 +1162,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .dock-move:hover { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--text-primary); }
 .dock-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dock-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
-.dock-move.on { color: var(--accent); }
+.dock-move.on { color: var(--primary-color-text-override, var(--accent)); }
 </style>
 <style scoped src="../../styles/composer-field.css"></style>
 

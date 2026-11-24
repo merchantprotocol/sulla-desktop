@@ -193,7 +193,7 @@ function openHtmlFullscreen(event: MouseEvent): void {
 <style scoped>
 .inline-file-card { container-type: inline-size; min-width: 0; overflow: hidden; margin: 10px 0 0; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); scroll-margin-top: 12px; }
 .file-header { display: flex; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 6px 0 12px; color: var(--text-secondary); }
-.file-header :deep(.file-glyph) { width: 17px; height: 17px; border-radius: 4px; color: var(--accent-primary); background: color-mix(in srgb, var(--accent-primary) 12%, transparent); }
+.file-header :deep(.file-glyph) { width: 17px; height: 17px; border-radius: 4px; color: var(--primary-color-text-override, var(--accent-primary)); background: color-mix(in srgb, var(--accent-primary) 12%, transparent); }
 .file-header :deep(.file-glyph svg) { width: 13px; height: 13px; }
 .file-name { min-width: 36px; flex: 0 1 auto; overflow: hidden; color: var(--text-primary); font-size: 13px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .file-path { min-width: 0; flex: 0 20 auto; overflow: hidden; color: var(--text-muted); font: 11.5px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
@@ -204,11 +204,11 @@ function openHtmlFullscreen(event: MouseEvent): void {
 .file-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 28px; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
 .file-action:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
 .file-action:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
-.file-action[aria-pressed='true'] { background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-surface)); color: var(--accent-primary); }
+.file-action[aria-pressed='true'] { background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-surface)); color: var(--primary-color-text-override, var(--accent-primary)); }
 .file-action svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .file-body { min-width: 0; border-top: 1px solid var(--border-subtle); }
 .file-cap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 7px 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 11.5px; }
-.file-cap button { padding: 0; border: 0; background: transparent; color: var(--accent-primary); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.file-cap button { padding: 0; border: 0; background: transparent; color: var(--primary-color-text-override, var(--accent-primary)); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .file-cap button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .file-status { margin: 0; padding: 12px; color: var(--text-muted); font-size: 12px; }
 .file-status.file-error { border-top: 1px solid var(--border-subtle); color: var(--status-error); }

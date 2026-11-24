@@ -66,7 +66,7 @@ const timeLabel = computed(() => {
 .head {
   display: flex; align-items: center; gap: 12px;
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
 }
 .head .spin {
   width: 12px; height: 12px; border-radius: 50%;
@@ -96,7 +96,7 @@ const timeLabel = computed(() => {
 .step .tag {
   padding: 1px 6px; border-radius: 3px;
   background: var(--accent-dim);
-  color: var(--accent-hover); font-size: 9px; letter-spacing: 0.1em;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-size: 9px; letter-spacing: 0.1em;
   text-transform: uppercase;
 }
 .subagent.done { background: var(--status-success-soft); border-color: var(--status-success-soft); }
