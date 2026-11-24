@@ -57,7 +57,7 @@
             @pick="onSuggestion"
           />
           <Transcript v-else :reporting-level="reportingLevel" />
-          <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
+          <Composer v-if="!props.supportSendBlocked" />
         </div>
         <WorkerChart
           v-if="chartRoot"

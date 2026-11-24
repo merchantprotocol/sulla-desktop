@@ -229,53 +229,6 @@
         </div>
       </div>
 
-      <div
-        v-if="reportingLevel !== 'info'"
-        class="hints"
-        :class="{ 'hints-contextual': contextualHints }"
-      >
-        <div class="classic-guide">
-          <span><kbd>⏎</kbd> send</span>
-          <span><kbd>hold ␣</kbd> talk</span>
-          <span><kbd>⌘/</kbd> voice</span>
-          <span><kbd>?</kbd> help</span>
-        </div>
-        <div class="noir-guide">
-          <template v-if="isRecording">
-            <span><kbd>⌘/</kbd> stop listening</span>
-          </template>
-          <template v-else-if="controller.popover.value.open">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> run</span>
-            <span><kbd>esc</kbd> close</span>
-          </template>
-          <template v-else-if="useCases.intent.value">
-            <span><kbd>⏎</kbd> {{ intentSendHint }}</span>
-            <span><kbd>⌫</kbd> remove chip (empty draft)</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else-if="useCases.open.value && useCases.strip.active >= 0">
-            <span><kbd>↑↓</kbd> choose</span>
-            <span><kbd>⏎</kbd> pick</span>
-            <span><kbd>esc</kbd> back to typing</span>
-          </template>
-          <template v-else-if="useCases.open.value">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>↓</kbd> suggestions</span>
-            <span><kbd>{{ modKey }}1–5</kbd> pick</span>
-            <span><kbd>esc</kbd> hide</span>
-          </template>
-          <template v-else-if="draft.trim()">
-            <span><kbd>⏎</kbd> send</span>
-            <span><kbd>⇧⏎</kbd> new line</span>
-          </template>
-          <template v-else>
-            <span><kbd>/</kbd> commands</span>
-            <span><kbd>@</kbd> context</span>
-            <span><kbd>⌘/</kbd> voice</span>
-          </template>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -320,11 +273,6 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { ReportingLevel } from '../../models/ReportingLevel';
-
-const props = defineProps<{ reportingLevel: ReportingLevel }>();
-const reportingLevel = computed(() => props.reportingLevel);
-
 const controller = useChatController();
 
 // Injected by ChatPage when nested inside a browser tab — lets us open the
