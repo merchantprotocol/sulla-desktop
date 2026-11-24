@@ -112,7 +112,6 @@ import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimeKey, LineTimes } from '../../messages/lineTime';
 import { TranscriptJump } from '../../messages/transcriptJump';
-import { waitingOn } from '../../messages/waitingStatus';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
 const props = defineProps<{ reportingLevel: ReportingLevel }>();
@@ -198,7 +197,7 @@ onMounted(() => { window.addEventListener('chat:jump-to-message', onJump); scrol
 onBeforeUnmount(() => { pageEpoch++; window.removeEventListener('chat:jump-to-message', onJump); scroller.value?.removeEventListener('scroll', loadOlderOnScroll); });
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
-const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
+const waiting = computed(() => reporting.waiting(transcriptEntries.value, controller.isRunning.value));
 function resend(): void {
   const text = waiting.value?.message.text;
   controller.stop();
