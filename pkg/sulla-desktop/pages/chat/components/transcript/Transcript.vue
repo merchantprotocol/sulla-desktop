@@ -22,38 +22,38 @@
           :label="todayLabel"
         />
 
-        <div
-          v-for="(entry, index) in transcriptEntries"
-          :key="entry.id"
-          :ref="el => jumper.register(entry.id, el)"
-          class="report-entry"
-          :class="{
-            'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
-            'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
-          }"
-        >
-          <span
-            v-if="reportLabelVisible(entry)"
-            class="report-label"
-            :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
-          >{{ entry.label }}</span>
-          <MessageRouter
-            v-if="entry.kind === 'card'"
-            :msg="entry.message"
-            :latest-reply="entry.id === latestReplyId"
-            :reporting-level="reportingLevel"
-            :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
-          />
-          <div v-else class="report-activity">
-            <span class="report-activity-text">{{ entry.text }}</span>
-            <template v-if="reportingLevel === 'debug'">
-              <time v-if="activityTimes.get(entry.id)" class="report-activity-time" :datetime="activityTimes.get(entry.id)?.iso">
-                {{ activityTimes.get(entry.id)?.label }}
-              </time>
-              <span v-else class="report-activity-time">Time unavailable</span>
-            </template>
+        <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
+          <div
+            v-if="!isTraceEntry(entry)"
+            :ref="el => jumper.register(entry.id, el)"
+            class="report-entry"
+            :class="{
+              'report-entry-standard-intermediate': reportingLevel === 'info' && entry.kind === 'card' && entry.message.kind === 'sulla' && entry.id !== latestReplyId,
+              'report-entry-standard-evidence-after-reply': isStandardEvidenceAfterReply(index),
+            }"
+          >
+            <span
+              v-if="reportLabelVisible(entry)"
+              class="report-label"
+              :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
+            >{{ entry.label }}</span>
+            <MessageRouter
+              v-if="entry.kind === 'card'"
+              :msg="entry.message"
+              :latest-reply="entry.id === latestReplyId"
+              :reporting-level="reportingLevel"
+              :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
+            />
+            <div v-else class="report-activity">
+              <span class="report-activity-text">{{ entry.text }}</span>
+            </div>
           </div>
-        </div>
+          <TraceTurn
+            v-for="turn in detailedTraceAfter.get(entry.sourceId) ?? []"
+            :key="turn.id"
+            :turn="turn"
+          />
+        </template>
         <div v-if="waiting" :key="waiting.since" class="report-entry">
           <span class="report-label">Status</span>
           <TurnWaiting
@@ -86,6 +86,8 @@ import MessageRouter from './MessageRouter.vue';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
+import TraceTurn from './TraceTurn.vue';
+import { DetailedTraceProjection } from './DetailedTraceProjection';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
 import { useChatController } from '../../controller/useChatController';
@@ -98,10 +100,25 @@ const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
 const scroller = ref<HTMLElement | null>(null);
 const reporting = new TranscriptReporting();
+const detailedTraceProjection = new DetailedTraceProjection();
 
 const transcriptEntries = computed(() => reporting.entries(controller.messages.value, props.reportingLevel));
+const detailedTraceTurns = computed(() => props.reportingLevel === 'debug'
+  ? detailedTraceProjection.project(controller.messages.value, reporting.entries(controller.messages.value, 'debug'))
+  : []);
+const detailedTraceAfter = computed(() => {
+  const turns = new Map<string, typeof detailedTraceTurns.value>();
+  for (const turn of detailedTraceTurns.value) turns.set(turn.afterId, [...(turns.get(turn.afterId) ?? []), turn]);
+  return turns;
+});
+const traceOnlyKinds = new Set(['patch', 'channel', 'subagent', 'subagent_exchange', 'citation', 'memory', 'proactive', 'heartbeat']);
+function isTraceEntry(entry: TranscriptEntry): boolean {
+  if (props.reportingLevel !== 'debug') return false;
+  if (entry.kind === 'activity') return true;
+  return entry.kind === 'card' && traceOnlyKinds.has(entry.message.kind);
+}
 function reportLabelVisible(entry: TranscriptEntry): boolean {
-  if (props.reportingLevel !== 'info' || entry.kind !== 'card') return true;
+  if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
   return !['Message', 'Reply', 'Evidence', 'Handoff'].includes(entry.label);
 }
@@ -121,27 +138,12 @@ const latestReplyId = computed(() => transcriptEntries.value.findLast(entry =>
   entry.kind === 'card' && entry.message.kind === 'sulla')?.id);
 const { showPill, scrollToBottom } = useScrollAnchor(scroller, transcriptEntries);
 
-// Detailed activity has its own timestamps; only cards participate in
-// the existing shared card-minute stamps.
+// Only cards participate in the existing shared card-minute stamps.
 const times = computed(() => LineTimes.lineTimes(transcriptEntries.value.filter(entry => entry.kind === 'card').map(entry => ({
   id: entry.id,
   at: LineTimes.idTime(entry.sourceId) ?? entry.createdAt,
 }))));
 provide(LineTimeKey, id => times.value.get(id));
-
-const activityTimes = computed(() => {
-  const recorded = new Map<string, { iso: string; label: string }>();
-  if (props.reportingLevel !== 'debug') return recorded;
-  for (const entry of transcriptEntries.value) {
-    if (entry.kind !== 'activity') continue;
-    const at = LineTimes.idTime(entry.sourceId) ?? entry.createdAt;
-    const date = new Date(at);
-    if (at > 0 && Number.isFinite(date.getTime())) {
-      recorded.set(entry.id, { iso: date.toISOString(), label: LineTimes.fullTime(at) });
-    }
-  }
-  return recorded;
-});
 
 // "Jump to" from the side dock, status line or quick switcher: whichever
 // transcript shows the message scrolls to it.

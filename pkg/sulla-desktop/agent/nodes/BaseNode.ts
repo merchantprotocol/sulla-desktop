@@ -1997,6 +1997,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         prompt_tokens:     reply.metadata.prompt_tokens,
         completion_tokens: reply.metadata.completion_tokens,
         time_spent:        reply.metadata.time_spent,
+        model:             reply.metadata.model,
         threadId:          state.metadata.threadId,
         nodeId:            this.name,
       },

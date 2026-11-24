@@ -55,11 +55,10 @@
       @pin="onPin"
       @fork="onFork"
     >
-      <span :class="['reply-metadata', { 'reply-metadata-standard': reportingLevel === 'info' }]">
+      <span v-if="reportingLevel === 'info'" class="reply-metadata reply-metadata-standard">
         <time v-if="replyTime" :datetime="replyTime.iso">{{ replyTime.label }}</time>
         <span v-else>Time not recorded</span>
         <span>{{ msg.replyAttribution?.agent || 'Agent not recorded' }}</span>
-        <span v-if="reportingLevel !== 'info'">{{ msg.replyAttribution?.model || 'Model not recorded' }}</span>
       </span>
     </TurnActions>
 

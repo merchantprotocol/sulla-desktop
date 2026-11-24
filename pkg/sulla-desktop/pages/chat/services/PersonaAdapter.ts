@@ -27,11 +27,13 @@ import { OptimisticSendFeedback } from './OptimisticSendFeedback';
 import { VoiceAgentRouting } from './VoiceAgentRouting';
 import { VoiceTranscriptTagger } from './VoiceTranscriptTagger';
 import { ChatInterface, type ChatMessage as BackendMessage } from '../../agent/ChatInterface';
+import { redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
 import { asArtifactId, asMessageId, newAttachmentId, newMessageId, type ArtifactId, type MessageId } from '../types/chat';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 import { A2aCardMarkup } from '../messages/a2aCardMarkup';
+import { TracePayloadRedactor } from '@pkg/agent/tools/TracePayloadRedactor';
 
 import type { ChatController } from '../controller/ChatController';
 import type {
@@ -56,6 +58,7 @@ export interface PersonaAdapterOptions {
 }
 
 export class PersonaAdapter {
+  private readonly tracePayloadRedactor = new TracePayloadRedactor();
   private readonly voiceAgentRouting = new VoiceAgentRouting();
   private readonly voiceTranscriptTagger = new VoiceTranscriptTagger();
   private readonly optimisticSendFeedback: OptimisticSendFeedback;
@@ -820,6 +823,22 @@ export class PersonaAdapter {
     const id = asMessageId(b.id);
     const createdAt = this.stableCreatedAt(b.id);
 
+    // Token usage is a hidden Detailed-only trace record. It deliberately
+    // does not become a Standard transcript entry or a user-facing message.
+    if (b.kind === 'trace_metrics' && b.traceMetrics) {
+      const metrics = b.traceMetrics;
+      return {
+        id,
+        kind: 'trace_metrics',
+        createdAt,
+        ...(typeof metrics.promptTokens === 'number' ? { inputTokens: metrics.promptTokens } : {}),
+        ...(typeof metrics.completionTokens === 'number' ? { outputTokens: metrics.completionTokens } : {}),
+        ...(typeof metrics.durationMs === 'number' ? { durationMs: metrics.durationMs } : {}),
+        ...(typeof metrics.model === 'string' ? { model: metrics.model } : {}),
+        ...(typeof metrics.nodeId === 'string' ? { nodeId: metrics.nodeId } : {}),
+      } satisfies import('../models/Message').TraceMetricsMessage;
+    }
+
     if (b.kind === 'a2a_delivery_status' && b.a2aDeliveryStatus) {
       this.pendingA2aStatuses.set(b.a2aDeliveryStatus.messageId, b.a2aDeliveryStatus);
       while (this.pendingA2aStatuses.size > 500) this.pendingA2aStatuses.delete(this.pendingA2aStatuses.keys().next().value!);
@@ -995,18 +1014,24 @@ export class PersonaAdapter {
           : b.toolCard.status === 'failed'
             ? 'error'
             : 'running';
+      const safeResult = b.toolCard.result === undefined ? undefined : this.tracePayloadRedactor.redact(b.toolCard.result);
+      const output = toolOutputDetail(b.toolCard.output, safeResult);
       return {
         id,
         kind: 'tool',
         createdAt,
         recordedToolName: b.toolCard.toolName,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
-        desc: b.toolCard.summary || b.toolCard.description || '',
+        desc: this.tracePayloadRedactor.redactText(b.toolCard.summary || b.toolCard.description || ''),
         status,
-        input:        b.toolCard.input,
-        output:       toolOutputDetail(b.toolCard.output, b.toolCard.result),
-        error:        b.toolCard.error ?? undefined,
+        input:        b.toolCard.input ? this.tracePayloadRedactor.redactText(b.toolCard.input) : undefined,
+        output:       output ? this.tracePayloadRedactor.redactText(output) : undefined,
+        error:        b.toolCard.error ? this.tracePayloadRedactor.redactText(b.toolCard.error) : undefined,
         outputFormat: b.toolCard.outputFormat,
+        traceArgs:    b.toolCard.args
+          ? this.tracePayloadRedactor.redact(redactToolArgs(b.toolCard.toolName, b.toolCard.args)) as Readonly<Record<string, unknown>>
+          : undefined,
+        durationMs:   b.toolCard.durationMs,
       } satisfies ToolMessage;
     }
 

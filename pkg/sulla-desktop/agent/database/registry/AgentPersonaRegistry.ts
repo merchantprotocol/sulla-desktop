@@ -23,10 +23,18 @@ export interface ChatMessage {
   reportingActivity?: 'status' | 'tool';
   replyStreamId?: string;
   replyAttribution?: { agent?: string; model?: string };
+  /** Per-response usage reserved for the Detailed transcript trace. */
+  traceMetrics?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    durationMs?: number;
+    model?: string;
+    nodeId?: string;
+  };
   modelStatus?:      import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue;
   voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number };
   fileReferences?: Array<Record<string, unknown>>;
-  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'a2a_delivery_status' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'sub_agent_exchange' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive' | 'notice';
+  kind?:     'text' | 'tool' | 'tool_approval' | 'tool_question' | 'planner' | 'critic' | 'progress' | 'error' | 'thinking' | 'channel_message' | 'a2a_delivery_status' | 'workflow_node' | 'workflow_document' | 'html' | 'sub_agent_activity' | 'sub_agent_exchange' | 'voice_interim' | 'streaming' | 'speak' | 'citation' | 'file_patch' | 'proactive' | 'notice' | 'trace_metrics';
   a2aDeliveryStatus?: { messageId: string; status: 'sent' | 'delivered' | 'failed'; reason?: string };
   image?: {
     dataUrl:      string;
@@ -48,6 +56,9 @@ export interface ChatMessage {
     input?:        string;
     output?:       string;
     outputFormat?: 'text' | 'code' | 'url' | 'json';
+    startedAt?:    number;
+    completedAt?:  number;
+    durationMs?:   number;
   };
   channelMeta?: {
     senderId:      string;

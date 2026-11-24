@@ -9,7 +9,7 @@ import { returnCoveredByCard } from '../../messages/handoffCover';
 import type { Message, ToolMessage } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
-export type CardMessage = Exclude<Message, { kind: 'thinking' | 'tool' }>;
+export type CardMessage = Exclude<Message, { kind: 'thinking' | 'tool' | 'trace_metrics' }>;
 type Classification = { label: string; level: ReportingLevel; essential?: true };
 type EntryBase = Classification & { id: string; sourceId: string; createdAt: number };
 export type TranscriptEntry =
@@ -127,6 +127,8 @@ export class TranscriptReporting {
 
   private *project(message: Message, messages: readonly Message[], level: ReportingLevel): Iterable<TranscriptEntry> {
     const base = { id: message.id, sourceId: message.id, createdAt: message.createdAt };
+    // Usage is metadata for DetailedTraceProjection, not a transcript row.
+    if (message.kind === 'trace_metrics') return;
     if (message.kind === 'thinking') {
       if (message.chatToolActivity) {
         const activity = ChatToolReporting.describe(message.chatToolActivity);

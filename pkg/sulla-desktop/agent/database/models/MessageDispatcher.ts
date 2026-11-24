@@ -21,6 +21,7 @@
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
 import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import { formatToolCard, formatToolResult, redactToolArgs } from '@pkg/agent/tools/toolCardFormatters';
+import { TracePayloadRedactor } from '@pkg/agent/tools/TracePayloadRedactor';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
@@ -860,8 +861,10 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     if (toolRunId) {
       const existingId = ctx.toolRunIdToMessageId.get(toolRunId);
       if (existingId && ctx.messages.some(message => message.id === existingId && message.threadId === msgThreadId)) return;
-      const messageId = `${ Date.now() }_tool_${ toolRunId }`;
-      const safeArgs = redactToolArgs(toolName, args) as Record<string, unknown>;
+      const startedAt = Date.now();
+      const messageId = `${ startedAt }_tool_${ toolRunId }`;
+      const payloadRedactor = new TracePayloadRedactor();
+      const safeArgs = payloadRedactor.redact(redactToolArgs(toolName, args)) as Record<string, unknown>;
       const description = typeof safeArgs?.description === 'string' ? safeArgs.description : undefined;
       const display = formatToolCard(toolName, safeArgs);
       const message: ChatMessage = {
@@ -874,13 +877,14 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
         toolCard:  {
           toolRunId,
           toolName,
-          description,
+          description: description ? payloadRedactor.redactText(description) : undefined,
           status:       'running',
           args:         safeArgs,
           label:        display.label,
-          summary:      display.summary,
-          input:        display.input,
+          summary:      payloadRedactor.redactText(display.summary),
+          input:        display.input ? payloadRedactor.redactText(display.input) : undefined,
           outputFormat: display.outputFormat,
+          startedAt,
         },
       };
       ctx.messages.push(message);
@@ -892,7 +896,8 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
     ctx.currentActivity.value = 'Thinking';
     const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
     const success = data?.success === true;
-    const error = typeof data?.error === 'string' ? data.error : null;
+    const payloadRedactor = new TracePayloadRedactor();
+    const error = typeof data?.error === 'string' ? payloadRedactor.redactText(data.error) : null;
     const result = capForDisplay(data?.result);
 
     if (toolRunId) {
@@ -900,16 +905,21 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       if (messageId) {
         const message = ctx.messages.find(m => m.id === messageId);
         if (message?.toolCard) {
+          const completedAt = Date.now();
           message.toolCard.status = success ? 'success' : 'failed';
           message.toolCard.error = error;
-          message.toolCard.result = result;
+          message.toolCard.result = payloadRedactor.redact(result);
+          message.toolCard.completedAt = completedAt;
+          if (typeof message.toolCard.startedAt === 'number' && Number.isFinite(message.toolCard.startedAt)) {
+            message.toolCard.durationMs = Math.max(0, completedAt - message.toolCard.startedAt);
+          }
           const resultDisplay = formatToolResult(
             message.toolCard.toolName,
             message.toolCard.args ?? {},
             result,
             error,
           );
-          if (resultDisplay.output) message.toolCard.output = capForDisplay(resultDisplay.output) as string;
+          if (resultDisplay.output) message.toolCard.output = capForDisplay(payloadRedactor.redactText(resultDisplay.output)) as string;
           if (resultDisplay.outputFormat) message.toolCard.outputFormat = resultDisplay.outputFormat;
         }
         ctx.toolRunIdToMessageId.delete(toolRunId);
@@ -1021,13 +1031,32 @@ function handleThreadRestored(ctx: DispatchContext, agentId: string, msgThreadId
 
 // ─── Handler: token_info ────────────────────────────────────────
 
-function handleTokenInfo(ctx: DispatchContext, _agentId: string, _threadId: string, msg: WebSocketMessage): void {
+function handleTokenInfo(ctx: DispatchContext, agentId: string, threadId: string, msg: WebSocketMessage): void {
   const data = (msg.data && typeof msg.data === 'object') ? (msg.data as any) : {};
   if (typeof data.tokens_used === 'number') {
     ctx.handleTokenInfo(
       data.tokens_used, data.prompt_tokens, data.completion_tokens,
       data.time_spent, data.threadId, data.nodeId,
     );
+  }
+  const traceMetrics = {
+    ...(typeof data.prompt_tokens === 'number' && Number.isFinite(data.prompt_tokens) && data.prompt_tokens >= 0 ? { promptTokens: data.prompt_tokens } : {}),
+    ...(typeof data.completion_tokens === 'number' && Number.isFinite(data.completion_tokens) && data.completion_tokens >= 0 ? { completionTokens: data.completion_tokens } : {}),
+    ...(typeof data.time_spent === 'number' && Number.isFinite(data.time_spent) ? { durationMs: Math.max(0, data.time_spent) } : {}),
+    ...(typeof data.model === 'string' && data.model.trim() ? { model: data.model } : {}),
+    ...(typeof data.nodeId === 'string' && data.nodeId.trim() ? { nodeId: data.nodeId } : {}),
+  };
+  if (Object.keys(traceMetrics).length > 0) {
+    const createdAt = Date.now();
+    ctx.messages.push({
+      id: uniqueMessageId(ctx, `${ createdAt }_trace_metrics`),
+      channelId: agentId,
+      threadId,
+      role: 'system',
+      content: '',
+      kind: 'trace_metrics',
+      traceMetrics,
+    });
   }
 }
 
