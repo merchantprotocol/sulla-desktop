@@ -119,7 +119,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, provide, reactive, ref, toRef, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import Canvas             from './components/chrome/Canvas.vue';
@@ -419,7 +419,7 @@ const reportingLevel = ref<ReportingLevel>('info');
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
-const traceDisclosure = reactive(new TraceDisclosureController());
+const traceDisclosure = new TraceDisclosureController();
 provide('chat:trace-disclosure', traceDisclosure);
 // Composer's voice reads this: only the tab on screen speaks.
 provide('chat:is-active', toRef(props, 'isActive'));
