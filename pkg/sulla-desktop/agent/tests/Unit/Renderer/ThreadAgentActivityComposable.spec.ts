@@ -71,6 +71,10 @@ describe('useThreadAgentActivity', () => {
     expect(flatten(activity.chartRoot.value)).toEqual(['chat:thread-b', 'job-b:0']);
     expect(activity.checkIns.value.map(item => item.text)).toEqual(['check-in job-b:0']);
     expect(activity.rootFallback.value).toBeNull();
+
+    threadId.value = undefined;
+    expect(activity.checkIns.value).toEqual([]);
+    expect(activity.rootFallback.value).toBeNull();
   });
 
   it('clears the previous thread queue and history before observing the next thread', () => {

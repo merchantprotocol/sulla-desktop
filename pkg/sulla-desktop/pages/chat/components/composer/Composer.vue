@@ -37,22 +37,27 @@
       <div class="composer-up-row">
         <div class="dock-status">
           <slot name="status-line">
-            <ThreadStatusLine>
-              <template #end>
-                <span class="dock-divider" aria-hidden="true" />
-                <button
-                  type="button"
-                  class="dock-move"
-                  :class="{ on: drawerOpen }"
-                  :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
-                  :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
-                  :aria-pressed="drawerOpen"
-                  @click="setPosition(drawerOpen ? 'bottom' : 'side')"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
-                </button>
-              </template>
-            </ThreadStatusLine>
+            <!-- Keep its tab-dot activity wiring alive; the roll-up owns the visible line. -->
+            <ThreadStatusLine v-show="false" />
+            <StatusRollup
+              v-if="statusThreadId && threadActivity"
+              class="dock-rollup"
+              :thread-id="statusThreadId"
+              :check-ins="statusCheckIns"
+              :root-fallback="statusRootFallback"
+            />
+            <span class="dock-divider" aria-hidden="true" />
+            <button
+              type="button"
+              class="dock-move"
+              :class="{ on: drawerOpen }"
+              :title="drawerOpen ? 'Close the side panel' : 'Open the side panel'"
+              :aria-label="drawerOpen ? 'Close the side panel' : 'Open the side panel: agents, results, decisions and files'"
+              :aria-pressed="drawerOpen"
+              @click="setPosition(drawerOpen ? 'bottom' : 'side')"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>
+            </button>
           </slot>
         </div>
         <div class="composer-agent-picker">
@@ -302,6 +307,7 @@ import HeartbeatControl   from './HeartbeatControl.vue';
 import QueueStrip         from './QueueStrip.vue';
 import RunControls        from './RunControls.vue';
 import ShelfPanel         from './ShelfPanel.vue';
+import StatusRollup       from './StatusRollup.vue';
 import ThreadStatusLine   from './ThreadStatusLine.vue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
@@ -309,6 +315,7 @@ import { useArtifactMentions } from '../../composables/useArtifactMentions';
 import { useCommandPopover } from '../../composables/useCommandPopover';
 import { DockPositions } from '../../composables/useDockPosition';
 import { useSelectionLabel } from '../../composables/useSelectionLabel';
+import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
 import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
 import { ChatController } from '../../controller/ChatController';
 import { LocalStoragePersister } from '../../services/LocalStoragePersister';
@@ -349,7 +356,11 @@ function looksLikeUrl(input: string): boolean {
 
 const draft        = ref('');
 const { createTab } = useBrowserTabs();
-const activityContext = inject<{ tabId?: string }>('chat:activity-context', {});
+const activityContext = inject<{ tabId?: string; backendThreadId?: Ref<string | undefined> }>('chat:activity-context', {});
+const threadActivity = inject(THREAD_AGENT_ACTIVITY_KEY, null);
+const statusThreadId = computed(() => activityContext.backendThreadId?.value);
+const statusCheckIns = computed(() => threadActivity?.checkIns.value ?? []);
+const statusRootFallback = computed(() => threadActivity?.rootFallback.value ?? null);
 const remoteTransport: RemoteChatTransport = {
   connect: bound => ipcRenderer.invoke('remote-chat:connect', bound),
   send: frame => ipcRenderer.invoke('remote-chat:send', frame),
@@ -948,7 +959,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
 .chat-root.artifact-open .composer-inner { max-width: 760px; }
 .composer-up-row { display: flex; align-items: flex-end; gap: 12px; min-width: 0; margin-bottom: 12px; padding: 0 10px; }
-.dock-status { flex: 1 1 auto; min-width: 0; max-width: 470px; }
+.dock-status { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; max-width: 470px; }
+.dock-rollup { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.dock-status :deep(.status-rollup) { min-width: 0; }
+.dock-status :deep(.status-rollup__line) { max-width: 100%; overflow: hidden; }
 .dock-status :deep(.ta) { border-bottom: 0; }
 .dock-status :deep(.ta-row), .dock-status :deep(.ta-row-working), .dock-status :deep(.ta-row-you), .dock-status :deep(.ta-row-stalled) { border-radius: 99px; background: transparent; }
 .dock-status :deep(.ta-line) { min-height: 34px; height: 34px; padding: 0 14px; border-radius: 99px; background: var(--bg-surface); box-shadow: var(--elev-rest, var(--shadow-sm)); }
