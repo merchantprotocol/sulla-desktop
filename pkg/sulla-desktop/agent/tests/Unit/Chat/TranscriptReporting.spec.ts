@@ -195,12 +195,12 @@ it('keeps the original actionable cards and terminal failure at every level', as
 it('ignores an old page if the active thread changes while loading', async() => {
   const live = new ReportingFixture();
   let finishPage!: (data: unknown) => void;
-  vi.mocked(ipcRenderer.invoke).mockImplementation((channel: string) => {
+  vi.mocked(ipcRenderer.invoke).mockImplementation((...[channel]) => {
     if (channel === 'chat-messages:message-count') return Promise.resolve({ success: true, count: 5 });
     if (channel === 'chat-messages:load-before') return new Promise(resolve => { finishPage = resolve; });
     return Promise.resolve(undefined);
   });
-  onTestFinished(() => vi.mocked(ipcRenderer.invoke).mockReset());
+  onTestFinished(() => { vi.mocked(ipcRenderer.invoke).mockReset(); });
   live.chat.appendMessage({ id: asMessageId('original'), kind: 'user', createdAt: 1, text: 'Original chat' });
   const wrapper = live.mount('debug');
   await wrapper.get('.scroller').trigger('scroll');
