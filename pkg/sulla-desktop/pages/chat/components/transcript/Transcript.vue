@@ -13,8 +13,16 @@
     <div
       ref="scroller"
       class="scroller"
-      :class="{ 'has-scroll-pill': showPill }"
+      :class="{ 'has-scroll-pill': showPill, 'has-aside': Boolean($slots.aside) }"
     >
+      <!--
+        Sticky layer inside the scroller (the worker chart): it stays put
+        over the right gutter while the messages scroll under it, and the
+        scroller's scrollbar stays at the far right, after it.
+      -->
+      <div v-if="$slots.aside" class="scroller-aside">
+        <slot name="aside" />
+      </div>
       <div class="chat-dialogue">
         <!-- Time marker for today (phase-0 scaffold) -->
         <TimeMarker
@@ -231,6 +239,39 @@ defineExpose({ scroller, scrollToBottom });
 .transcript-standard .scroller {
   padding-top: 112px;
 }
+/*
+ * With an aside the scroller drops its side padding so the aside can reach
+ * the right edge; the messages get the same 8% inset as margins instead.
+ * --chart-gutter-w (set by ChatPage while the chart sits in the gutter)
+ * keeps the messages exactly where they were when the chart was a column
+ * beside the transcript: 8% of the narrower column on each side, plus the
+ * gutter on the right.
+ */
+.scroller.has-aside { padding-right: 0; padding-left: 0; }
+.scroller.has-aside > .chat-dialogue {
+  margin-right: calc(8% + 0.92 * var(--chart-gutter-w, 0px));
+  margin-left: calc(8% - 0.08 * var(--chart-gutter-w, 0px));
+}
+/*
+ * The aside layer covers the visible transcript from the top edge down to
+ * the bottom padding, pinned with sticky. Floated with no width so it takes
+ * no room from the messages; its children position against it.
+ */
+.scroller-aside {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  float: right;
+  width: 0;
+  height: calc(100% + 96px);
+  margin-top: -96px;
+}
+.transcript-standard .scroller-aside {
+  height: calc(100% + 112px);
+  margin-top: -112px;
+}
+/* The jump pill stays centred over the messages, not the gutter. */
+.transcript :deep(.scroll-pill) { left: calc(50% - var(--chart-gutter-w, 0px) / 2); }
 .report-entry { display: flex; flex-direction: column; min-width: 0; }
 .report-entry-standard-evidence-after-reply { margin-top: -12px; }
 .report-entry-standard-evidence-after-reply :deep(.supporting-reports.standard) { margin-top: 0; }
