@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
-import { ToolCardFormatterRegistry, ToolCardPresenter } from './toolCardFormatterRegistry';
+import { ToolArgumentRedactor, ToolCardFormatterRegistry, ToolCardPresenter } from './toolCardFormatterRegistry';
 import { AgentsToolCardFormatter } from './toolCardStrategies/AgentsToolCardFormatter';
 import { BridgeToolCardFormatter } from './toolCardStrategies/BridgeToolCardFormatter';
 import { BrowserToolCardFormatter } from './toolCardStrategies/BrowserToolCardFormatter';
@@ -23,9 +23,13 @@ import { WorkflowToolCardFormatter } from './toolCardStrategies/WorkflowToolCard
 import { WorkspaceToolCardFormatter } from './toolCardStrategies/WorkspaceToolCardFormatter';
 
 export class ToolCardCompositionRoot {
+  readonly redactor: ToolArgumentRedactor;
   readonly presenter: ToolCardPresenter;
   constructor() {
     const text = new ToolCardText();
+    this.redactor = new ToolArgumentRedactor(new Map([
+      ['vault_create_password', ['password']], ['vault_update_password', ['password']], ['vault_set_credential', ['value']],
+    ]));
     const strategies = [new ShellFileToolCardFormatter(text), new BrowserToolCardFormatter(text),
       new GitToolCardFormatter(text), new GitHubToolCardFormatter(text), new DockerToolCardFormatter(text),
       new SlackToolCardFormatter(text), new DatabaseToolCardFormatter(text), new RedisToolCardFormatter(text),

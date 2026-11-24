@@ -48,6 +48,10 @@ const perf = Logging.perf;
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 
+// Model-bound tool results stay bounded to protect the next request's
+// context window. The separate WebSocket transcript event remains complete.
+const MAX_INLINE_SCREENSHOT_BYTES = 500_000;
+
 // The loop detector only needs enough history to prove that the same call was
 // made seven times in a row. Keep fixed-size hashes instead of retaining raw
 // arguments and results in thread metadata (the durable conversation log owns
@@ -761,7 +765,7 @@ export class ToolExecutor {
     RunActivity.touch(state.metadata);
     if (action === 'emit_chat_message') return;
 
-    const formatPayload = (payload: unknown): string => {
+    const formatPayload = (payload: unknown, maxLen?: number): string => {
       if (payload == null) return 'null';
 
       let parsed = payload;
@@ -779,10 +783,14 @@ export class ToolExecutor {
         }
       }
 
-      return typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2) ?? String(parsed);
+      const serialized = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2) ?? String(parsed);
+      if (maxLen && serialized.length > maxLen) {
+        return `${ serialized.substring(0, maxLen) }...`;
+      }
+      return serialized;
     };
 
-    const contentText = formatPayload(result.result);
+    const contentText = formatPayload(result.result, 5000);
     const errorText = String(result.error || 'unknown error').trim();
     const showDetails = contentText.trim().length > 0 && contentText.trim() !== errorText;
 
@@ -818,14 +826,18 @@ export class ToolExecutor {
       } as ChatMessage);
     }
 
-    // 2. Persist to state.messages as native tool_result (user role), retaining
-    // the complete result payload for the saved conversation and provider.
+    // 2. Persist the model-bounded result to state.messages as native
+    // tool_result. The full result was already sent to the independent chat
+    // transcript event in emitToolResultEvent above.
     let toolResultContent: string | any[];
-    if (screenshotBase64) {
+    if (screenshotBase64 && screenshotBase64.length <= MAX_INLINE_SCREENSHOT_BYTES) {
       toolResultContent = [
         { type: 'image', source: { type: 'base64', media_type: screenshotMediaType, data: screenshotBase64 } },
         { type: 'text', text: resultContent },
       ];
+    } else if (screenshotBase64) {
+      console.warn(`[ToolExecutor] Dropped inline screenshot (${ screenshotBase64.length } bytes > ${ MAX_INLINE_SCREENSHOT_BYTES } cap) for tool "${ action }" — tool should use screenshot_store.saveScreenshot and return a path reference`);
+      toolResultContent = `${ resultContent }\n\n[screenshot dropped: ${ screenshotBase64.length } bytes exceeds inline cap; tool should return a path reference instead]`;
     } else {
       toolResultContent = resultContent;
     }

@@ -7,6 +7,19 @@ import { PrefixToolCardFormatter } from './toolCardStrategies/PrefixToolCardForm
 import { ToolCardText } from './toolCardStrategies/ToolCardText';
 export type { ToolArguments, ToolCardDisplay, ToolCardFormatter } from './toolCardStrategies/ToolCardFormatter';
 
+export class ToolArgumentRedactor {
+  private readonly secretFields: ReadonlyMap<string, readonly string[]>;
+  constructor(secretFields: ReadonlyMap<string, readonly string[]>) { this.secretFields = secretFields; }
+  redact(toolName: string, args: unknown): unknown {
+    if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+    const fields = this.secretFields.get(toolName) ?? this.secretFields.get(toolName.replace(/^vault\//, 'vault_'));
+    if (!fields) return args;
+    const safe = { ...(args as ToolArguments) };
+    for (const field of fields) if (field in safe) safe[field] = '[REDACTED]';
+    return safe;
+  }
+}
+
 export class ToolCardFormatterRegistry {
   constructor(
     private readonly exactFormatters: readonly ToolCardFormatter[],

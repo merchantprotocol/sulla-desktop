@@ -42,6 +42,15 @@ const cards: Record<CardMessage['kind'], Classification> = {
 };
 
 const toolStatuses = new Map([['running', 'Running'], ['ok', 'Completed'], ['error', 'Failed']]);
+// Standard view retains the established friendly labels; Detailed view uses
+// recorded tool names and full payloads instead of this presentation map.
+const toolLabels = new Map([
+  ['Agents', 'Agents'], ['Bash', 'Shell'], ['Bridge', 'Bridge'], ['Browser', 'Browser'],
+  ['Calendar', 'Calendar'], ['Database', 'Database'], ['Docker', 'Docker'], ['Extensions', 'Extensions'],
+  ['File', 'File'], ['Git', 'Git'], ['GitHub', 'GitHub'], ['Host', 'Host'], ['Memory', 'Memory'],
+  ['Integrations', 'Integrations'], ['Redis', 'Redis'], ['Search', 'Search'], ['Skills', 'Skills'],
+  ['Slack', 'Slack'], ['Vault', 'Vault'], ['Workflow', 'Workflow'], ['Workspace', 'Workspace'],
+]);
 
 export class TranscriptReporting {
   /** Project one active thread, never reorder or change its retained messages. */
@@ -101,8 +110,9 @@ export class TranscriptReporting {
     }
 
     if (message.kind === 'tool') {
+      if (level !== 'debug' && ChatToolReporting.isBackgroundBrowse(message.recordedToolName ?? message.tool)) return;
       const text = this.toolText(message, level);
-      yield { ...base, kind: 'activity', label: 'Tool',
+      if (text) yield { ...base, kind: 'activity', label: 'Tool',
         level: message.status === 'running' || message.tool === 'Memory' || ChatToolReporting.isMemoryTool(message.recordedToolName) ? 'debug' : 'info', text,
         ...(level === 'debug' ? { toolMessage: message } : {}) };
       return;
@@ -150,10 +160,18 @@ export class TranscriptReporting {
       ...(message.kind === 'notice' && message.action ? { essential: true } : {}) };
   }
 
-  private toolText(message: ToolMessage, level: ReportingLevel): string {
-    const toolName = message.recordedToolName || message.tool || 'unknown tool';
-    const status = message.status || 'unknown';
-    const summaryStatus = toolStatuses.get(status) ?? status;
-    return `${ toolName } · ${ level === 'debug' ? status : summaryStatus }`;
+  private toolText(message: ToolMessage, level: ReportingLevel): string | undefined {
+    if (level === 'debug') {
+      const toolName = message.recordedToolName || message.tool || 'unknown tool';
+      return `${ toolName } · ${ message.status || 'unknown' }`;
+    }
+
+    // Preserve main's Standard projection: only typed tool envelopes with a
+    // known formatter label are shown, with their established friendly label.
+    if (!/^\d+_tool_[\w.-]+$/.test(message.id)) return undefined;
+    const isMemory = ChatToolReporting.isMemoryTool(message.recordedToolName);
+    const label = isMemory ? 'Memory' : toolLabels.get(message.tool);
+    const status = toolStatuses.get(message.status);
+    return label && status ? `${ label } · ${ status }` : undefined;
   }
 }

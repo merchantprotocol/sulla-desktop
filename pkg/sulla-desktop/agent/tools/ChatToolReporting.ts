@@ -21,6 +21,10 @@ export class ChatToolReporting {
     return browserOperations.find(operation => operation === value);
   }
 
+  static isBackgroundBrowse(name: unknown): boolean {
+    return name === 'background_browse' || name === 'browser/background_browse' || name === 'browser_background_browse';
+  }
+
   static isMemoryTool(value: string | undefined): boolean {
     return !!value && memoryTools.has(value.replace(/^(?:memory|observation)[_/]/, ''));
   }

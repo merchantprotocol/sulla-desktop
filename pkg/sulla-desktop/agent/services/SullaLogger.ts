@@ -25,6 +25,7 @@
  * Everything lands in ~/sulla/logs/ (or $SULLA_HOME_DIR/logs/).
  */
 
+import { redactToolArgs } from '../tools/toolCardFormatters';
 
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
@@ -630,7 +631,7 @@ class SullaLogger extends EventEmitter {
       ts:       new Date().toISOString(),
       type:     'tool_call',
       toolName,
-      args,
+      args: redactToolArgs(toolName, args),
       ...(result !== undefined ? { result } : {}),
     });
   }
