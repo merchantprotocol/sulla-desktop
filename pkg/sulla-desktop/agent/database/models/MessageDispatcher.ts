@@ -353,9 +353,13 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const reason = typeof ta?.reason === 'string' ? ta.reason.trim() : '';
     const command = typeof ta?.command === 'string' ? ta.command.trim() : '';
     if (!approvalId || !reason || !command) return;
+    if (ctx.messages.some(message => message.kind === 'tool_approval' && message.threadId === msgThreadId &&
+      message.toolApproval?.approvalId === approvalId)) return;
+    const title = typeof ta?.title === 'string' && ta.title.trim() ? ta.title.trim() : undefined;
+    const expiresAt = typeof ta?.expiresAt === 'number' && Number.isFinite(ta.expiresAt) ? ta.expiresAt : undefined;
 
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_tool_approval_${ approvalId }`,
+      id:        `${ Number.isFinite(data?.timestamp) ? data.timestamp : Date.now() }_ws_tool_approval_${ approvalId }`,
       channelId: agentId,
       threadId:  msgThreadId,
       role:      'assistant',
@@ -365,6 +369,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         approvalId,
         reason,
         command,
+        ...(title ? { title } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
         origin: ta?.origin && typeof ta.origin === 'object' ? ta.origin : undefined,
       },
     });
