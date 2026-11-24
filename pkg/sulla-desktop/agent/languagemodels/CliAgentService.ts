@@ -20,6 +20,7 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool } from '../services/RunLivenessClock';
 
 const log = Logging.background;
 const MCP_SESSION_TTL_MS = 4 * 60 * 60_000 + 30 * 60_000;
@@ -327,10 +328,11 @@ export class CliAgentService extends BaseLanguageModel {
       let usage: any = null;
       let errorMessage = '';
       let sawTerminalResult = false;
-      let lastActivity = Date.now();
+      // Whole-loop liveness (Jonathon, 2026-11-24): stream bytes, tool starts,
+      // tool results, and tools still running all count as activity.
+      const liveness = new RunLivenessClock(STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS);
       let stopped = false;
       let settled = false;
-      const activeToolEvents = new Map<string, { startedAt: number }>();
       let sawToolExecution = false;
       let unresolvedTool = false;
       let watchdog: ReturnType<typeof setInterval> | undefined;
@@ -382,13 +384,11 @@ export class CliAgentService extends BaseLanguageModel {
       if (stopped) return;
 
       watchdog = setInterval(() => {
-        const silentMs = Date.now() - lastActivity;
-        if (silentMs < STALL_TIMEOUT_MS) return;
-        if (activeToolEvents.size > 0) {
-          const tools = [...activeToolEvents.values()];
-          if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
+        const verdict = liveness.verdict();
+        if (verdict.kind === 'alive') return;
+        if (verdict.kind === 'tool_hung') {
           unresolvedTool = true;
-          errorMessage = `${ this.spec.name } stopped reporting activity while a tool was unresolved.`;
+          errorMessage = `${ this.spec.name } ${ describeHungTool(verdict.tool) }, with no other activity.`;
           void stop().then(() => {
             proc.removeAllListeners('error');
             proc.on('error', () => { /* late child error after forced teardown */ });
@@ -397,15 +397,13 @@ export class CliAgentService extends BaseLanguageModel {
           }, error => rejectOnce(error instanceof Error ? error : new CliFaultError('transport', String(error), error, false)));
           return;
         }
-        if (silentMs > STALL_TIMEOUT_MS) {
-          errorMessage = `${ this.spec.name } stalled with no stream activity for 15 minutes.`;
-          void stop().then(() => {
-            proc.removeAllListeners('error');
-            proc.on('error', () => { /* late child error after forced teardown */ });
-            if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
-            rejectOnce(new CliFaultError('stall', errorMessage));
-          }, error => rejectOnce(error instanceof Error ? error : new CliFaultError('transport', String(error), error, false)));
-        }
+        errorMessage = `${ this.spec.name } stalled with no stream activity and no tool running for 15 minutes.`;
+        void stop().then(() => {
+          proc.removeAllListeners('error');
+          proc.on('error', () => { /* late child error after forced teardown */ });
+          if (sessionId) this.setSession(conversationId, sessionId).catch(() => {});
+          rejectOnce(new CliFaultError('stall', errorMessage));
+        }, error => rejectOnce(error instanceof Error ? error : new CliFaultError('transport', String(error), error, false)));
       }, 30_000);
       watchdog.unref?.();
 
@@ -416,10 +414,12 @@ export class CliAgentService extends BaseLanguageModel {
         try { parsed = JSON.parse(trimmed) } catch { return }
         const event = this.spec.parseEvent(parsed);
         if (event.toolState?.toolUseId) {
-          if (event.toolState.status === 'completed') activeToolEvents.delete(event.toolState.toolUseId);
+          if (event.toolState.status === 'completed') liveness.toolFinished(event.toolState.toolUseId);
           else {
             sawToolExecution = true;
-            activeToolEvents.set(event.toolState.toolUseId, { startedAt: Date.now() });
+            if (liveness.toolStarted(event.toolState.toolUseId, event.toolState.toolName)) {
+              try { callbacks.onToolStarted?.({ toolUseId: event.toolState.toolUseId, toolName: event.toolState.toolName }) } catch { /* UI callback */ }
+            }
           }
         }
         if (event.sessionId) sessionId = event.sessionId;
@@ -453,7 +453,8 @@ export class CliAgentService extends BaseLanguageModel {
 
       proc.stdout.on('data', chunk => {
         if (settled) return;
-        lastActivity = Date.now();
+        liveness.touch();
+        try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
         stdoutBuffer += chunk.toString('utf8');
         const lines = stdoutBuffer.split('\n');
         stdoutBuffer = lines.pop() ?? '';
@@ -461,7 +462,7 @@ export class CliAgentService extends BaseLanguageModel {
       });
       proc.stderr.on('data', chunk => {
         if (settled) return;
-        lastActivity = Date.now();
+        liveness.touch();
         stderrBuffer += chunk.toString('utf8');
       });
       proc.stdin.on('error', () => { /* early CLI exit */ });
@@ -474,7 +475,7 @@ export class CliAgentService extends BaseLanguageModel {
             return;
           }
         }
-        const retrySafe = activeToolEvents.size === 0 && !unresolvedTool;
+        const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool;
         const safety = retrySafe ? '' : ' Recovery was not attempted because a tool or approval was still unresolved.';
         rejectOnce(new CliFaultError('spawn', `${ this.spec.name } process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
       });
@@ -534,21 +535,21 @@ export class CliAgentService extends BaseLanguageModel {
           if (/unauthorized|invalid api key|credential|quota|usage balance|weekly limit|session limit|rate limit|too many requests/i.test(combinedError)) {
             reject(new Error(message));
           } else {
-            const retrySafe = activeToolEvents.size === 0 && !unresolvedTool && !isPermanentCliFailure(combinedError);
+            const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool && !isPermanentCliFailure(combinedError);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool or approval was still unresolved.';
-            reject(new CliFaultError(errorMessage.includes('stalled') ? 'stall' : 'process_exit', `${ message }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolEvents.size > 0 || unresolvedTool)));
+            reject(new CliFaultError(errorMessage.includes('stalled') ? 'stall' : 'process_exit', `${ message }${ safety }`, undefined, retrySafe, !retrySafe && (liveness.toolsInFlight > 0 || unresolvedTool)));
           }
           return;
         }
         if (!sawTerminalResult) {
-          const retrySafe = activeToolEvents.size === 0 && !unresolvedTool;
+          const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool;
           reject(new CliFaultError('protocol', `${ this.spec.name } exited before emitting a terminal result event.`, undefined, retrySafe, !retrySafe));
           return;
         }
         if (!text.trim()) {
-          const retrySafe = activeToolEvents.size === 0 && !unresolvedTool && !isPermanentCliFailure(stderrBuffer);
+          const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool && !isPermanentCliFailure(stderrBuffer);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(new CliFaultError('protocol', `${ this.spec.name } returned no text. ${ stderrBuffer.trim().slice(-300) }${ safety }`, undefined, retrySafe, !retrySafe && (activeToolEvents.size > 0 || unresolvedTool)));
+          reject(new CliFaultError('protocol', `${ this.spec.name } returned no text. ${ stderrBuffer.trim().slice(-300) }${ safety }`, undefined, retrySafe, !retrySafe && (liveness.toolsInFlight > 0 || unresolvedTool)));
           return;
         }
         recordEngineUsage(this.spec.id, usage, this.getModel(), Date.now() - started).catch(() => {});

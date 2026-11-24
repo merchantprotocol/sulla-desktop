@@ -13,6 +13,7 @@
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
 import { runTools, type ToolInFlight } from './RunToolTracker';
+import { LONG_TOOL_CEILING_MS, describeHungTool } from './RunLivenessClock';
 
 const lastActivity = new Map<string, number>();
 
@@ -64,13 +65,19 @@ export async function deadRunMinutes(): Promise<number> {
   return Number.isFinite(value) && value > 0 ? value : DEFAULT_DEAD_RUN_MINUTES;
 }
 
+export type DeadRunKind = 'idle' | 'tool_hung';
+
 /**
- * Watch a run's activity clock and call `onDead` once it has been silent past
- * the dead-run threshold. Returns a stop function that also clears the clock.
+ * Watch a run's activity clock and call `onDead` once its WHOLE loop has been
+ * silent past the dead-run threshold: no model output, no tool start or
+ * result, no check-in or message, and no tool still running. A tool running
+ * past LONG_TOOL_CEILING_MS stops protecting the run and is reported as
+ * `tool_hung` ("tool still running for Xm: <name>"), not as an idle agent.
+ * Returns a stop function that also clears the clock.
  */
 export function watchForDeadRun(
   key: string,
-  onDead: (reason: string) => void | Promise<void>,
+  onDead: (reason: string, kind: DeadRunKind) => void | Promise<void>,
   stillAlive: () => Promise<boolean> = async() => false,
   liveness: { createdAt: number; hasCheckin: () => Promise<boolean> } = { createdAt: Date.now(), hasCheckin: async() => false },
   policy = new AgentJobLivenessPolicy(),
@@ -82,8 +89,9 @@ export function watchForDeadRun(
       if (fired) return;
       const minutes = await deadRunMinutes();
       const now = Date.now();
-      // A tool still running (a long shell command emits nothing until it ends) is activity.
-      if (RunActivity.toolInFlight(key)) return;
+      // A tool still running (a long shell command emits nothing until it ends) is activity, up to the ceiling.
+      const tool = RunActivity.toolInFlight(key);
+      if (tool && now - tool.startedAt < LONG_TOOL_CEILING_MS) return;
       const clock = {
         createdAt: liveness.createdAt,
         startedAt: liveness.createdAt,
@@ -94,7 +102,11 @@ export function watchForDeadRun(
       if (await stillAlive()) return;
       fired = true;
       const idleMinutes = Math.floor(policy.idleMs(clock) / 60_000);
-      await onDead(`no agent activity for ${ idleMinutes } minute(s) (limit ${ minutes })`);
+      if (tool) {
+        await onDead(`${ describeHungTool(tool, now) } (tool ceiling ${ Math.round(LONG_TOOL_CEILING_MS / 60_000) }m), no other agent activity for ${ idleMinutes } minute(s)`, 'tool_hung');
+        return;
+      }
+      await onDead(`no agent activity for ${ idleMinutes } minute(s) (limit ${ minutes })`, 'idle');
     })().catch(err => console.warn(`[RunActivity] dead-run check failed for ${ key }:`, err));
   }, DEAD_RUN_CHECK_MS);
   return () => {

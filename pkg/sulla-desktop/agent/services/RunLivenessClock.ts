@@ -53,10 +53,12 @@ export class RunLivenessClock {
   /** Any stream byte, event, steer or callback from the run. */
   touch(): void { this.lastActivityAt = this.clock() }
 
-  toolStarted(id: string, name: string): void {
+  /** Returns true when this call id was not already running. */
+  toolStarted(id: string, name: string): boolean {
     this.touch();
-    if (!id || this.tools.has(id)) return;
+    if (!id || this.tools.has(id)) return false;
     this.tools.set(id, { name: name || 'a tool', startedAt: this.clock() });
+    return true;
   }
 
   toolFinished(id: string): void {
