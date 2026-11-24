@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { StatusRollupQueue, type StatusRollupItem } from './StatusRollupQueue';
+import { StatusRollupQueue, type StatusRollupItem } from '../../../../pages/chat/components/composer/StatusRollupQueue';
 
 class StatusRollupQueueFixture {
   readonly queue = new StatusRollupQueue();
