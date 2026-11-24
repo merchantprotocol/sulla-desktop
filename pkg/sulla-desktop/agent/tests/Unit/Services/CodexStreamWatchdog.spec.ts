@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCodexService } from '../../../languagemodels/CodexService';
 import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
+import { providerBridgeActivity } from '../../../vault-broker/ProviderBridgeActivity';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
@@ -47,39 +48,46 @@ async function launch() {
 }
 
 describe('Codex quiet stream watchdog', () => {
-  it('allows a quiet reasoning interval beyond three minutes, then accepts the result', async() => {
+  it('kills at three minutes despite ongoing provider-bridge activity and reports the exact stall text', async() => {
+    // risk: stalled Codex run hangs indefinitely while unrelated bridge activity masks silence
     const run = await launch();
-    await vi.advanceTimersByTimeAsync(9 * 60_000);
-    expect(run.proc.kill).not.toHaveBeenCalled();
-    run.proc.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Completed after quiet reasoning.' } }) + '\n');
-    run.proc.stdout.write(JSON.stringify({ type: 'turn.completed', usage: {} }) + '\n');
-    run.proc.emit('close', 0);
-    await run.finished;
-    expect(run.outcome().text).toBe('Completed after quiet reasoning.');
-    await vi.advanceTimersByTimeAsync(11 * 60_000);
-    expect(run.proc.kill).not.toHaveBeenCalled();
+    const bridgePodId = 'codex-watchdog-test-pod';
+    providerBridgeActivity.mark(bridgePodId);
+    const bridgeHeartbeat = setInterval(() => providerBridgeActivity.mark(bridgePodId), 30_000);
+    try {
+      await vi.advanceTimersByTimeAsync(3 * 60_000);
+      expect(providerBridgeActivity.lastActivityAt(bridgePodId)).toBe(Date.now());
+      expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+      await vi.advanceTimersByTimeAsync(5_000);
+      await run.finished;
+      expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    } finally {
+      clearInterval(bridgeHeartbeat);
+    }
   });
 
-  it('still terminates a silent process at ten minutes and settles after teardown', async() => {
+  it('terminates a silent process at three minutes and settles after teardown', async() => {
+    // risk: Codex remains stuck beyond Jonathon's three-minute silence limit
     const run = await launch();
-    await vi.advanceTimersByTimeAsync(10 * 60_000 - 1);
+    await vi.advanceTimersByTimeAsync(3 * 60_000 - 1);
     expect(run.proc.kill).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall' });
-    expect(run.outcome().message).toContain('10 minutes');
+    expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
   });
 
-  it('resets the silence clock on actual stream bytes', async() => {
+  it('resets the silence clock when stdout arrives at 2:59', async() => {
+    // risk: real Codex output is ignored and an active model turn is killed
     const run = await launch();
-    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
     run.proc.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'reasoning' } }) + '\n');
-    await vi.advanceTimersByTimeAsync(9 * 60_000);
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
     expect(run.proc.kill).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(65_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome()).toMatchObject({ faultKind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
   });
 });
