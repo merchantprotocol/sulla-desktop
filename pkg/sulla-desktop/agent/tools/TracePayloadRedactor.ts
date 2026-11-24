@@ -8,7 +8,10 @@ export class TracePayloadRedactor {
   static readonly withheld = 'Details withheld';
   private readonly denylist = /(?:^|[\/_:. -])(vault|secrets?|credentials?|passwords?|wallet|crypto|keychain|auth|token)(?:$|[\/_:. -])/i;
   private readonly sensitiveAssignment = /(^|[^A-Za-z0-9_])(?:[A-Za-z0-9_]*(?:PASSWORD|PASSWD|PWD|SECRET|TOKEN|API[_-]?KEY|APIKEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIALS?|AUTH|SESSION|COOKIE|DSN|CONNECTION)[A-Za-z0-9_]*)[\"']?\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,;&}]+)/gi;
-  private readonly sensitiveCommand = /(?:^|[;&|]\s*)(?:cat\s+(?:\.env[^\s]*|~\/(?:\.aws\/credentials|\.ssh\/[^\s]*)|[^\s]*(?:\.pem|\.key)(?:\s|$))|(?:printenv|env|set)(?:\s|$)|docker\s+inspect(?:\s|$)|kubectl\s+get\s+secret(?:\s|$)|security\s+find-generic-password(?:\s|$))/i;
+  /** Command readers are deliberately independent of the tool adapter name. */
+  private readonly sensitiveReader = /(?:^|[\s\"'([{;&|])(?:cat|less|more|head|tail|bat|grep|rg|awk|sed|source|xxd|base64|cp|scp|\.)\b[^\n;&|]{0,500}/i;
+  private readonly sensitivePath = /(?:^|[\s\"'([{=:])(?:(?:~|[A-Za-z0-9_.-]+)\/)*(?:\.env(?:[._-][A-Za-z0-9_-]+)?|\.aws\/credentials|\.ssh\/[A-Za-z0-9_.-]+|id_(?:rsa|ed25519)(?:[._-][A-Za-z0-9_-]+)?|[A-Za-z0-9_.-]+\.(?:pem|key|p12)|\.npmrc|\.netrc|\.pgpass|\.git-credentials|\.docker\/config\.json|kubeconfig)(?=$|[\s\"',;)}\]\.:])/i;
+  private readonly sensitiveBuiltin = /(?:^|[\s\"'([{;&|])(?:env|printenv|set)(?=\s|$)|(?:^|[\s\"'([{;&|])export\s+-p(?:\s|$)|(?:^|[\s\"'([{;&|])docker\s+inspect\b|(?:^|[\s\"'([{;&|])kubectl\s+get\s+secret\b|(?:^|[\s\"'([{;&|])security\s+find-generic-password\b|(?:^|[\s\"'([{;&|])op\s+read\b|(?:^|[\s\"'([{;&|])gh\s+auth\s+token\b|(?:^|[\s\"'([{;&|])aws\s+configure\s+get\b|(?:^|[\s\"'([{;&|])gcloud\s+auth\s+print-access-token\b/i;
   private readonly patterns: readonly [RegExp, string][] = [
     [/-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*?(?:-----END(?: [A-Z0-9]+)* PRIVATE KEY-----|$)/g, '[REDACTED PRIVATE KEY]'],
     [/\bBearer\s+\S+/gi, 'Bearer [REDACTED]'],
@@ -26,10 +29,16 @@ export class TracePayloadRedactor {
     return !!toolName && this.denylist.test(toolName);
   }
 
-  isSensitiveCommand(value: unknown, toolName?: string): boolean {
-    if (!toolName || !/\b(?:shell|exec)\b/i.test(toolName)) return false;
-    const command = typeof value === 'string' ? value : '';
-    return this.sensitiveCommand.test(command);
+  isSensitiveCommand(value: unknown, _toolName?: string): boolean {
+    const command = this.commandText(value);
+    if (this.sensitiveBuiltin.test(command)) return true;
+    return this.sensitiveReader.test(command) && this.sensitivePath.test(command);
+  }
+
+  private commandText(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (!value || typeof value !== 'object') return '';
+    try { return JSON.stringify(value) ?? ''; } catch { return ''; }
   }
 
   redactText(value: string, toolName?: string): string {
