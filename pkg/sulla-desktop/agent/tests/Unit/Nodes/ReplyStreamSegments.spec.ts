@@ -130,4 +130,28 @@ describe('live reply segments around provider tool activity', () => {
       'The thread transcript isn\'t reachable from here.',
     ]);
   });
+
+  // risk: the full reply that follows the live stream carried text the last
+  // throttled update hadn't shown yet, and the chat silently dropped it
+  it.each([
+    { name: 'after several segments', streams: [['r', 'Checked files.'], ['r', 'Build']], final: 'Checked files.\n\nBuild passed.', shown: ['Checked files.', 'Build passed.'] },
+    { name: 'keeping an indented code block', streams: [['r', 'Here is the example:'], ['r', '    echo']], final: 'Here is the example:\n\n    echo ok', shown: ['Here is the example:', '    echo ok'] },
+    { name: 'after one segment with different spacing', streams: [['r', 'Build  passed']], final: 'Build passed today', shown: ['Build passed today'] },
+    { name: 'without moving it into another reply stream', streams: [['a', 'Tests:'], ['b', 'PASS']], final: 'Tests: PASS (6/6)', shown: ['Tests:', 'PASS', 'Tests: PASS (6/6)'] },
+    { name: 'without moving it into segments of unknown streams', streams: [[undefined, 'Tests:'], [undefined, 'PASS']], final: 'Tests: PASS (6/6)', shown: ['Tests:', 'PASS', 'Tests: PASS (6/6)'] },
+  ])('keeps the end of the full reply that the live segments had not shown yet, $name', ({ streams, final, shown }) => {
+    const ctx = { messages: [] as any[], graphRunning: { value: true }, registry: { setLoading() {} } };
+    const dispatcher = createMessageDispatcher();
+    const send = (content: string, kind: string, extras: Record<string, unknown> = {}) => dispatcher.dispatch(ctx as any, 'probe', 't', {
+      type: 'assistant_message',
+      data: { ...extras, content, role: 'assistant', kind, thread_id: 't' },
+    } as any);
+    streams.forEach(([replyStreamId, text], replySegment) => {
+      send(text!, 'streaming', replyStreamId ? { replyStreamId, replySegment } : {});
+      send('', 'streaming_complete', replyStreamId ? { replyStreamId } : {});
+    });
+    send(final, 'progress');
+
+    expect(ctx.messages.filter(message => message.role === 'assistant').map(message => String(message.content).replace(/^\n+|\s+$/g, ''))).toEqual(shown);
+  });
 });
