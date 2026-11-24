@@ -41,7 +41,7 @@ import { kindFromName, type Attachment } from '../models/Attachment';
 import type {
   Message, UserMessage, SullaMessage, StreamingMessage, ThinkingMessage,
   ToolMessage, ToolApprovalMessage, ToolQuestionMessage, ChannelMessage, SubAgentMessage, SubAgentExchangeMessage, CitationMessage, ErrorMessage, NoticeMessage, HtmlMessage, InterimMessage,
-  PatchMessage, PatchHunk, ProactiveMessage,
+  PatchMessage, PatchHunk, ProactiveMessage, InlineFileReferenceMessage,
 } from '../models/Message';
 import type { ChatArtifactChangedEvent, ChatArtifactRecord } from '@pkg/shared/chatArtifacts';
 
@@ -798,7 +798,7 @@ export class PersonaAdapter {
       ? `${ b.workflowNode.status }|${ b.workflowNode.output?.length ?? -1 }|${ b.workflowNode.error ?? '' }|${ b.workflowNode.nodeIndex }|${ b.workflowNode.totalNodes }`
       : '';
     const fileReferences = Array.isArray(b.fileReferences) ? b.fileReferences.map((item:any) => `${ item.fileId }:${ item.versionId }`).join(',') : '';
-    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ b.chatToolActivity ?? '' }|${ b.agentReporting ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }|${ b.replyStreamId ?? '' }`;
+    return `${ b.kind ?? '' }|${ b.role }|${ contentLen }|${ completed }|${ b.terminalRunError === true }|${ b.decisionFollowUpId ?? '' }|${ b.reportingActivity ?? '' }|${ b.chatToolActivity ?? '' }|${ b.agentReporting ?? '' }|${ tool }|${ subAgent }|${ wfNode }|${ fileReferences }|${ JSON.stringify(b.modelStatus ?? null) }|${ JSON.stringify(b.replyAttribution ?? null) }|${ b.replyStreamId ?? '' }|${ b.inlineFileReference ? JSON.stringify(b.inlineFileReference) : '' }`;
   }
 
   private syncRunState(running: boolean): void {
@@ -895,6 +895,16 @@ export class PersonaAdapter {
         ...(completedAt !== undefined ? { completedAt } : {}),
         summary:   completed ? firstLineOf(b.content ?? '') : undefined,
       } satisfies ThinkingMessage;
+    }
+
+    if (b.kind === 'inline_file_reference' && b.inlineFileReference) {
+      const reference = b.inlineFileReference;
+      if (!reference.file_id || !reference.collection_id || !reference.tool_call_id || !reference.thread_id) return null;
+      return {
+        id, kind: 'inline_file_reference', createdAt,
+        fileId: reference.file_id, collectionId: reference.collection_id,
+        toolCallId: reference.tool_call_id, threadId: reference.thread_id,
+      } satisfies InlineFileReferenceMessage;
     }
 
     // Workflow document — `workflow/display` tool published a routine for

@@ -37,6 +37,7 @@ const cards: Record<CardMessage['kind'], Classification> = {
   interim:           { label: 'Voice', level: 'info', essential: true },
   error:             { label: 'Error', level: 'fatal' },
   notice:            { label: 'Notice', level: 'info' },
+  inline_file_reference: { label: 'File', level: 'info', essential: true },
 };
 
 // These are fixed, public progress strings emitted by the provider adapters.
