@@ -167,6 +167,7 @@ import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
 import type { ReportingLevel } from './models/ReportingLevel';
+import { TraceDisclosureController } from './components/transcript/traceDisclosure';
 import type { Thread }   from './models/Thread';
 import { asThreadId, type ThreadId } from './types/chat';
 
@@ -412,6 +413,8 @@ watch(
 
 // Provide so every descendant can call `useChatController()`.
 const reportingLevel = ref<ReportingLevel>('info');
+const traceDisclosure = new TraceDisclosureController();
+provide('chat:trace-disclosure', traceDisclosure);
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
