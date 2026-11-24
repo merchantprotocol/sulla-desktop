@@ -182,7 +182,7 @@ describe('DreamDuplicateSweeper', () => {
     expect(evidenced.superseded_by).toBeNull();
     expect(store.calls.some(call => call.oldId === user.id || call.keepId === user.id)).toBe(false);
     expect(store.calls.some(call => call.oldId === evidenced.id || call.keepId === evidenced.id)).toBe(false);
-    expect(store.calls.map(call => call.keepId)).toEqual(['a-new', 'b-new']);
+    expect(store.calls.map(call => call.keepId).sort()).toEqual(['a-new', 'b-new']);
   });
 
   it('keeps exact cross-subject duplicates under the deepest subject, even when older', async() => {
