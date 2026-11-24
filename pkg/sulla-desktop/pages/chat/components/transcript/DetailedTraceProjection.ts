@@ -62,7 +62,11 @@ export class DetailedTraceProjection {
   }
 
   private rowsFor(message: Message, anchor: string, activities?: readonly string[]): TraceRow[] {
-    const rows = (activities ?? []).map((text, index) => this.row(`${message.id}:activity:${index}`, 'activity', 'Status', text, 'ok', anchor, message.createdAt));
+    // Actual tool records and typed tool thoughts already have faithful rows.
+    // Don't render their legacy formatter summaries as a second trace item.
+    const hasRecordedToolRow = message.kind === 'tool' ||
+      (message.kind === 'thinking' && message.reportingActivity === 'tool' && !message.chatToolActivity);
+    const rows = (hasRecordedToolRow ? [] : activities ?? []).map((text, index) => this.row(`${message.id}:activity:${index}`, 'activity', 'Status', text, 'ok', anchor, message.createdAt));
     switch (message.kind) {
       case 'thinking': return rows.concat(this.rowsForThinking(message, anchor));
       case 'tool': return rows.concat(this.rowsForTool(message, anchor));
@@ -81,7 +85,7 @@ export class DetailedTraceProjection {
   private rowsForTool(message: ToolMessage, anchor: string): TraceRow[] {
     const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
     const target = message.recordedToolName ?? message.tool;
-    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status, anchor, message.createdAt, this.duration(message.meta), this.serializer.summary(message.input), this.serializer.serialize({ tool: target, input: message.input, output: message.output, error: message.error }))];
+    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status, anchor, message.createdAt, this.duration(message.meta), this.serializer.summary(message.input), this.serializer.serialize({ tool: target, status: message.status, input: message.input, output: message.output, error: message.error, description: message.desc, meta: message.meta }))];
   }
 
   private rowsForMemory(message: MemoryMessage, anchor: string): TraceRow[] {
