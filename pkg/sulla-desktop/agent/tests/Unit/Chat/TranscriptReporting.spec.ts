@@ -141,10 +141,12 @@ it('keeps every shared Standard DOM node identical when trace-only rows are remo
   expect(toggleAll.text()).toBe('Open all payloads');
   await toggleAll.trigger('click');
   expect(toggleAll.attributes('aria-pressed')).toBe('true');
-  expect(wrapper.findAll('button.trace-row__expand').every(button => button.attributes('aria-expanded') === 'true')).toBe(true);
+  const disclosures = wrapper.findAll('button.trace-row__expand');
+  expect(disclosures).not.toHaveLength(0);
+  expect(disclosures.every(button => button.attributes('aria-expanded') === 'true')).toBe(true);
   await toggleAll.trigger('click');
   expect(toggleAll.text()).toBe('Open all payloads');
-  expect(wrapper.findAll('button.trace-row__expand').every(button => button.attributes('aria-expanded') === 'false')).toBe(true);
+  expect(disclosures.every(button => button.attributes('aria-expanded') === 'false')).toBe(true);
 });
 
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
