@@ -12,6 +12,7 @@ describe('AgentFileOpenRoutePolicy', () => {
     threadId: 'thread-a',
     executionThreadId: 'thread-a',
     hasChatTransport: true,
+    isHumanVisibleChatEligible: true,
     isChatMuted: false,
     isSubconsciousSilent: false,
   };
@@ -29,10 +30,15 @@ describe('AgentFileOpenRoutePolicy', () => {
 
   it.each([
     ['no originating thread', { ...visibleTrustedContext, threadId: undefined }],
+    ['no execution thread', { ...visibleTrustedContext, executionThreadId: undefined }],
+    ['empty execution thread', { ...visibleTrustedContext, executionThreadId: '  ' }],
     ['no chat transport', { ...visibleTrustedContext, hasChatTransport: false }],
+    ['no trusted visibility evidence', { ...visibleTrustedContext, isHumanVisibleChatEligible: undefined as unknown as boolean }],
+    ['hidden chat despite a transport', { ...visibleTrustedContext, isHumanVisibleChatEligible: false }],
     ['muted worker', { ...visibleTrustedContext, isChatMuted: true }],
     ['subconscious worker', { ...visibleTrustedContext, isSubconsciousSilent: true }],
     ['mismatched execution thread', { ...visibleTrustedContext, executionThreadId: 'thread-b' }],
+    ['mismatched trusted state thread', { ...visibleTrustedContext, threadId: 'thread-b' }],
   ])('uses legacy tab behavior for %s', (_reason, context) => {
     // risk: hidden-worker isolation
     expect(policy.route(undefined, context)).toEqual({ kind: 'legacy-tab' });
@@ -45,16 +51,16 @@ describe('AgentFileOpenRoutePolicy', () => {
       .toEqual({ kind: 'inline', threadId: 'thread-a', onFailure: 'propagate' });
   });
 
-  it('fails closed on an unknown placement value', () => {
+  it('rejects an unknown placement without choosing a presentation route', () => {
     // risk: permission boundary
-    expect(policy.route('active-window', visibleTrustedContext)).toEqual({ kind: 'legacy-tab' });
+    expect(policy.route('active-window', visibleTrustedContext)).toEqual({ kind: 'reject', reason: 'invalid-placement' });
   });
 });
 
 describe('InlineFileReferenceMessageFactory', () => {
   const factory = new InlineFileReferenceMessageFactory();
 
-  it('persists only assistant role, call identity, and reference IDs', () => {
+  it('keeps a non-shared system record with only call identity and reference IDs', () => {
     // risk: unauthorized file disclosure
     const input = {
       threadId: 'thread-a',
@@ -66,8 +72,8 @@ describe('InlineFileReferenceMessageFactory', () => {
       deniedMetadata: 'synthetic-denial-detail',
     };
     expect(factory.create(input)).toEqual({
-      role: 'assistant',
-      kind: 'inline_file_reference',
+      role: 'system',
+      content: '',
       thread_id: 'thread-a',
       tool_call_id: 'call-a',
       reference: { file_id: 'file-a', collection_id: 'collection-a' },

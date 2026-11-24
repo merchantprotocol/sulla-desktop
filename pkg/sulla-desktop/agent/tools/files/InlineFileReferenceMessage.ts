@@ -10,12 +10,14 @@ export interface InlineFileReference {
 }
 
 /**
- * Reference-only assistant message. File bytes, access capabilities, display
- * metadata, and authorization-denial details belong nowhere in this payload.
+ * Canonical non-shared system record for an opened-file reference. It uses the
+ * graph-message shape so transcript storage keeps kind/role `system`. A
+ * dispatcher-specific assistant envelope, if needed, belongs at the dispatch
+ * boundary and must not replace this stored form.
  */
 export interface InlineFileReferenceMessage {
-  role: 'assistant';
-  kind: 'inline_file_reference';
+  role: 'system';
+  content: '';
   thread_id: string;
   tool_call_id: string;
   reference: InlineFileReference;
@@ -36,8 +38,8 @@ export class InlineFileReferenceMessageFactory {
     }
 
     return {
-      role: 'assistant',
-      kind: 'inline_file_reference',
+      role: 'system',
+      content: '',
       thread_id: input.threadId,
       tool_call_id: input.toolCallId,
       reference: {
