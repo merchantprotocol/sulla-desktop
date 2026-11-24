@@ -10,6 +10,7 @@ export const CACHE_UPDATE_TTL_MS = 60_000;
 export const CHALLENGE_RATE_WINDOW_MS = 60_000;
 export const CHALLENGE_RATE_LIMIT = 10;
 export const APPROVAL_TTL_MS = 2 * 60_000;
+export const CLERK_APPROVAL_TTL_MS = 10 * 60_000;
 export const HUMAN_SESSION_TTL_MS = 15 * 60_000;
 export const MAX_RESPONSE_BYTES = 1_048_576;
 export const MAX_FILES_SYNC_UPLOAD_BYTES = 6 * 1024 * 1024;

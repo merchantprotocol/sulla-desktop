@@ -48,7 +48,9 @@ export class BrokerCredentialFields {
       .map(([, value]) => value as string);
     const output: Record<string, string> = {};
     for (const [name, value] of Object.entries(source)) {
-      if (!BrokerCredentialFields.SAFE_INTEGRATION_METADATA_FIELDS.has(name) || typeof value !== 'string') continue;
+      const clerkMetadata = integrationId === 'clerk' && /^(staging|production)_(publishable_key|instance_id|warning)$/.test(name);
+      if ((!clerkMetadata && !BrokerCredentialFields.SAFE_INTEGRATION_METADATA_FIELDS.has(name)) || typeof value !== 'string') continue;
+      if (clerkMetadata && name.endsWith('_publishable_key') && !/^pk_(?:test|live)_[A-Za-z0-9+/_=-]+$/.test(value)) continue;
       if (name === 'base_url' || name === 'server_url' || name === 'gateway_url' || name === 'resource_url') {
         try {
           const parsed = new URL(value);
@@ -59,7 +61,7 @@ export class BrokerCredentialFields {
           }
         } catch { continue; }
       }
-      output[name] = BrokerCredentialFields.redact(value, secrets);
+      output[name] = BrokerCredentialFields.redact(value, clerkMetadata && name.endsWith('_publishable_key') ? secrets.filter(secret => secret !== value || secret.startsWith('sk_')) : secrets);
     }
     return output;
   }

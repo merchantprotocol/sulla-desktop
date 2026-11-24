@@ -72,6 +72,8 @@ export interface BrokerExecuteRequest {
   bodyEncoding?: 'base64';
   injections:    BrokerInjection[];
   approvalId?:   string;
+  /** Dedicated Clerk guard metadata, never forwarded to Clerk. */
+  clerk?:        { environment?: unknown; confirm?: unknown; operationId?: string; deadlineAt?: number };
   /** 'base64': raw upstream bytes returned base64-encoded in body (Files sync chunk reads only). */
   responseType?: 'json' | 'text' | 'stream' | 'binary-stream' | 'base64';
 }

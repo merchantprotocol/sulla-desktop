@@ -24,12 +24,13 @@ export class VaultErrorHandler {
         if (request.path.startsWith('/v1/broker/')) {
           response.setHeader('X-Sulla-Vault-Error', error.code);
           if (error.reason) response.setHeader('X-Sulla-Vault-Error-Reason', error.reason);
-          if (retryable && error.status !== 499) response.setHeader('Retry-After', String(UPSTREAM_RETRY_AFTER_SECONDS));
+          if (retryable && error.status !== 499) response.setHeader('Retry-After', String(error.retryAfterSeconds ?? UPSTREAM_RETRY_AFTER_SECONDS));
         }
         response.status(error.status).json({
           error: error.code,
           message: error.code === 'approval_required' ? 'Owner approval is required' : error.message,
           ...(error.code === 'approval_required' ? { operationId: error.message } : {}),
+          ...(error.code === 'approval_required' && error.approvalContext ? { approvalContext: error.approvalContext } : {}),
           ...(error.reason ? { reason: error.reason } : {}),
           ...(retryable && error.status !== 499 ? { retryable: true } : {}),
         });

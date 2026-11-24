@@ -21,7 +21,13 @@ export class BrokerExecutionRoutes {
 
     app.post('/v1/broker/execute', async(request, response) => {
       const identity = serviceIdentity(request);
-      response.json(await localAuthority.execute(request.body, identity.serviceId, identity.token));
+      if (request.body?.operation !== 'clerk.backend') {
+        response.json(await localAuthority.execute(request.body, identity.serviceId, identity.token));
+        return;
+      }
+      const controller = new AbortController();
+      response.once('close', () => controller.abort());
+      response.json(await localAuthority.execute(request.body, identity.serviceId, identity.token, controller.signal));
     });
     app.post('/v1/broker/execute-stream', async(request, response) => {
       const identity = serviceIdentity(request);
