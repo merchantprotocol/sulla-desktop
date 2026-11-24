@@ -152,6 +152,23 @@ export class MessageDispatcher {
 
 // ─── Handler: chat / assistant / system messages ────────────────
 
+/**
+ * The text after its first `count` non-whitespace characters. Drops the
+ * break before it (blank lines, or spaces on the same line) but keeps the
+ * indentation of its first line, which can be Markdown.
+ */
+function afterVisibleChars(text: string, count: number): string {
+  let seen = 0;
+  let index = 0;
+  while (index < text.length && seen < count) {
+    if (!/\s/.test(text[index])) seen++;
+    index++;
+  }
+  const rest = text.slice(index);
+
+  return /^[ \t]*\r?\n/.test(rest) ? rest.replace(/^(?:[ \t]*\r?\n)+/, '') : rest.replace(/^[ \t]+/, '');
+}
+
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
   if (msg.data && typeof msg.data === 'object' && AgentReadinessStatus.apply(ctx.messages, agentId, msgThreadId, msg.data as Record<string, unknown>)) return;
   const activity = msg.data as { kind?: string; thread_id?: string; chatToolActivity?: ChatMessage['chatToolActivity'] } | null;
@@ -732,7 +749,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       // full reply keeps the paragraph breaks between them: compare without whitespace.
       const flatIncoming = incoming.replace(/\s+/g, '');
       const flatStreamed = streamed.replace(/\s+/g, '');
-      const alreadyShown = flatStreamed.length > 0 && (
+      const lastSegment = recentStreamIndexes[0];
+      // The final reply carries no stream id. Its extra text can only go into
+      // the last segment when every segment here provably belongs to one stream.
+      const lastStreamId = ctx.messages[lastSegment].replyStreamId;
+      const oneStream = recentStreamIndexes.length === 1 ||
+        (lastStreamId !== undefined && recentStreamIndexes.every(i => ctx.messages[i].replyStreamId === lastStreamId));
+      const addsText = flatIncoming.length > flatStreamed.length && flatIncoming.startsWith(flatStreamed);
+      const alreadyShown = flatStreamed.length > 0 && !(addsText && !oneStream) && (
         flatStreamed === flatIncoming ||
         (flatStreamed.length >= Math.max(1, flatIncoming.length * 0.6) && flatIncoming.startsWith(flatStreamed)) ||
         flatStreamed.startsWith(flatIncoming)
@@ -740,9 +764,12 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (alreadyShown) {
         // A final dump can carry the last part of a formatted block after
         // a throttled stream update. Keep it in the existing bubble.
-        const lastSegment = recentStreamIndexes[0];
-        if (recentStreamIndexes.length === 1 && incoming.length > streamed.length && incoming.startsWith(streamed)) {
+        if (recentStreamIndexes.length === 1 && (addsText || (incoming.length > streamed.length && incoming.startsWith(streamed)))) {
           ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: finalContent };
+        } else if (addsText) {
+          // Several segments: the text after the earlier ones belongs to the last.
+          const lastFlat = (ctx.messages[lastSegment].content || '').replace(/\s+/g, '').length;
+          ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: afterVisibleChars(finalContent, flatStreamed.length - lastFlat) };
         }
         if (explicitReferences?.length) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], ...referenceUpdate };
         // Close any open thinking bubble and swallow the duplicate dump.
