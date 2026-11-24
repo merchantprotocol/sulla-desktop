@@ -86,6 +86,11 @@ export class SullaFilesClient {
   currentPrincipalId():Promise<string> {
     return getSullaFilesWatcher().currentPrincipalId();
   }
+
+  /** Fresh composite main-process authority snapshot, including the signed-in Cloud account and org. */
+  currentAuthorityId():Promise<string> {
+    return getSullaFilesWatcher().currentAuthorityId();
+  }
 }
 
 export class SullaFilesClientProvider {

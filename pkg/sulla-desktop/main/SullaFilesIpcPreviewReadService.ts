@@ -151,10 +151,10 @@ export class SullaFilesIpcPreviewReadService {
     if (!id || id.length > 200 || /[\u0000-\u001f]/.test(id)) return { state:'unavailable', reason:'invalid-metadata' };
     if (signal?.aborted) return { state:'cancelled' };
 
-    let principalBefore:string;
-    try { principalBefore = await this.api.client.currentPrincipalId(); }
+    let authorityBefore:string;
+    try { authorityBefore = await this.api.client.currentAuthorityId(); }
     catch { return signal?.aborted ? { state:'cancelled' } : { state:'offline' }; }
-    if (!principalBefore) return { state:'offline' };
+    if (!authorityBefore) return { state:'offline' };
 
     let raw:unknown;
     try {
@@ -164,7 +164,7 @@ export class SullaFilesIpcPreviewReadService {
       return this.failure(error, signal);
     }
     if (signal?.aborted) return { state:'cancelled' };
-    const metadataAuthority = await this.authorityState(principalBefore);
+    const metadataAuthority = await this.authorityState(authorityBefore);
     if (metadataAuthority !== 'same') return metadataAuthority === 'offline' ? { state:'offline' } : { state:'unavailable', reason:'authority-changed' };
 
     const file = this.normalize(raw, id);
@@ -208,7 +208,7 @@ export class SullaFilesIpcPreviewReadService {
     const bounded = await this.bodyReader.read(response, file.size, preview.maxBytes, signal);
     if (signal?.aborted) return { state:'cancelled' };
     if (!bounded || (bounded.overflow && file.size <= preview.maxBytes)) return { state:'unavailable', reason:'invalid-content' };
-    const bodyAuthority = await this.authorityState(principalBefore);
+    const bodyAuthority = await this.authorityState(authorityBefore);
     if (bodyAuthority !== 'same') return bodyAuthority === 'offline' ? { state:'offline' } : { state:'unavailable', reason:'authority-changed' };
 
     if (textKind) {
@@ -288,7 +288,7 @@ export class SullaFilesIpcPreviewReadService {
 
   private async authorityState(expected:string):Promise<'same' | 'changed' | 'offline'> {
     try {
-      const actual = await this.api.client.currentPrincipalId();
+      const actual = await this.api.client.currentAuthorityId();
       return actual ? actual === expected ? 'same' : 'changed' : 'offline';
     } catch { return 'offline'; }
   }
