@@ -15,11 +15,11 @@
       <button type="button" class="dismiss-children" aria-label="Dismiss" @click="childStop.dismiss()">×</button>
     </div>
   <button
-    :class="['composer-send', { running, ready: canSend }]"
+    :class="['composer-send', { running, continue: showContinue, ready: !running && (canSend || showContinue) }]"
     type="button"
-    :disabled="!running && !canSend"
-    :aria-label="running ? 'Stop Sulla' : 'Send message'"
-    :title="running ? 'Stop · ESC' : 'Send · Enter'"
+    :disabled="!running && !showContinue && !canSend"
+    :aria-label="running ? 'Stop' : showContinue ? 'Continue' : 'Send message'"
+    :title="running ? 'Stop · ESC' : showContinue ? 'Continue the paused run' : 'Send · Enter'"
     @click="activate"
   >
     <span
@@ -30,6 +30,11 @@
       class="stop-square"
       aria-hidden="true"
     />
+    <svg
+      class="continue-glyph"
+      viewBox="0 0 16 16"
+      aria-hidden="true"
+    ><path d="M5 3.5v9l7-4.5z" /></svg>
     <span
       class="run-ring"
       aria-hidden="true"
@@ -39,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { onUnmounted } from 'vue';
+import { computed, onUnmounted } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { activateComposerSend } from './ComposerSendBehavior';
 import { ChildAgentStopController } from './ChildAgentStopController';
@@ -48,10 +53,14 @@ import { useChatController } from '../../controller/useChatController';
 const props = defineProps<{
   running: boolean;
   canSend: boolean;
+  /** The run is paused at its step limit and the draft is empty: the button resumes it. */
+  continuable?: boolean;
 }>();
 const emit = defineEmits<(e: 'send') => void>();
 
 const controller = useChatController();
+// Typing (canSend) always wins over Continue, so the button reverts to Send.
+const showContinue = computed(() => !props.running && !props.canSend && !!props.continuable);
 const childStop = new ChildAgentStopController(ipcRenderer);
 
 function activeThreadId(): string {
@@ -66,7 +75,7 @@ onUnmounted(() => childStop.dispose());
 
 function activate(): void {
   const wasRunning = props.running;
-  activateComposerSend(controller, props.running, props.canSend, () => emit('send'));
+  activateComposerSend(controller, props.running, props.canSend, () => emit('send'), showContinue.value);
   if (wasRunning && !controller.thread.value.remote) void childStop.inspect(activeThreadId());
 }
 </script>
@@ -103,10 +112,10 @@ function activate(): void {
   cursor: pointer;
   transform: scale(1.05);
 }
-.composer-send.running {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--border-default) 62.5%, transparent);
-  box-shadow: inset 0 0 0 1px var(--border-default);
+.composer-send.running, .composer-send.running:hover {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 35%, transparent);
   cursor: pointer;
   transform: none;
 }
@@ -129,6 +138,15 @@ function activate(): void {
   transform: scale(0.4);
   transition: opacity 0.2s, transform 0.5s linear(0, .0258, .09, .1763, .2732, .3724, .4683, .5573, .6376, .7082, .7689, .8202, .8628, .8976, .9256, .9476, .9648, .9778, .9875, .9945, .9994, 1.0026, 1.0047, 1.0058, 1.0062, 1.0062, 1.0059, 1.0055, 1.0049, 1.0043, 1.0036, 1.0031, 1.0025, 1.002, 1.0016, 1.0013, 1);
 }
+.continue-glyph {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.2s, transform 0.5s cubic-bezier(.22, 1, .36, 1);
+}
 .run-ring {
   position: absolute;
   inset: -3px;
@@ -146,6 +164,8 @@ function activate(): void {
 .composer-send.running .send-arrow { opacity: 0; transform: translateY(-10px); }
 .composer-send.running .stop-square { opacity: 1; transform: none; }
 .composer-send.running .run-ring { opacity: 1; }
+.composer-send.continue .send-arrow { opacity: 0; transform: translateX(8px); }
+.composer-send.continue .continue-glyph { opacity: 1; transform: none; }
 
 @keyframes composer-run-spin { to { transform: rotate(1turn); } }
 
@@ -153,6 +173,7 @@ function activate(): void {
   .composer-send,
   .send-arrow,
   .stop-square,
+  .continue-glyph,
   .run-ring { animation: none; transition: none; }
 }
 </style>
