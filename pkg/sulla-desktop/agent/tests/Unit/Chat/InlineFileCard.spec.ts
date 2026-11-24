@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
 
 import InlineFileCard from '../../../../pages/chat/components/files/InlineFileCard.vue';
 import InlineFileCardFixture from './fixtures/InlineFileCardFixture.vue';
@@ -60,9 +61,11 @@ describe('InlineFileCard', () => {
 
   it('uses the same sandboxed frame when Full screen opens and restores focus after the native dialog closes', async() => {
     // risk: renderer isolation — expanding a preview must not weaken iframe policy or strand keyboard focus.
-    const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
+    const wrapper = mount(InlineFileCard, { props: { file: htmlFile }, attachTo: document.body });
     const fullScreenButton = wrapper.get('[title="Full screen"]');
+    expect(document.body.contains(fullScreenButton.element)).toBe(true);
     await fullScreenButton.trigger('click');
+    await nextTick();
 
     const dialog = wrapper.get('dialog');
     expect((dialog.element as HTMLDialogElement).open).toBe(true);
@@ -72,7 +75,20 @@ describe('InlineFileCard', () => {
       expect(frame.attributes('srcdoc')).toContain("default-src 'none'");
     }
 
-    dialog.element.dispatchEvent(new Event('close'));
+    const nativeDialog = dialog.element as HTMLDialogElement;
+    const closeEvent = new Promise<void>(resolve => {
+      nativeDialog.addEventListener('close', () => resolve(), { once: true });
+    });
+    if (typeof nativeDialog.close === 'function') {
+      nativeDialog.close();
+    } else {
+      // jsdom does not implement HTMLDialogElement.close(); model its closed state and event.
+      nativeDialog.removeAttribute('open');
+      nativeDialog.dispatchEvent(new Event('close'));
+    }
+    await closeEvent;
+    await nextTick();
+
     expect(document.activeElement).toBe(fullScreenButton.element);
     wrapper.unmount();
   });
