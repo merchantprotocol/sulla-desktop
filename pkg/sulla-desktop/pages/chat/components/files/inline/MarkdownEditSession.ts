@@ -117,7 +117,7 @@ export class MarkdownEditSession {
 
     this.saveStatus = outcome.status;
     this.externalChange = outcome.status === 'conflict';
-    this.message = outcome.message ?? (outcome.status === 'conflict'
+    this.message = ('message' in outcome ? outcome.message : undefined) ?? (outcome.status === 'conflict'
       ? 'The file changed before this draft could be saved. Your draft is preserved.'
       : 'The draft could not be saved. Your changes are preserved.');
     return true;
