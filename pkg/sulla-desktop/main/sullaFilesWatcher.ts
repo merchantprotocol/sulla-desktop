@@ -364,6 +364,8 @@ export class SullaFilesWatcher {
   async requestFiles(endpoint:string, init:RequestInit = {}, server = false, capability:SullaFilesCapabilityContext = {}):Promise<Response> { return this.filesRequests.requestFiles(endpoint, init, server, capability) }
   async requestNativeFiles(endpoint:string, init:RequestInit = {}):Promise<Response> { return this.filesRequests.requestNativeFiles(endpoint, init) }
   async requestFilesStream(endpoint:string, init:RequestInit = {}, signal?:AbortSignal):Promise<Response> { return this.filesRequests.requestFilesStream(endpoint, init, signal) }
+  /** Trusted identity used to bind a main-process preview read across metadata and content requests. */
+  async currentPrincipalId():Promise<string> { await this.ensureUnlocked(); return this.filesRequests.localPrincipalId() }
 
   async notifyRescan():Promise<void> {
     return this.notifyRescanNow();
