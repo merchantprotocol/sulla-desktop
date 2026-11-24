@@ -15,7 +15,9 @@ describe('AgentFileOpenRoutePolicy', () => {
     threadId: 'thread-a',
     executionThreadId: 'thread-a',
     hasChatTransport: true,
-    isHumanVisibleChatEligible: true,
+    isDesktopChatVisible: true,
+    isSubAgent: false,
+    isRelayed: false,
     isChatMuted: false,
     isSubconsciousSilent: false,
   };
@@ -26,25 +28,32 @@ describe('AgentFileOpenRoutePolicy', () => {
       .toEqual({ kind: 'inline', threadId: 'thread-a', onFailure: 'propagate' });
   });
 
+  it('routes a verified CLI/MCP tool session without a container execution identity inline', () => {
+    // risk: policy — in-VM claude-code/codex sessions carry the bound graph state but no executionContext.
+    expect(policy.route(undefined, { ...visibleTrustedContext, executionThreadId: undefined }))
+      .toEqual({ kind: 'inline', threadId: 'thread-a', onFailure: 'propagate' });
+  });
+
   it('keeps an explicit tab request on the legacy route even with trusted chat context', () => {
     // risk: permission boundary
-    expect(policy.route('tab', visibleTrustedContext)).toEqual({ kind: 'legacy-tab' });
+    expect(policy.route('tab', visibleTrustedContext)).toEqual({ kind: 'legacy-tab', reason: 'requested-tab' });
   });
 
   it.each([
-    ['no originating thread', { ...visibleTrustedContext, threadId: undefined }],
-    ['no execution thread', { ...visibleTrustedContext, executionThreadId: undefined }],
-    ['empty execution thread', { ...visibleTrustedContext, executionThreadId: '  ' }],
-    ['no chat transport', { ...visibleTrustedContext, hasChatTransport: false }],
-    ['no trusted visibility evidence', { ...visibleTrustedContext, isHumanVisibleChatEligible: undefined as unknown as boolean }],
-    ['hidden chat despite a transport', { ...visibleTrustedContext, isHumanVisibleChatEligible: false }],
-    ['muted worker', { ...visibleTrustedContext, isChatMuted: true }],
-    ['subconscious worker', { ...visibleTrustedContext, isSubconsciousSilent: true }],
-    ['mismatched execution thread', { ...visibleTrustedContext, executionThreadId: 'thread-b' }],
-    ['mismatched trusted state thread', { ...visibleTrustedContext, threadId: 'thread-b' }],
-  ])('uses legacy tab behavior for %s', (_reason, context) => {
+    ['no originating thread', { ...visibleTrustedContext, threadId: undefined }, 'no-thread'],
+    ['no chat transport', { ...visibleTrustedContext, hasChatTransport: false }, 'no-chat-transport'],
+    ['no trusted visibility evidence', { ...visibleTrustedContext, isDesktopChatVisible: undefined as unknown as boolean }, 'not-visible-desktop-chat'],
+    ['hidden chat despite a transport', { ...visibleTrustedContext, isDesktopChatVisible: false }, 'not-visible-desktop-chat'],
+    ['sub-agent', { ...visibleTrustedContext, isSubAgent: true }, 'sub-agent'],
+    ['relayed turn', { ...visibleTrustedContext, isRelayed: true }, 'relayed-turn'],
+    ['muted worker', { ...visibleTrustedContext, isChatMuted: true }, 'chat-muted'],
+    ['subconscious worker', { ...visibleTrustedContext, isSubconsciousSilent: true }, 'chat-muted'],
+    ['mismatched execution thread', { ...visibleTrustedContext, executionThreadId: 'thread-b' }, 'thread-mismatch'],
+    ['mismatched trusted state thread', { ...visibleTrustedContext, threadId: 'thread-b' }, 'thread-mismatch'],
+  ])('uses legacy tab behavior for %s and rejects an explicit inline request', (_name, context, reason) => {
     // risk: hidden-worker isolation
-    expect(policy.route(undefined, context)).toEqual({ kind: 'legacy-tab' });
+    expect(policy.route(undefined, context)).toEqual({ kind: 'legacy-tab', reason });
+    expect(policy.route('inline', context)).toMatchObject({ kind: 'reject', reason, message: expect.stringContaining('Inline file cards need a visible Desktop chat; this call came from') });
   });
 
   it('does not accept a user-supplied thread id in placement options as routing context', () => {
@@ -56,7 +65,7 @@ describe('AgentFileOpenRoutePolicy', () => {
 
   it('rejects an unknown placement without choosing a presentation route', () => {
     // risk: permission boundary
-    expect(policy.route('active-window', visibleTrustedContext)).toEqual({ kind: 'reject', reason: 'invalid-placement' });
+    expect(policy.route('active-window', visibleTrustedContext)).toMatchObject({ kind: 'reject', reason: 'invalid-placement' });
   });
 });
 

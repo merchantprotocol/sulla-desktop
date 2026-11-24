@@ -26,7 +26,7 @@
     @mousemove="onHoverBlock"
     @mouseleave="releaseBlock"
   >
-    <InlineReplyBody class="chat-body" :text="msg.text" agent-cards structured />
+    <InlineReplyBody class="chat-body" :text="msg.text" agent-cards />
     <button
       v-if="hoverBlock"
       type="button"
@@ -125,8 +125,8 @@ function onQuote(): void {
   sendReply(props.msg.text);
 }
 
-// ── Reply to one block (paragraph, list item, section card, code block) ──
-const REPLY_BLOCKS = 'p, li, pre, blockquote, table, section.reply-section > :is(h2, h3)';
+// ── Reply to one block (paragraph, heading, list item, code block) ──
+const REPLY_BLOCKS = 'p, h2, h3, li, pre, blockquote, table';
 const turnEl = ref<HTMLElement | null>(null);
 const hoverBlock = ref<{ el: HTMLElement; top: number } | null>(null);
 
@@ -160,8 +160,7 @@ function onHoverBlock(event: MouseEvent): void {
     return;
   }
   holdBlock();
-  // A section heading stands for its whole card.
-  const el = block.matches('h2, h3') ? block.parentElement! : block;
+  const el = block;
   if (hoverBlock.value?.el === el) return;
   hoverBlock.value = { el, top: el.getBoundingClientRect().top - turn.getBoundingClientRect().top };
 }

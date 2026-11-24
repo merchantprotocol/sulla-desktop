@@ -27,6 +27,7 @@ import { sessionAllowsTool } from './toolSessionPolicy';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { ToolSessionChatTransport } from '@pkg/agent/tools/ToolSessionChatTransport';
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import type { ToolExecutionTarget } from '@pkg/agent/tools/executionTargets';
 
@@ -38,7 +39,10 @@ export interface GraphToolCallResult {
 }
 
 interface ToolWorker {
+  name?:             string;
+  metadata?:         { category?: unknown };
   executionContext?: ToolExecutionContext;
+  sendChatMessage?:  (content: string, kind?: string, extras?: Record<string, unknown>) => Promise<boolean>;
   call(args: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
   invoke?(args: Record<string, unknown>, state: BaseThreadState): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
 }
@@ -46,8 +50,9 @@ interface ToolWorker {
 export type ToolResolver = (name: string) => Promise<ToolWorker>;
 
 export interface GraphToolExecutionOptions {
-  state:            BaseThreadState;
-  executionContext: ToolExecutionContext;
+  state:             BaseThreadState;
+  /** Present only for container runtimes; in-VM sessions run with the bound state alone. */
+  executionContext?: ToolExecutionContext;
   executionTarget(name: string): ToolExecutionTarget | undefined;
 }
 
@@ -74,6 +79,7 @@ export function buildGraphToolHandler(
   getTool: ToolResolver,
   execution?: GraphToolExecutionOptions,
 ) {
+  const chatTransport = new ToolSessionChatTransport();
   return async({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
     // `exec` in the surface means full Sulla catalog authority (same rule as
     // the CLI session gate), so dispatched workers can reach github/*,
@@ -88,8 +94,11 @@ export function buildGraphToolHandler(
       const worker = await getTool(tool);
       let result;
       if (execution) {
-        worker.executionContext = execution.executionContext;
-        const runtime = containerRuntimeForExecution(execution.executionContext, execution.executionTarget(tool));
+        if (execution.executionContext) worker.executionContext = execution.executionContext;
+        chatTransport.attach(worker, execution.state);
+        const runtime = execution.executionContext
+          ? containerRuntimeForExecution(execution.executionContext, execution.executionTarget(tool))
+          : undefined;
         const invoke = () => worker.invoke
           ? worker.invoke(args ?? {}, execution.state)
           : worker.call(args ?? {});

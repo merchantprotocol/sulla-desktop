@@ -242,12 +242,6 @@ defineExpose({ scroller, scrollToBottom });
 .report-label-user { align-self: flex-end; }
 .report-activity { color: var(--text-secondary); font-size: 13px; }
 .report-activity-time { margin-inline-start: 8px; color: var(--text-muted); }
-.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-section),
-.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-labeled),
-.report-entry-standard-intermediate :deep(.chat-turn.sulla .chat-body .reply-flag) {
-  background: transparent;
-  box-shadow: none;
-}
 .scroller::-webkit-scrollbar { width: 8px; }
 .scroller::-webkit-scrollbar-track { background: transparent; }
 .scroller::-webkit-scrollbar-thumb { background: var(--accent-dim); border-radius: 4px; }
