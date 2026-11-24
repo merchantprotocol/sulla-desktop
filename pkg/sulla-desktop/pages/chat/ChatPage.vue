@@ -66,7 +66,7 @@
               />
             </template>
           </Transcript>
-          <Composer v-if="!props.supportSendBlocked" :reporting-level="reportingLevel" />
+          <Composer v-if="!props.supportSendBlocked" />
         </div>
       </main>
 
@@ -170,6 +170,7 @@ import { ShelfNotes } from './messages/shelfNote';
 import { useBrowserTabs }        from '@pkg/composables/useBrowserTabs';
 
 import type { ReportingLevel } from './models/ReportingLevel';
+import { TraceDisclosureController } from './components/transcript/traceDisclosure';
 import type { Thread }   from './models/Thread';
 import { asThreadId, type ThreadId } from './types/chat';
 
@@ -418,6 +419,8 @@ const reportingLevel = ref<ReportingLevel>('info');
 provide(ChatControllerKey, controller);
 provide(ThreadRegistryKey, registry);
 provide(ModelSelectorKey,  modelSelector);
+const traceDisclosure = new TraceDisclosureController();
+provide('chat:trace-disclosure', traceDisclosure);
 // Composer's voice reads this: only the tab on screen speaks.
 provide('chat:is-active', toRef(props, 'isActive'));
 
