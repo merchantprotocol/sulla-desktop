@@ -16,7 +16,7 @@ export interface CheckinEpisodeIdentityInput {
 /** Builds stable identities only for explicit, non-human status check-ins. */
 export class CheckinIdentity {
   private static readonly agentJobPattern = /\b(agent-job-\d+-\d+)\b/gi;
-  private static readonly spawnAgentThreadPattern = /\b(spawn-agent-[a-z0-9][a-z0-9_-]*)\b/gi;
+  private static readonly spawnAgentThreadPattern = /\b(spawn-agent-[\w-]+)\b/gi;
   private static readonly pullRequestPattern = /\b(?:pull\s+request|pr|draft(?:\s+pr)?)\s*[:#-]?\s*#?\s*(\d+)\b/gi;
   private static readonly hashNumberPattern = /#(\d+)\b/g;
   private static readonly statusPattern =
@@ -41,10 +41,10 @@ export class CheckinIdentity {
       episode.id,
       episode.text,
       ...(episode.keys ?? []),
-      conversationId ?? '',
     ].join('\n');
     const jobIds = this.uniqueMatches(this.agentJobPattern, identityText);
-    const pullRequestNumbers = this.uniqueMatches(this.pullRequestPattern, identityText);
+    const explicitPullRequestNumbers = this.uniqueMatches(this.pullRequestPattern, identityText);
+    const pullRequestNumbers = [...explicitPullRequestNumbers];
     for (const match of identityText.matchAll(this.hashNumberPattern)) {
       const number = match[1];
       if (number && !pullRequestNumbers.includes(number)) pullRequestNumbers.push(number);
@@ -60,7 +60,7 @@ export class CheckinIdentity {
 
     const pullRequestNumber = pullRequestNumbers[0];
     if (pullRequestNumber) {
-      if (!conversationId && !/\bepic\b/i.test(identityText)) return null;
+      if (!conversationId && explicitPullRequestNumbers.length === 0) return null;
       return this.identityKey('pr', pullRequestNumber, conversationId);
     }
 
@@ -84,7 +84,7 @@ export class CheckinIdentity {
     conversationId: string | null
   ): string {
     return conversationId
-      ? `conversation:${encodeURIComponent(conversationId)}:${kind}:${identity}`
+      ? `conv:${conversationId}|${kind}:${identity}`
       : `${kind}:${identity}`;
   }
 
