@@ -694,11 +694,15 @@ function publishAttentionMenu(id: string, update: boolean): void {
     return;
   }
   if (!update) {
-    claimContextMenu(id, action => {
-      if (!action.startsWith('attention:')) return;
-      const tabId = action.slice('attention:'.length);
+    tabContextMenuBridge.open({
+      id,
+      select: action => {
+        if (!action.startsWith('attention:')) return;
+        const tabId = action.slice('attention:'.length);
 
-      if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
+        if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
+      },
+      onClosed: trackContextMenu(id),
     });
     attentionMenuId.value = id;
   }
@@ -710,16 +714,12 @@ function publishAttentionMenu(id: string, update: boolean): void {
   });
 }
 
-function claimContextMenu(id: string, select: (action: string) => void): void {
-  tabContextMenuBridge.open({
-    id,
-    select,
-    onClosed: () => {
-      if (contextMenuId === id) contextMenuId = undefined;
-      if (attentionMenuId.value === id) attentionMenuId.value = undefined;
-    },
-  });
+function trackContextMenu(id: string): () => void {
   contextMenuId = id;
+  return () => {
+    if (contextMenuId === id) contextMenuId = undefined;
+    if (attentionMenuId.value === id) attentionMenuId.value = undefined;
+  };
 }
 
 function hideTabContextMenu(): void {
@@ -1474,7 +1474,12 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab) {
 
   const requestId = crypto.randomUUID();
 
-  claimContextMenu(requestId, action => handleTabContextMenuAction(action, tab.id));
+  tabContextMenuBridge.openForTab(
+    requestId,
+    () => allTabsById.value.get(tab.id),
+    handleTabContextMenuAction,
+    trackContextMenu(requestId),
+  );
   ipcRenderer.send('tab-context-menu:show', {
     requestId,
     screenX: event.screenX,
@@ -1517,12 +1522,12 @@ function cancelRename(): void {
 }
 
 /** Handle a context-menu action forwarded back from the popup window via IPC. */
-function handleTabContextMenuAction(action: string, tabId: string): void {
-  // Resolve the full HeaderTab from orderedTabs (it may have changed since the menu was opened)
-  const headerTab = orderedTabs.value.find(t => t.id === tabId);
-  const index = orderedTabs.value.findIndex(t => t.id === tabId);
-  const browserId = headerTab?.browserId;
-  const tabRoute = headerTab?.route;
+function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void {
+  const { id: tabId, browserId, route: tabRoute } = headerTab;
+  const tabs = orderedTabs.value;
+  const index = tabs.findIndex(t => t.id === tabId);
+
+  if (index === -1) return;
 
   switch (action) {
   case 'pin':
@@ -1534,11 +1539,11 @@ function handleTabContextMenuAction(action: string, tabId: string): void {
     break;
 
   case 'rename':
-    if (headerTab?.browserId) startRename(headerTab);
+    if (headerTab.browserId) startRename(headerTab);
     break;
 
   case 'close':
-    if (headerTab?.closeable) closeAnyTab(headerTab);
+    if (headerTab.closeable) closeAnyTab(headerTab);
     break;
 
   case 'closeOther':
@@ -1550,7 +1555,6 @@ function handleTabContextMenuAction(action: string, tabId: string): void {
     break;
 
   case 'closeRight': {
-    const tabs = orderedTabs.value;
     for (let i = tabs.length - 1; i > index; i--) {
       if (tabs[i].closeable) closeAnyTab(tabs[i]);
     }
@@ -1567,7 +1571,7 @@ function handleTabContextMenuAction(action: string, tabId: string): void {
       setGroupFolded(tabGroupModel.groupForMode(newTab.mode), false);
       router.push(`/Browser/${ newTab.id }`);
     } else {
-      if (headerTab) activateTab(headerTab);
+      activateTab(headerTab);
     }
     break;
 
@@ -1585,13 +1589,11 @@ function handleTabContextMenuAction(action: string, tabId: string): void {
   }
 
   case 'moveStart': {
-    if (!headerTab || index < 0) break;
     reorderTabs(index, headerTab.pinned ? 0 : pinnedTabCount.value);
     break;
   }
 
   case 'moveEnd': {
-    if (!headerTab || index < 0) break;
     const target = headerTab.pinned ? pinnedTabCount.value - 1 : orderedTabs.value.length - 1;
 
     reorderTabs(index, target);
@@ -1599,7 +1601,7 @@ function handleTabContextMenuAction(action: string, tabId: string): void {
   }
 
   case 'reload':
-    if (browserId && tabRoute) {
+    if (browserId) {
       router.push('/Chat').then(() => router.push(tabRoute));
     }
     break;
