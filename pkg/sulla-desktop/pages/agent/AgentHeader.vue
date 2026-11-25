@@ -378,7 +378,7 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, inject, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import TabStripTab from './TabStripTab.vue';
@@ -386,7 +386,6 @@ import { isTabCloseable } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { tabContextMenuBridge } from '@pkg/composables/TabContextMenuBridge';
 import { TabDragAutoScroll } from '@pkg/composables/TabDragAutoScroll';
 import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
 import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
@@ -394,8 +393,8 @@ import { TabHoverController } from '@pkg/composables/TabHoverController';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
 import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composables/TabTransferPayload';
+import { windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
-import { chatActivityStore } from '@pkg/pages/chat/messages/chatActivityStore';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -453,6 +452,11 @@ interface HistoryRecord {
   created_at:     string;
   last_active_at: string;
 }
+
+const injectedTabStrip = inject(windowTabStripKey);
+
+if (!injectedTabStrip) throw new Error('Window tab strip state is not provided');
+const windowTabStrip = injectedTabStrip;
 
 const extensionService = getExtensionService();
 const router = useRouter();
@@ -694,7 +698,7 @@ function publishAttentionMenu(id: string, update: boolean): void {
     return;
   }
   if (!update) {
-    tabContextMenuBridge.open({
+    windowTabStrip.open({
       id,
       select: action => {
         if (!action.startsWith('attention:')) return;
@@ -726,7 +730,7 @@ function hideTabContextMenu(): void {
   const id = contextMenuId;
 
   if (!id) return;
-  tabContextMenuBridge.close(id);
+  windowTabStrip.close(id);
   ipcRenderer.send('tab-context-menu:hide', id);
 }
 
@@ -1050,7 +1054,7 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const { working, snapshot } = bt.mode === 'chat' ? chatActivityStore.read(bt.id) : { working: false, snapshot: undefined };
+    const { working, snapshot } = bt.mode === 'chat' ? windowTabStrip.readActivity(bt.id) : { working: false, snapshot: undefined };
     const activity = snapshot?.state ?? (working ? 'working' : undefined);
     const statusLine = bt.mode === 'chat' ? snapshot?.detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
 
@@ -1474,7 +1478,7 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab) {
 
   const requestId = crypto.randomUUID();
 
-  tabContextMenuBridge.openForTab(
+  windowTabStrip.openForTab(
     requestId,
     () => allTabsById.value.get(tab.id),
     handleTabContextMenuAction,
