@@ -249,10 +249,10 @@ export interface IpcMainEvents {
   // #endregion
 
   // #region Tab context menu (popup window)
-  'tab-context-menu:show':           (payload: TabContextMenuRequest) => void;
-  'tab-context-menu:hide':           (id: string) => void;
-  'tab-hover:show':                  (payload: TabHoverRequest) => void;
-  'tab-hover:hide':                  (id: string) => void;
+  'tab-context-menu:show':    (payload: TabContextMenuRequest) => void;
+  'tab-context-menu:hide':    (id: string) => void;
+  'tab-hover:show':           (payload: TabHoverRequest) => void;
+  'tab-hover:hide':           (id: string) => void;
   'tab-context-menu:action':  (requestId: string, action: string) => void;
   'tab-context-menu:dismiss': (requestId: string) => void;
   // #endregion
