@@ -10,7 +10,8 @@ import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
-import { SullaLogger, type ConversationEventAppender } from '@pkg/agent/services/SullaLogger';
+import { SullaLogger } from '@pkg/agent/services/SullaLogger';
+import type { ConversationEventAppender } from '@pkg/agent/services/ConversationEventAppender';
 
 // risk: secret exposure — provider MCP aliases must hit the existing vault-argument log redaction policy.
 it('normalizes MCP and server-prefixed provider names before redacting logged args', async() => {

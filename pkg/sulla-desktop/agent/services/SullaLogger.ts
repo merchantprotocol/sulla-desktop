@@ -34,6 +34,8 @@ import util from 'node:util';
 
 import { autoTitleAfterMessages } from './ConversationTitleService';
 import { TitleMessageBuffer } from './TitleMessageBuffer';
+import { FileConversationEventAppender, type ConversationEventAppender } from './ConversationEventAppender';
+import { ToolCallLogWriter } from './ToolCallLogWriter';
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { resolveSullaLogsDir } from '../utils/sullaPaths';
 
@@ -380,17 +382,11 @@ export class TopicLog {
 // SullaLogger — singleton combining topic + conversation logging
 // ══════════════════════════════════════════════════════════════════════════════
 
-export interface ConversationEventAppender {
-  append(filePath: string, contents: string): void;
-}
-
-class FileConversationEventAppender implements ConversationEventAppender {
-  append(filePath: string, contents: string): void {
-    fs.appendFileSync(filePath, contents, 'utf-8');
-  }
-}
-
 class SullaLogger extends EventEmitter {
+  private readonly toolCallLogWriter = new ToolCallLogWriter(
+    (id, event) => this.log(id, event), id => this.resolveJsonlPath(id),
+    id => ConversationHistoryModel.getFileAssociations(id),
+    (name, args) => redactToolArgs(name.replace(/^mcp__.*?__|^[^/]+\//, ''), args));
   private readonly dir:            string;
   private readonly indexPath:      string;
   private readonly indexJsonlPath: string;
@@ -638,22 +634,7 @@ class SullaLogger extends EventEmitter {
     }
   }
 
-  async logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown, toolCallId?: string): Promise<boolean> {
-    const written = this.log(conversationId, {
-      ts:       new Date().toISOString(),
-      type:     'tool_call',
-      toolName,
-      args: redactToolArgs(toolName.replace(/^mcp__.*?__|^[^/]+\//, ''), args),
-      ...(result !== undefined ? { result } : {}), ...(toolCallId ? { toolCallId } : {}),
-    });
-    if (!written) return false;
-
-    // The payload loader resolves through this database association; an append alone
-    // is not enough to safely replace the renderer's only full-result copy.
-    const association = await ConversationHistoryModel.getFileAssociations(conversationId);
-    const expectedLog = path.resolve(this.resolveJsonlPath(conversationId));
-    return Boolean(association.log_file && path.resolve(association.log_file) === expectedLog);
-  }
+  logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown, toolCallId?: string): Promise<boolean> { return this.toolCallLogWriter.write(conversationId, toolName, args, result, toolCallId) }
 
   logLLMCall(conversationId: string, direction: 'request' | 'response', data: Record<string, unknown>): void {
     this.log(conversationId, {
