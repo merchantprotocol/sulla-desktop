@@ -24,10 +24,18 @@ export class TabHoverWindow {
     const zoom = owner.webContents.getZoomFactor();
     const point = { x: Math.round(x + (request.anchor.x * zoom)), y: Math.round(y + (request.anchor.y * zoom)) };
 
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    const aboveY = Math.round(y + (request.anchor.aboveY * zoom));
+
+    if (![point.x, point.y, aboveY].every(Number.isFinite)) return;
     const { workArea } = screen.getDisplayNearestPoint(point);
     const width = Math.min(326, workArea.width);
-    const height = Math.min(238, workArea.y + workArea.height - point.y);
+    const bottom = workArea.y + workArea.height;
+    const belowStart = Math.max(workArea.y, point.y);
+    const aboveEnd = Math.min(bottom, aboveY);
+    const belowSpace = bottom - belowStart;
+    const aboveSpace = aboveEnd - workArea.y;
+    const above = belowSpace < 238 && aboveSpace > belowSpace;
+    const height = Math.min(238, above ? aboveSpace : belowSpace);
 
     if (height < 1) return;
     const hover = this.windows.get(owner.id) ?? this.create(owner);
@@ -44,11 +52,11 @@ export class TabHoverWindow {
     if (popup.isDestroyed() || owner.isDestroyed() || !owner.isFocused() || hover.requestId !== request.id) return;
     popup.setBounds({
       x: Math.max(workArea.x, Math.min(point.x, workArea.x + workArea.width - width)),
-      y: point.y,
+      y: above ? aboveEnd - height : belowStart,
       width,
       height,
     });
-    popup.webContents.send('tab-hover:data', request);
+    popup.webContents.send('tab-hover:data', { ...request, above });
     popup.showInactive();
   }
 
