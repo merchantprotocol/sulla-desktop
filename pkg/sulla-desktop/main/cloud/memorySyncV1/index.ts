@@ -45,6 +45,7 @@ class MemorySyncV1Impl{
    const pulled=await change.json()as{records:WireRecord[];head:{seq:number;stateHash:string;mac:string;deviceId:string}|null;nextCursor:number|null};pulledHead=pulled.head;
    if(pulled.head){verifyMemoryHead(key,pulled.head,verified);verified=Math.max(verified,pulled.head.seq)}else if(verified>0&&await SullaSettingsModel.get('memorySyncV1OwnDelete','')!=='true')throw new Error('memory_head_missing_confirmation_required');
    for(const rec of pulled.records){
+    if(!this.isSyncedRecordId(rec.id))continue;
     if(rec.deleted){await this.tombstone(rec.id);await postgresClient.query('INSERT INTO memory_sync_v1_records(id,generation,deleted,source_device_id) VALUES($1,$2,true,$3) ON CONFLICT(id) DO UPDATE SET generation=$2,deleted=true,source_device_id=$3',[rec.id,rec.generation,rec.deviceId]);continue}
     if(!rec.envelope)throw new Error('memory_envelope_missing');
     const plain:Record<string,unknown>={...(decryptMemoryRecord(key,userId,rec.id,rec.generation,rec.envelope)as Record<string,unknown>),generation:rec.generation,sourceDeviceId:rec.deviceId};
@@ -77,6 +78,8 @@ class MemorySyncV1Impl{
   else await postgresClient.query(`INSERT INTO subject_memory.overviews SELECT * FROM json_populate_record(NULL::subject_memory.overviews,$1::json) ON CONFLICT(subject,ts) DO UPDATE SET text=excluded.text,status=excluded.status,worker=excluded.worker`,[json]);
   const contentHash=memoryContentHash(v);
   await postgresClient.query('INSERT INTO memory_sync_v1_records(id,generation,deleted,content_hash,source_device_id) VALUES($1,$2,false,$3,$4) ON CONFLICT(id) DO UPDATE SET generation=GREATEST(memory_sync_v1_records.generation,$2),deleted=false,content_hash=$3,source_device_id=$4',[String(record.id),Number(record.generation??1),contentHash,String(record.sourceDeviceId??'')]);}
+ /** Records from tables outside TABLES (retired observations / identity_observations) are ignored on pull. */
+ private isSyncedRecordId(id:string){const split=id.indexOf(':');return split>0&&TABLES.includes(id.slice(0,split)as typeof TABLES[number])}
  private async tombstone(id:string){const split=id.indexOf(':'),table=id.slice(0,split),pk=id.slice(split+1);if(table==='subject_memory.items')await postgresClient.query('UPDATE subject_memory.items SET superseded_by=$2,superseded_ts=$3 WHERE id=$1',[pk,'sync:tombstone',Date.now()]);else if(table==='subject_memory.subjects')await postgresClient.query("UPDATE subject_memory.subjects SET status='archived' WHERE slug=$1",[pk]);else if(table==='subject_memory.overviews'){const at=pk.lastIndexOf(':');if(at>0)await postgresClient.query("UPDATE subject_memory.overviews SET status='archived' WHERE subject=$1 AND ts=$2",[pk.slice(0,at),Number(pk.slice(at+1))])}}
 }
 export const MemorySyncV1=new MemorySyncV1Impl();
