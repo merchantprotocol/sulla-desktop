@@ -6,6 +6,7 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn(async() 
 
 import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
 
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import { StatusRollupQueue, type StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -49,19 +50,26 @@ function flatten(root: WorkerChartAgent | null): string[] {
   return [root.id, ...(root.children ?? []).flatMap(child => flatten(child))];
 }
 
+const useActivityWithConsumer = (sources: Parameters<typeof useThreadAgentActivity>[0]) => {
+  const activity = useThreadAgentActivity(sources);
+  activity.attachConsumer();
+  return activity;
+};
+
 describe('useThreadAgentActivity', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   it('keeps chart, status items, and root fallback inside the active thread', async() => {
     // risk: cross-thread agent/check-in disclosure
+    vi.useFakeTimers();
     const rows = new RowFactory();
     const rootA = rows.create('job-a:0', 'thread-a', 'thread-a');
     const childA = rows.create('job-a-child:0', 'thread-a', null, rootA.key);
     const rootB = rows.create('job-b:0', 'thread-b', null);
     const snapshot = ref<AgentStateSnapshot>({
-      version: 1,
+      version: 0,
       generatedAt: '2026-11-23T17:02:00.000Z',
-      rows: [rootA, childA, rootB],
+      rows: [],
     });
     const threadId = ref<string | undefined>('thread-a');
     // Each chat's transcript belongs to its own controller; switching threads swaps the transcript too.
@@ -69,9 +77,15 @@ describe('useThreadAgentActivity', () => {
       'thread-a': [{ id: 'tool-a' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:45.000Z'), tool: 'Read', desc: 'Reading ChatPage.vue', status: 'running', input: '{"path":"secret-a"}' } as Message],
       'thread-b': [{ id: 'tool-b' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:50.000Z'), tool: 'Edit', desc: 'Editing thread-b file', status: 'running' } as Message],
     };
-    const transcript = ref<readonly Message[]>(transcripts['thread-a']);
-    const activity = useThreadAgentActivity({ snapshot, threadId, transcript, primaryAgentName: ref('Sulla'), now: () => Date.parse('2026-11-23T17:02:00.000Z') });
+    const transcript = ref<readonly Message[]>([]);
+    const activity = useActivityWithConsumer({ snapshot, threadId, transcript, primaryAgentName: ref('Sulla'), now: () => Date.parse('2026-11-23T17:02:00.000Z') });
     const texts = () => activity.checkIns.value.map(item => item.text);
+
+    snapshot.value = { version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [rootA, childA, rootB] };
+    transcript.value = transcripts['thread-a'];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
 
     expect(activity.projection.value.agents.map(agent => agent.row.key)).toEqual(['job-a:0', 'job-a-child:0']);
     expect(flatten(activity.chartRoot.value)).toEqual(['chat:thread-a', 'job-a:0', 'job-a-child:0']);
@@ -87,6 +101,8 @@ describe('useThreadAgentActivity', () => {
 
     threadId.value = 'thread-b';
     transcript.value = transcripts['thread-b'];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
     await nextTick();
     expect(activity.projection.value.agents.map(agent => agent.row.key)).toEqual(['job-b:0']);
     expect(flatten(activity.chartRoot.value)).toEqual(['chat:thread-b', 'job-b:0']);
@@ -108,17 +124,20 @@ describe('useThreadAgentActivity', () => {
     const child = rows.create('child-job:0', 'thread-a', null, root.key);
     const grandchild = rows.create('grandchild-job:0', 'thread-a', null, child.key);
     const snapshot = ref<AgentStateSnapshot>({
-      version: 1,
+      version: 0,
       generatedAt: '2026-11-23T17:02:00.000Z',
-      rows: [root, child, grandchild],
+      rows: [],
     });
     const threadId = ref<string | undefined>('thread-a');
-    const activity = useThreadAgentActivity({
+    const activity = useActivityWithConsumer({
       snapshot,
       threadId,
       traceHistory: async(_parentThreadId, jobId) => jobId === 'grandchild-job' ? null : { checkins: [], messages: [] },
       now: () => Date.parse('2026-11-23T17:02:00.000Z'),
     });
+
+    snapshot.value = { version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [root, child, grandchild] };
+    await nextTick();
 
     await Promise.resolve();
     await nextTick();
@@ -127,23 +146,230 @@ describe('useThreadAgentActivity', () => {
     ]));
   });
 
+  // risk: status-line accuracy — snapshot and first history reads must not announce the same check-in twice.
+  it('does not re-emit a snapshot check-in when its first history read arrives later', async() => {
+    const rows = new RowFactory();
+    const checkinAt = Date.parse('2026-11-23T17:01:30.000Z');
+    const summary = 'Worker finished the requested change';
+    const row = { ...rows.create('worker-job:0', 'thread-a', null), lastCheckinAt: null, lastCheckinSummary: null };
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] });
+    const threadId = ref<string | undefined>('thread-a');
+    const history: AgentTraceHistoryData = {
+      checkins: [{ step: '', summary, filesTouched: [], blockers: [], createdAt: checkinAt }],
+      messages: [],
+    };
+    let resolveInitialHistory!: (data: AgentTraceHistoryData | null) => void;
+    let firstRead = true;
+    const activity = useActivityWithConsumer({
+      snapshot,
+      threadId,
+      traceHistory: () => {
+        if (!firstRead) return Promise.resolve(history);
+        firstRead = false;
+        return new Promise(resolve => { resolveInitialHistory = resolve; });
+      },
+      now: () => Date.parse('2026-11-23T17:02:00.000Z'),
+    });
+
+    snapshot.value = {
+      version: 2,
+      generatedAt: '2026-11-23T17:02:01.000Z',
+      rows: [{ ...row, lastCheckinAt: new Date(checkinAt).toISOString(), lastCheckinSummary: summary }],
+    };
+    await nextTick();
+    const emitted = activity.checkIns.value.filter(item => item.key.startsWith('agent-checkin:'));
+    expect(emitted).toHaveLength(1);
+    const snapshotKey = emitted[0]?.key;
+    activity.consumeCheckIns();
+
+    resolveInitialHistory(history);
+    await Promise.resolve();
+    await Promise.resolve();
+    await nextTick();
+
+    expect(activity.checkIns.value.filter(item => item.key === snapshotKey)).toEqual([]);
+  });
+
+  // risk: memory lifecycle — an absent consumer keeps only the latest event and does not replay consumed source rows.
+  it('retains one newest history event while detached and delivers it once after attachment', async() => {
+    const rows = new RowFactory();
+    const row = {
+      ...rows.create('worker-job:0', 'thread-a', null),
+      lastActivityAt: '2026-11-23T16:59:00.000Z',
+      lastCheckinAt: null,
+      lastCheckinSummary: null,
+    };
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] });
+    const threadId = ref<string | undefined>('thread-a');
+    const history: AgentTraceHistoryData['checkins'][number][] = [];
+    const activity = useThreadAgentActivity({
+      snapshot,
+      threadId,
+      traceHistory: async() => ({ checkins: [...history], messages: [] }),
+      now: () => Date.parse('2026-11-23T17:02:00.000Z'),
+    });
+    const settleHistory = async(): Promise<void> => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await nextTick();
+    };
+
+    await settleHistory();
+    for (let index = 0; index < 24; index++) {
+      history.push({
+        step: '', summary: `History event ${index}`, filesTouched: [], blockers: [],
+        createdAt: Date.parse('2026-11-23T17:00:00.000Z') + (index + 1) * 1_000,
+      });
+      snapshot.value = { version: index + 2, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+      await settleHistory();
+      expect(activity.checkIns.value).toHaveLength(1);
+      expect(activity.checkIns.value[0]?.text).toBe(`History event ${index}`);
+    }
+
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['History event 23']);
+    activity.attachConsumer();
+    snapshot.value = { version: 26, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+    await settleHistory();
+    const firstQueue = new StatusRollupQueue();
+    firstQueue.observe(activity.checkIns.value, 'thread-a', Date.parse('2026-11-23T17:02:00.000Z'));
+    activity.consumeCheckIns();
+    expect(firstQueue.pending.map(item => item.text)).toEqual(['History event 23']);
+
+    snapshot.value = { version: 27, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+    await settleHistory();
+    firstQueue.observe(activity.checkIns.value, 'thread-a', Date.parse('2026-11-23T17:02:00.000Z'));
+    expect(activity.checkIns.value).toEqual([]);
+    expect(firstQueue.pending).toHaveLength(1);
+
+    history.push({
+      step: '', summary: 'First event with a consumer', filesTouched: [], blockers: [],
+      createdAt: Date.parse('2026-11-23T17:00:00.000Z') + 25_000,
+    });
+    snapshot.value = { version: 28, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+    await settleHistory();
+
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['First event with a consumer']);
+
+    history.push({
+      step: '', summary: 'Second event before detach', filesTouched: [], blockers: [],
+      createdAt: Date.parse('2026-11-23T17:00:00.000Z') + 25_500,
+    });
+    snapshot.value = { version: 29, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+    await settleHistory();
+    expect(activity.checkIns.value.map(item => item.text)).toEqual([
+      'First event with a consumer',
+      'Second event before detach',
+    ]);
+
+    activity.detachConsumer();
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['Second event before detach']);
+    history.push({
+      step: '', summary: 'Event while detached', filesTouched: [], blockers: [],
+      createdAt: Date.parse('2026-11-23T17:00:00.000Z') + 26_000,
+    });
+    snapshot.value = { version: 30, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+    await settleHistory();
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['Event while detached']);
+
+    activity.attachConsumer();
+    const detachedQueue = new StatusRollupQueue();
+    detachedQueue.observe(activity.checkIns.value, 'thread-a', Date.parse('2026-11-23T17:02:00.000Z'));
+    activity.consumeCheckIns();
+    expect(detachedQueue.pending.map(item => item.text)).toEqual(['Event while detached']);
+    snapshot.value = { version: 31, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] };
+    await settleHistory();
+    expect(activity.checkIns.value).toEqual([]);
+    detachedQueue.observe(activity.checkIns.value, 'thread-a', Date.parse('2026-11-23T17:02:00.000Z'));
+    expect(detachedQueue.pending).toHaveLength(1);
+  });
+
+  // risk: availability and memory lifecycle — setup-time transcript priming survives until the status-line consumer mounts.
+  it('retains the newest transcript event before mount and delivers it once after attachment', async() => {
+    vi.useFakeTimers();
+    const startAt = Date.parse('2026-11-23T17:00:00.000Z');
+    const createTool = (index: number): Message => ({
+      id: `transcript-tool-${index}` as Message['id'],
+      kind: 'tool',
+      createdAt: startAt + index * 1_000,
+      tool: 'Read',
+      desc: `Reading transcript item ${index}`,
+      status: 'running',
+    } as Message);
+    const transcript = ref<readonly Message[]>([createTool(0)]);
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: new Date(startAt).toISOString(), rows: [] });
+    const activity = useThreadAgentActivity({
+      snapshot,
+      threadId: ref<string | undefined>('thread-a'),
+      transcript,
+      now: () => startAt + 30_000,
+    });
+
+    expect(activity.checkIns.value).toHaveLength(1);
+    for (let index = 1; index < 24; index++) {
+      transcript.value = [...transcript.value, createTool(index)];
+      await nextTick();
+      await vi.advanceTimersByTimeAsync(100);
+      await nextTick();
+      expect(activity.checkIns.value).toHaveLength(1);
+      expect(activity.checkIns.value[0]?.text).toBe(`Reading transcript item ${index}`);
+    }
+
+    const createThought = (revision: number): Message => ({
+      id: 'transcript-thought' as Message['id'],
+      kind: 'thinking',
+      createdAt: startAt + 24_000,
+      startedAt: startAt + 24_000,
+      thoughts: [`Thought revision ${revision}`],
+      completed: false,
+    });
+    transcript.value = [...transcript.value, createThought(0)];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
+    for (let revision = 1; revision <= 8; revision++) {
+      transcript.value = [...transcript.value.slice(0, -1), createThought(revision)];
+      await nextTick();
+      await vi.advanceTimersByTimeAsync(100);
+      await nextTick();
+      expect(activity.checkIns.value).toHaveLength(1);
+      expect(activity.checkIns.value[0]?.text).toBe(`Thought revision ${revision}`);
+      expect(activity.checkIns.value[0]?.updateOnly).not.toBe(true);
+    }
+
+    const newest = activity.checkIns.value[0];
+    expect(newest?.text).toBe('Thought revision 8');
+    activity.attachConsumer();
+    const queue = new StatusRollupQueue();
+    queue.observe(activity.checkIns.value, 'thread-a', startAt + 30_000);
+    activity.consumeCheckIns();
+    expect(queue.pending.map(item => item.key)).toEqual([newest?.key]);
+
+    snapshot.value = { version: 2, generatedAt: new Date(startAt + 31_000).toISOString(), rows: [] };
+    await nextTick();
+    expect(activity.checkIns.value).toEqual([]);
+    queue.observe(activity.checkIns.value, 'thread-a', startAt + 31_000);
+    expect(queue.pending).toHaveLength(1);
+  });
+
   it('clears the previous thread queue and history before observing the next thread', () => {
     // risk: stale cross-thread status remains visible after switching chats
     const rows = new RowFactory();
     const rootA = rows.create('job-a:0', 'thread-a', 'thread-a');
     const snapshot = ref<AgentStateSnapshot>({
-      version: 1,
+      version: 0,
       generatedAt: '2026-11-23T17:02:00.000Z',
-      rows: [
-        rootA,
-        rows.create('job-a-child:0', 'thread-a', null, rootA.key),
-        rows.create('job-b:0', 'thread-b', null),
-      ],
+      rows: [],
     });
     const threadId = ref<string | undefined>('thread-a');
-    const activity = useThreadAgentActivity({ snapshot, threadId, now: () => Date.parse('2026-11-23T17:02:00.000Z') });
+    const activity = useActivityWithConsumer({ snapshot, threadId, now: () => Date.parse('2026-11-23T17:02:00.000Z') });
     const queue = new StatusRollupQueue();
     const now = Date.parse('2026-11-23T17:01:01.000Z');
+
+    snapshot.value = {
+      version: 1,
+      generatedAt: '2026-11-23T17:02:00.000Z',
+      rows: [rootA, rows.create('job-a-child:0', 'thread-a', null, rootA.key), rows.create('job-b:0', 'thread-b', null)],
+    };
 
     queue.observe(activity.checkIns.value, 'thread-a', now);
     queue.pump(now);
@@ -184,6 +410,23 @@ describe('useThreadAgentActivity', () => {
     expect(queue.current?.key).toBe(`event-${items.length - 1}`);
     expect(queue.pending).toEqual([]);
     expect(queue.history.map(item => item.key)).not.toContain('event-0');
+  });
+
+  // risk: status-line accuracy — a thought revised before queue transfer must remain eligible for its first display.
+  it('keeps a buffered new thought queueable when a revision arrives before consumption', () => {
+    const buffer = new ThreadAgentEventBuffer();
+    const queue = new StatusRollupQueue();
+    const thought: StatusRollupItem = {
+      key: 'thought-before-transfer', threadId: 'thread-a', agentId: 'agent-a', agentName: 'Agent A',
+      kind: 'thought', text: 'Initial thought', observedAt: 1,
+    };
+
+    buffer.append(thought);
+    buffer.append({ ...thought, text: 'Revised thought', updateOnly: true });
+    queue.observe(buffer.items.value, 'thread-a', 2);
+
+    expect(queue.pending).toEqual([expect.objectContaining({ key: thought.key, text: 'Revised thought' })]);
+    expect(queue.pending[0]?.updateOnly).not.toBe(true);
   });
 
   // risk: memory lifecycle — a cursor retains only the keys in its current projection, never keys from old projections.
@@ -234,14 +477,18 @@ describe('useThreadAgentActivity', () => {
       lastCheckinAt: '2026-11-23T17:01:00.000Z',
       lastCheckinSummary: 'First check-in',
     };
-    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [originalRow] });
+    const snapshot = ref<AgentStateSnapshot>({ version: 0, generatedAt: '2026-11-23T17:02:00.000Z', rows: [] });
     const threadId = ref<string | undefined>('thread-a');
     const agentName = ref('Sulla');
-    const transcript = ref<readonly Message[]>([
-      { id: 'tool-a' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:45.000Z'), tool: 'Read', desc: 'Read file', status: 'running' } as Message,
-    ]);
-    const activity = useThreadAgentActivity({ snapshot, threadId, transcript, primaryAgentName: agentName, now: () => Date.parse('2026-11-23T17:02:00.000Z') });
+    const transcript = ref<readonly Message[]>([]);
+    const activity = useActivityWithConsumer({ snapshot, threadId, transcript, primaryAgentName: agentName, now: () => Date.parse('2026-11-23T17:02:00.000Z') });
     const queue = new StatusRollupQueue();
+
+    snapshot.value = { version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [originalRow] };
+    transcript.value = [{ id: 'tool-a' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:45.000Z'), tool: 'Read', desc: 'Read file', status: 'running' } as Message];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
 
     expect(activity.checkIns.value).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: expect.stringContaining('agent-checkin:'), text: 'First check-in' }),
@@ -288,14 +535,18 @@ describe('useThreadAgentActivity', () => {
       startedAt: createdAt,
       completed: false,
     };
-    const transcript = ref<readonly Message[]>([original]);
+    const transcript = ref<readonly Message[]>([]);
     const project = vi.spyOn(DetailedTraceProjection.prototype, 'project');
-    const activity = useThreadAgentActivity({
+    const activity = useActivityWithConsumer({
       snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: new Date(createdAt).toISOString(), rows: [] }),
       threadId: ref<string | undefined>('thread-a'),
       transcript,
       now: () => createdAt,
     });
+    transcript.value = [original];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
     expect(project).toHaveBeenCalledTimes(1);
     project.mockClear();
 
@@ -323,13 +574,18 @@ describe('useThreadAgentActivity', () => {
       startedAt: createdAt,
       completed: false,
     };
-    const transcript = ref<readonly Message[]>([original]);
-    const activity = useThreadAgentActivity({
+    const transcript = ref<readonly Message[]>([]);
+    const activity = useActivityWithConsumer({
       snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: new Date(createdAt).toISOString(), rows: [] }),
       threadId: ref<string | undefined>('thread-a'),
       transcript,
       now: () => createdAt,
     });
+
+    transcript.value = [original];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
 
     const originalThought = activity.checkIns.value.find(item => item.kind === 'thought');
     expect(originalThought?.text).toBe('Checking the first possibility');
@@ -384,8 +640,8 @@ describe('useThreadAgentActivity', () => {
     const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: new Date(secondAt).toISOString(), rows: [] });
     const threadId = ref<string | undefined>('thread-a');
     const agentName = ref('Sulla');
-    const transcript = ref<readonly Message[]>([toolA]);
-    const activity = useThreadAgentActivity({ snapshot, threadId, transcript, primaryAgentName: agentName, now: () => secondAt });
+    const transcript = ref<readonly Message[]>([]);
+    const activity = useActivityWithConsumer({ snapshot, threadId, transcript, primaryAgentName: agentName, now: () => secondAt });
     const queue = new StatusRollupQueue();
     const transfer = () => {
       const items = [...activity.checkIns.value];
@@ -393,6 +649,11 @@ describe('useThreadAgentActivity', () => {
       activity.consumeCheckIns();
       return items;
     };
+
+    transcript.value = [toolA];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
 
     const startA = transfer();
     expect(startA).toHaveLength(1);

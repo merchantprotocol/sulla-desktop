@@ -34,6 +34,10 @@ export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
   /** Undelivered events for this chat's own transcript and proven sub-agent tree, oldest first. */
   readonly checkIns: ComputedRef<StatusRollupItem[]>;
+  /** Marks the status-rollup as the active consumer of buffered events. */
+  attachConsumer(): void;
+  /** Stops buffering events when the status-rollup is not mounted. */
+  detachConsumer(): void;
   /** Removes events after the status queue has taken ownership of them. */
   consumeCheckIns(): void;
   readonly rootFallback: ComputedRef<StatusRollupItem | null>;
@@ -46,6 +50,10 @@ export class ThreadAgentEventProjectionDiff {
 
   get retainedKeyCount(): number {
     return this.previousKeys.size;
+  }
+
+  has(key: string): boolean {
+    return this.previousKeys.has(key);
   }
 
   diff(items: readonly StatusRollupItem[]): StatusRollupItem[] {
@@ -128,13 +136,30 @@ export class ThreadAgentHistoryCursor {
 export class ThreadAgentEventBuffer {
   readonly items = ref<StatusRollupItem[]>([]);
 
+  /** Retains one newest event while the status-line consumer is absent. */
+  appendNewest(item: StatusRollupItem): void {
+    const existing = this.items.value[0];
+    if (existing?.key === item.key && existing.kind === 'thought' && item.kind === 'thought' && existing.text !== item.text) {
+      this.items.value = [existing.updateOnly ? item : { ...item, updateOnly: false }];
+      return;
+    }
+    if (existing && item.observedAt < existing.observedAt) return;
+    this.items.value = [item.updateOnly ? { ...item, updateOnly: false } : item];
+  }
+
+  /** Keeps only the most recent pending event when the consumer detaches. */
+  retainNewest(): void {
+    const newest = this.items.value[this.items.value.length - 1];
+    this.items.value = newest ? [newest.updateOnly ? { ...newest, updateOnly: false } : newest] : [];
+  }
+
   append(item: StatusRollupItem): void {
     const index = this.items.value.findIndex(existing => existing.key === item.key);
     if (index >= 0) {
       const existing = this.items.value[index];
       if (item.kind === 'thought' && existing?.kind === 'thought' && existing.text !== item.text) {
         const updated = [...this.items.value];
-        updated[index] = item;
+        updated[index] = existing.updateOnly ? item : { ...item, updateOnly: false };
         this.items.value = updated;
       }
       return;
@@ -450,6 +475,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const historyPending = new Set<string>();
   const historyRefreshQueued = new Set<string>();
   const transcriptProjection = new ThreadAgentEventProjectionDiff();
+  let consumerAttached = false;
   let activeThreadId: string | undefined;
   let snapshotPrimed = false;
   let transcriptPrimed = false;
@@ -480,7 +506,8 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
 
   const append = (item: StatusRollupItem): void => {
     if (!activeThreadId || item.threadId !== activeThreadId) return;
-    eventBuffer.append(item);
+    if (consumerAttached) eventBuffer.append(item);
+    else eventBuffer.appendNewest(item);
   };
 
   const stateEvent = (agent: PresentedThreadAgent, threadId: string, version: number, at: number): StatusRollupItem =>
@@ -550,7 +577,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     if (firstRead) {
       const latest = items[items.length - 1];
       cursor.prime(items);
-      if (latest) append(latest);
+      if (latest && !snapshotCheckinDiffs.get(agent.row.key)?.has(latest.key)) append(latest);
       historyPrimed.add(key);
       return;
     }
@@ -678,6 +705,11 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   return {
     projection,
     checkIns: computed(() => eventItems.value),
+    attachConsumer: () => { consumerAttached = true; },
+    detachConsumer: () => {
+      consumerAttached = false;
+      eventBuffer.retainNewest();
+    },
     consumeCheckIns: () => eventBuffer.consume(),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
     chartRoot: computed(() => mapper.chartRoot(projection.value, sources.threadId.value)),

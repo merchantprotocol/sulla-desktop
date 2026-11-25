@@ -100,7 +100,12 @@ const props = defineProps<{
   rootFallback?: StatusRollupItem | null;
 }>();
 
-const emit = defineEmits<{ shown: [payload: StatusRollupShownEvent]; consumed: [] }>();
+const emit = defineEmits<{
+  shown: [payload: StatusRollupShownEvent];
+  consumed: [];
+  'consumer-attached': [];
+  'consumer-detached': [];
+}>();
 
 const queue = new StatusRollupQueue();
 const rootElement = ref<HTMLElement | null>(null);
@@ -250,6 +255,7 @@ watch(
 );
 
 onMounted(() => {
+  emit('consumer-attached');
   mounted.value = true;
   documentVisible.value = !document.hidden;
   document.addEventListener('visibilitychange', syncVisibility);
@@ -263,6 +269,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  emit('consumer-detached');
   mounted.value = false;
   hovered.value = false;
   if (timer !== undefined) window.clearInterval(timer);
