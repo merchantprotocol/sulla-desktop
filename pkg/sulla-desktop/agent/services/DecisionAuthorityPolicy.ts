@@ -9,17 +9,19 @@ export type DecisionAgentAction = 'answer' | 'approve' | 'deny' | 'pass';
 
 /** The record-level authority rules shared by decision creation and later agent actions. */
 export class DecisionAuthorityPolicy {
-  classify(record: Pick<DecisionRecord, 'kind' | 'questions' | 'payload'>): DecisionAuthority {
+  classify(record: Pick<DecisionRecord, 'kind' | 'questions' | 'payload'> & Partial<Pick<DecisionRecord, 'route'>>): DecisionAuthority {
     if (record.kind === 'approval') return 'human';
     if (record.payload?.decisionAuthority === 'human' || record.questions?.some(question => question.task)) return 'human';
+    if (record.route?.authority === 'human') return 'human';
     return 'any';
   }
 
-  allows(record: Pick<DecisionRecord, 'kind' | 'questions' | 'payload'>, action: DecisionAgentAction, actorKind: 'agent' | 'human'): boolean {
+  allows(record: Pick<DecisionRecord, 'kind' | 'questions' | 'payload'> & Partial<Pick<DecisionRecord, 'route'>>,
+    action: DecisionAgentAction, actorKind: 'agent' | 'human'): boolean {
     if (actorKind === 'human') {
       return record.kind === 'approval' ? action === 'approve' || action === 'deny' : action === 'answer';
     }
     if (record.kind === 'approval') return action === 'deny' || action === 'pass';
-    return action === 'answer' && this.classify(record) === 'any';
+    return (action === 'answer' || action === 'pass') && this.classify(record) === 'any';
   }
 }

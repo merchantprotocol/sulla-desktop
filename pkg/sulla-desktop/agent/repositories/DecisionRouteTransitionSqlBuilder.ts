@@ -18,6 +18,7 @@ export class DecisionRouteTransitionSqlBuilder {
     return {
       sql: `UPDATE human_decisions SET record = record || jsonb_build_object('route', COALESCE(record->'route','{}'::jsonb) || $6::jsonb), updated_at=NOW()
         WHERE id=$1 AND record->>'kind'=$2 AND ${this.openPredicate(recordKind)} AND ${this.actorPredicate()}
+          AND record#>>'{route,deliveredAt}' IS NULL
         RETURNING id`,
       params: [id, recordKind, actor.kind, expectedHolderIndex, actor.threadId ?? '', JSON.stringify(routePatch)],
     };
@@ -29,6 +30,7 @@ export class DecisionRouteTransitionSqlBuilder {
       sql: `UPDATE human_decisions SET record = record || jsonb_build_object('route',
           (COALESCE(record->'route','{}'::jsonb) || $6::jsonb) || jsonb_build_object('history', COALESCE(record#>'{route,history}','[]'::jsonb) || $7::jsonb)), updated_at=NOW()
         WHERE id=$1 AND record->>'kind'=$2 AND ${this.openPredicate(recordKind)} AND ${this.actorPredicate()}
+          AND ($3 <> 'agent' OR record->>'kind'='approval' OR record#>>'{route,authority}'='any')
           AND ($8::bigint IS NULL OR (record#>>'{route,holderDeadline}')::bigint <= $8)
         RETURNING id`,
       params: [id, recordKind, actor.kind, expectedHolderIndex, actor.threadId ?? '', JSON.stringify(routePatch), JSON.stringify([history]), deadlineNow ?? null],
@@ -54,8 +56,8 @@ export class DecisionRouteTransitionSqlBuilder {
   }
 
   private actorPredicate(): string {
-    return `($3 IN ('human','system') OR (COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4
-      AND record#>>ARRAY['route','chain',$4::text,'threadId']=$5))`;
+    return `($3='human' OR (COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4
+      AND ($3='system' OR record#>>ARRAY['route','chain',$4::text,'threadId']=$5)))`;
   }
 
   private settlementPredicate(recordKind: DecisionRecord['kind']): string {

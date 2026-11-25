@@ -15,6 +15,8 @@ export interface AgentJobTaskTarget {
   parentThreadId?: string;
   label?:          string;
   agentId?:        string;
+  spawnMode?:      'sync' | 'async';
+  parentJobId?:    string | null;
 }
 
 export interface AgentJobMessage {

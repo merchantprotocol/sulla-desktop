@@ -27,6 +27,13 @@ class InlineApprovalFlowHarness {
       this.records.set(id, next);
       return true;
     }),
+    settleAs: vi.fn(async(id: string, holderIndex: number, _actor: unknown, status: string, patch: Partial<DecisionRecord>, history: unknown[] = []) => {
+      const previous = this.records.get(id);
+      if (!previous?.route || previous.route.holderIndex !== holderIndex || !['pending', 'deferred'].includes(previous.status)) return false;
+      this.records.set(id, { ...previous, ...patch, status: status as DecisionRecord['status'],
+        route: { ...previous.route, history: [...previous.route.history, ...history as NonNullable<DecisionRecord['route']>['history']] } });
+      return true;
+    }),
     expirePending: vi.fn(async(id: string) => {
       const previous = this.records.get(id);
       if (previous) this.records.set(id, { ...previous, status: 'expired' });
@@ -79,7 +86,7 @@ describe('Files publish decision flow', () => {
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/approve', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       });
-      expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved' }), expect.any(String));
+      expect(flow.repository.settleAs).toHaveBeenCalledWith(record.id, record.route!.holderIndex, { kind: 'human' }, 'approved', expect.objectContaining({ status: 'approved' }), expect.any(Array));
       expect(flow.notifications).toEqual([`[Human decision] Jonathon approved publishing "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }).`]);
       expect(flow.errors).toEqual([]);
     } finally { flow.dispose() }
@@ -91,7 +98,7 @@ describe('Files publish decision flow', () => {
     try {
       const record = await flow.decide('denied');
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
-      expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'denied', expect.objectContaining({ status: 'denied' }), expect.any(String));
+      expect(flow.repository.settleAs).toHaveBeenCalledWith(record.id, record.route!.holderIndex, { kind: 'human' }, 'denied', expect.objectContaining({ status: 'denied' }), expect.any(Array));
       expect(flow.request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
       expect(flow.notifications).toEqual([`[Human decision] Jonathon denied publishing "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }).`]);
     } finally { flow.dispose() }
@@ -103,7 +110,8 @@ describe('Files publish decision flow', () => {
     try {
       const record = await flow.decide('expired');
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
-      expect(flow.repository.expirePending).toHaveBeenCalledWith(record.id);
+      expect(flow.repository.settleAs).toHaveBeenCalledWith(record.id, record.route!.holderIndex,
+        expect.objectContaining({ kind: 'system' }), 'expired', { status: 'expired' }, []);
       expect(flow.notifications).toEqual([`[Human decision] The request to publish "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }) expired: request a fresh publish if still needed.`]);
     } finally { flow.dispose() }
   });

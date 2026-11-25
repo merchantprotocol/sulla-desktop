@@ -1266,8 +1266,7 @@ export class ChatCompletionsServer {
         const canonicalCategory = String(tool.metadata?.category ?? '').trim();
         const isGitHubTool = canonicalCategory === 'github';
         const needsGitHubCredential = isGitHubTool && !LOCAL_GITHUB_TOOLS.has(toolName);
-        const sessionToken = req.header('X-Sulla-Tool-Session')?.trim();
-        const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+        const sessionToken = req.header('X-Sulla-Tool-Session')?.trim(), bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
         const host = getMCPServerHost();
         const session = sessionToken ? host.getToolSession(sessionToken) : null;
         if (sessionToken && !session) {
@@ -1512,7 +1511,8 @@ export class ChatCompletionsServer {
           const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
-          const invoke = () => tool.call(params);
+          const invoke = () => canonicalCategory === 'agents' && toolName === 'answer_decision'
+            ? (tool as any).callWithVerifiedSession(session?.state.metadata?.threadId, params) : tool.call(params);
           const result = runtime ? await withAgentContainerRuntime(runtime, invoke) : await invoke();
           return res.json({ success: true, result });
         } finally { res.off('close', onDisconnect) }

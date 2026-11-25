@@ -4,11 +4,12 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 export type DecisionAuthority = 'human' | 'any';
-export type DecisionActor = { kind: 'human' } | { kind: 'agent'; agentId?: string; label?: string; threadId?: string };
+export type DecisionActor = { kind: 'human' } | { kind: 'agent'; agentId?: string; label?: string; threadId?: string; note?: string };
 export type DecisionRouteEntry = {
   threadId: string;
   channel: string;
   agentId: string;
+  label?: string;
   jobId?: string;
   taskIndex?: number;
   kind: 'agent' | 'human';
@@ -16,7 +17,7 @@ export type DecisionRouteEntry = {
 export type DecisionRouteHistoryEntry = {
   threadId: string;
   agentId: string;
-  action: 'answered' | 'passed' | 'denied' | 'timeout' | 'unavailable';
+  action: 'answered' | 'passed' | 'denied' | 'approved' | 'deferred' | 'timeout' | 'unavailable';
   at: number;
   note?: string;
 };
@@ -25,8 +26,8 @@ export interface DecisionRoute {
   chain: DecisionRouteEntry[];
   holderIndex: number;
   holderSince: number;
-  holderDeadline?: number;
-  deliveredAt?: number;
+  holderDeadline?: number | null;
+  deliveredAt?: number | null;
   history: DecisionRouteHistoryEntry[];
 }
 
@@ -65,11 +66,13 @@ export interface DecisionRecord {
 export interface DecisionResponse {
   id:             string;
   conversationId: string;
-  action:         'approved' | 'denied' | 'answered' | 'deferred';
+  action:         'approved' | 'denied' | 'answered' | 'deferred' | 'passed';
   answers?:       { question: string; selected: string[] }[];
+  note?:          string;
 }
 export interface DecisionOutcome {
   status:  DecisionRecord['status'];
   answers: { question: string; selected: string[] }[];
   answeredBy?: DecisionActor;
+  note?: string;
 }

@@ -28,12 +28,32 @@ describe('durable late answers', () => {
     expect(f.decisions.queueLateAnswer).toHaveBeenCalledTimes(1);
   });
   it('does not send a second wake or replace the answer when the same receipt already exists', async() => {
-    const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, answerDelivery: 'queued' });
+    const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers: response.answers });
     await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: true }); expect(f.send).not.toHaveBeenCalled();
   });
   it('does not report a conflicting or dismissed request as answered', async() => {
     const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, attention: 'dismissed' });
     await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: false }); expect(f.send).not.toHaveBeenCalled();
+  });
+  it('rejects a competing answer after another actor won the compare-and-set', async() => {
+    // risk: concurrency — a later parent answer must not report success after the human already answered this question.
+    const f = fixture();
+    const attempt = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'parent', threadId: 'parent-thread' } };
+    f.decisions.queueLateAnswer.mockResolvedValue(undefined);
+    f.decisions.findById.mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers: [{ question: 'Color?', selected: ['Red'] }] });
+
+    await expect(f.handler.handle(attempt, response)).resolves.toMatchObject({ settled: false, reason: expect.stringContaining('changed') });
+    expect(f.send).not.toHaveBeenCalled();
+  });
+  it('treats an identical same-agent retry as idempotent', async() => {
+    // risk: user communication — retrying an already-committed parent answer does not create a duplicate inbox message.
+    const f = fixture();
+    const attempt = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'parent', threadId: 'parent-thread' } };
+    f.decisions.queueLateAnswer.mockResolvedValue(undefined);
+    f.decisions.findById.mockResolvedValue({ ...attempt, attention: 'answered', answerDelivery: 'queued', answers: response.answers });
+
+    await expect(f.handler.handle(attempt, response)).resolves.toMatchObject({ settled: true });
+    expect(f.send).not.toHaveBeenCalled();
   });
   it('does not queue into a deleted or replacement conversation', async() => {
     const f = fixture(); f.conversations.find.mockResolvedValue(null);

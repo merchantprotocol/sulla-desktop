@@ -8,6 +8,8 @@ import type { DecisionActor } from '@pkg/shared/decisions';
 export class DecisionAnswererLabel {
   label(actor?: DecisionActor): string | undefined {
     if (!actor) return undefined;
-    return actor.kind === 'human' ? 'your human' : actor.label?.trim() || actor.agentId?.trim() || 'agent';
+    if (actor.kind === 'human') return 'your human';
+    const label = actor.label?.trim() || actor.agentId?.trim() || 'agent';
+    return actor.note ? `${ label }: ${ actor.note.slice(0, 500) }` : label;
   }
 }

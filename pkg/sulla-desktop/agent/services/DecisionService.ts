@@ -16,6 +16,10 @@ import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
 import { DecisionAuthorityPolicy } from './DecisionAuthorityPolicy';
 import { DecisionRouteResolver } from './DecisionRouteResolver';
 import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './DecisionAskerWaiter';
+import { DecisionEscalationService } from './DecisionEscalationService';
+import { DecisionHolderNotifier } from './DecisionHolderNotifier';
+import type { DecisionAgentAction, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
+import type { DecisionSettlementStatus, DecisionTransitionActor } from '../repositories/DecisionRouteTransitionSqlBuilder';
 import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
 
 import type { DecisionActor, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
@@ -32,6 +36,7 @@ export class DecisionService {
   private readonly authorityPolicy: DecisionAuthorityPolicy;
   private readonly routeResolver: DecisionRouteResolver;
   private readonly askerWaiter: DecisionQuestionAskerWaiter;
+  private readonly escalation: Pick<DecisionEscalationService, 'start' | 'reconcile' | 'answerAsAgent' | 'authorize' | 'passFromResolveAs' | 'historyForAction'>;
 
   constructor(
     lateAnswerHandler?: LateDecisionAnswerHandler,
@@ -42,6 +47,8 @@ export class DecisionService {
       authorityPolicy?: DecisionAuthorityPolicy;
       routeResolver?: DecisionRouteResolver;
       askerWaiter?: DecisionQuestionAskerWaiter;
+      escalation?: DecisionService['escalation'];
+      holderNotifier?: DecisionHolderNotifier;
     } = {},
   ) {
     this.pendingDecisions = repositories.pendingDecisions ?? new PendingDecisionRepository(postgresClient);
@@ -55,6 +62,15 @@ export class DecisionService {
       { find: conversationId => this.pendingDecisions.findConversation(conversationId) },
       new LazyLateAnswerMessageSender(() => getWebSocketClientService()),
     );
+    const repositoryFor = async(id: string) => (await this.pendingDecisions.findById(id))?.kind === 'approval' ? this.decisions : this.pendingDecisions;
+    this.escalation = repositories.escalation ?? new DecisionEscalationService({
+      findById: id => this.pendingDecisions.findById(id),
+      openRoutedQuestions: async() => await this.pendingDecisions.openRoutedQuestions?.() ?? [],
+      claimHolder: async(id, index, actor, patch) => (await repositoryFor(id)).claimHolder(id, index, actor, patch),
+      advanceHolder: async(id, index, actor, patch, history, deadlineNow) => (await repositoryFor(id)).advanceHolder(id, index, actor, patch, history, deadlineNow),
+      settleAs: async(id, index, actor, status, patch, history) => (await repositoryFor(id)).settleAs(id, index, actor, status, patch, history),
+    }, this.routeResolver, this.authorityPolicy, repositories.holderNotifier ?? new DecisionHolderNotifier(),
+    (actor, response) => this.resolveAs(actor, response), record => this.changed(record));
   }
   private readonly session = randomUUID();
   private readonly listeners = new Set<(record: DecisionRecord) => void>();
@@ -85,8 +101,10 @@ export class DecisionService {
       const existing = await this.pendingDecisions.findOpenQuestion(input);
       if (existing) {
         const parked = existing.attention !== 'answered' && await this.parkQuestionAsker(asker, existing.id);
-        this.changed(existing);
-        return { record: existing, reused: true, ...(parked ? { parked: true } : {}) };
+        await this.escalation.start(existing);
+        const current = await this.pendingDecisions.findById(existing.id) ?? existing;
+        this.changed(current);
+        return { record: current, reused: true, ...(parked ? { parked: true } : {}) };
       }
       const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
       if (signal?.aborted) throw new Error('Request cancelled');
@@ -96,6 +114,7 @@ export class DecisionService {
       const authority = this.authorityPolicy.classify(candidate);
       const record: DecisionRecord = {
         ...input,
+        ...(asker ? { requestedBy: { agentId: asker.agentId || asker.label || 'agent', label: asker.label, jobId: asker.jobId, taskIndex: asker.taskIndex } } : {}),
         relatedConversationIds,
         route: { authority, chain, holderIndex: authority === 'human' ? chain.length - 1 : 0, holderSince: now, history: [] },
         kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now,
@@ -107,8 +126,10 @@ export class DecisionService {
       };
       await this.decisions.insert(record, this.session);
       const parked = await this.parkQuestionAsker(asker, record.id);
-      this.changed(record);
-      return { record, reused: false, ...(parked ? { parked: true } : {}) };
+      await this.escalation.start(record);
+      const current = await this.pendingDecisions.findById(record.id) ?? record;
+      this.changed(current);
+      return { record: current, reused: false, ...(parked ? { parked: true } : {}) };
     });
     this.questionWrites = operation.then(() => undefined, () => undefined);
     return operation;
@@ -170,6 +191,7 @@ export class DecisionService {
   /** Expire overdue requests and announce each one, so Files and the asker hear about it. */
   async reconcileExpired(): Promise<void> {
     for (const record of await this.pendingDecisions.expireOpenDecisions(this.session, Date.now())) this.changed(record);
+    await this.escalation.reconcile();
   }
 
   async pendingAnswerTargets(locallyOwnedThreads: string[] = []) {
@@ -197,20 +219,46 @@ export class DecisionService {
     return this.resolveAs(actor, response);
   }
 
+  async answerAsAgent(threadId: string, decisionId: string, action: DecisionAgentAction, answers?: DecisionResponse['answers'], note?: string) {
+    return this.escalation.answerAsAgent(threadId, decisionId, action, answers, note);
+  }
+
   async resolveAs(actor: DecisionActor, response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
     if (!actor || !['human', 'agent'].includes(actor.kind)) throw new Error('A decision actor is required.');
     if (!response || typeof response.id !== 'string' || typeof response.conversationId !== 'string') return { settled: false, reason: 'Request and conversation are required.' };
     const entry = this.waiting.get(response.id);
+    // Holder changes are persisted by the escalation service, including when
+    // no local waiter call is active. Always authorize against the latest row;
+    // the in-memory entry exists only to settle this process's shared waiter.
+    const record = await this.pendingDecisions.findById(response.id) ?? entry?.record;
+    if (!record || record.conversationId !== response.conversationId) return { settled: false, reason: 'Request is no longer waiting.' };
+    // Keep the shared in-memory waiter aligned with holder transitions made
+    // durably by the escalation service before it attempts the settlement CAS.
+    if (entry) entry.record = record;
+    const agentAction: DecisionAgentAction | undefined = response.action === 'answered' ? 'answer' : response.action === 'denied' ? 'deny'
+      : response.action === 'passed' ? 'pass' : response.action === 'approved' ? 'approve' : response.action === 'deferred' ? 'pass' : undefined;
+    if (actor.kind === 'agent' && (!agentAction || !await this.escalation.authorize(record, actor, agentAction))) {
+      return { settled: false, reason: 'Only the authorized holder may take that action.' };
+    }
+    if (response.action === 'passed') {
+      if (entry?.busy) return { settled: false, reason: 'Already answered or unavailable.' };
+      if (entry) entry.busy = true;
+      try {
+        if (actor.kind !== 'agent' || !await this.escalation.passFromResolveAs(record, actor, response.note)) return { settled: false, reason: 'Decision is no longer held by this agent.' };
+        const updated = await this.pendingDecisions.findById(record.id);
+        if (updated) { if (entry) entry.record = updated; this.changed(updated) }
+        return { settled: true, conversationId: record.conversationId };
+      } finally { if (entry) entry.busy = false }
+    }
     if (!entry) {
-      const record = await this.pendingDecisions.findById(response.id);
-      if (record?.kind === 'question' && (record.status === 'expired' || record.payload?.answerRoute === 'inbox') && response.action === 'answered' && record.conversationId === response.conversationId) {
+      if (record.kind === 'question' && (record.status === 'expired' || record.payload?.answerRoute === 'inbox') && response.action === 'answered') {
         const receipt = await this.lateAnswerHandler.handle({ ...record, answeredBy: actor }, response);
         const updated = await this.pendingDecisions.findById(record.id);
         if (updated) this.changed(updated);
         return receipt;
       }
       // A Files publish approval has no blocked tool waiting on it, so it stays decidable after an app restart.
-      if (record?.kind === 'approval' && record.payload?.filesPublishRequestId && record.conversationId === response.conversationId && ['pending', 'deferred'].includes(record.status)) {
+      if (record.kind === 'approval' && actor.kind === 'human' && record.payload?.filesPublishRequestId && ['pending', 'deferred'].includes(record.status)) {
         if (!['approved', 'denied', 'deferred'].includes(response.action)) throw new Error('Choose approve or deny');
         const now = Date.now();
         if (now >= record.expiresAt) {
@@ -223,16 +271,25 @@ export class DecisionService {
           answeredBy: actor,
           ...(response.action !== 'deferred' ? { attention: 'answered' } : {}),
         };
-        if (!await this.decisions.settleDurablePublish(response.id, response.action, next, now)) return { settled: false, reason: 'Request is no longer pending.' };
-        this.changed(next);
+        const history = response.action === 'deferred' ? [] : this.escalation.historyForAction(record, actor, response.action, response.note);
+        const { route: _route, ...patch } = next;
+        const settled = record.route
+          ? await this.decisions.settleAs(record.id, record.route.holderIndex, actor, response.action, patch, history)
+          : await this.decisions.settleDurablePublish(response.id, response.action, next, now);
+        if (!settled) return { settled: false, reason: 'Request is no longer pending.' };
+        const updated = await this.pendingDecisions.findById(record.id) ?? next;
+        this.changed(updated);
         return { settled: true, conversationId: next.conversationId };
       }
       return { settled: false, reason: 'Request is no longer waiting.' };
     }
-    if (entry.record.conversationId !== response.conversationId || entry.busy) {
+    if (entry.busy) {
       return { settled: false, reason: 'Already answered, unavailable, or not this conversation.' };
     }
-    if (Date.now() >= entry.record.expiresAt) {
+    entry.busy = true;
+    try {
+      if (Date.now() >= entry.record.expiresAt) {
+        entry.busy = false;
       await this.expire(response.id);
       const expired = await this.pendingDecisions.findById(response.id);
       if (expired?.kind === 'question' && expired.status === 'expired' && response.action === 'answered') {
@@ -242,39 +299,44 @@ export class DecisionService {
         return receipt;
       }
       return { settled: false, reason: 'This request expired. Ask for a fresh request in the original conversation.' };
-    }
-    const action = response.action;
-    if (!['approved', 'denied', 'answered', 'deferred'].includes(action)) throw new Error('Invalid decision');
-    if (entry.record.kind === 'question' && !['answered', 'deferred'].includes(action)) throw new Error('Answer the questions');
-    if (entry.record.kind === 'approval' && action === 'answered') throw new Error('Choose approve or deny');
-    let answers: DecisionOutcome['answers'] = [];
-    if (action === 'answered') {
-      const questions = entry.record.questions ?? [];
-      if (!Array.isArray(response.answers) || response.answers.length !== questions.length) throw new Error('Answer every question');
-      answers = questions.map((q, i) => {
-        const selected = response.answers![i]?.selected;
-        if (!Array.isArray(selected) || !selected.length || (!q.multiSelect && selected.length !== 1) ||
-          selected.some(s => typeof s !== 'string' || !s.trim() || s.length > 10000)) throw new Error('Answer could not be recorded.');
-        return { question: q.question, selected: selected.map(s => s.trim()) };
-      });
-    }
-    entry.busy = true;
-    try {
+      }
+      const action = response.action;
+      if (!['approved', 'denied', 'answered', 'deferred'].includes(action)) throw new Error('Invalid decision');
+      if (entry.record.kind === 'question' && !['answered', 'deferred'].includes(action)) throw new Error('Answer the questions');
+      if (entry.record.kind === 'approval' && action === 'answered') throw new Error('Choose approve or deny');
+      let answers: DecisionOutcome['answers'] = [];
+      if (action === 'answered') {
+        const questions = entry.record.questions ?? [];
+        if (!Array.isArray(response.answers) || response.answers.length !== questions.length) throw new Error('Answer every question');
+        answers = questions.map((q, i) => {
+          const selected = response.answers![i]?.selected;
+          if (!Array.isArray(selected) || !selected.length || (!q.multiSelect && selected.length !== 1) || selected.some(s => typeof s !== 'string' || !s.trim() || s.length > 10000)) throw new Error('Answer could not be recorded.');
+          return { question: q.question, selected: selected.map(s => s.trim()) };
+        });
+      }
       const next: DecisionRecord = {
         ...entry.record, status: action,
         ...(action !== 'deferred' ? { attention: 'answered' as const, answeredBy: actor } : {}),
         ...(answers.length ? { answers } : {}),
       };
-      if (!await this.decisions.settle(response.id, action, next, this.session)) return { settled: false, reason: 'Request is no longer pending.' };
-      entry.record = next;
-      this.changed(next);
+      const history = action === 'deferred' ? [] : this.escalation.historyForAction(entry.record, actor, action, response.note);
+      const repository = entry.record.kind === 'approval' ? this.decisions : this.pendingDecisions;
+      const { route: _route, ...patch } = next;
+      const settled = entry.record.route
+        ? await repository.settleAs(response.id, entry.record.route.holderIndex, actor, action as DecisionSettlementStatus, patch, history)
+        : actor.kind === 'human' && entry.record.kind === 'approval'
+          ? await this.decisions.settle(response.id, action, next, this.session)
+          : false;
+      if (!settled) return { settled: false, reason: 'Request is no longer pending.' };
+      entry.record = await this.pendingDecisions.findById(response.id) ?? next;
+      this.changed(entry.record);
       if (action !== 'deferred') {
         entry.cleanup();
         clearTimeout(entry.timer);
         this.waiting.delete(response.id);
-        entry.settle({ status: action, answers, answeredBy: actor });
+        entry.settle({ status: action, answers, answeredBy: actor, ...(actor.note ? { note: actor.note } : {}) });
       }
-      return { settled: true, conversationId: next.conversationId };
+      return { settled: true, conversationId: entry.record.conversationId };
     } finally { entry.busy = false }
   }
 
@@ -286,14 +348,24 @@ export class DecisionService {
       entry.timer.unref?.();
       return;
     }
-    this.waiting.delete(id);
-    clearTimeout(entry.timer);
-    entry.cleanup();
-    entry.settle({ status: 'expired', answers: [] });
-    this.changed({ ...entry.record, status: 'expired', ...(entry.record.kind === 'question' && !entry.record.attention ? { attention: 'active' as const } : {}) });
+    entry.busy = true;
     try {
-      await this.decisions.expirePending(id);
-    } catch { /* Fail closed even if persistence is temporarily unavailable. list() reconciles below. */ }
+      const route = entry.record.route;
+      const repo = entry.record.kind === 'approval' ? this.decisions : this.pendingDecisions;
+      const expired = route
+        ? await repo.settleAs(id, route.holderIndex, { kind: 'system', threadId: route.chain[route.holderIndex]?.threadId ?? entry.record.conversationId }, 'expired', { status: 'expired' }, [])
+        : (await this.decisions.expirePending(id), (await this.pendingDecisions.findById(id))?.status === 'expired');
+      const current = await this.pendingDecisions.findById(id);
+      if (!expired && current && !['approved', 'denied', 'answered', 'expired'].includes(current.status)) return;
+      this.waiting.delete(id);
+      clearTimeout(entry.timer);
+      entry.cleanup();
+      const result = current ?? { ...entry.record, status: 'expired' as const };
+      entry.record = result;
+      entry.settle({ status: result.status, answers: result.answers ?? [], answeredBy: result.answeredBy, ...(result.answeredBy?.note ? { note: result.answeredBy.note } : {}) });
+      this.changed(result);
+    } catch { /* Keep the waiter available; the durable sweep retries after database recovery. */ }
+    finally { entry.busy = false }
   }
 
   async requiresApproval(toolName: string): Promise<boolean> {

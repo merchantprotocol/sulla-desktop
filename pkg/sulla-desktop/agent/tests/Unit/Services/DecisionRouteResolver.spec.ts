@@ -18,11 +18,12 @@ describe('DecisionRouteResolver', () => {
     // risk: authorization — route holder order must follow child -> parent -> root, not an unordered ancestry set.
     const resolver = new DecisionRouteResolver(new TaskMap(new Map([
       ['child-thread', { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', parentThreadId: 'manager-thread', parentChannel: 'manager-channel' }],
-      ['manager-thread', { jobId: 'manager-job', taskIndex: 1, jobStatus: 'parked', taskStatus: 'parked', agentId: 'coding-manager', parentThreadId: 'root-chat', parentChannel: 'root-channel' }],
+      ['manager-thread', { jobId: 'manager-job', taskIndex: 1, jobStatus: 'parked', taskStatus: 'parked', agentId: 'coding-manager', parentThreadId: 'root-chat', parentChannel: 'root-channel', parentJobId: null }],
     ])));
 
     await expect(resolver.resolve('child-thread', 'child-channel')).resolves.toEqual([
       { threadId: 'manager-thread', channel: 'manager-channel', agentId: 'coding-manager', jobId: 'manager-job', taskIndex: 1, kind: 'agent' },
+      { threadId: 'root-chat', channel: 'root-channel', agentId: 'root-channel', kind: 'agent' },
       { threadId: 'root-chat', channel: 'root-channel', agentId: 'human', kind: 'human' },
     ]);
     await expect(resolver.resolve('root-chat', 'root-channel')).resolves.toEqual([

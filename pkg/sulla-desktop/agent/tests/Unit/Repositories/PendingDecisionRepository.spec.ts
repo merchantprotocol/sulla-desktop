@@ -70,6 +70,24 @@ describe('PendingDecisionRepository', () => {
     expect(sql).not.toContain("'you','human'");
   });
 
+  it('requires persisted any-authority and the current holder for every agent late-answer write', async() => {
+    // risk: authorization — route-less legacy questions remain human-only even if a caller reaches the repository directly.
+    const record = { id: 'legacy-agent-answer', conversationId: 'chat', channel: 'sulla-desktop', kind: 'question', status: 'expired',
+      answeredBy: { kind: 'agent', threadId: 'parent-thread' } } as any;
+    const query = vi.fn(async() => []);
+    const repository = new PendingDecisionRepository({ query });
+    await repository.queueLateAnswer(record, [{ question: 'Color?', selected: ['Blue'] }], 'Parent answer');
+    await repository.recordJobAnswer(record, [{ question: 'Color?', selected: ['Blue'] }]);
+
+    expect(query).toHaveBeenCalledTimes(2);
+    const [chatSql] = query.mock.calls[0];
+    const [jobSql] = query.mock.calls[1];
+    expect(chatSql).toContain("$8::jsonb->>'kind'='human'");
+    expect(chatSql).toContain('$11::integer IS NOT NULL');
+    expect(jobSql).toContain("$3::jsonb->>'kind'='human'");
+    expect(jobSql).toContain('$5::integer IS NOT NULL');
+  });
+
   it('marks a successfully sent delegated answer delivered only while queued', async() => {
     // risk: user communication — a successful job-mailbox send must not leave a permanently queued decision receipt.
     const query = vi.fn(async() => [{ id: 'decision-1' }]);
