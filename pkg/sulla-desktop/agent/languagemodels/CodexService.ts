@@ -1039,7 +1039,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         steeringOpen = false;
         unsubscribeSteer();
         if (interruptEscalation) { clearTimeout(interruptEscalation); interruptEscalation = null }
-        if (handBack) for (const m of steers.splice(0)) markSteerPending(m);
+        if (handBack) for (const m of steers.splice(0)) markSteerPending(m, options.state);
       };
 
       const onAbort = () => {
@@ -1323,7 +1323,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         }
         // Steers taken but never delivered (the run ended first) go back to
         // the graph, which runs another turn for them.
-        for (const m of steered) markSteerPending(m);
+        for (const m of steered) markSteerPending(m, options.state);
 
         // Aborted by the caller (Stop, or a new/steering message superseding
         // this run) — report an abort, not a provider failure that would

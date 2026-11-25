@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { ReturnedTaskSettlement } from './ReturnedTaskSettlement';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { deliverJobCompletion, returnedJobResult } from '../tools/agents/jobDelivery';
@@ -93,9 +95,12 @@ export class AgentJobLifecycleService {
 
   async waitForWake(threadId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void> {
     if (signal?.aborted) return;
+    const state = this.liveState(threadId);
+    if (state && (DeferredStallInput.actionableMessages(state).length || DelegatedCompletionHandoff.hasWakeEntries(state)
+      || (state.metadata as any).delegatedContractReturned)) return;
     const queuedAt = this.pendingWakes.get(threadId);
     this.pendingWakes.delete(threadId);
-    if (queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;
+    if (!state && queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;
     await new Promise<void>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = () => {
@@ -114,6 +119,7 @@ export class AgentJobLifecycleService {
   wake(threadId: string): boolean {
     const waiter = this.waiters.get(threadId);
     if (!waiter) {
+      if (this.liveState(threadId)) return false; // unread state, not a TTL, owns this wake
       const cutoff = Date.now() - AgentJobLifecycleService.PENDING_WAKE_TTL_MS;
       for (const [key, queuedAt] of this.pendingWakes) if (queuedAt < cutoff) this.pendingWakes.delete(key);
       if (this.pendingWakes.size >= AgentJobLifecycleService.MAX_PENDING_WAKES) this.pendingWakes.delete(this.pendingWakes.keys().next().value as string);

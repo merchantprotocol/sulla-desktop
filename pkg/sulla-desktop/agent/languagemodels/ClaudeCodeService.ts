@@ -1491,7 +1491,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           steeringOpen = false;
           unsubscribeSteer();
           if (steerGraceTimer) { clearTimeout(steerGraceTimer); steerGraceTimer = null }
-          for (const s of steersInFlight.splice(0)) markSteerPending(s.message);
+          for (const s of steersInFlight.splice(0)) markSteerPending(s.message, options.state);
         };
         if (options.signal) {
           if (options.signal.aborted) onAbort();

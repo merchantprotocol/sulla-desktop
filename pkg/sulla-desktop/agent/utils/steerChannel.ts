@@ -53,9 +53,12 @@ export function markSteerDelivered(message: ChatMessage): void {
 }
 
 /** Hand a steer back to the graph — the live turn took it but never used it. */
-export function markSteerPending(message: ChatMessage): void {
+export function markSteerPending(message: ChatMessage, state?: { messages: ChatMessage[] }): void {
   const meta = (message as any).metadata;
-  if (meta) meta.steerPending = true;
+  if (meta) {
+    meta.steerPending = true;
+    if (state) DeferredStallInput.markActionable(state, message);
+  }
 }
 
 /**

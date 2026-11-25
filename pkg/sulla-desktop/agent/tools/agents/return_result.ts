@@ -101,6 +101,13 @@ export class ReturnResultWorker extends BaseTool {
     }
 
     if (recorded.visibility !== 'tab') {
+      const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');
+      const thread = recorded.tasks[taskIndex]?.threadId;
+      const live = thread && agentJobLifecycle.liveState(thread);
+      if (live) {
+        (live.metadata as any).delegatedContractReturned = { jobId: job.jobId, taskIndex, returnedAt: recorded.tasks[taskIndex].returnedAt };
+        agentJobLifecycle.wake(thread!);
+      }
       // A rehydrated parked manager has no original promise chain left to
       // settle it after a restart, so its return commits and wakes its parent
       // here. A live runner sees the same recorded return and completion is
