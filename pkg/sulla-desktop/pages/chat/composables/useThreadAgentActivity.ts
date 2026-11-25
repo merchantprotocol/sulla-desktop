@@ -7,14 +7,16 @@ import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHi
 import {
   ThreadAgentActivityPresenter,
   type PresentedThreadAgent,
-  type ThreadAgentActivityNode,
   type ThreadAgentActivityProjection,
 } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
-import type { StatusRollupItem, StatusRollupKind } from '../components/composer/StatusRollupQueue';
+import type { StatusRollupItem, StatusRollupShownEvent } from '../components/composer/StatusRollupQueue';
 import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
-import type { TraceRow } from '../components/transcript/traceTypes';
 import type { Message } from '../models/Message';
-import type { WorkerChartAgent, WorkerChartState } from '../components/workerChart/workerChartModel';
+import type { WorkerChartSnippetTick, WorkerChartAgent } from '../components/workerChart/WorkerChartController';
+import { ThreadAgentActivityMapper } from './ThreadAgentActivityMapper';
+import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor } from './ThreadAgentActivityEvents';
+
+export { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor } from './ThreadAgentActivityEvents';
 
 export interface ThreadAgentActivitySources {
   readonly snapshot: Readonly<Ref<AgentStateSnapshot>>;
@@ -42,422 +44,17 @@ export interface ThreadAgentActivity {
   consumeCheckIns(): void;
   readonly rootFallback: ComputedRef<StatusRollupItem | null>;
   readonly chartRoot: ComputedRef<WorkerChartAgent | null>;
-}
-
-/** Diffs mutable source projections while retaining only the previous projection's keys. */
-export class ThreadAgentEventProjectionDiff {
-  private previousKeys = new Set<string>();
-
-  get retainedKeyCount(): number {
-    return this.previousKeys.size;
-  }
-
-  has(key: string): boolean {
-    return this.previousKeys.has(key);
-  }
-
-  diff(items: readonly StatusRollupItem[]): StatusRollupItem[] {
-    const currentKeys = new Set<string>();
-    const projectionKeys = new Set<string>();
-    const emitted: StatusRollupItem[] = [];
-    for (const item of items) {
-      if (projectionKeys.has(item.key)) continue;
-      projectionKeys.add(item.key);
-      currentKeys.add(item.key);
-      if (this.previousKeys.has(item.key)) {
-        if (item.kind === 'thought') emitted.push({ ...item, updateOnly: true });
-      } else {
-        emitted.push(item);
-      }
-    }
-    this.previousKeys = currentKeys;
-    return emitted;
-  }
-
-  /** Marks the current projection as already present without replaying its backlog. */
-  prime(items: readonly StatusRollupItem[]): void {
-    this.previousKeys = new Set(items.map(item => item.key));
-  }
-
-  clear(): void {
-    this.previousKeys.clear();
-  }
-}
-
-/** Compact cursor for immutable, append-only history rows returned as complete arrays. */
-export class ThreadAgentHistoryCursor {
-  private highestObservedAt = Number.NEGATIVE_INFINITY;
-  private keysAtHighestTimestamp = new Set<string>();
-
-  get retainedKeyCount(): number {
-    return this.keysAtHighestTimestamp.size;
-  }
-
-  /** Emits only new append-only rows, retaining ties at the current source timestamp. */
-  select(items: readonly StatusRollupItem[]): StatusRollupItem[] {
-    const selected: StatusRollupItem[] = [];
-    const ordered = [...items].sort((left, right) => left.observedAt - right.observedAt);
-    for (const item of ordered) {
-      if (!Number.isFinite(item.observedAt)) continue;
-      if (item.observedAt < this.highestObservedAt) continue;
-      if (item.observedAt > this.highestObservedAt) {
-        this.highestObservedAt = item.observedAt;
-        this.keysAtHighestTimestamp.clear();
-      }
-      if (this.keysAtHighestTimestamp.has(item.key)) {
-        continue;
-      }
-      this.keysAtHighestTimestamp.add(item.key);
-      selected.push(item);
-    }
-    return selected;
-  }
-
-  /** Seeds the cursor when old projected history should not be replayed. */
-  prime(items: readonly StatusRollupItem[]): void {
-    const ordered = [...items].sort((left, right) => left.observedAt - right.observedAt);
-    for (const item of ordered) {
-      if (!Number.isFinite(item.observedAt) || item.observedAt < this.highestObservedAt) continue;
-      if (item.observedAt > this.highestObservedAt) {
-        this.highestObservedAt = item.observedAt;
-        this.keysAtHighestTimestamp.clear();
-      }
-      this.keysAtHighestTimestamp.add(item.key);
-    }
-  }
-
-  clear(): void {
-    this.highestObservedAt = Number.NEGATIVE_INFINITY;
-    this.keysAtHighestTimestamp.clear();
-  }
-}
-
-/** Holds only events awaiting transfer to the status queue. */
-export class ThreadAgentEventBuffer {
-  readonly items = ref<StatusRollupItem[]>([]);
-
-  /** Retains one newest event while the status-line consumer is absent. */
-  appendNewest(item: StatusRollupItem): void {
-    const existing = this.items.value[0];
-    if (existing?.key === item.key && existing.kind === 'thought' && item.kind === 'thought' && existing.text !== item.text) {
-      this.items.value = [existing.updateOnly ? item : { ...item, updateOnly: false }];
-      return;
-    }
-    if (existing && item.observedAt < existing.observedAt) return;
-    this.items.value = [item.updateOnly ? { ...item, updateOnly: false } : item];
-  }
-
-  /** Keeps only the most recent pending event when the consumer detaches. */
-  retainNewest(): void {
-    const newest = this.items.value[this.items.value.length - 1];
-    this.items.value = newest ? [newest.updateOnly ? { ...newest, updateOnly: false } : newest] : [];
-  }
-
-  append(item: StatusRollupItem): void {
-    const index = this.items.value.findIndex(existing => existing.key === item.key);
-    if (index >= 0) {
-      const existing = this.items.value[index];
-      if (item.kind === 'thought' && existing?.kind === 'thought' && existing.text !== item.text) {
-        const updated = [...this.items.value];
-        updated[index] = existing.updateOnly ? item : { ...item, updateOnly: false };
-        this.items.value = updated;
-      }
-      return;
-    }
-
-    const ordered = [...this.items.value];
-    let low = 0;
-    let high = ordered.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (ordered[middle]!.observedAt <= item.observedAt) low = middle + 1;
-      else high = middle;
-    }
-    ordered.splice(low, 0, item);
-    this.items.value = ordered;
-  }
-
-  consume(): void {
-    this.items.value = [];
-  }
-
-  clear(): void {
-    this.consume();
-  }
+  readonly snippetTick: Readonly<Ref<WorkerChartSnippetTick | null>>;
+  /** Relays each newly shown status snippet as a sequenced chart marker tick. */
+  statusItemShown(event: StatusRollupShownEvent): void;
 }
 
 export const THREAD_AGENT_ACTIVITY_KEY: InjectionKey<ThreadAgentActivity> = Symbol('ThreadAgentActivity');
 
-/** Adapts the detailed transcript, scoped live snapshots, and authorized trace history into line events. */
-class ThreadAgentActivityMapper {
-  private readonly traceProjection = new DetailedTraceProjection();
-
-  checkins(projection: ThreadAgentActivityProjection, threadId: string): StatusRollupItem[] {
-    return projection.agents.flatMap(agent => agent.checkins.flatMap(checkin => {
-      const item = this.snapshotCheckin(agent, threadId, checkin.at, checkin.summary);
-      return item ? [item] : [];
-    }));
-  }
-
-  snapshotCheckin(agent: PresentedThreadAgent, threadId: string, at = agent.row.lastCheckinAt, summary = agent.row.lastCheckinSummary): StatusRollupItem | null {
-    const observedAt = at ? Date.parse(at) : NaN;
-    const text = summary?.trim();
-    if (!Number.isFinite(observedAt) || !text) return null;
-    return this.statusItem(agent, threadId, this.checkinText('', text), observedAt,
-      `agent-checkin:${threadId}:${agent.row.key}:${at}:${text}`, 'agent');
-  }
-
-  primaryTrace(messages: readonly Message[], threadId: string, agentName: string, now: number): StatusRollupItem[] {
-    const recentMessages = messages.slice(-40);
-    const byId = new Map(recentMessages.map(message => [String(message.id), message]));
-    const rows = this.traceProjection.project(recentMessages, []).flatMap(turn => turn.rows);
-    const items = rows.map(row => this.traceItem(row, byId, threadId, agentName, now));
-    for (const message of recentMessages) {
-      if (message.kind === 'streaming') {
-        items.push({
-          key: `reply-start:${threadId}:${String(message.id)}`,
-          threadId,
-          agentId: `chat:${threadId}`,
-          agentName: agentName.trim() || 'Sulla',
-          kind: 'reply',
-          text: 'Writing a reply',
-          observedAt: message.startedAt || message.createdAt,
-          urgency: 'normal',
-          role: 'root',
-        });
-      } else if (message.kind === 'subagent_exchange' && message.direction === 'to_agent') {
-        items.push({
-          key: `agent-brief:${threadId}:${String(message.id)}`,
-          threadId,
-          agentId: message.jobId ? `${message.jobId}:${message.taskIndex ?? 0}` : message.agentId,
-          agentName: message.label || message.agentId,
-          kind: 'agent',
-          text: `Brief sent${message.summary ? `: ${message.summary}` : ''}`,
-          observedAt: message.createdAt,
-          urgency: 'normal',
-          role: 'worker',
-        });
-      }
-    }
-    return items.sort((left, right) => left.observedAt - right.observedAt);
-  }
-
-  history(agent: PresentedThreadAgent, history: AgentTraceHistoryData, threadId: string): StatusRollupItem[] {
-    const items: StatusRollupItem[] = [
-      ...history.checkins.map(checkin => this.statusItem(agent, threadId,
-        this.checkinText(checkin.step, checkin.summary), checkin.createdAt,
-        `agent-checkin:${threadId}:${agent.row.key}:${new Date(checkin.createdAt).toISOString()}:${checkin.summary}`, 'agent')),
-      ...history.messages.map(message => this.statusItem(agent, threadId, `Message sent: ${message.message}`, message.createdAt,
-        `agent-message:${threadId}:${agent.row.key}:${message.createdAt}:${message.message}`, 'agent')),
-    ];
-    return items.filter(item => Number.isFinite(item.observedAt)).sort((left, right) => left.observedAt - right.observedAt);
-  }
-
-  state(agent: PresentedThreadAgent, threadId: string, at: number, key: string): StatusRollupItem {
-    const { row } = agent;
-    const label = this.stateLabel(agent.state);
-    const detail = row.stateReason?.trim();
-    return this.statusItem(agent, threadId, detail && ['blocked', 'failed', 'lost', 'stopped'].includes(agent.state)
-      ? `${label}: ${detail}` : label, at, key, 'agent');
-  }
-
-  tool(agent: PresentedThreadAgent, threadId: string, name: string, at: number, key: string, phase: 'started' | 'finished' | 'failed', correlationId: string): StatusRollupItem {
-    const kind = this.toolKind(name);
-    const item = this.statusItem(agent, threadId, `${phase === 'started' ? 'Running' : phase === 'failed' ? 'Failed' : 'Finished'} ${name}`,
-      at, key, kind);
-    return {
-      ...item,
-      phase: phase === 'started' ? 'start' : 'result',
-      correlationId,
-      ...(phase === 'failed' ? { urgency: 'failed' as const } : {}),
-    };
-  }
-
-  liveActivity(agent: PresentedThreadAgent, threadId: string, at: number, key: string): StatusRollupItem {
-    return this.statusItem(agent, threadId, agent.row.stateReason?.trim() || this.stateLabel(agent.state), at, key, 'status');
-  }
-
-  rootFallback(projection: ThreadAgentActivityProjection, threadId: string | undefined, now: number): StatusRollupItem | null {
-    if (!threadId || projection.scope === 'empty') return null;
-    const ownRows = projection.agents.filter(agent => agent.row.threadId === threadId);
-    // A fallback is only safe when the active thread identifies exactly one of its own agent rows.
-    if (ownRows.length !== 1) return null;
-    const ownRoot = ownRows[0];
-    const lastText = ownRoot.row.lastCheckinSummary?.trim() || ownRoot.row.stateReason?.trim() || this.stateLabel(ownRoot.row.state);
-    const observedAt = this.timestamp(ownRoot.row.lastCheckinAt ?? ownRoot.row.lastActivityAt, now) ?? now;
-    return this.statusItem(ownRoot, threadId, lastText, observedAt, `${ownRoot.row.key}:fallback`, 'status', 'root');
-  }
-
-  chartRoot(projection: ThreadAgentActivityProjection, threadId: string | undefined): WorkerChartAgent | null {
-    if (!threadId || projection.scope === 'empty' || !projection.roots.length) return null;
-
-    const roots = projection.roots.map(node => this.chartNode(node));
-    if (projection.scope === 'child' && roots.length === 1) return roots[0];
-
-    // A root chat can launch several independent top-level jobs. Keep every
-    // scoped tree visible under the chat's virtual root instead of dropping siblings.
-    return {
-      id: `chat:${threadId}`,
-      name: 'Sulla',
-      initials: 'S',
-      state: this.aggregateState(roots),
-      children: roots,
-    };
-  }
-
-  private traceItem(row: TraceRow, byId: ReadonlyMap<string, Message>, threadId: string, agentName: string, now: number): StatusRollupItem {
-    const message = byId.get(String(row.id));
-    const agentRow = row.kind === 'subagent' ? row.subagent : undefined;
-    const name = row.kind === 'subagent' ? row.target : agentName.trim() || 'Sulla';
-    const kind = this.traceKind(row, message);
-    const text = this.traceText(row, message);
-    const at = Number.isFinite(row.at) ? row.at! : now;
-    const state = row.status;
-    const urgency = state === 'failed' ? 'failed' : state === 'blocked' || state === 'waiting' ? 'needs-you' : 'normal';
-    return {
-      key: row.kind === 'thought'
-        ? `trace:${threadId}:${row.id}:${state}:${row.verb}`
-        : `trace:${threadId}:${row.id}:${state}:${row.verb}:${row.target}`,
-      threadId,
-      agentId: agentRow?.jobId ? `${agentRow.jobId}:${agentRow.taskIndex ?? 0}` : `chat:${threadId}`,
-      agentName: name,
-      kind,
-      text,
-      observedAt: at,
-      urgency,
-      role: agentRow ? 'worker' : 'root',
-      ...(row.kind === 'tool' ? { phase: state === 'running' ? 'start' as const : 'result' as const, correlationId: `primary:${threadId}:${row.id}` } : {}),
-    };
-  }
-
-  private traceKind(row: TraceRow, message?: Message): StatusRollupKind {
-    if (row.kind === 'thought') return 'thought';
-    if (row.kind === 'activity' || row.kind === 'approval' || row.kind === 'heartbeat') return 'status';
-    if (row.kind === 'source') return 'read';
-    if (row.kind === 'tool' && message?.kind === 'tool') return this.toolKind(message.recordedToolName ?? message.tool);
-    if (row.kind === 'subagent') return 'agent';
-    return row.kind === 'memory' ? 'edit' : 'status';
-  }
-
-  private traceText(row: TraceRow, message?: Message): string {
-    switch (row.kind) {
-      case 'tool': {
-        if (message?.kind !== 'tool') return `${row.verb} ${row.target}`;
-        return message.desc?.trim() || message.recordedToolName || message.tool;
-      }
-      case 'thought': return row.target;
-      case 'activity': return row.target;
-      case 'source': return `${row.verb}: ${row.target}`;
-      case 'approval': {
-        const reason = message?.kind === 'tool_approval' ? message.reason : row.target;
-        return `${row.status === 'waiting' ? 'Needs you' : 'Approval'}: ${reason}`;
-      }
-      case 'subagent': return `${row.status}${row.note ? `: ${row.note}` : ''}`;
-      case 'heartbeat': return `${row.verb}: ${row.target}`;
-      case 'memory': return `${row.verb}: ${row.target}`;
-      default: return `${row.verb}: ${row.target}`;
-    }
-  }
-
-  private statusItem(
-    agent: PresentedThreadAgent,
-    threadId: string,
-    text: string,
-    observedAt: number,
-    key: string,
-    kind: StatusRollupKind,
-    role?: StatusRollupItem['role'],
-  ): StatusRollupItem {
-    return {
-      key,
-      threadId,
-      agentId: agent.row.key,
-      agentName: agent.row.label?.trim() || agent.row.agentId || 'Agent',
-      lane: agent.lane,
-      kind,
-      text,
-      observedAt,
-      urgency: agent.urgency,
-      role: role ?? (agent.row.waitingOnChildren > 0 ? 'manager' : 'worker'),
-    };
-  }
-
-  private checkinText(step: string, summary: string): string {
-    return step && step !== summary ? `${step}: ${summary}` : summary;
-  }
-
-  private toolKind(name: string): StatusRollupKind {
-    if (/^(?:Read|Glob|Grep|LS|Search|Fetch|Browser)/i.test(name)) return 'read';
-    if (/^(?:Edit|Write|Patch|Replace)/i.test(name)) return 'edit';
-    if (/^(?:Bash|exec|run|shell)/i.test(name)) return 'run';
-    return 'tool';
-  }
-
-  private chartNode(node: ThreadAgentActivityNode): WorkerChartAgent {
-    const { agent } = node;
-    const row = agent.row;
-    const latestCheckin = agent.checkins[agent.checkins.length - 1];
-    return {
-      id: row.key,
-      name: row.label?.trim() || row.agentId || 'Agent',
-      initials: agent.initials,
-      lane: agent.lane,
-      state: this.chartState(agent),
-      model: row.modelStatus?.model ?? null,
-      task: row.stateReason || row.lastCheckinSummary || undefined,
-      startedAt: this.timestamp(row.startedAt),
-      finishedAt: this.timestamp(row.endedAt),
-      lastCheckIn: latestCheckin ? { timestamp: this.timestamp(latestCheckin.at)!, text: latestCheckin.summary } : null,
-      activity: agent.activity.flatMap(value => {
-        const timestamp = this.timestamp(value);
-        return timestamp === null ? [] : [{ timestamp, value: 1 }];
-      }),
-      children: node.children.map(child => this.chartNode(child)),
-    };
-  }
-
-  private chartState(agent: PresentedThreadAgent): WorkerChartState {
-    if (agent.urgency === 'failed' || agent.state === 'lost') return 'failed';
-    if (agent.urgency === 'needs-you') return 'needs-you';
-    if (agent.state === 'parked') return 'parked';
-    if (agent.state === 'done' || agent.state === 'stopped') return 'done';
-    return 'working';
-  }
-
-  private aggregateState(roots: readonly WorkerChartAgent[]): WorkerChartState {
-    const states = roots.map(root => root.state);
-    if (states.includes('failed')) return 'failed';
-    if (states.includes('needs-you')) return 'needs-you';
-    if (states.includes('working')) return 'working';
-    if (states.includes('parked')) return 'parked';
-    return 'done';
-  }
-
-  private stateLabel(state: PresentedThreadAgent['state']): string {
-    switch (state) {
-      case 'queued': return 'Starting';
-      case 'working': return 'Working';
-      case 'parked': return 'Working';
-      case 'quiet': return 'Quiet';
-      case 'blocked': return 'Needs you';
-      case 'failed': return 'Failed';
-      case 'lost': return 'Not reporting';
-      case 'stopped': return 'Stopped';
-      case 'done': return 'Returned';
-    }
-  }
-
-  timestamp(value: string | null | undefined, fallback?: number): number | null {
-    if (!value) return fallback ?? null;
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? parsed : fallback ?? null;
-  }
-}
-
 export function useThreadAgentActivity(sources: ThreadAgentActivitySources): ThreadAgentActivity {
   const presenter = new ThreadAgentActivityPresenter();
   const eventPresenter = new ThreadAgentActivityPresenter();
-  const mapper = new ThreadAgentActivityMapper();
+  const mapper = new ThreadAgentActivityMapper(new DetailedTraceProjection());
   const now = sources.now ?? Date.now;
   const projection = computed(() => presenter.project(
     sources.snapshot.value,
@@ -482,6 +79,8 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let historyTimer: ReturnType<typeof setInterval> | undefined;
   let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingTranscript: { threadId: string; messages: readonly Message[]; agentName: string } | undefined;
+  let snippetSequence = 0;
+  const snippetTick = ref<WorkerChartSnippetTick | null>(null);
 
   const resetThread = (threadId: string | undefined): void => {
     if (activeThreadId === threadId) return;
@@ -492,6 +91,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     pendingTranscript = undefined;
     activeThreadId = threadId;
     eventBuffer.clear();
+    snippetTick.value = null;
     previousRows.clear();
     snapshotCheckinDiffs.clear();
     historyCursors.clear();
@@ -713,5 +313,10 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     consumeCheckIns: () => eventBuffer.consume(),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
     chartRoot: computed(() => mapper.chartRoot(projection.value, sources.threadId.value)),
+    snippetTick,
+    statusItemShown: (event: StatusRollupShownEvent) => {
+      if (!event.agentId || event.threadId !== sources.threadId.value) return;
+      snippetTick.value = { agentId: event.agentId, sequence: ++snippetSequence };
+    },
   };
 }

@@ -29,7 +29,7 @@ export interface ThreadAgentActivityProjection {
 
 /** Projects the shared live-agent snapshot into only the current thread's proven tree. */
 export class ThreadAgentActivityPresenter {
-  static readonly activityWindowMs = 150_000;
+  static readonly activityWindowMs = 154_000;
   static readonly maxCheckinsPerAgent = 6;
   static readonly maxActivityPerAgent = 30;
 

@@ -6,8 +6,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AgentStateService, type AgentStateStore } from '../../../app/Services/AgentStateService';
 import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
+import { AgentLaunchCapabilityLookup } from '../../../services/AgentLaunchCapabilityLookup';
 import { AgentLivenessReconciler } from '../../../app/Services/AgentLivenessReconciler';
 import type { AgentJob, AgentJobTask } from '../../../tools/agents/jobRegistry';
+import type { AgentDefinition } from '../../../database/models/AgentDefinitionModel';
 import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActivityProjector';
 import { AgentJobLivenessPolicy } from '../../../services/AgentJobLivenessPolicy';
 
@@ -68,6 +70,28 @@ describe('authoritative live agent state', () => {
     store.jobsForProjection = async() => [];
     expect(await states.jobsForProjection(120_000)).toEqual([]);
     expect((await new AgentStateProjector(states, new EmptyTelemetry(), () => 10_000).snapshot()).rows).toEqual([]);
+  });
+
+  it('projects delegation capability from live agent definitions into each task row', async() => {
+    // risk: misleading agent role — manager styling must come from live can_call capability, not model identity.
+    const manager = job('manager', [task({ agentId: 'coding-manager-sol', label: 'Build feature', threadId: 'manager-thread' })]);
+    const worker = job('worker', [task({ agentId: 'opus-worker', label: 'Implement feature', threadId: 'worker-thread' })]);
+    const { states, store } = harness([manager, worker]);
+    store.jobsForProjection = async() => [manager, worker];
+    const definitions = {
+      list: async() => [
+        { slug: 'coding-manager-sol', can_call: ['*'] } as unknown as AgentDefinition,
+        { slug: 'opus-worker', can_call: [] } as unknown as AgentDefinition,
+      ],
+    };
+    const capabilityReader = new AgentLaunchCapabilityLookup(definitions, () => 10_000);
+    const projector = new AgentStateProjector(
+      states, new EmptyTelemetry(), () => 10_000, {}, undefined, undefined, 0, capabilityReader,
+    );
+
+    const rows = (await projector.snapshot()).rows;
+    expect(rows.find(row => row.agentId === 'coding-manager-sol')?.canLaunchAgents).toBe(true);
+    expect(rows.find(row => row.agentId === 'opus-worker')?.canLaunchAgents).toBe(false);
   });
 
   it('uses point reads for mutation and on-demand job lookup without loading history', async() => {
