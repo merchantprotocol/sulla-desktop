@@ -6,6 +6,7 @@ import '../../Support/TestHomeEnv';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider';
 import { DeferredStallInput } from '../../../app/Services/DeferredStallInput';
 import { clearCompletionInboxes, enqueueAgentCompletion, registerCompletionIdleDispatcher } from '../../../services/AgentCompletionInbox';
 import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
@@ -176,7 +177,12 @@ describe('delegated timer wake after graph-cache eviction', () => {
     backend.recoveryAbort = new AbortController();
     backend.dispatchToAgent = vi.fn(() => Promise.resolve('deferred'));
     vi.spyOn(parkedAgentRehydrator, 'isTerminalDelegatedThread').mockResolvedValue(false);
-    registerCompletionIdleDispatcher((channel, target) => backend.handleCompletionWake(channel, target));
+    vi.spyOn(agentJobProvider.jobs, 'markTaskCompletionFirstDelivered').mockResolvedValue(undefined);
+    vi.spyOn(agentJobProvider.completionAcknowledgements, 'acknowledge').mockResolvedValue(undefined);
+    const dispatches: Promise<unknown>[] = [];
+    registerCompletionIdleDispatcher((channel, target) => {
+      dispatches.push(backend.handleCompletionWake(channel, target));
+    });
     const childReturns = () => enqueueAgentCompletion('sulla-desktop', threadId, {
       jobId: 'lost-wake-child',
       taskIndex: 0,
@@ -251,9 +257,12 @@ describe('delegated timer wake after graph-cache eviction', () => {
       scheduler.stop();
       cache.clear();
       await flushMicrotasks();
-      await run;
-      releaseOwner?.();
-      clearCompletionInboxes();
+      try {
+        await Promise.all([run, ...dispatches, ...backend.dispatchToAgent.mock.results.map((result: any) => result.value)]);
+      } finally {
+        releaseOwner?.();
+        clearCompletionInboxes();
+      }
     }
   });
 });
