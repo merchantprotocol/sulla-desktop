@@ -23,6 +23,7 @@ import { providerSessionStore } from './providerSessionStore';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { emitCodexToolEvent } from './codexToolEvents';
@@ -50,6 +51,8 @@ const CODEX_PID_MARKER = 'SULLA_CODEX_PID=';
 
 /** After SIGINT for a steer, how long codex gets to save its thread and exit before SIGTERM. */
 const STEER_INTERRUPT_GRACE_MS = 10_000;
+/** Jonathon's rule (2026-11-23): Codex must not sit idle longer than this. Idle = the whole agent loop, not chat. */
+export const CODEX_STALL_TIMEOUT_MS = 3 * 60 * 1_000;
 
 /** Opening line of the resume prompt that delivers a steer to an interrupted codex turn. */
 const STEER_RESUME_NOTE = '[Steering message] The user sent the message below while you were working. Your turn was paused to deliver it. Take it into account and carry on with the task. Do not start over or repeat work that is already done.';
@@ -639,7 +642,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
     const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
-    const providerBridgePodId = currentAgentContainerRuntime()?.podId;
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -853,7 +855,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       let unsubscribeProviderBridgeRetryStatus = () => {};
       let lastUsage: any = null;
       let sawTerminalResult = false;
-      const activeToolItems = new Map<string, { startedAt: number; approval: boolean }>();
+      // Whole-loop liveness: stdout/stderr, every JSONL event, tool start and
+      // result, and provider stream chunks relayed by the bridge (reasoning
+      // tokens arrive there long before `codex exec --json` prints the item).
+      // Container runs record bridge activity under the runtime pod; VM runs on a
+      // bridge lease (vault authority, first-run pending bridge) under the lease's pod.
+      const providerBridgePodId = currentAgentContainerRuntime()?.podId ?? executionAuth?.podId;
+      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, () => Date.now(),
+        () => providerBridgeActivity.lastModelOutputAt(providerBridgePodId));
+      let hungTool: RunToolInFlight | undefined;
+      let lastBridgeOutputReportedAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
       let sawToolExecution = false;
       let unresolvedTool = false;
       let settled = false;
@@ -923,12 +934,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       };
 
       // ── Stall watchdog ──────────────────────────────────────────────
-      // Jonathon's rule (2026-11-23): Codex must not sit silent for more than
-      // three minutes. Only process spawn and actual stdout/stderr reset this
-      // clock; provider-bridge activity is not model output.
-      const STALL_TIMEOUT_MS = 3 * 60 * 1_000;
+      // Jonathon's rules: Codex must not sit silent for more than three
+      // minutes (2026-11-23), and silence means the WHOLE loop is idle
+      // (2026-11-24): no stream byte, no JSONL event, no provider stream chunk
+      // and no tool call still running. Provider retry status (429/503) never
+      // counts. A tool running past LONG_TOOL_CEILING_MS is reported as a hung
+      // tool, not a dead agent.
       const STALL_CHECK_MS = 30 * 1_000;
-      let lastStreamActivityAt = Date.now();
       let stalled = false;
       let stallTimer: NodeJS.Timeout | null = null;
       const stopStallWatchdog = () => {
@@ -939,22 +951,27 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         unsubscribeProviderBridgeRetryStatus();
         unsubscribeProviderBridgeRetryStatus = () => {};
       };
-      const stallErrorMessage = () => unresolvedTool
-        ? 'Codex stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+      const stallErrorMessage = () => hungTool
+        ? `Codex ${ describeHungTool(hungTool) }, with no other activity. Recovery was not attempted because replay could duplicate side effects.`
         : latestRateLimitReason
           ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
           : 'Codex stalled: no output for 3 minutes';
       const startStallWatchdog = () => {
-        lastStreamActivityAt = Date.now();
+        liveness.start();
         stallTimer = setInterval(() => {
-          const silentMs = Date.now() - lastStreamActivityAt;
-          if (activeToolItems.size > 0) {
-            const tools = [...activeToolItems.values()];
-            if (tools.some(tool => tool.approval && Date.now() - tool.startedAt < 2 * 60 * 60_000)) return;
-            if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
-            unresolvedTool = true;
+          // Relayed model output (reasoning) is invisible on stdout; pass it up to the job clock.
+          const bridgeOutputAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
+          if (bridgeOutputAt > lastBridgeOutputReportedAt) {
+            lastBridgeOutputReportedAt = bridgeOutputAt;
+            try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
           }
-          if (silentMs < STALL_TIMEOUT_MS) return;
+          const verdict = liveness.verdict();
+          if (verdict.kind === 'alive') return;
+          const silentMs = verdict.silentMs;
+          if (verdict.kind === 'tool_hung') {
+            unresolvedTool = true;
+            hungTool = verdict.tool;
+          }
           stalled = true;
           stopStallWatchdog();
           cleanupMcp();
@@ -1112,11 +1129,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             if (isTool && itemId) {
               if (parsed.type === 'item.started') {
                 callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input: item.arguments ?? item.input });
-                activeToolItems.set(itemId, {
-                  startedAt: Date.now(),
-                  approval:  /ask_user_question|approval|permission/i.test(String(item.tool ?? kind)),
-                });
-              } else activeToolItems.delete(itemId);
+                liveness.toolStarted(itemId, String(item.tool ?? item.name ?? kind));
+              } else if (parsed.type === 'item.completed') liveness.toolFinished(itemId);
             }
             if (isTool && parsed.type === 'item.started') sawToolExecution = true;
             if (kind === 'agent_message' && parsed.type === 'item.completed') {
@@ -1219,7 +1233,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       proc.stdout.on('data', (chunk) => {
         if (settled) return;
-        lastStreamActivityAt = Date.now();
+        liveness.touch();
+        try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
         stdoutBuffer = lines.pop() ?? '';
@@ -1228,7 +1243,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       proc.stderr.on('data', (chunk) => {
         if (settled) return;
-        lastStreamActivityAt = Date.now();
+        liveness.touch();
         let text = chunk.toString('utf-8');
         if (!codexPid && text.includes(CODEX_PID_MARKER)) {
           const m = new RegExp(`${ CODEX_PID_MARKER }(\\d+)\\s*`).exec(text);
@@ -1250,7 +1265,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         cleanupMcp();
         failureDiagnostics.failure({ error: err, fault: 'spawn', conversationId: convId, runId: diagnosticRunId });
         if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
-        const retrySafe = activeToolItems.size === 0 && !unresolvedTool;
+        const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool;
         const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
         reject(new CliFaultError('spawn', `Codex process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe));
       });
@@ -1371,9 +1386,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
           if (signal) Object.assign(typedFailure, { signal });
           failureDiagnostics.failure({ error: typedFailure, fault: 'process_exit', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
-          reject(isPermanentCliFailure(typedFailure) && !(activeToolItems.size > 0 || unresolvedTool)
+          reject(isPermanentCliFailure(typedFailure) && !(liveness.toolsInFlight > 0 || unresolvedTool)
             ? typedFailure
-            : new CliFaultError('process_exit', `Codex: ${ msg }`, typedFailure, !(activeToolItems.size > 0 || unresolvedTool), Boolean(activeToolItems.size > 0 || unresolvedTool)));
+            : new CliFaultError('process_exit', `Codex: ${ msg }`, typedFailure, !(liveness.toolsInFlight > 0 || unresolvedTool), Boolean(liveness.toolsInFlight > 0 || unresolvedTool)));
           return;
         }
 
@@ -1382,16 +1397,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const typedFailure = legacyProviderFailure('codex', msg, { exitCode: code });
           if (signal) Object.assign(typedFailure, { signal });
           failureDiagnostics.failure({ error: typedFailure, fault: 'process_exit', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
+          const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
+          reject(!retrySafe && !(liveness.toolsInFlight > 0 || unresolvedTool)
             ? typedFailure
-            : new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+            : new CliFaultError('process_exit', `Codex: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (liveness.toolsInFlight > 0 || unresolvedTool)));
           return;
         }
 
         if (!sawTerminalResult) {
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool;
+          const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool;
           const protocolError = new CliFaultError('protocol', 'Codex exited before emitting a terminal completion event.', undefined, retrySafe, !retrySafe);
           failureDiagnostics.failure({ error: protocolError, fault: 'protocol', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           reject(protocolError);
@@ -1403,11 +1418,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const typedFailure = legacyProviderFailure('codex', stderrTail || 'Codex returned no output', { exitCode: code });
           if (signal) Object.assign(typedFailure, { signal });
           failureDiagnostics.failure({ error: typedFailure, fault: 'protocol', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
-          const retrySafe = activeToolItems.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
+          const retrySafe = liveness.toolsInFlight === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
           const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-          reject(!retrySafe && !(activeToolItems.size > 0 || unresolvedTool)
+          reject(!retrySafe && !(liveness.toolsInFlight > 0 || unresolvedTool)
             ? typedFailure
-            : new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (activeToolItems.size > 0 || unresolvedTool)));
+            : new CliFaultError('protocol', `Codex returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (liveness.toolsInFlight > 0 || unresolvedTool)));
           return;
         }
 

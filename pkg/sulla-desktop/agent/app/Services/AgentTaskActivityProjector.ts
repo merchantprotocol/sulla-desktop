@@ -5,6 +5,7 @@
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import { LiveTaskStatusProjector } from './LiveTaskStatusProjector';
 import { UnresolvedBlockerPolicy } from './UnresolvedBlockerPolicy';
+import { LONG_TOOL_CEILING_MS, toolHoldsRunAlive } from '../../services/RunLivenessClock';
 
 export interface AgentTaskActivityReader {
   lastActivityAt(key: string): number | undefined;
@@ -20,8 +21,8 @@ export class AgentTaskActivityProjector {
     private readonly activity: AgentTaskActivityReader,
     private readonly now: () => number = Date.now,
     private readonly quietAfterMs = 5 * 60_000,
-    /** A single command running longer than this is flagged even though it is still running. */
-    private readonly longCommandMs = 30 * 60_000,
+    /** A single command running longer than this is flagged (as a hung tool) even though it is still running. */
+    private readonly longCommandMs = LONG_TOOL_CEILING_MS,
     private readonly liveness: LiveTaskStatusProjector = new LiveTaskStatusProjector(),
     private readonly blockers: UnresolvedBlockerPolicy = new UnresolvedBlockerPolicy(liveness),
   ) {}
@@ -39,18 +40,27 @@ export class AgentTaskActivityProjector {
   /** `answeredAt` is the latest orchestrator-message delivery to this task, used to resolve its blocker. */
   project(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null): AgentTaskActivityProjection {
     const startedAt = task.startedAt ?? job.createdAt;
+    const tool = this.toolInFlight(job.jobId, taskIndex);
     const lastActivityAt = Math.max(
       startedAt,
       checkin?.createdAt ?? 0,
       this.activity.lastActivityAt(`${ job.jobId }#${ taskIndex }`) ?? 0,
       task.finishedAt ?? 0,
       task.returnedAt ?? 0,
+      // A tool still running is activity right now (up to the ceiling), so every
+      // reader of lastActivityAt (directory "stalled", alerts) sees a busy agent.
+      task.status === 'running' && this.isBusy(tool) ? this.now() : 0,
     );
-    return { lastActivityAt, state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, this.toolInFlight(job.jobId, taskIndex)) };
+    return { lastActivityAt, state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, tool) };
+  }
+
+  /** A tool call still running and still under the hung-tool ceiling, or waiting on the human. */
+  isBusy(tool?: { name?: string; startedAt: number }): boolean {
+    return toolHoldsRunAlive(tool && { name: tool.name ?? '', startedAt: tool.startedAt }, this.now(), this.longCommandMs);
   }
 
   /** Derived from the task's own lifecycle only. The job's status is never inherited. */
-  private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null, tool?: { startedAt: number }): string {
+  private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null, tool?: { name?: string; startedAt: number }): string {
     if (task.status === 'stopped') return 'stopped';
     // A stale task error can outlive a successfully delivered completion result.
     // Match AgentStateService's derived job status while keeping genuine errors terminal.
@@ -64,7 +74,7 @@ export class AgentTaskActivityProjector {
     if (task.status === 'parked' || (task.wakeAt !== undefined && task.wakeAt > this.now())) return 'parked';
     if (task.status === 'queued') return 'queued';
     // A long command emits nothing until it ends; that is work, not silence, up to a limit.
-    const busy = tool !== undefined && this.now() - tool.startedAt < this.longCommandMs;
+    const busy = this.isBusy(tool);
     if (task.status === 'running' && !busy && this.now() - lastActivityAt >= this.quietAfterMs) return 'quiet';
     return 'working';
   }

@@ -38,6 +38,7 @@ function parseCursorEvent(event: any): CliAgentEventResult {
     const [kind, details] = Object.entries(call).find(([, value]) => value && typeof value === 'object') ?? ['tool', call];
     const detail = details;
     const result = detail?.result ?? call.result ?? call.output ?? event.result ?? '';
+    const ended = ['failed', 'error', 'cancelled'].find(status => event.subtype === status || event.status === status) as 'failed' | 'error' | 'cancelled' | undefined;
     const completed = event.subtype === 'completed' || event.status === 'completed' || result !== '';
     return {
       sessionId,
@@ -45,7 +46,7 @@ function parseCursorEvent(event: any): CliAgentEventResult {
       toolState: {
         toolUseId: String(event.call_id ?? call.id ?? call.call_id ?? call.callId ?? kind),
         toolName:  String(kind),
-        status:    completed ? 'completed' : 'started',
+        status:    completed ? 'completed' : ended ?? 'started',
       },
       toolEvent: completed
         ? {
