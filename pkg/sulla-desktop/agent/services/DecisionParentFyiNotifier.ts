@@ -7,6 +7,7 @@ import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
 import type { PendingCompletion } from './AgentCompletionInbox';
 import { AgentAwarenessPolicy } from './AgentAwarenessPolicy';
+import { DecisionAuthorityPolicy } from './DecisionAuthorityPolicy';
 
 export interface DecisionParentFyiMailbox {
   channel: string;
@@ -26,7 +27,10 @@ export interface DecisionParentFyiDelivery {
 export class DecisionParentFyiNotifier {
   private readonly attemptedDecisionIds = new Set<string>();
 
-  constructor(private readonly delivery: DecisionParentFyiDelivery = new RuntimeDecisionParentFyiDelivery()) {}
+  constructor(
+    private readonly delivery: DecisionParentFyiDelivery = new RuntimeDecisionParentFyiDelivery(),
+    private readonly authorityPolicy = new DecisionAuthorityPolicy(),
+  ) {}
 
   async notify(record: DecisionRecord): Promise<void> {
     if (!this.isHumanOnly(record) || this.attemptedDecisionIds.has(record.id)) return;
@@ -52,7 +56,7 @@ export class DecisionParentFyiNotifier {
   }
 
   private isHumanOnly(record: DecisionRecord): boolean {
-    return record.kind === 'approval' || (record.kind === 'question' && record.route?.authority === 'human');
+    return this.authorityPolicy.classify(record) === 'human';
   }
 
   private isLive(target: AgentJobTaskTarget): boolean {

@@ -52,7 +52,7 @@ function serviceWith(delivery: DecisionParentFyiDelivery) {
     decisions: decisions as any,
     pendingDecisions: pendingDecisions as any,
     routeResolver: { resolve: async() => [] } as any,
-    askerWaiter: { park: async() => undefined } as any,
+    askerWaiter: { park: async() => undefined, parkQuestionAsker: async() => false } as any,
     parentFyiNotifier: notifier,
   });
   return { service, decisions, notifier };
@@ -60,6 +60,14 @@ function serviceWith(delivery: DecisionParentFyiDelivery) {
 
 function approval(id: string): DecisionRecord {
   return { id, conversationId: 'child-thread', channel: 'sulla-desktop', title: 'Run an action?', kind: 'approval', status: 'pending', createdAt: 1, expiresAt: 10 };
+}
+
+function question(id: string, task: boolean): DecisionRecord {
+  return {
+    id, conversationId: 'child-thread', channel: 'sulla-desktop', title: task ? 'Task question' : 'Plain question',
+    kind: 'question', status: 'pending', createdAt: 1, expiresAt: 10,
+    questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }], ...(task ? { task: true } : {}) }],
+  };
 }
 
 describe('DecisionParentFyiNotifier', () => {
@@ -86,6 +94,22 @@ describe('DecisionParentFyiNotifier', () => {
 
     expect(delivery.queueAgentMessage).toHaveBeenCalledTimes(3);
     expect(delivery.enqueueChatQuietly).not.toHaveBeenCalled();
+  });
+
+  it('notifies the parent for a task:true question with no route', async() => {
+    // risk: authority — task questions remain human-only even when no route is attached.
+    const delivery = new FyiDelivery();
+    const notifier = new DecisionParentFyiNotifier(delivery);
+    await notifier.notify(question('task-without-route', true));
+    expect(delivery.queueAgentMessage).toHaveBeenCalledOnce();
+  });
+
+  it('does not notify the parent for a plain question with no route', async() => {
+    // risk: authority — a parent FYI must not turn a plain question into a human-only request.
+    const delivery = new FyiDelivery();
+    const notifier = new DecisionParentFyiNotifier(delivery);
+    await notifier.notify(question('plain-without-route', false));
+    expect(delivery.queueAgentMessage).not.toHaveBeenCalled();
   });
 
   it('skips a missing parent and a parent with Sees other agents turned off', async() => {

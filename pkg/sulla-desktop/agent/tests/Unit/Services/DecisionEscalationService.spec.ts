@@ -170,7 +170,7 @@ class EscalationHarness {
     this.decisions = new DecisionService(lateAnswers, {
       decisions: this.store as any, pendingDecisions: this.store as any,
       routeResolver: routes, authorityPolicy: this.authority, holderNotifier: this.notifier,
-      askerWaiter: { park: async() => undefined }, escalation: this.escalation as any,
+      askerWaiter: { park: async() => undefined, parkQuestionAsker: async() => false }, escalation: this.escalation as any,
     });
   }
 
