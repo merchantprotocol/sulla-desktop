@@ -17,26 +17,9 @@ vi.mock('@pkg/agent/services/BackendGraphWebSocketService', () => ({
 }));
 
 import { ChatHeartbeatServiceProvider, chatHeartbeatProvider } from '@pkg/agent/app/Providers/ChatHeartbeatServiceProvider';
-import type { ChatHeartbeatJobRecord, ChatHeartbeatJobRecordStore } from '@pkg/agent/app/Repositories/ChatHeartbeatJobRepository';
+import type { ChatHeartbeatJobRecord } from '@pkg/agent/app/Repositories/ChatHeartbeatJobRepository';
+import { MemoryHeartbeatStore } from '../../Support/MemoryHeartbeatStore';
 import { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatService';
-
-class MemoryHeartbeatStore implements ChatHeartbeatJobRecordStore {
-  readonly records: ChatHeartbeatJobRecord[] = [];
-  readonly deleted: Array<{ jobId: string; taskIndex: number }> = [];
-
-  constructor(records: ChatHeartbeatJobRecord[] = []) { this.records.push(...records) }
-  async save(record: ChatHeartbeatJobRecord): Promise<void> {
-    const index = this.records.findIndex(row => row.jobId === record.jobId && row.taskIndex === record.taskIndex);
-    if (index < 0) this.records.push(record);
-    else this.records[index] = record;
-  }
-  async all(): Promise<ChatHeartbeatJobRecord[]> { return [...this.records] }
-  async delete(jobId: string, taskIndex: number): Promise<void> {
-    this.deleted.push({ jobId, taskIndex });
-    const index = this.records.findIndex(row => row.jobId === jobId && row.taskIndex === taskIndex);
-    if (index >= 0) this.records.splice(index, 1);
-  }
-}
 
 describe('ChatHeartbeatServiceProvider', () => {
   // risk: duplicate side effects — two schedulers would each fire heartbeat messages and split thread registrations.
@@ -151,5 +134,81 @@ describe('ChatHeartbeatServiceProvider', () => {
     ]));
     expect(heartbeats.records.map(record => record.jobId)).toEqual(['active-job']);
     provider.scheduler().unregister('active-thread');
+  });
+
+  it('restores the remaining job heartbeats when one record cannot be read, and never fails startup recovery', async() => {
+    // risk: one bad heartbeat row blocks runtime recovery, so finished sub-agent results are never redelivered.
+    const record = (jobId: string): ChatHeartbeatJobRecord => ({
+      jobId, taskIndex: 0, threadId: `${ jobId }-thread`, channel: 'sulla-desktop',
+      config: { intervalMinutes: 5, message: 'Resume work.', startedAt: 1_000, expiresAt: 21_601_000, setBy: 'agent' },
+      startedAt: 1_000, expiresAt: 21_601_000, setBy: 'agent',
+    });
+    const heartbeats = new MemoryHeartbeatStore([record('broken-job'), record('healthy-job')]);
+    const provider = new ChatHeartbeatServiceProvider({
+      jobChanges: { onJobChange: () => () => undefined },
+      jobHeartbeats: heartbeats,
+      getJob: async(jobId) => {
+        if (jobId === 'broken-job') throw new Error('job row unreadable');
+        return { jobId, status: 'parked', tasks: [{ threadId: `${ jobId }-thread`, status: 'parked' }] } as any;
+      },
+      hasRunningChildren: async() => false,
+      now: () => 10_000,
+    });
+
+    await expect(provider.rehydrateJobHeartbeats()).resolves.toBeUndefined();
+
+    expect(provider.scheduler().status('healthy-job-thread')).toMatchObject({ enabled: true, expiresAt: 21_601_000 });
+    expect(provider.scheduler().has('broken-job-thread')).toBe(false);
+    // The unreadable record is kept for the next recovery rather than destroyed on a transient error.
+    expect(heartbeats.records.map(row => row.jobId)).toEqual(['broken-job', 'healthy-job']);
+    provider.scheduler().unregister('healthy-job-thread');
+
+    const unreachable = new ChatHeartbeatServiceProvider({
+      jobChanges: { onJobChange: () => () => undefined },
+      jobHeartbeats: { save: async() => undefined, delete: async() => undefined, all: async() => { throw new Error('table unreachable') } },
+      getJob: async() => undefined,
+    });
+    await expect(unreachable.rehydrateJobHeartbeats()).resolves.toBeUndefined();
+  });
+
+  it('deletes the job heartbeat record at auto-off and queues the final beat for a task that is mid-turn', async() => {
+    // risk: an expired heartbeat is restored by the next restart; a busy agent is never told its heartbeat is gone.
+    vi.useFakeTimers();
+    try {
+      waits.wake.mockClear();
+      const heartbeats = new MemoryHeartbeatStore();
+      const queued: Array<{ target: unknown; threadId: string; message: string }> = [];
+      const provider = new ChatHeartbeatServiceProvider({
+        jobChanges: { onJobChange: () => () => undefined },
+        jobHeartbeats: heartbeats,
+        getJob: async() => ({
+          jobId: 'busy-job', status: 'running', parentChannel: 'sulla-desktop',
+          tasks: [{ threadId: 'busy-thread', agentId: 'codex-sol-worker', status: 'running' }],
+        }) as any,
+        hasRunningChildren: async() => false,
+        queueJobMessage: async(target, threadId, message) => { queued.push({ target, threadId, message }); return { id: 'queued-final' } },
+        now: () => Date.now(),
+      });
+      const scheduler = provider.scheduler();
+      scheduler.register({
+        threadId: 'busy-thread', channel: 'sulla-desktop', jobId: 'busy-job', taskIndex: 0,
+        config: { intervalMinutes: null, message: 'Keep going.', setBy: 'agent' },
+      });
+      scheduler.configure('busy-thread', { intervalMinutes: 60, message: 'Keep going.', setBy: 'agent' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(heartbeats.records.map(row => row.jobId)).toEqual(['busy-job']);
+
+      await vi.advanceTimersByTimeAsync(6 * 60 * 60_000);
+
+      expect(scheduler.status('busy-thread')?.enabled).toBe(false);
+      expect(heartbeats.records).toEqual([]);
+      expect(heartbeats.deleted).toContainEqual({ jobId: 'busy-job', taskIndex: 0 });
+      // Regular beats to the running task were dropped; only the final notice was queued, once.
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({ target: { jobId: 'busy-job', taskIndex: 0 }, threadId: 'busy-thread' });
+      expect(queued[0].message).toContain('System: your heartbeat was switched off automatically after 6 hours.');
+      expect(waits.wake).not.toHaveBeenCalled();
+      scheduler.unregister('busy-thread');
+    } finally { vi.useRealTimers() }
   });
 });
