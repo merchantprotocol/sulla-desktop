@@ -99,13 +99,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 import { newMessageId } from '../../types/chat';
+import { useHeartbeatControl } from './useHeartbeatControl';
 
 import {
   DEFAULT_CHAT_HEARTBEAT_MESSAGE,
   defaultChatHeartbeatConfig,
-  normalizeChatHeartbeatConfig,
   type ChatHeartbeatBeat,
-  type ChatHeartbeatConfig,
   type ChatHeartbeatStatus,
 } from '@pkg/shared/chatHeartbeat';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -133,7 +132,6 @@ const status = ref<ChatHeartbeatStatus>({
   expiresAt: null,
   ...defaultChatHeartbeatConfig(),
 });
-let registeredThreadId = '';
 let clock: ReturnType<typeof setInterval> | null = null;
 
 const backendThreadId = computed(() => controller.thread.value.backendThreadId ?? '');
@@ -154,79 +152,10 @@ const countdown = computed(() => {
   return `next in ${ Math.floor(seconds / 60) }:${ String(seconds % 60).padStart(2, '0') }`;
 });
 
-function syncForm(config: ChatHeartbeatConfig): void {
-  const minutes = config.intervalMinutes ?? lastMinutes.value;
-  if (config.intervalMinutes !== null) lastMinutes.value = config.intervalMinutes;
-  choice.value = presets.includes(minutes) ? String(minutes) : 'custom';
-  if (!presets.includes(minutes)) customMinutes.value = minutes;
-  draftMessage.value = config.message;
-}
-
-function errorText(err: unknown): string {
-  const text = err instanceof Error ? err.message : String(err ?? '');
-  // A main process started before this feature existed has no handler.
-  if (/no handler registered/i.test(text)) return 'Heartbeat service isn\'t loaded — restart Sulla Desktop.';
-  return text || 'Heartbeat service did not respond.';
-}
-
-async function register(threadId: string): Promise<boolean> {
-  if (!threadId) return false;
-  if (registeredThreadId && registeredThreadId !== threadId) {
-    await ipcRenderer.invoke('chat-heartbeat:unregister', registeredThreadId).catch(() => undefined);
-    registeredThreadId = '';
-  }
-  try {
-    const result = await ipcRenderer.invoke('chat-heartbeat:register', {
-      threadId,
-      channel: 'sulla-desktop',
-      // Plain copy — IPC can't structured-clone Vue's reactive proxy.
-      config:  normalizeChatHeartbeatConfig(controller.heartbeat.value),
-      busy:    controller.isRunning.value,
-    });
-    if (!result?.success) throw new Error(result?.error || 'register failed');
-    registeredThreadId = threadId;
-    status.value = result.status;
-    error.value = '';
-    return true;
-  } catch (err) {
-    error.value = errorText(err);
-    return false;
-  } finally {
-    syncForm(controller.heartbeat.value);
-  }
-}
-
-async function apply(config: ChatHeartbeatConfig): Promise<void> {
-  const normalized = normalizeChatHeartbeatConfig({ ...config, startedAt: null, expiresAt: null, setBy: 'human' });
-  syncForm(normalized);
-  // Register on demand — the chat may not have been registered yet (thread
-  // id arrived late, or the first attempt failed).
-  if (!registeredThreadId) {
-    const registered = await register(backendThreadId.value);
-    syncForm(normalized);
-    if (!registered) {
-      // No timer exists yet, so there is no deadline to lose: keep the choice
-      // for the registration that follows.
-      controller.setHeartbeat(normalized);
-      if (!backendThreadId.value) error.value = 'This chat has no backend thread yet — send a message first.';
-      return;
-    }
-  }
-  try {
-    const result = await ipcRenderer.invoke('chat-heartbeat:set', { threadId: registeredThreadId, config: normalized });
-    if (!result?.success) throw new Error(result?.error || 'update failed');
-    status.value = result.status;
-    // Tab state is saved only now, with the deadline the scheduler really set.
-    // Saving it earlier left an enabled heartbeat with no deadline on disk, and
-    // a crash in that gap handed the next registration a fresh six hours.
-    controller.confirmHeartbeat(result.status);
-    syncForm(controller.heartbeat.value);
-    error.value = '';
-  } catch (err) {
-    error.value = errorText(err);
-    syncForm(controller.heartbeat.value);
-  }
-}
+const { registeredThreadId, register, apply, onStatus, onConfig } = useHeartbeatControl(
+  controller, () => backendThreadId.value, ipcRenderer,
+  { presets, choice, customMinutes, draftMessage, lastMinutes, status, error },
+);
 
 function draftMinutes(): number {
   return choice.value === 'custom' ? Number(customMinutes.value) : Number(choice.value);
@@ -254,27 +183,8 @@ function onPointerDown(event: PointerEvent): void {
   if (open.value && root.value && !root.value.contains(event.target as Node)) open.value = false;
 }
 
-function onStatus(_event: unknown, value: ChatHeartbeatStatus): void {
-  if (value?.threadId !== registeredThreadId) return;
-  status.value = value;
-  // Auto-off may arrive as a status update even if the paired config event was
-  // missed during a renderer transition. Keep the composer switch truthful.
-  if (!value.enabled && controller.heartbeat.value.intervalMinutes !== null) {
-    const config = normalizeChatHeartbeatConfig({ ...controller.heartbeat.value, intervalMinutes: null, startedAt: null, expiresAt: null });
-    controller.setHeartbeat(config);
-    syncForm(config);
-  }
-}
-
-function onConfig(_event: unknown, value: { threadId: string; config: ChatHeartbeatConfig }): void {
-  if (value?.threadId !== registeredThreadId) return;
-  const config = normalizeChatHeartbeatConfig(value.config);
-  controller.setHeartbeat(config);
-  syncForm(config);
-}
-
 function onBeat(_event: unknown, beat: ChatHeartbeatBeat): void {
-  if (beat?.threadId !== registeredThreadId) return;
+  if (beat?.threadId !== registeredThreadId.value) return;
   controller.appendHeartbeat({
     id:              newMessageId(),
     kind:            'heartbeat',
@@ -286,7 +196,7 @@ function onBeat(_event: unknown, beat: ChatHeartbeatBeat): void {
 
 watch(backendThreadId, threadId => { register(threadId).catch(() => undefined) }, { immediate: true });
 watch(() => controller.isRunning.value, busy => {
-  if (registeredThreadId) ipcRenderer.invoke('chat-heartbeat:busy', { threadId: registeredThreadId, busy }).catch(() => undefined);
+  if (registeredThreadId.value) ipcRenderer.invoke('chat-heartbeat:busy', { threadId: registeredThreadId.value, busy }).catch(() => undefined);
 });
 
 onMounted(() => {
@@ -303,7 +213,7 @@ onBeforeUnmount(() => {
   ipcRenderer.removeListener('chat-heartbeat:beat', onBeat);
   document.removeEventListener('pointerdown', onPointerDown);
   if (clock) clearInterval(clock);
-  if (registeredThreadId) ipcRenderer.invoke('chat-heartbeat:unregister', registeredThreadId).catch(() => undefined);
+  if (registeredThreadId.value) ipcRenderer.invoke('chat-heartbeat:unregister', registeredThreadId.value).catch(() => undefined);
 });
 </script>
 

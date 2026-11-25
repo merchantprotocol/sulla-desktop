@@ -84,9 +84,11 @@ export class ChatHeartbeatExpiryService {
 
     try {
       const finalMessage = await this.buildMessage(runtime, message, intervalMinutes, startedAt, expiresAt, true);
-      if (!target && this.deps.isBusy?.(runtime)) {
+      if (!target) {
         runtime.pendingFinalBeat = { message: finalMessage, intervalMinutes, attempts: 0 };
-        this.deps.watchForIdle?.(runtime);
+        // Chat notices use the same deferred path whether the thread is busy at expiry
+        // or the bus rejects the first idle delivery; neither case may drop the only notice.
+        await this.deliverPending(runtime);
         return;
       }
       await this.deliverFinal(runtime, finalMessage, intervalMinutes, target);
@@ -117,7 +119,10 @@ export class ChatHeartbeatExpiryService {
       console.warn(`[ChatHeartbeat] deferred final beat failed for thread ${ runtime.threadId }:`, error);
     } finally {
       runtime.finalDeliveryInFlight = false;
-      if (this.deps.isCurrent(runtime)) this.deps.emitStatus(runtime);
+      if (this.deps.isCurrent(runtime)) {
+        if (runtime.pendingFinalBeat === pending && pending.attempts < 2) this.deps.watchForIdle?.(runtime);
+        this.deps.emitStatus(runtime);
+      }
     }
   }
 
