@@ -252,8 +252,6 @@
 .app-titlebar .tab-active-native .tab-label {
   flex: 0 1 auto;
   max-width: 440px;
-  -webkit-mask-image: none;
-  mask-image: none;
   text-overflow: clip;
 }
 .app-titlebar .tab-accent-bar {
@@ -304,6 +302,10 @@
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.app-titlebar .tab-label.tab-label-overflowing {
   -webkit-mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
   mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
 }
