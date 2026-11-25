@@ -183,6 +183,7 @@ import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quiet
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
+import type { ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -309,9 +310,21 @@ function jumpTo(messageId: string): void {
   window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId } }));
 }
 
-// Tab dots: tell the tab strip what this thread is doing.
-watch(() => activity.value.state, state => {
-  if (context.tabId) chatActivityByTab.set(context.tabId, state);
+function reportTabActivity(snapshot: ChatTabActivitySnapshot): void {
+  if (!context.tabId) return;
+  chatActivityByTab.set(context.tabId, snapshot);
+  window.dispatchEvent(new CustomEvent('sulla:chat-activity', {
+    detail: { tabId: context.tabId, ...snapshot },
+  }));
+}
+
+// Include the short reason so the shell can show useful attention summaries
+// even when this chat lives in its own process-per-tab renderer.
+watch(() => `${ activity.value.state }\u0000${ activity.value.parts.slice(0, 2).join(' · ') }`, () => {
+  reportTabActivity({
+    state:  activity.value.state,
+    detail: activity.value.parts.slice(0, 2).join(' · ').slice(0, 240),
+  });
 }, { immediate: true });
 watch(hasItems, has => { if (!has) open.value = false; });
 
@@ -324,7 +337,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer);
   window.removeEventListener('click', clearConfirm);
-  if (context.tabId) chatActivityByTab.delete(context.tabId);
+  if (context.tabId) {
+    reportTabActivity({ state: 'idle', detail: 'nothing running or scheduled' });
+    chatActivityByTab.delete(context.tabId);
+  }
 });
 </script>
 

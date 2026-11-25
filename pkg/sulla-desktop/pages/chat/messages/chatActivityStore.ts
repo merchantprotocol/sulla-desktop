@@ -5,7 +5,7 @@
 
 import { reactive } from 'vue';
 
-import type { ThreadActivityState } from './threadActivity';
+import type { ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 
 /** Each chat tab's current activity, keyed by browser tab id, for the tab strip's dots. */
-export const chatActivityByTab = reactive(new Map<string, ThreadActivityState>());
+export const chatActivityByTab = reactive(new Map<string, ChatTabActivitySnapshot>());

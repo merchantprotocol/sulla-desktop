@@ -14,6 +14,7 @@ import Electron from 'electron';
 import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
+import type { ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -77,11 +78,12 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
-  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-running': (tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
   'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
+  'tabs:drag-cancel':               (payload: { tabId: string }) => void;
   'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
   'tabs:transfer-released': (transferId: string, tabId: string) => void;
   'tabs:transfer-adopted': (transferId: string, tabId: string) => void;

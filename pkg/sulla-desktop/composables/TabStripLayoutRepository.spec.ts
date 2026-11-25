@@ -25,6 +25,20 @@ describe('TabStripLayoutRepository', () => {
     expect(storage.getItem(key)).toBe('["browser","chats"]');
   });
 
+  it('shares a reactive fold owner only for repositories on the same window key', () => {
+    const storage = new MemoryStorage();
+    const key = 'sulla:win:window-3:tab-strip-layout';
+    const first = new TabStripLayoutRepository(storage, key);
+    const second = new TabStripLayoutRepository(storage, key);
+    const otherWindow = new TabStripLayoutRepository(storage, 'sulla:win:window-4:tab-strip-layout');
+
+    first.setFoldedGroups(['browser']);
+
+    expect(second.foldedGroups).toBe(first.foldedGroups);
+    expect(second.foldedGroups.value).toEqual(['browser']);
+    expect(otherWindow.foldedGroups.value).toEqual(['tools']);
+  });
+
   it('recovers safely from malformed stored layout', () => {
     const storage = new MemoryStorage();
     storage.setItem('layout', '{broken');

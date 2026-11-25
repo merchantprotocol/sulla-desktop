@@ -16,6 +16,7 @@
       :tabs="needsYouTabs"
       :count="needsYouCount"
       @select="activateTabById"
+      @open-change="onNeedsYouMenuOpenChange"
     />
     <div
       ref="tabScrollWrapper"
@@ -148,6 +149,8 @@
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
+    </div>
+    <Teleport to="body">
       <div
         v-if="hoveredTab"
         class="tab-hover-card"
@@ -156,7 +159,7 @@
         <strong>{{ hoveredTab.label }}</strong>
         <span>{{ hoverStatusLine(hoveredTab) }}</span>
       </div>
-    </div>
+    </Teleport>
     <div class="titlebar-controls relative flex shrink-0 justify-end items-center gap-4">
       <div
         v-if="route.path === '/Filesystem'"
@@ -393,6 +396,7 @@ import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutReposit
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
+import { isChatTabActivitySnapshot, type ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
@@ -400,6 +404,7 @@ const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
   waiting: 'Waiting on agents or a schedule',
   you:     'Needs you',
   stalled: 'No progress: an agent has gone quiet',
+  quiet:   'Quiet',
   idle:    'Idle',
 };
 
@@ -424,21 +429,22 @@ const workingTabIds = ref(new Set<string>());
 let _workingMountCount = 0;
 
 function _onChatRunning(event: Event) {
-  const { tabId, running } = (event as CustomEvent<{ tabId?: string; running?: boolean }>).detail ?? {};
+  const { tabId, running, activity } = (event as CustomEvent<{ tabId?: string; running?: boolean; activity?: ChatTabActivitySnapshot }>).detail ?? {};
 
-  if (tabId && typeof running === 'boolean') _setChatRunning(tabId, running);
+  if (tabId && typeof running === 'boolean') _setChatRunning(tabId, running, activity);
 }
 
-function _onHostedChatRunning(_event: unknown, tabId: string, running: boolean) {
-  _setChatRunning(tabId, running);
+function _onHostedChatRunning(_event: unknown, tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) {
+  _setChatRunning(tabId, running, activity);
 }
 
-function _setChatRunning(tabId: string, running: boolean) {
+function _setChatRunning(tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) {
   const next = new Set(workingTabIds.value);
 
   if (running) next.add(tabId);
   else next.delete(tabId);
   workingTabIds.value = next;
+  if (isChatTabActivitySnapshot(activity)) chatActivityByTab.set(tabId, activity);
 }
 
 function _tabCtxBridge(...args: any[]) { _onTabCtxAction?.(...args) }
@@ -495,7 +501,17 @@ const {
 } = useBrowserTabs();
 const tabGroupModel = new TabGroupModel();
 const tabLayoutRepository = new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey);
-const foldedGroupIds = ref<TabGroupId[]>(tabLayoutRepository.loadFoldedGroups());
+const foldedGroupIds = tabLayoutRepository.foldedGroups;
+const tabStripOverlayIds = { hover: Symbol('tab-hover-card'), needsYou: Symbol('needs-you-menu') };
+
+function setTabStripOverlay(id: symbol, visible: boolean): void {
+  window.dispatchEvent(new CustomEvent('sulla:tab-strip-overlay', { detail: { id, visible } }));
+}
+
+function onNeedsYouMenuOpenChange(open: boolean): void {
+  if (open) hideTabHover();
+  setTabStripOverlay(tabStripOverlayIds.needsYou, open);
+}
 
 defineProps<{
   isDark:         boolean;
@@ -537,6 +553,11 @@ function openModeTab(mode: BrowserTabMode) {
   return tab;
 }
 
+function openUsageTab(): void {
+  const tab = openModeTab('marketplace');
+  updateTab(tab.id, { title: 'Usage', studioSection: 'usage' });
+}
+
 // ── Phase 7: Keyboard shortcuts ──
 
 function handleKeyboardShortcuts(e: KeyboardEvent): void {
@@ -567,7 +588,7 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
   // Cmd+1 through Cmd+9: switch to nth tab (Cmd+9 = last tab)
   if (meta && !e.shiftKey && e.key >= '1' && e.key <= '9') {
     e.preventDefault();
-    const allTabs = orderedTabs.value;
+    const allTabs = shortcutVisibleTabs.value;
     const idx = e.key === '9' ? allTabs.length - 1 : parseInt(e.key) - 1;
     const target = allTabs[idx];
     if (target) activateTab(target);
@@ -585,7 +606,7 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
   // Cmd+U: provider usage and subscription windows
   if (meta && !e.shiftKey && e.key.toLowerCase() === 'u') {
     e.preventDefault();
-    openModeTab('usage');
+    openUsageTab();
     return;
   }
 
@@ -600,7 +621,7 @@ function handleNavigateTab(event: Event) {
   const tabId = (event as CustomEvent).detail?.tabId;
   if (tabId) {
     const tab = getTab(tabId);
-    if (tab) setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
+    if (tab && !isTabPinned(`browser-${ tabId }`)) setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
     router.push(`/Browser/${ tabId }`);
   }
 }
@@ -664,7 +685,7 @@ function onTabWheel(event: WheelEvent) {
 }
 
 const hoveredTab = ref<HeaderTab | null>(null);
-const hoverCardStyle = ref<Record<string, string>>({ left: '8px' });
+const hoverCardStyle = ref<Record<string, string>>({ left: '8px', top: '52px' });
 let hoverTimer: number | undefined;
 
 function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
@@ -672,27 +693,29 @@ function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
   if (dragState.value?.active) return;
   const tabElement = event.currentTarget as HTMLElement;
   hoverTimer = window.setTimeout(() => {
-    const wrapper = tabScrollWrapper.value;
-    if (!wrapper || !tabElement.isConnected) return;
+    if (!tabElement.isConnected) return;
     const tabRect = tabElement.getBoundingClientRect();
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const left = Math.max(8, Math.min(tabRect.left - wrapperRect.left, wrapperRect.width - 328));
-    hoverCardStyle.value = { left: `${ left }px` };
+    const left = Math.max(8, Math.min(tabRect.left, window.innerWidth - 328));
+    const top = Math.max(8, Math.min(tabRect.bottom + 6, window.innerHeight - 96));
+    hoverCardStyle.value = { left: `${ left }px`, top: `${ top }px` };
     hoveredTab.value = tab;
+    setTabStripOverlay(tabStripOverlayIds.hover, true);
   }, 350);
 }
 
 function hideTabHover(): void {
+  const wasVisible = Boolean(hoveredTab.value);
   if (hoverTimer !== undefined) {
     window.clearTimeout(hoverTimer);
     hoverTimer = undefined;
   }
   hoveredTab.value = null;
+  if (wasVisible) setTabStripOverlay(tabStripOverlayIds.hover, false);
 }
 
 function hoverStatusLine(tab: HeaderTab): string {
-  const activity = tab.activity && tab.activity !== 'idle' ? ACTIVITY_LABEL[tab.activity] : 'Idle';
-  return tab.statusLine ? `${ activity } · ${ tab.statusLine }` : activity;
+  if (tab.statusLine) return tab.statusLine;
+  return tab.activity ? ACTIVITY_LABEL[tab.activity] : 'Idle';
 }
 
 onMounted(() => {
@@ -722,8 +745,10 @@ onMounted(() => {
 });
 onActivated(() => nextTick(syncTabStrip));
 onUnmounted(() => {
+  cancelCurrentDrag();
   document.documentElement.classList.remove('tab-pointer-dragging');
   hideTabHover();
+  setTabStripOverlay(tabStripOverlayIds.needsYou, false);
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -870,21 +895,29 @@ interface HeaderTab {
  * inline so they inherit `currentColor` and stay crisp at any DPI.
  */
 const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
-  welcome:      'M3 12L12 3l9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10',
-  browser:      'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a13.5 13.5 0 010 18M12 3a13.5 13.5 0 000 18',
-  chat:         'M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z',
-  calendar:     'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
-  integrations: 'M9 2v6M15 2v6M9 16v6M15 16v6M6 8h12a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4a2 2 0 012-2z',
-  document:     'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
-  secretary:    'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16',
-  vault:        'M5 11a2 2 0 012-2h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2v-9zM8 11V7a4 4 0 118 0v4M12 15v2',
-  account:      'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
-  history:      'M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2',
-  routines:     'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
-  marketplace:  'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
-  terminal:     'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
-  usage:        'M4 19V9M10 19V5M16 19v-7M22 19V3M2 19h20',
-  'capture-studio': 'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
+  welcome:           'M3 12L12 3l9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10',
+  browser:           'M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3a13.5 13.5 0 010 18M12 3a13.5 13.5 0 000 18',
+  chat:              'M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z',
+  calendar:          'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
+  integrations:      'M9 2v6M15 2v6M9 16v6M15 16v6M6 8h12a2 2 0 012 2v4a2 2 0 01-2 2H6a2 2 0 01-2-2v-4a2 2 0 012-2z',
+  document:          'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8',
+  secretary:         'M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2zM16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16',
+  conversations:     'M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z',
+  vault:             'M5 11a2 2 0 012-2h10a2 2 0 012 2v9a2 2 0 01-2 2H7a2 2 0 01-2-2v-9zM8 11V7a4 4 0 118 0v4M12 15v2',
+  account:           'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
+  history:           'M12 3a9 9 0 109 9M3 3v6h6M12 7v5l3 2',
+  routines:          'M6 3h4v4H6zM14 3h4v4h-4zM6 17h4v4H6zM14 17h4v4h-4zM10 5h4M10 19h4M12 7v10M6 11h12',
+  marketplace:       'M3 9h18l-1 10a2 2 0 01-2 2H6a2 2 0 01-2-2L3 9zM3 9l2-5h14l2 5M9 13a3 3 0 006 0',
+  labs:              'M3 4h18v16H3zM3 8h18M7 6h.01M10 6h.01M13 6h.01M8 12h8M8 16h5',
+  terminal:          'M4 5h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zM7 9l3 3-3 3M13 15h4',
+  files:             'M3 5h7l2 2h9v12H3zM3 9h18',
+  'file-editor':     'M4 20h4l11-11-4-4L4 16v4zM13 7l4 4',
+  paper:             'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M8 13h8M8 17h8',
+  decide:            'M5 12l4 4L19 6',
+  preferences:       'M4 6h16M4 12h16M4 18h16M8 4v4M16 10v4M10 16v4',
+  docker:            'M3 10h3v3H3zM7 10h3v3H7zM11 10h3v3h-3zM7 6h3v3H7zM11 6h3v3h-3zM15 10h3v3h-3zM2 15h18c-.6 3-2.5 5-6 5H8c-3 0-5-2-6-5z',
+  'support-session': 'M4 13v-2a8 8 0 0116 0v2M4 13h3v6H5a2 2 0 01-2-2v-2a2 2 0 012-2zM20 13h-3v6h2a2 2 0 002-2v-2a2 2 0 00-2-2z',
+  'capture-studio':  'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
 };
 
 interface TabStripSection {
@@ -908,8 +941,7 @@ function setGroupFolded(id: TabGroupId, folded: boolean): void {
   if (folded) next.add(id);
   else next.delete(id);
   if (next.size === foldedGroupIds.value.length && foldedGroupIds.value.every(group => next.has(group))) return;
-  foldedGroupIds.value = [...next];
-  tabLayoutRepository.saveFoldedGroups(foldedGroupIds.value);
+  tabLayoutRepository.setFoldedGroups([...next]);
 }
 
 function toggleGroup(id: TabGroupId): void {
@@ -921,7 +953,7 @@ function isActiveTabActivity(tab: HeaderTab): boolean {
 }
 
 function activateTab(tab: HeaderTab): void {
-  setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
+  if (!tab.pinned) setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
   router.push(tab.route).then(() => nextTick(() => scrollTabIntoView(tab.id)));
 }
 
@@ -986,9 +1018,10 @@ const allTabsById = computed(() => {
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
     const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
-    const activity = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) ?? (working ? 'working' : undefined) : undefined;
+    const snapshot = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
+    const activity = snapshot?.state === 'idle' && working ? 'working' : snapshot?.state ?? (working ? 'working' : undefined);
     const statusLine = bt.mode === 'chat'
-      ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
+      ? `chat · ${ activity ? ACTIVITY_LABEL[activity] : 'ready' }${ snapshot?.detail ? ` · ${ snapshot.detail }` : '' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
 
     map.set(id, {
@@ -1016,6 +1049,18 @@ const allTabsById = computed(() => {
 
 /** Saved order is reconciled and sorted into visual order by the group model. */
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
+
+const activeTabIdentity = computed(() => {
+  const active = orderedTabs.value.find(tab => tab.isActive);
+  return active ? `${ active.id }|${ active.mode || '' }|${ active.pinned ? 'pinned' : 'unpinned' }` : '';
+});
+watch(activeTabIdentity, identity => {
+  if (!identity) return;
+  const active = orderedTabs.value.find(tab => tab.isActive);
+  if (active && !active.pinned) setGroupFolded(tabGroupModel.groupForMode(active.mode), false);
+}, { flush: 'post' });
+
+const shortcutVisibleTabs = computed(() => orderedTabs.value.filter(tab => tab.pinned || !isGroupFolded(tabGroupModel.groupForMode(tab.mode))));
 
 const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
 
@@ -1066,9 +1111,10 @@ async function closeBrowserTab(id: string) {
   let nextTab: HeaderTab | null = null;
   if (isActive) {
     const visual = orderedTabs.value;
-    const visualIdx = visual.findIndex(t => t.browserId === id);
-    // Prefer the tab to the right, then left — Chrome behavior
-    const candidate = visual[visualIdx + 1] ?? visual[visualIdx - 1];
+    const visibleIds = new Set(shortcutVisibleTabs.value.map(tab => tab.id));
+    const visualIdx = visual.findIndex(tab => tab.browserId === id);
+    const candidate = visual.slice(visualIdx + 1).find(tab => visibleIds.has(tab.id)) ??
+      visual.slice(0, visualIdx).reverse().find(tab => visibleIds.has(tab.id));
     nextTab = candidate ?? null;
     nextTabRoute = candidate?.route ?? null;
   }
@@ -1119,6 +1165,7 @@ interface DragState {
 }
 
 const dragState = ref<DragState | null>(null);
+let currentDragCancel: (() => void) | null = null;
 const transferSnapshots = ref<Record<string, Record<string, unknown>>>({});
 function onTransferSnapshot(event: Event) {
   const detail = (event as CustomEvent<Record<string, unknown>>).detail;
@@ -1139,8 +1186,23 @@ function offsetLeftWithin(element: HTMLElement, ancestor: HTMLElement): number {
 
 function positionDraggedTab(state: DragState, container: HTMLElement): void {
   const containerLeft = container.getBoundingClientRect().left;
+  const scope = state.tabEl.closest<HTMLElement>('.tab-group, .tab-pinned-section') ?? container;
+  const groupTabs = Array.from(scope.querySelectorAll<HTMLElement>('.tab-item'))
+    .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0);
+  if (!groupTabs.length) {
+    state.tabEl.style.setProperty('--tab-drag-x', '0px');
+    return;
+  }
+  const positions = groupTabs.map(element => offsetLeftWithin(element, container));
+  const groupStart = Math.min(...positions);
+  const groupEnd = Math.max(...groupTabs.map((element, index) => positions[index] + element.offsetWidth));
+  const width = state.tabEl.offsetWidth;
+  const visualLeft = state.lastClientX - state.grabOffsetX;
+  const minLeft = containerLeft + groupStart - container.scrollLeft;
+  const maxLeft = Math.max(minLeft, containerLeft + groupEnd - container.scrollLeft - width);
+  const clampedLeft = Math.max(minLeft, Math.min(visualLeft, maxLeft));
   const layoutLeft = containerLeft + offsetLeftWithin(state.tabEl, container) - container.scrollLeft;
-  state.tabEl.style.setProperty('--tab-drag-x', `${ state.lastClientX - state.grabOffsetX - layoutLeft }px`);
+  state.tabEl.style.setProperty('--tab-drag-x', `${ clampedLeft - layoutLeft }px`);
 }
 
 function onPointerDown(event: PointerEvent, index: number): void {
@@ -1149,7 +1211,7 @@ function onPointerDown(event: PointerEvent, index: number): void {
   const tab = orderedTabs.value[index];
   if (!tab) return;
 
-  const state: DragState = {
+  const initial: DragState = {
     active:       false,
     originIndex:  index,
     currentIndex: index,
@@ -1164,7 +1226,64 @@ function onPointerDown(event: PointerEvent, index: number): void {
     detached:     false,
     initialOrder: orderedTabs.value.map(item => item.id),
   };
-  dragState.value = state;
+  dragState.value = initial;
+  // `ref` proxies object values. Event closures must compare/mutate the same
+  // proxy stored in the ref, not the raw object assigned above.
+  const state = dragState.value;
+  if (!state) return;
+
+  let finished = false;
+  const removeListeners = () => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    window.removeEventListener('keydown', onEscape);
+  };
+  const restoreOrder = () => {
+    const liveTabs = [...allTabsById.value.values()];
+    tabOrder.value = tabGroupModel.orderTabs(liveTabs, state.initialOrder).map(item => item.id);
+  };
+  const resetVisuals = () => {
+    tabEl.style.pointerEvents = '';
+    tabEl.style.removeProperty('--tab-drag-x');
+    document.documentElement.classList.remove('tab-pointer-dragging');
+    if (dragState.value === state) dragState.value = null;
+    currentDragCancel = null;
+  };
+  const suppressClick = () => {
+    const preventClick = (clickEvent: Event) => {
+      clickEvent.preventDefault();
+      clickEvent.stopImmediatePropagation();
+    };
+    tabEl.addEventListener('click', preventClick, { capture: true, once: true });
+  };
+  const cancel = (preventFollowingClick: boolean) => {
+    if (finished) return;
+    finished = true;
+    removeListeners();
+    if (state.active) restoreOrder();
+    if (state.detached) ipcRenderer.send('tabs:drag-cancel', { tabId: state.tabId });
+    resetVisuals();
+    if (preventFollowingClick && state.active) suppressClick();
+  };
+  const commit = (upEvent: PointerEvent) => {
+    if (finished) return;
+    finished = true;
+    removeListeners();
+    if (dragState.value === state) dragState.value = null;
+    document.documentElement.classList.remove('tab-pointer-dragging');
+    if (state.detached) {
+      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: state.tabId } }));
+      ipcRenderer.send('tabs:drag-end', {
+        tabId:     state.tabId,
+        screenX:   upEvent.screenX,
+        screenY:   upEvent.screenY,
+        transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) },
+      });
+    }
+    resetVisuals();
+    if (state.active) suppressClick();
+  };
 
   const onMove = (moveEvent: PointerEvent): void => {
     if (moveEvent.pointerId !== state.pointerId || dragState.value !== state) return;
@@ -1237,49 +1356,27 @@ function onPointerDown(event: PointerEvent, index: number): void {
   };
 
   const onEscape = (keyEvent: KeyboardEvent): void => {
-    if (keyEvent.key !== 'Escape' || !state.active || state.detached) return;
+    if (keyEvent.key !== 'Escape' || !state.active) return;
     keyEvent.preventDefault();
-    const liveTabs = [...allTabsById.value.values()];
-    tabOrder.value = tabGroupModel.orderTabs(liveTabs, state.initialOrder).map(item => item.id);
-    tabEl.style.removeProperty('--tab-drag-x');
-    tabEl.style.pointerEvents = '';
-    dragState.value = null;
-    document.documentElement.classList.remove('tab-pointer-dragging');
+    cancel(true);
   };
 
   const onUp = (upEvent: PointerEvent): void => {
     if (upEvent.pointerId !== state.pointerId) return;
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', onUp);
-    window.removeEventListener('keydown', onEscape);
-
-    dragState.value = null;
-    document.documentElement.classList.remove('tab-pointer-dragging');
-    if (state.detached) {
-      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: state.tabId } }));
-      ipcRenderer.send('tabs:drag-end', {
-        tabId:     state.tabId,
-        screenX:   upEvent.screenX,
-        screenY:   upEvent.screenY,
-        transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) },
-      });
-    }
-    tabEl.style.pointerEvents = '';
-    tabEl.style.removeProperty('--tab-drag-x');
-    if (state.active) {
-      const preventClick = (clickEvent: Event) => {
-        clickEvent.preventDefault();
-        clickEvent.stopImmediatePropagation();
-      };
-      tabEl.addEventListener('click', preventClick, { capture: true, once: true });
-    }
+    if (upEvent.type === 'pointercancel') cancel(false);
+    else commit(upEvent);
   };
 
+  currentDragCancel?.();
+  currentDragCancel = () => cancel(false);
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
   window.addEventListener('pointercancel', onUp);
   window.addEventListener('keydown', onEscape);
+}
+
+function cancelCurrentDrag(): void {
+  currentDragCancel?.();
 }
 
 // ── Phase 6: Middle-click to close ──
@@ -2035,22 +2132,6 @@ function handleTabContextMenuAction(
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
 .app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
 .app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
-.app-titlebar .tab-item {
-  position: relative;
-  height: 34px;
-  min-width: 64px;
-  max-width: none;
-  flex: 0 1 var(--tab-basis, 190px);
-  gap: var(--tab-gap, 8px);
-  padding: 0 var(--tab-padding, 12px);
-  border: 0;
-  border-radius: 9px 9px 0 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-muted, var(--text-secondary));
-  overflow: visible;
-}
-.app-titlebar .tab-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
 .app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
 .app-titlebar .tab-active .tab-activity-dot,
@@ -2176,7 +2257,6 @@ function handleTabContextMenuAction(
   background: linear-gradient(90deg, transparent, var(--accent-hover), transparent);
   animation: tab-working-streak 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
 }
-@keyframes tab-working-spin { to { transform: rotate(1turn); } }
 @keyframes tab-working-streak { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
 
 </style>
