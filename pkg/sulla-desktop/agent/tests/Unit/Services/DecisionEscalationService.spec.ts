@@ -87,14 +87,17 @@ class RecordingDelivery implements DecisionHolderDelivery {
   unavailableTools = new Set<string>();
   activeChats = new Set<string>();
   queuedForNextBoundary = false;
+  throwsOnDelivery = false;
   beforeDeliver?: () => void;
 
   async sendJob(input: { jobId: string; taskIndex: number; message: string }) {
+    if (this.throwsOnDelivery) throw new Error('delivery unavailable');
     this.beforeDeliver?.();
     this.delivered.push({ holder: `${ input.jobId }:${ input.taskIndex }`, message: input.message });
     return { successBoolean: true, responseString: JSON.stringify(this.queuedForNextBoundary ? { deliveredLive: 0, queuedForNextBoundary: 1 } : { deliveredLive: 1 }) };
   }
   enqueueChat(_channel: string, threadId: string, entry: { notice: string }): boolean {
+    if (this.throwsOnDelivery) throw new Error('delivery unavailable');
     this.beforeDeliver?.();
     this.delivered.push({ holder: threadId, message: entry.notice });
     return true;
@@ -152,6 +155,24 @@ const question = (id: string, route: NonNullable<DecisionRecord['route']>, conve
 });
 
 describe('DecisionEscalationService', () => {
+  it('durably advances to the human when holder delivery keeps throwing', async() => {
+    // risk: availability — a broken notifier must never leave a decision owned by an agent without a deadline.
+    const chain = [agent('parent', 'manager', 'parent-job'), agent('root-chat', 'root-agent'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    harness.delivery.throwsOnDelivery = true;
+    const record = question('notifier-failure', { authority: 'any', chain, holderIndex: 0, holderSince: harness.now, history: [] });
+    harness.store.put(record);
+
+    await expect(harness.escalation.start(record)).resolves.toBeUndefined();
+    const current = (await harness.store.findById(record.id))!;
+
+    expect(current.route).toMatchObject({ holderIndex: 2, history: [
+      expect.objectContaining({ agentId: 'manager', action: 'unavailable' }),
+      expect.objectContaining({ agentId: 'root-agent', action: 'unavailable' }),
+    ] });
+    expect(current.route?.chain[current.route.holderIndex]?.kind).toBe('human');
+  });
+
   it('walks parent then root before the human, using the three-minute delivery window and five-minute level cap', async() => {
     // risk: availability — each parent gets a bounded chance to answer before the question reaches the human.
     const chain = [agent('parent', 'manager', 'parent-job'), agent('root-chat', 'root-agent'), human];

@@ -142,11 +142,13 @@ export class DecisionEscalationService {
     if (this.delivering.has(key)) return;
     this.delivering.add(key);
     try {
-      if (await this.routes.liveness(holder, current.conversationId) !== 'available' || !await this.notifier.canAnswer(current, holder)) {
-        await this.advance(current.id, 'unavailable');
-        return;
-      }
-      if (!await this.notifier.deliver(current, holder)) {
+      let available = false;
+      let delivered = false;
+      try {
+        available = await this.routes.liveness(holder, current.conversationId) === 'available' && await this.notifier.canAnswer(current, holder);
+        if (available) delivered = await this.notifier.deliver(current, holder);
+      } catch { /* An untrustworthy notifier cannot hold a decision indefinitely. */ }
+      if (!available || !delivered) {
         await this.advance(current.id, 'unavailable');
         return;
       }
