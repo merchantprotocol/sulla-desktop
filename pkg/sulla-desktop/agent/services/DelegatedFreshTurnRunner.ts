@@ -127,8 +127,11 @@ export class DelegatedFreshTurnRunner {
         await this.log(identity, attempt, Number(state.metadata?.delegatedProviderDispatchCount ?? 0) > before);
       }
     }
+    // A CLI may return an unread steer during execute(); that is new work even
+    // when the same message was in the turn's original input snapshot.
+    DeferredStallInput.settledInputs(state, currentInputs.filter(message =>
+      !(message.metadata?.steerPending && message.metadata.steerDeliveredAt !== undefined)));
     if (!returned && !progress.madeProgress()) {
-      DeferredStallInput.settledInputs(state, currentInputs);
       return this.settleEmptyTurn(currentState, entries, currentInputs.length > 0, identity.source);
     }
     if (jobId && (returned || progress.madeProgress())) {

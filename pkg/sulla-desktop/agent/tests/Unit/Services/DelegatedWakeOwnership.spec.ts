@@ -15,7 +15,7 @@ import { DelegatedFreshTurnRunner, type DelegatedFreshTurnPorts } from '../../..
 import { DelegatedWakeRepairNotice } from '../../../services/DelegatedWakeRepairNotice';
 import { ThreadGraphCache } from '../../../services/ThreadGraphCache';
 import { TurnOutputCounter } from '../../../services/TurnOutputCounter';
-import { injectSteer } from '../../../utils/steerChannel';
+import { injectSteer, markSteerPending, onSteer } from '../../../utils/steerChannel';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 const taskThread = 'parked-worker';
@@ -151,10 +151,51 @@ describe('live delegated wake ownership', () => {
         expect(await deliver()).toBe(true);
         expect(h.state.messages).toHaveLength(2);
         expect(h.execute).toHaveBeenCalledTimes(1);
+        const nextPark = h.lifecycle.waitForWake(taskThread, h.abort.signal);
+        try {
+          expect(h.lifecycle.hasLiveWaiter(taskThread)).toBe(true);
+          expect(h.inbox.pendingCount()).toBe(0);
+        } finally {
+          h.abort.abort();
+          await nextPark;
+        }
       });
       expect(h.lifecycle.liveState(taskThread)).toBeUndefined();
       expect(cache.size).toBeLessThanOrEqual(12);
     } finally { cache.clear() }
+  });
+
+  it('admits input before wait installation even beyond the legacy wake TTL; leaves a later arrival pending', async() => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.lifecycle.withRunner(taskThread, h.state, async() => {
+      h.lifecycle.deliver(taskThread, timer());
+      await vi.advanceTimersByTimeAsync(300_001);
+      const guard = new AbortController();
+      const wait = h.lifecycle.waitForWake(taskThread, guard.signal);
+      try { expect(h.lifecycle.hasLiveWaiter(taskThread)).toBe(false) } finally { guard.abort(); await wait }
+      h.ports.execute = async() => {
+        await h.execute();
+        h.lifecycle.deliver(taskThread, { ...timer(), metadata: { wakeId: 'later' } });
+        return h.state;
+      };
+      await new DelegatedFreshTurnRunner(h.ports).run(h.state);
+      expect(DeferredStallInput.actionableMessages(h.state).map(m => m.metadata?.wakeId)).toEqual(['later']);
+    });
+  });
+
+  it.each([true, false])('only a handed-back CLI steer admits another turn: handback=%s', async(handback) => {
+    vi.useFakeTimers();
+    const h = harness();
+    const message = timer();
+    const off = onSteer(h.state, () => true);
+    try { expect(injectSteer(h.state, message)).toBe(true) } finally { off() }
+    if (handback) markSteerPending(message, h.state);
+    const run = h.run();
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.execute).toHaveBeenCalledTimes(handback ? 1 : 0);
+    } finally { h.abort.abort(); await run }
   });
 
   it('records the throwing provider boundary and never echoes prompt text, arbitrary source or supplied ID', async() => {

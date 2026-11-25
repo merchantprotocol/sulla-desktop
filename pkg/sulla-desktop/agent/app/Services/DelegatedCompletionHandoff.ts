@@ -42,6 +42,10 @@ export class DelegatedCompletionHandoff {
     return entries;
   }
 
+  static hasWakeEntries(state: DelegatedThreadState): boolean {
+    return !!this.pendingWakes.get(state)?.length;
+  }
+
   static recordWakeEntries(state: DelegatedThreadState, entries: PendingCompletion[]): void {
     this.pendingWakes.set(state, [...(this.pendingWakes.get(state) ?? []), ...entries]);
   }
