@@ -7,22 +7,22 @@ import path from 'path';
 
 import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
+import { TabHoverWindow } from './tabHoverWindow';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 import type { TabContextMenuRequest } from '@pkg/shared/TabStripPopup';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 
-import { TabHoverWindow } from './tabHoverWindow';
-
 interface MenuRequest {
-  opener: BrowserWindow;
+  opener:  BrowserWindow;
   payload: TabContextMenuRequest;
 }
 
 class TabContextMenuWindow {
-  private popup?: BrowserWindow;
-  private loaded?: Promise<void>;
+  private popup?:   BrowserWindow;
+  private loaded?:  Promise<void>;
   private pending?: MenuRequest;
 
   async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
@@ -30,7 +30,12 @@ class TabContextMenuWindow {
     if (payload.update && (!payload.attention || this.pending?.opener !== opener || this.pending.payload.attention?.id !== payload.attention.id)) return;
     const request = { opener, payload };
 
+    const previous = this.pending;
+
     this.pending = request;
+    if (previous && (previous.opener !== opener || previous.payload.attention?.id !== payload.attention?.id)) {
+      this.notifyClosed(previous);
+    }
     const popup = this.popup ?? this.create();
     let themeId: string = DEFAULT_THEME_ID;
 
@@ -63,8 +68,10 @@ class TabContextMenuWindow {
     if (!popup.isVisible() || !payload.update) {
       popup.showInactive();
       setTimeout(() => {
-        if (!popup.isDestroyed() && this.pending?.opener === opener &&
-            (this.pending === request || (payload.attention && this.pending?.payload.attention?.id === payload.attention.id))) popup.focus();
+        if (popup.isDestroyed() || this.pending?.opener !== opener) return;
+        if (this.pending !== request && (!payload.attention || this.pending.payload.attention?.id !== payload.attention.id)) return;
+        if (!opener.isDestroyed() && (opener.isFocused() || popup.isFocused())) popup.focus();
+        else this.close();
       }, 50);
     }
   }
@@ -76,7 +83,7 @@ class TabContextMenuWindow {
   act(sender: Electron.WebContents, action: string): void {
     if (sender !== this.popup?.webContents || !this.pending) return;
     const { opener, payload } = this.pending;
-    const allowed = payload.items.some(item => typeof item === 'string' ? item !== '---' && item === action : `attention:${ item.id }` === action);
+    const allowed = payload.items.some(item => typeof item === 'string' ? item !== '---' && item === action : `attention:${ item?.id }` === action);
 
     if (allowed && !opener.isDestroyed()) opener.webContents.send('tab-context-menu:selected', action, payload.tabData);
     this.close();
@@ -91,7 +98,11 @@ class TabContextMenuWindow {
 
     this.pending = undefined;
     if (this.popup && !this.popup.isDestroyed()) this.popup.hide();
-    if (closed?.payload.attention && !closed.opener.isDestroyed()) {
+    if (closed) this.notifyClosed(closed);
+  }
+
+  private notifyClosed(closed: MenuRequest): void {
+    if (closed.payload.attention && !closed.opener.isDestroyed()) {
       closed.opener.webContents.send('tab-context-menu:attention-closed', closed.payload.attention.id);
     }
   }
@@ -153,6 +164,10 @@ class TabContextMenuWindow {
   }
 }
 
+function logPopupError(error: unknown): void {
+  console.error('[TabStripPopup] Could not show popup', error);
+}
+
 export function registerTabContextMenuIpc(): void {
   const menu = new TabContextMenuWindow();
   const hover = new TabHoverWindow();
@@ -160,23 +175,23 @@ export function registerTabContextMenuIpc(): void {
   ipcMain.on('tab-context-menu:show', (event, payload: TabContextMenuRequest) => {
     const opener = agentWindowFromSender(event.sender);
 
-    if (opener && payload) void menu.show(opener, payload);
+    if (opener && payload) menu.show(opener, payload).catch(logPopupError);
   });
   ipcMain.on('tab-context-menu:hide-attention', (event, id: string) => {
     const opener = agentWindowFromSender(event.sender);
 
-    if (opener) menu.hideAttention(opener, id);
+    if (opener && typeof id === 'string') menu.hideAttention(opener, id);
   });
   ipcMain.on('tab-context-menu:action', (event, action: string) => menu.act(event.sender, action));
   ipcMain.on('tab-context-menu:dismiss', event => menu.dismiss(event.sender));
   ipcMain.on('tab-hover:show', (event, payload) => {
     const owner = agentWindowFromSender(event.sender);
 
-    if (owner?.webContents === event.sender && payload) void hover.show(owner, payload);
+    if (owner?.webContents === event.sender && payload) hover.show(owner, payload).catch(logPopupError);
   });
   ipcMain.on('tab-hover:hide', (event, id: string) => {
     const owner = agentWindowFromSender(event.sender);
 
-    if (owner?.webContents === event.sender) hover.hide(owner, id);
+    if (owner?.webContents === event.sender && typeof id === 'string') hover.hide(owner, id);
   });
 }

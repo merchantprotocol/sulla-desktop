@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TabAttentionMenuOwner } from './TabAttentionMenuOwner';
 import { TabHoverController } from './TabHoverController';
 
 describe('TabHoverController', () => {
@@ -11,7 +12,7 @@ describe('TabHoverController', () => {
     const show = vi.fn();
     const hide = vi.fn();
     const clock = {
-      setTimeout: (callback: () => void, delay: number) => Number(setTimeout(callback, delay)),
+      setTimeout:   (callback: () => void, delay: number) => Number(setTimeout(callback, delay)),
       clearTimeout: (id: number) => clearTimeout(id),
     };
     return { show, hide, hover: new TabHoverController(clock, show, hide) };
@@ -49,5 +50,27 @@ describe('TabHoverController', () => {
     hover.cancel();
     vi.advanceTimersByTime(350);
     expect(show).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TabAttentionMenuOwner', () => {
+  it('delivers selections to the current opener and ignores replies for a replaced header', () => {
+    const owner = new TabAttentionMenuOwner();
+    const first = { id: 'old-header', select: vi.fn(), onClosed: vi.fn() };
+    const current = { id: 'visible-header', select: vi.fn(), onClosed: vi.fn() };
+
+    owner.open(first);
+    owner.open(current);
+    owner.close(first.id);
+    owner.select(first.id, 'stale-tab');
+    owner.select(current.id, 'folded-chat');
+
+    expect(first.onClosed).toHaveBeenCalledOnce();
+    expect(first.select).not.toHaveBeenCalled();
+    expect(current.select).toHaveBeenCalledExactlyOnceWith('folded-chat');
+    owner.close(current.id);
+    owner.select(current.id, 'closed-menu');
+    expect(current.select).toHaveBeenCalledOnce();
+    expect(current.onClosed).toHaveBeenCalledOnce();
   });
 });

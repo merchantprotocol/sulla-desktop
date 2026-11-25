@@ -6,7 +6,7 @@ import type { TabHoverRequest } from '../shared/TabStripPopup';
 
 /** The window may retain hidden headers; each header can cancel only its own request. */
 export class TabHoverController {
-  private timer?: number;
+  private timer?:   number;
   private shownId?: string;
 
   constructor(
