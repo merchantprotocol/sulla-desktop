@@ -61,10 +61,10 @@ class ToolTranscriptFixture {
     });
   }
 
-  async record(toolRunId: string, toolName: string, args: unknown, result: unknown, error?: string): Promise<void> {
+  async record(toolRunId: string, toolName: string, args: unknown, result: unknown, error?: string, payloadThreadId?: string): Promise<void> {
     await this.executor.emitToolCallEvent(this.state, toolRunId, toolName, args);
     const success = error === undefined;
-    await this.executor.emitToolResultEvent(this.state, toolRunId, success, error, result);
+    await this.executor.emitToolResultEvent(this.state, toolRunId, success, error, result, payloadThreadId);
     await this.executor.appendToolResultMessage(this.state, toolName, {
       toolName, toolCallId: toolRunId, success, error, result,
     });
@@ -119,7 +119,7 @@ it('adds every full tool payload to Detailed without a withheld placeholder in e
     'episodic_search · error', 'background_browse · error', 'github/search · ok',
   ]);
   expect(rows.map(row => row.target)).toEqual([
-    'exec', 'vendor/custom_action', 'legacy/untyped_action', 'episodic_search', 'background_browse', 'github/search',
+    'FULL_KNOWN_INPUT', 'vendor/custom_action', 'legacy/untyped_action', 'episodic_search', 'background_browse', 'github/search',
   ]);
   expect(rows.map(row => JSON.parse(row.payload!.serialize()))).toEqual([
     expect.objectContaining({ tool: 'exec', input: 'FULL_KNOWN_INPUT', output: 'FULL_KNOWN_OUTPUT', error: 'FULL_KNOWN_ERROR' }),
@@ -184,7 +184,7 @@ it('projects a 600 KB screenshot to a payload reference while the model receives
   const fixture = new ToolTranscriptFixture();
   const screenshot = `FULL_SCREENSHOT:${ 'x'.repeat(600_000) }`;
   const result = { text: 'Screenshot reference: /tmp/fixture-screenshot.png', screenshotBase64: screenshot, screenshotMediaType: 'image/png' };
-  await fixture.record('screenshot-call', 'browser_screenshot', { tabId: 'fixture-tab' }, result);
+  await fixture.record('screenshot-call', 'browser_screenshot', { tabId: 'fixture-tab' }, result, undefined, 'fixture-thread');
   const modelToolResult = (fixture.state.messages[0] as any).content[0];
   expect(modelToolResult.content).toContain('Screenshot reference: /tmp/fixture-screenshot.png');
   expect(modelToolResult.content).not.toContain(screenshot);

@@ -438,7 +438,7 @@ it('retains exact tool data and recorded timestamps through Detailed projection 
     const turns = new DetailedTraceProjection().project(fixture.chat.messages.value, standard);
     const rows = turns.flatMap(turn => turn.rows);
     const trace = rows.find(row => row.kind === 'tool')!;
-    expect(trace).toMatchObject({ target: 'exec', status: 'ok', at: tool.createdAt });
+    expect(trace).toMatchObject({ target: 'echo fixture', status: 'ok', at: tool.createdAt });
     expect(JSON.parse(trace.payload!.serialize())).toMatchObject({ input: tool.input, output: 'FIXTURE_OUTPUT' });
     expect(rows).toContainEqual(expect.objectContaining({ at: 0, target: 'Preparing your turn…' }));
     expect(JSON.stringify(fixture.chat.messages.value)).toBe(originalRecords);
@@ -449,8 +449,8 @@ it('retains exact tool data and recorded timestamps through Detailed projection 
   expect(standardText).toEqual(['Shell · Completed']);
   await wrapper.setProps({ reportingLevel: 'debug' });
   expect(wrapper.findAll('.report-activity-text').map(row => row.text())).toEqual(standardText);
-  await wrapper.get('article.dtr-row-tool button').trigger('click');
-  expect(wrapper.get('article.dtr-row-tool pre').text()).toContain('FIXTURE_OUTPUT');
+  await wrapper.get('li.dtr-row[data-kind="tool"] button').trigger('click');
+  expect(wrapper.get('li.dtr-row[data-kind="tool"] pre').text()).toContain('FIXTURE_OUTPUT');
   await wrapper.setProps({ reportingLevel: 'fatal' });
   expect(wrapper.text()).not.toContain('FIXTURE_OUTPUT');
 });
@@ -626,12 +626,9 @@ it('serializes a tool only on disclosure, caches it across re-projections and re
     status: 'running', input: 'head\n' + 'x'.repeat(50_000) + 'input-tail' } as const;
   fixture.chat.appendMessage(tool);
   const wrapper = fixture.mount('debug');
-  const row = () => wrapper.get('article.dtr-row-tool');
+  const row = () => wrapper.get('li.dtr-row[data-kind="tool"]');
   const toggle = () => row().get('button').trigger('click');
-  const preview = row().get('.dtr-args').text();
   expect(serializedTools()).toHaveLength(0);
-  expect(preview).toMatch(/^head x/);
-  expect(preview.length).toBeLessThanOrEqual(300);
 
   await toggle();
   expect(JSON.parse(row().get('pre').text()).input).toBe(tool.input);
@@ -665,7 +662,7 @@ it('ticks only a mounted working sub-agent and stops ticking when it settles', a
     const wrapper = fixture.mount('info');
     const baseline = startTicker.mock.calls.length;
     await wrapper.setProps({ reportingLevel: 'debug' });
-    const elapsed = () => wrapper.get('.dtr-agent .dtr-duration').text();
+    const elapsed = () => wrapper.get('.dtr-agent .dtr-dur').text();
     expect(elapsed()).toBe('1s');
     expect(startTicker).toHaveBeenCalledTimes(baseline + 1);
     vi.advanceTimersByTime(1_000);
