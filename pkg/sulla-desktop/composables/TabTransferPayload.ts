@@ -7,7 +7,7 @@ import { toRaw } from 'vue';
 import type { BrowserTab } from './useBrowserTabs';
 
 export interface TabEditorTransferSnapshot {
-  tabId: string;
+  tabId:      string;
   fileEditor: NonNullable<BrowserTab['transferState']>;
 }
 
@@ -18,29 +18,29 @@ export class TabTransferPayload {
     const { filesNavigation, documentFile, agentChat, supportSession, transferState } = raw;
 
     return {
-      id: raw.id,
-      url: raw.url,
-      title: raw.title,
-      favicon: raw.favicon,
-      loading: raw.loading,
-      mode: raw.mode,
-      assetId: raw.assetId,
-      content: raw.content,
-      recipeAppSlug: raw.recipeAppSlug,
-      studioSection: raw.studioSection,
-      section: raw.section,
-      customTitle: raw.customTitle,
+      id:             raw.id,
+      url:            raw.url,
+      title:          raw.title,
+      favicon:        raw.favicon,
+      loading:        raw.loading,
+      mode:           raw.mode,
+      assetId:        raw.assetId,
+      content:        raw.content,
+      recipeAppSlug:  raw.recipeAppSlug,
+      studioSection:  raw.studioSection,
+      section:        raw.section,
+      customTitle:    raw.customTitle,
       lastAccessedAt: raw.lastAccessedAt,
       initialAgentId: raw.initialAgentId,
       ...(filesNavigation && {
         filesNavigation: {
-          fileId: filesNavigation.fileId,
-          versionId: filesNavigation.versionId,
-          path: filesNavigation.path,
-          section: filesNavigation.section,
-          collectionId: filesNavigation.collectionId,
+          fileId:        filesNavigation.fileId,
+          versionId:     filesNavigation.versionId,
+          path:          filesNavigation.path,
+          section:       filesNavigation.section,
+          collectionId:  filesNavigation.collectionId,
           openRequestId: filesNavigation.openRequestId,
-          openKind: filesNavigation.openKind,
+          openKind:      filesNavigation.openKind,
         },
       }),
       ...(documentFile && {
@@ -48,14 +48,14 @@ export class TabTransferPayload {
       }),
       ...(agentChat && {
         agentChat: {
-          threadId: agentChat.threadId,
-          agentId: agentChat.agentId,
-          agentName: agentChat.agentName,
-          parentThreadId: agentChat.parentThreadId,
-          parentAgentId: agentChat.parentAgentId,
+          threadId:        agentChat.threadId,
+          agentId:         agentChat.agentId,
+          agentName:       agentChat.agentName,
+          parentThreadId:  agentChat.parentThreadId,
+          parentAgentId:   agentChat.parentAgentId,
           parentAgentName: agentChat.parentAgentName,
-          contractId: agentChat.contractId,
-          depth: agentChat.depth,
+          contractId:      agentChat.contractId,
+          depth:           agentChat.depth,
         },
       }),
       ...(supportSession && { supportSession: { sessionId: supportSession.sessionId } }),

@@ -13,18 +13,18 @@ describe('tab pointer gesture cleanup', () => {
     const anchor = new EventTarget();
     const other = new EventTarget();
     const suppress = new TabDragClickSuppression({
-      addEventListener: events.addEventListener.bind(events),
+      addEventListener:    events.addEventListener.bind(events),
       removeEventListener: (type: string, callback: EventListener, options?: EventListenerOptions | boolean) =>
         events.removeEventListener(type, callback, typeof options === 'boolean' ? { capture: options } : options),
-      setTimeout: (callback: () => void, delay: number) => Number(setTimeout(callback, delay)),
+      setTimeout:   (callback: () => void, delay: number) => Number(setTimeout(callback, delay)),
       clearTimeout: (id: number) => clearTimeout(id),
     } as unknown as Window);
     const dispatch = (type: string, target = anchor, pointerId = 7, detail = 1) => {
       const event = new Event(type, { cancelable: true });
       Object.defineProperties(event, {
-        pointerId: { value: pointerId },
-        detail: { value: detail },
-        button: { value: 0 },
+        pointerId:    { value: pointerId },
+        detail:       { value: detail },
+        button:       { value: 0 },
         composedPath: { value: () => [target, events] },
       });
       events.dispatchEvent(event);
@@ -71,7 +71,7 @@ describe('tab pointer gesture cleanup', () => {
   it('continues edge steps without pointer moves and stops the pending frame on drop or cancellation', () => {
     const scroll = new TabDragAutoScroll({
       requestAnimationFrame: callback => Number(setTimeout(() => callback(Date.now()), 16)),
-      cancelAnimationFrame: id => clearTimeout(id),
+      cancelAnimationFrame:  id => clearTimeout(id),
     });
     const step = vi.fn(() => true);
     scroll.start(step);

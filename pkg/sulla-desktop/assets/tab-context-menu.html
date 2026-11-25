@@ -167,6 +167,7 @@
         padding: 5px;
         background: var(--strip-bg-elevated, Canvas);
         border-color: var(--strip-border-default, ButtonBorder);
+        box-shadow: var(--strip-elev-raised, none);
         font: 12px/1.35 system-ui, sans-serif;
         animation: none;
       }
@@ -322,7 +323,7 @@
         menu.replaceChildren();
         menu.classList.toggle("attention", Boolean(attention));
         if (attention) {
-          for (const token of ["bg-elevated", "bg-surface-hover", "border-default", "text-primary", "text-muted", "status-warning", "status-error"]) {
+          for (const token of ["bg-elevated", "bg-surface-hover", "border-default", "elev-raised", "text-primary", "text-muted", "status-warning", "status-error"]) {
             menu.style.setProperty("--strip-" + token, attention.palette?.[token] || "");
           }
           const heading = document.createElement("div");

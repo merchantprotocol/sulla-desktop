@@ -112,30 +112,30 @@
 import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { lazyScreen } from './agent/lazyScreen';
-const BrowserTab = lazyScreen(() => import('./BrowserTab.vue'), 'BrowserTab');
-import ModeRail from './chat/components/chrome/ModeRail.vue';
-import StartupOverlay from './agent/StartupOverlay.vue';
 import AgentHeader from './agent/AgentHeader.vue';
+import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
+import { lazyScreen } from './agent/lazyScreen';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
-import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
+import ModeRail from './chat/components/chrome/ModeRail.vue';
+import { ConversationShellPolicy } from './conversations/ConversationShellPolicy';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
+import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
-import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
-import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
-import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { TabGroupModel } from '@pkg/composables/TabGroupModel';
 import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
-import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId, type BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { ConversationShellPolicy } from './conversations/ConversationShellPolicy';
+
+const BrowserTab = lazyScreen(() => import('./BrowserTab.vue'), 'BrowserTab');
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
