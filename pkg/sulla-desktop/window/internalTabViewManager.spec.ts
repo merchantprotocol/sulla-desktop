@@ -145,7 +145,7 @@ describe('InternalTabViewManager', () => {
     instance.setBounds(owner, 'one', { ...bounds, width: 700 });
     instance.setVisible(owner, 'one', true);
     expect(tab.view.setBounds).toHaveBeenLastCalledWith({ ...bounds, width: 700 });
-    expect(tab.view.webContents.focus).toHaveBeenCalledOnce();
+    expect(tab.view.webContents.focus).not.toHaveBeenCalled();
   });
 
   it('keeps activated views detached until chrome readiness and attaches them together on signal', () => {
