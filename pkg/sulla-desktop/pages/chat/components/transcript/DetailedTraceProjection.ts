@@ -7,7 +7,8 @@ import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMes
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
-import type { TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
+import { SupportingReportResolver } from '../../services/SupportingReportResolver';
+import type { SubAgentTraceStatus, TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
@@ -29,7 +30,9 @@ export class DetailedTraceProjection {
           ...jobRows.map(row => ({ ...row, anchorEntryId }))];
       });
       const usage = this.usage(group);
-      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows, ...(usage ? { usage } : {}) };
+      const agentSummary = SubAgentTraceProjection.summary(rows.flatMap(row => row.subagent ? [row.status as SubAgentTraceStatus] : []));
+      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows,
+        ...(usage ? { usage } : {}), ...(agentSummary ? { agentSummary } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));
   }
 
@@ -118,7 +121,12 @@ export class DetailedTraceProjection {
   }
 
   private rowsForCitation(message: CitationMessage, anchor: string): TraceRow[] {
-    return message.sources.map((source, index) => this.row(`${message.id}:${index}`, 'source', 'Source', source.title, 'ok', anchor, message.createdAt, undefined, source.origin, this.serializer.lazy(source)));
+    // The Read step behind each numbered source, worded like the sources row's own button.
+    return message.sources.map((source, index) => ({
+      ...this.row(`${message.id}:${index}`, 'source', SupportingReportResolver.webUrl(source) ? 'Read source' : 'Read report',
+        source.title, 'ok', anchor, message.createdAt, undefined, source.origin, this.serializer.lazy(source)),
+      cite: source.num,
+    }));
   }
 
   private row(id: string, kind: TraceRowKind, verb: string, target: string, status: TraceRowStatus, anchorEntryId: string, at: number, durationLabel?: string, keyArgs?: string, payload?: TracePayload): TraceRow {
