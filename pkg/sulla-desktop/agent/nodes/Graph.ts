@@ -108,6 +108,8 @@ export interface BaseThreadState {
     /** Attribution from a claimed answer dispatch or an awaited live approval. */
     reportingDecisionFollowUp?: { id: string; threadId: string };
     reportingSteerRevision?: number;
+    delegatedRunActive?: boolean;
+    runtimeInterrupted?: boolean;
 
     reasoning?: string;
 

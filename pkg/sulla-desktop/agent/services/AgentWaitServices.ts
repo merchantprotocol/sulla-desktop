@@ -18,15 +18,17 @@ export class AgentWaitServiceProvider {
 
   constructor() {
     this.repository = new AgentTaskWaitRepository(postgresClient);
-    this.scheduler = new AgentWakeScheduler(this.repository, async(wait) => {
+    this.scheduler = new AgentWakeScheduler(this.repository, async(wait, wakeId, wakeAttempt) => {
       const job = await getJob(wait.jobId);
       const task = job?.tasks[wait.taskIndex];
       // Nothing left to wake: the task already resumed, settled or was stopped.
-      if (!job || !task?.threadId || task.status !== 'parked') return true;
+      if (!job || !task?.threadId || !['running', 'parked'].includes(task.status)) return true;
+      const { agentJobLifecycle } = await import('./AgentJobLifecycleService');
+      if (task.status !== 'parked' && !agentJobLifecycle.liveState(task.threadId)) return true;
       const { getBackendGraphWebSocketService } = await import('./BackendGraphWebSocketService');
       // false = deferred (a turn is already running); the scheduler retries it.
       return getBackendGraphWebSocketService().wakeParkedAgent(job.parentChannel ?? 'sulla-desktop', task.threadId,
-        `[Wait complete]\n${ wait.reason }`, task.agentId, { jobId: wait.jobId, taskIndex: wait.taskIndex, source: 'agent_wait_timer' });
+        `[Wait complete]\n${ wait.reason }`, task.agentId, { jobId: wait.jobId, taskIndex: wait.taskIndex, source: 'agent_wait_timer', wakeId, wakeAttempt });
     }, () => Date.now(), waitForAutomaticAgentExecution);
     this.parking = new AgentTaskParkingService(this.repository, async(wait) => Boolean(await agentJobProvider.states.mutateJob(wait.jobId, current =>
       AgentTaskParkingService.parkedJob(current, wait))), this.scheduler);

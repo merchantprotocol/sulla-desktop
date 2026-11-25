@@ -642,6 +642,7 @@ export class SpawnAgentWorker extends BaseTool {
       }
 
       let subStateRef: any;
+      let unregister: (() => void) | undefined;
       let containerLifecycle: ParkedContainerLifecycle | undefined;
       let taskResult: AgentJobResult | undefined;
       const returnedTask = async() => {
@@ -657,6 +658,7 @@ export class SpawnAgentWorker extends BaseTool {
           agentConfigChannel,
           threadId,
         ) as { graph: any; state: any };
+        unregister = agentJobLifecycle.registerRunner(threadId, subState);
         subStateRef = subState;
         installWorkerRoute(subState, input.task.workerModelRoute, activityJobId ? { jobId: activityJobId, taskIndex: index, generation: input.generation } : undefined);
         subState.metadata.modelDecision = input.task.modelDecision;
@@ -785,7 +787,7 @@ export class SpawnAgentWorker extends BaseTool {
           taskIndex:              index,
           threadId,
           state:                  subState,
-          signal:                 taskAbortSignal,
+          signal:                 combined?.signal ?? taskAbortSignal,
           prepare:                state => this.turnPreparer.prepare(state),
           execute:                executeGraph,
           returnedTask,
@@ -807,7 +809,7 @@ export class SpawnAgentWorker extends BaseTool {
         let reminderSent = false;
         let autoParkCount = 0;
         const settlementPolicy = new DelegatedTurnSettlementPolicy();
-        while (activityJobId && taskAbortSignal?.aborted !== true) {
+        while (activityJobId && !(combined?.signal ?? taskAbortSignal)?.aborted) {
           const openChildren = await agentJobLifecycle.openChildren(threadId);
           const pendingWait = await agentWaitProvider.repository.pending(activityJobId, index);
           // A timer/message can claim the durable wait before this turn reaches
@@ -839,7 +841,7 @@ export class SpawnAgentWorker extends BaseTool {
             await containerLifecycle?.park();
             await agentJobLifecycle.waitForWake(threadId, combined?.signal ?? taskAbortSignal);
             if ((agentExecutionReadiness.draining || subState.metadata.runtimeInterrupted) && !await returnedTask()) throw Object.assign(executionAbort(), { runtimeInterrupted: true });
-            if (taskAbortSignal?.aborted) break;
+            if ((combined?.signal ?? taskAbortSignal)?.aborted) break;
             await agentJobLifecycle.resume(activityJobId, index);
             await agentWaitProvider.cancel(activityJobId, index);
             if (settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent: true, autoParkCount, finalText: turnOutcome.text, schemaContract: Boolean(contract.schema) }) === 'fail') {
@@ -862,7 +864,7 @@ export class SpawnAgentWorker extends BaseTool {
           if (settlement === 'wait_park') await containerLifecycle?.park();
           await agentJobLifecycle.waitForWake(threadId, combined?.signal ?? taskAbortSignal);
           if ((agentExecutionReadiness.draining || subState.metadata.runtimeInterrupted) && !await returnedTask()) throw Object.assign(executionAbort(), { runtimeInterrupted: true });
-          if (taskAbortSignal?.aborted) break;
+          if ((combined?.signal ?? taskAbortSignal)?.aborted) break;
           returned = await returnedTask();
           if (returned) continue;
           await agentJobLifecycle.resume(activityJobId, index);
@@ -959,6 +961,7 @@ export class SpawnAgentWorker extends BaseTool {
         };
         return taskResult;
       } finally {
+        unregister?.();
         try {
           const cleanupReason = taskResult?.status === 'completed'
             ? 'delegated-job-completed'
@@ -987,7 +990,7 @@ export class SpawnAgentWorker extends BaseTool {
             if (idx >= 0) arr.splice(idx, 1);
           }
           // Clean up registry to prevent memory leaks
-          GraphRegistry.delete(threadId);
+          if (subStateRef && GraphRegistry.get(threadId)?.state === subStateRef) GraphRegistry.delete(threadId);
         }
       }
     };

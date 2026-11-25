@@ -10,9 +10,11 @@ export interface DelegatedThreadState { messages: any[]; metadata?: Record<strin
 export interface DelegatedCompletionInbox {
   take(channel: string, threadId: string): PendingCompletion[];
   currentEntries?(channel: string, threadId: string, entries: PendingCompletion[]): Promise<PendingCompletion[]>;
+  requeueQuietly?(channel: string, threadId: string, entry: PendingCompletion): void;
   format(entries: PendingCompletion[]): string;
 }
 export interface DelegatedRunLifecycle {
+  liveState?(threadId: string): DelegatedThreadState | undefined;
   hasLiveWaiter(threadId: string): boolean;
   /** Releases a parked runner, or latches the wake for its next waitForWake(). */
   wake(threadId: string): boolean;
@@ -53,24 +55,18 @@ export class DelegatedCompletionHandoff {
     private readonly clock: () => number = Date.now,
   ) {}
 
-  /** True when this thread is owned by a live in-process runner (the caller must not dispatch a new turn). */
-  owns(state: DelegatedThreadState | undefined, threadId: string): boolean {
-    return this.lifecycle.hasLiveWaiter(threadId) || Boolean(state?.metadata?.delegatedRunActive);
-  }
-
-  /** Delivers queued completions to a runner-owned thread. Returns false when the thread is not runner-owned. */
-  async deliver(channel: string, threadId: string, state: DelegatedThreadState | undefined): Promise<boolean> {
-    if (!this.owns(state, threadId)) return false;
-    if (!state) {
-      // A live waiter without graph state: release it so the runner cannot
-      // stay blocked; the entries stay queued for the next dispatch.
-      this.lifecycle.wake(threadId);
-      return true;
-    }
+  /** Resolve ownership only after any asynchronous stall validation. */
+  async deliver(channel: string, threadId: string, fallback: DelegatedThreadState | undefined | (() => DelegatedThreadState | undefined)): Promise<boolean> {
     const claimed = this.inbox.take(channel, threadId);
     const entries = claimed.some(entry => entry.noticeKind === 'stall')
       ? await this.inbox.currentEntries?.(channel, threadId, claimed) ?? claimed.filter(entry => entry.noticeKind !== 'stall')
       : claimed;
+    const live = this.lifecycle.liveState?.(threadId);
+    const state = live ?? (typeof fallback === 'function' ? fallback() : fallback);
+    if (!state || (!live && !this.lifecycle.hasLiveWaiter(threadId) && !state.metadata?.delegatedRunActive)) {
+      for (const entry of entries) this.inbox.requeueQuietly!(channel, threadId, entry);
+      return false;
+    }
     if (!entries.length) return true;
     DelegatedCompletionHandoff.recordWakeEntries(state, entries);
     const stalls = entries.filter(entry => CompletionKey.isStall(entry));
@@ -86,11 +82,11 @@ export class DelegatedCompletionHandoff {
       timestamp: this.clock(),
       metadata:  { source: 'sub_agent_completion', inputSource: 'system', completionEntries: regular },
     });
+    this.lifecycle.wake(threadId);
     for (const entry of entries) {
       if (CompletionKey.isTaskCompletion(entry)) await this.marks.firstDelivered(entry);
       await this.marks.acknowledge(entry);
     }
-    this.lifecycle.wake(threadId);
     return true;
   }
 }

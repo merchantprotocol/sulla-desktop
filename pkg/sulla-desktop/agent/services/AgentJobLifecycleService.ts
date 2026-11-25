@@ -2,6 +2,9 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { AgentGraphState } from '../nodes/Graph';
+import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import { injectSteer } from '../utils/steerChannel';
 import { ReturnedTaskSettlement } from './ReturnedTaskSettlement';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { deliverJobCompletion, returnedJobResult } from '../tools/agents/jobDelivery';
@@ -23,6 +26,39 @@ export class AgentJobLifecycleService {
     private readonly resumeTask: (jobId: string, taskIndex: number) => Promise<unknown>,
     private readonly settleReturn: (jobId: string, taskIndex: number) => Promise<boolean> = () => Promise.resolve(false),
   ) {}
+
+  private readonly runners = new Map<string, AgentGraphState>();
+
+  registerRunner(threadId: string, state: AgentGraphState): () => void {
+    if (this.runners.has(threadId)) throw new Error('Delegated thread already has a live runner');
+    this.runners.set(threadId, state);
+    return () => {
+      if (this.runners.get(threadId) !== state) return;
+      this.runners.delete(threadId);
+      this.pendingWakes.delete(threadId);
+    };
+  }
+
+  liveState(threadId: string): AgentGraphState | undefined { return this.runners.get(threadId) }
+
+  /** Lookup, deduplication, injection and release share a single JS turn. */
+  deliver(threadId: string, message: ChatMessage): boolean {
+    const state = this.liveState(threadId);
+    if (!state) return false;
+    const { wakeId, jobMessageId } = message.metadata ?? {};
+    if (!state.messages.some(previous => (wakeId && wakeId === previous.metadata?.wakeId) ||
+      (jobMessageId && jobMessageId === previous.metadata?.jobMessageId) || (message.id && message.id === previous.id))) {
+      if (!injectSteer(state, message)) this.wake(threadId);
+    }
+    return true;
+  }
+
+  interruptRunners(): void {
+    for (const state of this.runners.values()) {
+      state.metadata.runtimeInterrupted = true;
+      state.metadata.options?.abort?.abort();
+    }
+  }
 
   openChildren(threadId: string): Promise<number> {
     return this.children.openChildrenForThread(threadId);
@@ -48,17 +84,20 @@ export class AgentJobLifecycleService {
     return this.waiters.has(threadId);
   }
 
-  async waitForWake(threadId: string, signal?: AbortSignal): Promise<void> {
+  async waitForWake(threadId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void> {
     if (signal?.aborted) return;
     const queuedAt = this.pendingWakes.get(threadId);
     this.pendingWakes.delete(threadId);
     if (queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;
     await new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = () => {
+        clearTimeout(timer);
         this.waiters.delete(threadId);
         signal?.removeEventListener('abort', finish);
         resolve();
       };
+      if (timeoutMs !== undefined) timer = setTimeout(finish, timeoutMs);
       this.waiters.set(threadId, { resolve: finish });
       signal?.addEventListener('abort', finish, { once: true });
     });
@@ -123,7 +162,7 @@ export const returnedTaskSettlement: ReturnedTaskSettlement = new ReturnedTaskSe
   recordTaskCompletion,
   deliver:              deliverJobCompletion,
   completeJob,
-  hasLiveRunner:        (threadId: string): boolean => agentJobLifecycle.hasLiveWaiter(threadId),
+  hasLiveRunner:        (threadId: string): boolean => !!agentJobLifecycle.liveState(threadId) || agentJobLifecycle.hasLiveWaiter(threadId),
 });
 
 export const agentJobLifecycle: AgentJobLifecycleService = new AgentJobLifecycleService(
