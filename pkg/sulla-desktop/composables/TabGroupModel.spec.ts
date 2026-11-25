@@ -12,6 +12,20 @@ describe('TabGroupModel', () => {
     baseWidth,
     foldedWidth: baseWidth - 10,
   });
+  const crowdingGroups = () => [
+    layoutGroup('chats', [
+      { id: 'build-long-1', width: 500 },
+      { id: 'build-long-2', width: 460 },
+      { id: 'chat-3', width: 150 },
+      { id: 'chat-4', width: 120 },
+      { id: 'chat-5', width: 110 },
+      { id: 'chat-6', width: 110 },
+    ]),
+    layoutGroup('browser', [
+      { id: 'browser-active', width: 320, active: true },
+      { id: 'browser-2', width: 300 },
+    ]),
+  ];
 
   it('maps chat, legacy secretary and Secretary conversations to Chats, browser to Browser, and all other modes to Tools', () => {
     expect(model.groupForMode('chat')).toBe('chats');
@@ -224,7 +238,7 @@ describe('TabGroupModel', () => {
     });
 
     expect(layout[0].tabWidths.get('busy')).toBe(110);
-    expect(layout[0].tabWidths.get('idle')).toBe(36);
+    expect(layout[0].tabWidths.get('idle')).toBe(80);
   });
 
   it('does not level the active tab with non-active tabs', () => {
@@ -239,8 +253,53 @@ describe('TabGroupModel', () => {
     });
 
     expect(layout[0].tabWidths.get('active')).toBe(510);
-    expect(layout[0].tabWidths.get('busy')).toBeCloseTo(118, 4);
-    expect(layout[0].tabWidths.get('idle')).toBeCloseTo(118, 4);
+    expect(layout[0].tabWidths.get('busy')).toBe(110);
+    expect(layout[0].tabWidths.get('idle')).toBe(140);
+  });
+
+  it('levels long titles across expanded groups before compacting in the wide-bar evidence case', () => {
+    const layout = calculateTabStripLayout({
+      groups: crowdingGroups(),
+      activeGroup: 'browser',
+      availableWidth: 1700,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'expanded']);
+    expect(layout[0].tabWidths.get('build-long-1')).toBeGreaterThanOrEqual(140);
+    expect(layout[0].tabWidths.get('build-long-1')).toBeLessThan(500);
+    expect(layout[0].tabWidths.get('build-long-2')).toBeCloseTo(layout[0].tabWidths.get('build-long-1'), 4);
+    expect(layout[1].tabWidths.get('browser-2')).toBeCloseTo(layout[0].tabWidths.get('build-long-1'), 4);
+    expect(layout[1].tabWidths.get('browser-active')).toBe(320);
+  });
+
+  it('still compacts the non-active group when leveling cannot fit a narrow bar', () => {
+    const layout = calculateTabStripLayout({
+      groups: crowdingGroups(),
+      activeGroup: 'browser',
+      availableWidth: 700,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['compact', 'expanded']);
+    expect(layout[1].tabWidths.get('browser-active')).toBe(320);
+    expect(layout.reduce((total, group) => total + group.width, 0) + 8).toBeLessThanOrEqual(700);
+  });
+
+  it('uses 24px resize hysteresis to keep compaction stable around its fit boundary', () => {
+    const groups = [
+      layoutGroup('chats', [{ id: 'chat-1', width: 300 }, { id: 'chat-2', width: 300 }]),
+      layoutGroup('browser', [{ id: 'browser-active', width: 140, active: true }]),
+    ];
+    const compact = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 589 });
+    const nearBoundary = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 600, previousLayout: compact });
+    const resizedBack = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 589, previousLayout: nearBoundary });
+    const expanded = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 615, previousLayout: resizedBack });
+    const narrowedAfterExpansion = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 600, previousLayout: expanded });
+
+    expect(compact[0].presentation).toBe('compact');
+    expect(nearBoundary[0].presentation).toBe('compact');
+    expect(resizedBack[0].presentation).toBe('compact');
+    expect(expanded[0].presentation).toBe('expanded');
+    expect(narrowedAfterExpansion[0].presentation).toBe('expanded');
   });
 
   it('switches the expanded group and compacts the previous active capsule', () => {
