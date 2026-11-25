@@ -80,6 +80,47 @@ function minimumTabWidth(tab: TabStripLayoutTab, busyMinWidth: number, idleMinWi
   return tab.busy ? busyMinWidth : idleMinWidth;
 }
 
+function naturalTabWidth(tab: TabStripLayoutTab, busyMinWidth: number, idleMinWidth: number): number {
+  return Math.max(tab.width, minimumTabWidth(tab, busyMinWidth, idleMinWidth));
+}
+
+/** Level non-active tabs to one shared cap, keeping their individual floors. */
+function levelTabWidths(
+  tabs: readonly TabStripLayoutTab[],
+  availableTabSpace: number,
+  busyMinWidth: number,
+  idleMinWidth: number,
+): number[] {
+  const naturalWidths = tabs.map(tab => naturalTabWidth(tab, busyMinWidth, idleMinWidth));
+  const minimums = tabs.map(tab => minimumTabWidth(tab, busyMinWidth, idleMinWidth));
+  const activeWidth = tabs.reduce((total, tab, index) => total + (tab.active ? naturalWidths[index] : 0), 0);
+  const adjustable = tabs.flatMap((tab, index) => tab.active ? [] : [index]);
+  const adjustableSpace = availableTabSpace - activeWidth;
+  const minimumTotal = adjustable.reduce((total, index) => total + minimums[index], 0);
+
+  if (naturalWidths.reduce((total, width) => total + width, 0) <= availableTabSpace) return naturalWidths;
+  if (adjustableSpace <= minimumTotal) {
+    return tabs.map((tab, index) => tab.active ? naturalWidths[index] : minimums[index]);
+  }
+
+  let lowerCap = 0;
+  let upperCap = Math.max(0, ...adjustable.map(index => naturalWidths[index]));
+
+  // Find the highest uniform cap that fits; shorter titles therefore remain
+  // whole whenever any longer title is still above the cap.
+  for (let iteration = 0; iteration < 48; iteration++) {
+    const cap = (lowerCap + upperCap) / 2;
+    const total = adjustable.reduce((sum, index) => sum + Math.max(minimums[index], Math.min(naturalWidths[index], cap)), 0);
+
+    if (total > adjustableSpace) upperCap = cap;
+    else lowerCap = cap;
+  }
+
+  return tabs.map((tab, index) => tab.active
+    ? naturalWidths[index]
+    : Math.max(minimums[index], Math.min(naturalWidths[index], lowerCap)));
+}
+
 /**
  * Allocate the strip without depending on the DOM. Compact groups are budgeted
  * before the active group; if their icons overflow, each capsule keeps a +N
@@ -101,17 +142,24 @@ export function calculateTabStripLayout(input: TabStripLayoutInput): TabGroupLay
   } = input;
   const sectionGapWidth = Math.max(0, groups.length - 1) * groupGap;
   const groupBudget = Math.max(0, availableWidth - reservedWidth - sectionGapWidth);
-  const fullWidth = groups.reduce((total, group) => total + (group.folded ? group.foldedWidth : expandedGroupWidth(group, undefined, tabGap)), 0);
+  const widthsForGroup = (group: TabStripLayoutGroup) => group.tabs.map(tab => naturalTabWidth(tab, busyMinWidth, idleMinWidth));
+  const fullWidth = groups.reduce((total, group) => total + (group.folded
+    ? group.foldedWidth
+    : expandedGroupWidth(group, widthsForGroup(group), tabGap)), 0);
 
   if (fullWidth <= groupBudget) {
-    return groups.map(group => ({
-      id: group.id,
-      presentation: group.folded ? 'folded' : 'expanded',
-      width: group.folded ? group.foldedWidth : expandedGroupWidth(group, undefined, tabGap),
-      visibleTabIds: group.folded ? [] : group.tabs.map(tab => tab.id),
-      overflowCount: 0,
-      tabWidths: new Map(group.tabs.map(tab => [tab.id, tab.width])),
-    }));
+    return groups.map(group => {
+      const widths = widthsForGroup(group);
+
+      return {
+        id: group.id,
+        presentation: group.folded ? 'folded' : 'expanded',
+        width: group.folded ? group.foldedWidth : expandedGroupWidth(group, widths, tabGap),
+        visibleTabIds: group.folded ? [] : group.tabs.map(tab => tab.id),
+        overflowCount: 0,
+        tabWidths: new Map(group.tabs.map((tab, index) => [tab.id, widths[index]])),
+      };
+    });
   }
 
   const expanded = groups.find(group => group.id === activeGroup && !group.folded);
@@ -164,24 +212,10 @@ export function calculateTabStripLayout(input: TabStripLayoutInput): TabGroupLay
       continue;
     }
 
-    const minimums = group.tabs.map(tab => minimumTabWidth(tab, busyMinWidth, idleMinWidth));
-    const width = Math.min(expandedGroupWidth(group, undefined, tabGap), Math.max(group.baseWidth, availableExpandedWidth));
+    const naturalWidths = widthsForGroup(group);
+    const width = Math.min(expandedGroupWidth(group, naturalWidths, tabGap), Math.max(group.baseWidth, availableExpandedWidth));
     const tabSpace = Math.max(0, width - group.baseWidth - Math.max(0, group.tabs.length - 1) * tabGap);
-    const widths = group.tabs.map(tab => tab.width);
-    let excess = Math.max(0, widths.reduce((total, tabWidth) => total + tabWidth, 0) - tabSpace);
-
-    // Drain the widest title down to its floor before shrinking any shorter title.
-    const widestFirst = group.tabs
-      .map((tab, index) => ({ tab, index, width: widths[index], floor: minimums[index] }))
-      .sort((left, right) => right.width - left.width);
-
-    for (const entry of widestFirst) {
-      if (excess <= 0) break;
-      const reduction = Math.min(excess, Math.max(0, widths[entry.index] - entry.floor));
-
-      widths[entry.index] -= reduction;
-      excess -= reduction;
-    }
+    const widths = levelTabWidths(group.tabs, tabSpace, busyMinWidth, idleMinWidth);
 
     results.push({
       id: group.id,
