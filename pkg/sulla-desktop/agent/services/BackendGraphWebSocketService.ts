@@ -465,9 +465,9 @@ export class BackendGraphWebSocketService {
         threadId,
         undefined,
         receiverAgentId,
-        entries.every(entry => entry.envelope.kind === 'human') ? 'keyboard' : 'system',
-        { source: 'agent_inbox', workerMappingNewHumanTurn: entries.every(entry => entry.envelope.kind === 'human'), inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
-        entries.every(entry => entry.envelope.kind === 'human') ? entries.map(entry => ({ id: entry.envelope.ids.messageId, attempt: String((entry.envelope.ids as any).answerAttempt ?? ''), body: entry.envelope.body })) : undefined,
+        human ? 'keyboard' : 'system',
+        { source: 'agent_inbox', workerMappingNewHumanTurn: human, inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
+        entries.filter(entry => entry.envelope.ids.messageId.startsWith('decision-answer:')).map(entry => ({ id: entry.envelope.ids.messageId, attempt: String((entry.envelope.ids as any).answerAttempt ?? ''), body: entry.envelope.body })),
       );
     } finally { if (human && threadId) this.deliveringDecisionThreads.delete(threadId); }
   }

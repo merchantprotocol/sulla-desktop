@@ -172,6 +172,8 @@ export function formatQuestionResolution(
 }
 
 /** A question receipt contains no inferred choice and never asks the model to keep a tool connection open. */
-export function formatQuestionReceipt(id: string, answerSaved = false): string {
-  return `${ answerSaved ? 'The answer is already saved and queued' : 'The question is saved in For You and remains open until answered or dismissed' } (request ${ id }). The answer will arrive in this original conversation through the durable mailbox. Do not ask the question again, infer consent, or proceed with work that depends on the answer. Finish this turn so the saved answer can be delivered; independent work may continue separately. Ask a new question only when its context or choices actually change.`;
+export function formatQuestionReceipt(id: string, answerSaved = false, parked = false): string {
+  if (parked && !answerSaved) return `The question is saved in For You (request ${ id }) and this delegated task is durably parked for its answer. The result will arrive through the job mailbox; do not ask again, infer consent, or proceed with dependent work. End this turn now; independent work may continue separately.`;
+  const destination = parked ? 'the delegated task mailbox' : 'this original conversation through the durable mailbox';
+  return `${ answerSaved ? 'The answer is already saved and queued' : 'The question is saved in For You and remains open until answered or dismissed' } (request ${ id }). The answer will arrive in ${ destination }. Do not ask the question again, infer consent, or proceed with work that depends on the answer. Finish this turn so the saved answer can be delivered; independent work may continue separately. Ask a new question only when its context or choices actually change.`;
 }

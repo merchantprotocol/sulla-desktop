@@ -98,7 +98,7 @@ describe('Files request publish inline approval', () => {
         kind: 'tool_approval',
         extras: { toolApproval: { approvalId: decision.decision_id, title: record.title, expiresAt: record.expiresAt, origin: { kind: 'files_publish' } } },
       });
-      const final = await fixture.service.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' });
+      const final = await fixture.service.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' }, { kind: 'human' });
       expect(final.settled).toBe(true);
     } finally { coordinator.dispose() }
   });

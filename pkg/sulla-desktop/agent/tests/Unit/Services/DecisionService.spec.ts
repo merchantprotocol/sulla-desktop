@@ -40,7 +40,7 @@ describe('DecisionService', () => {
     const changed: any[] = [];
     service.subscribe(next => changed.push(next));
 
-    await expect(service.resolve({ id: record.id, conversationId: 'child-thread', action: 'approved' })).resolves.toMatchObject({ settled: true });
+    await expect(service.resolve({ id: record.id, conversationId: 'child-thread', action: 'approved' }, { kind: 'human' })).resolves.toMatchObject({ settled: true });
     // The session-free write is the publish-only one; the general settle keeps its session owner.
     expect(decisions.settleDurablePublish).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved' }), expect.any(Number));
     expect(decisions.settle).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe('DecisionService', () => {
 
     const cards = await service.listTranscriptDecisions('root-thread', [record.id]);
     expect(cards).toEqual([record]);
-    await expect(service.resolve({ id: cards[0].id, conversationId: cards[0].conversationId, action: 'approved' })).resolves.toMatchObject({ settled: true });
+    await expect(service.resolve({ id: cards[0].id, conversationId: cards[0].conversationId, action: 'approved' }, { kind: 'human' })).resolves.toMatchObject({ settled: true });
     expect(decisions.settleDurablePublish).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ conversationId: 'child-thread', status: 'approved' }), expect.any(Number));
     expect(stored.status).toBe('approved');
   });
@@ -88,6 +88,27 @@ describe('DecisionService', () => {
     await expect(service.list()).resolves.toEqual([expired]);
     expect(pendingDecisions.expireOpenDecisions).toHaveBeenCalledWith(expect.any(String), expect.any(Number));
     expect(changed).toEqual([expired]);
+  });
+
+  it('requires an actor and resolveAs settles the same waiting outcome with attribution', async() => {
+    // risk: authorization — an implicit human actor would let a future agent answer be misattributed or bypass the caller path.
+    let release!: () => void;
+    const settling = new Promise<void>(resolve => { release = resolve });
+    const decisions = { insert: vi.fn(async() => undefined), settle: vi.fn(async() => { await settling; return true }) };
+    const pendingDecisions = { ancestry: vi.fn(async() => []), taskForThread: vi.fn(async() => null), findById: vi.fn(async() => undefined) };
+    const service = new DecisionService(undefined, { decisions: decisions as any, pendingDecisions: pendingDecisions as any });
+    const { record, result } = await service.request({ kind: 'approval', title: 'Run?', toolName: 'write', conversationId: 'asker', channel: 'chat' }, 60_000);
+    const response = { id: record.id, conversationId: record.conversationId, action: 'denied' as const };
+    const actor = { kind: 'agent' as const, agentId: 'coding-manager', label: 'Coding Manager', threadId: 'manager' };
+
+    await expect((service.resolve as any)({ ...response, id: 'missing' })).rejects.toThrow('decision actor is required');
+    const first = service.resolveAs(actor, response);
+    await vi.waitFor(() => expect(decisions.settle).toHaveBeenCalledOnce());
+    await expect(service.resolveAs({ kind: 'human' }, response)).resolves.toMatchObject({ settled: false });
+    release();
+    await expect(first).resolves.toMatchObject({ settled: true });
+    await expect(result).resolves.toMatchObject({ status: 'denied', answeredBy: actor });
+    expect(decisions.settle).toHaveBeenCalledOnce();
   });
 });
 
@@ -117,7 +138,7 @@ describe('a question whose asker stops waiting', () => {
     const service = new DecisionService();
     const { record } = await service.request(question, 30 * 60_000);
 
-    await service.resolve({ id: record.id, conversationId: 'thread-1', action: 'answered', answers: [{ question: 'Color?', selected: ['Blue'] }] });
+    await service.resolve({ id: record.id, conversationId: 'thread-1', action: 'answered', answers: [{ question: 'Color?', selected: ['Blue'] }] }, { kind: 'human' });
 
     const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status = \$2/.test(sql))!;
     expect(JSON.parse(String(update[1]?.[2])).answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);

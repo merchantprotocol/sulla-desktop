@@ -15,6 +15,8 @@ import { LateDecisionAnswerHandler } from './LateDecisionAnswerHandler';
 import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
 import { DecisionAuthorityPolicy } from './DecisionAuthorityPolicy';
 import { DecisionRouteResolver } from './DecisionRouteResolver';
+import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './DecisionAskerWaiter';
+import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
 
 import type { DecisionActor, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
@@ -29,6 +31,7 @@ export class DecisionService {
   private readonly approvalPolicies: ToolApprovalPolicyRepository;
   private readonly authorityPolicy: DecisionAuthorityPolicy;
   private readonly routeResolver: DecisionRouteResolver;
+  private readonly askerWaiter: DecisionQuestionAskerWaiter;
 
   constructor(
     lateAnswerHandler?: LateDecisionAnswerHandler,
@@ -38,6 +41,7 @@ export class DecisionService {
       pendingDecisions?: PendingDecisionRepository;
       authorityPolicy?: DecisionAuthorityPolicy;
       routeResolver?: DecisionRouteResolver;
+      askerWaiter?: DecisionQuestionAskerWaiter;
     } = {},
   ) {
     this.pendingDecisions = repositories.pendingDecisions ?? new PendingDecisionRepository(postgresClient);
@@ -45,6 +49,7 @@ export class DecisionService {
     this.approvalPolicies = repositories.approvalPolicies ?? new ToolApprovalPolicyRepository(postgresClient);
     this.authorityPolicy = repositories.authorityPolicy ?? new DecisionAuthorityPolicy();
     this.routeResolver = repositories.routeResolver ?? new DecisionRouteResolver(this.pendingDecisions);
+    this.askerWaiter = repositories.askerWaiter ?? new DecisionAskerWaiter();
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
       { find: conversationId => this.pendingDecisions.findConversation(conversationId) },
@@ -65,13 +70,24 @@ export class DecisionService {
 
   private questionWrites = Promise.resolve();
 
+  private async parkQuestionAsker(asker: AgentJobTaskTarget | null | undefined, decisionId: string): Promise<boolean> {
+    if (!asker || !['running', 'parked'].includes(asker.jobStatus) || !['running', 'parked'].includes(asker.taskStatus)) return false;
+    try { await this.askerWaiter.park(asker.jobId, asker.taskIndex, decisionId); return true }
+    catch (error) { console.warn('[DecisionService] Could not park asker for question:', error); return false }
+  }
+
   /** Human questions outlive tool transports; answers always use the durable mailbox. */
-  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean }> {
+  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean; parked?: boolean }> {
     const operation = this.questionWrites.then(async() => {
       if (signal?.aborted) throw new Error('Request cancelled');
       if (!input.conversationId || !input.channel || !input.questions?.length) throw new Error('A question requires its original conversation and options.');
+      const asker = await this.pendingDecisions.taskForThread?.(input.conversationId);
       const existing = await this.pendingDecisions.findOpenQuestion(input);
-      if (existing) return { record: existing, reused: true };
+      if (existing) {
+        const parked = existing.attention !== 'answered' && await this.parkQuestionAsker(asker, existing.id);
+        this.changed(existing);
+        return { record: existing, reused: true, ...(parked ? { parked: true } : {}) };
+      }
       const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
       if (signal?.aborted) throw new Error('Request cancelled');
       const now = Date.now();
@@ -83,11 +99,16 @@ export class DecisionService {
         relatedConversationIds,
         route: { authority, chain, holderIndex: authority === 'human' ? chain.length - 1 : 0, holderSince: now, history: [] },
         kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now,
-        expiresAt: now + 30 * 60_000, payload: { ...input.payload, answerRoute: 'inbox' },
+        expiresAt: now + 30 * 60_000, payload: {
+          ...input.payload,
+          ...(asker ? { askerJobId: asker.jobId, askerTaskIndex: String(asker.taskIndex) } : {}),
+          answerRoute: 'inbox',
+        },
       };
       await this.decisions.insert(record, this.session);
+      const parked = await this.parkQuestionAsker(asker, record.id);
       this.changed(record);
-      return { record, reused: false };
+      return { record, reused: false, ...(parked ? { parked: true } : {}) };
     });
     this.questionWrites = operation.then(() => undefined, () => undefined);
     return operation;
@@ -172,7 +193,12 @@ export class DecisionService {
     return this.decisions.listRecent();
   }
 
-  async resolve(response: DecisionResponse, actor: DecisionActor = { kind: 'human' }): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
+  async resolve(response: DecisionResponse, actor: DecisionActor): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
+    return this.resolveAs(actor, response);
+  }
+
+  async resolveAs(actor: DecisionActor, response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
+    if (!actor || !['human', 'agent'].includes(actor.kind)) throw new Error('A decision actor is required.');
     if (!response || typeof response.id !== 'string' || typeof response.conversationId !== 'string') return { settled: false, reason: 'Request and conversation are required.' };
     const entry = this.waiting.get(response.id);
     if (!entry) {

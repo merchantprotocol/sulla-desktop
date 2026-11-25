@@ -100,6 +100,25 @@ it('uses the saved chat identity for legacy human rows with no recorded receiver
   expect(service.dispatchToAgent.mock.calls[0][5]).toBe('saved-original-agent');
 });
 
+it('dispatches an agent decision envelope as a system turn, never keyboard or a human mapping', async() => {
+  const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+  const service: any = Object.create(BackendGraphWebSocketService.prototype);
+  service.inboxThread = () => undefined;
+  service.deliveringDecisionThreads = new Set();
+  service.dispatchToAgent = vi.fn().mockResolvedValue('accepted');
+  const entry: any = {
+    target: { agentId: 'codex-luna-worker' },
+    envelope: { kind: 'decision', from: 'system:decision', body: '[Decision answered by Coding Manager]\nColor?: Blue', ids: { messageId: 'decision-answer:q', answerAttempt: 'attempt' } },
+  };
+
+  await service.wakeInbox({ channel: 'sulla-desktop', threadId: 'asker' }, entry.envelope.body, [entry]);
+  const dispatch = service.dispatchToAgent.mock.calls[0];
+  expect(dispatch[6]).toBe('system');
+  expect(dispatch[7].workerMappingNewHumanTurn).toBe(false);
+  expect(dispatch[8]).toEqual([{ id: 'decision-answer:q', attempt: 'attempt', body: entry.envelope.body }]);
+  expect(entry.envelope.from).not.toBe('you');
+});
+
 describe('late answer receiver on the shared desktop channel', () => {
   const answer = (agentId?: string) => [{ target: agentId ? { agentId } : {}, envelope: { kind: 'human', body: 'saved', ids: { messageId: 'answer', answerAttempt: 'a' } } }];
   async function inbox(options: { live?: Record<string, unknown>; saved?: Record<string, unknown> | null; owned?: boolean } = {}) {

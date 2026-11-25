@@ -54,7 +54,7 @@ export class DecisionRouteTransitionSqlBuilder {
   }
 
   private actorPredicate(): string {
-    return `($3='human' OR (COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4
+    return `($3 IN ('human','system') OR (COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4
       AND record#>>ARRAY['route','chain',$4::text,'threadId']=$5))`;
   }
 
