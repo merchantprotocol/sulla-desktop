@@ -136,6 +136,23 @@ export class ThreadAgentHistoryCursor {
 export class ThreadAgentEventBuffer {
   readonly items = ref<StatusRollupItem[]>([]);
 
+  /** Retains one newest event while the status-line consumer is absent. */
+  appendNewest(item: StatusRollupItem): void {
+    const existing = this.items.value[0];
+    if (existing?.key === item.key && existing.kind === 'thought' && item.kind === 'thought' && existing.text !== item.text) {
+      this.items.value = [existing.updateOnly ? item : { ...item, updateOnly: false }];
+      return;
+    }
+    if (existing && item.observedAt < existing.observedAt) return;
+    this.items.value = [item.updateOnly ? { ...item, updateOnly: false } : item];
+  }
+
+  /** Keeps only the most recent pending event when the consumer detaches. */
+  retainNewest(): void {
+    const newest = this.items.value[this.items.value.length - 1];
+    this.items.value = newest ? [newest.updateOnly ? { ...newest, updateOnly: false } : newest] : [];
+  }
+
   append(item: StatusRollupItem): void {
     const index = this.items.value.findIndex(existing => existing.key === item.key);
     if (index >= 0) {
@@ -488,8 +505,9 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   };
 
   const append = (item: StatusRollupItem): void => {
-    if (!consumerAttached || !activeThreadId || item.threadId !== activeThreadId) return;
-    eventBuffer.append(item);
+    if (!activeThreadId || item.threadId !== activeThreadId) return;
+    if (consumerAttached) eventBuffer.append(item);
+    else eventBuffer.appendNewest(item);
   };
 
   const stateEvent = (agent: PresentedThreadAgent, threadId: string, version: number, at: number): StatusRollupItem =>
@@ -690,7 +708,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     attachConsumer: () => { consumerAttached = true; },
     detachConsumer: () => {
       consumerAttached = false;
-      eventBuffer.clear();
+      eventBuffer.retainNewest();
     },
     consumeCheckIns: () => eventBuffer.consume(),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
