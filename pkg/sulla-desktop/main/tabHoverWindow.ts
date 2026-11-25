@@ -9,8 +9,8 @@ import { app, BrowserWindow, screen } from 'electron';
 import type { TabHoverRequest } from '@pkg/shared/TabStripPopup';
 
 interface HoverWindow {
-  popup: BrowserWindow;
-  ready: Promise<void>;
+  popup:      BrowserWindow;
+  ready:      Promise<void>;
   requestId?: string;
 }
 
@@ -65,14 +65,14 @@ export class TabHoverWindow {
 
   private create(owner: BrowserWindow): HoverWindow {
     const popup = new BrowserWindow({
-      parent: owner,
-      show: false,
-      frame: false,
-      transparent: true,
-      focusable: false,
-      resizable: false,
-      skipTaskbar: true,
-      hasShadow: false,
+      parent:         owner,
+      show:           false,
+      frame:          false,
+      transparent:    true,
+      focusable:      false,
+      resizable:      false,
+      skipTaskbar:    true,
+      hasShadow:      false,
       webPreferences: { contextIsolation: false, nodeIntegration: true },
     });
 

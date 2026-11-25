@@ -15,15 +15,28 @@ describe('TabTransferPayload', () => {
 
   it('can send nested reactive chat metadata without carrying internal fields', () => {
     const agentChat = reactive({
-      threadId: 'thread', agentId: 'child', agentName: 'Child', parentThreadId: 'parent-thread',
-      parentAgentId: 'parent', parentAgentName: 'Parent', contractId: 'result', depth: 1, extra: 'not on IPC',
+      threadId:        'thread',
+      agentId:         'child',
+      agentName:       'Child',
+      parentThreadId:  'parent-thread',
+      parentAgentId:   'parent',
+      parentAgentName: 'Parent',
+      contractId:      'result',
+      depth:           1,
+      extra:           'not on IPC',
     });
     const tab = readonly(reactive({ ...descriptor('chat'), agentChat, extra: 'ignored' }));
     const copy = structuredClone(payload.descriptor(tab));
 
     expect(copy.agentChat).toEqual({
-      threadId: 'thread', agentId: 'child', agentName: 'Child', parentThreadId: 'parent-thread',
-      parentAgentId: 'parent', parentAgentName: 'Parent', contractId: 'result', depth: 1,
+      threadId:        'thread',
+      agentId:         'child',
+      agentName:       'Child',
+      parentThreadId:  'parent-thread',
+      parentAgentId:   'parent',
+      parentAgentName: 'Parent',
+      contractId:      'result',
+      depth:           1,
     });
     expect(copy).not.toHaveProperty('extra');
     agentChat.threadId = 'changed';

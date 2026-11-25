@@ -100,9 +100,9 @@
                 aria-hidden="true"
               >
                 <i
-                  v-for="tab in section.tabs.filter(isActiveTabActivity)"
-                  :key="`${tab.id}-${tab.activity}`"
-                  :class="`tab-group-dot-${tab.activity}`"
+                  v-for="tab in section.tabs.filter(tab => Boolean(groupDotState(tab)))"
+                  :key="tab.id"
+                  :class="`tab-group-dot-${groupDotState(tab)}`"
                 />
               </span>
             </button>
@@ -386,18 +386,19 @@ import { isTabCloseable } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
+import { TabAttentionMenuOwner } from '@pkg/composables/TabAttentionMenuOwner';
 import { TabDragAutoScroll } from '@pkg/composables/TabDragAutoScroll';
 import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
-import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composables/TabTransferPayload';
+import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
 import { TabHoverController } from '@pkg/composables/TabHoverController';
-import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
-import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
+import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
+import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composables/TabTransferPayload';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 import { isChatTabActivitySnapshot, type ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
+import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
@@ -413,6 +414,7 @@ const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
 // tab strip per page. They share a single scroll offset so switching tabs
 // never resets the strip back to the left.
 let sharedTabScrollLeft = 0;
+const attentionOwner = new TabAttentionMenuOwner();
 </script>
 
 <script setup lang="ts">
@@ -440,21 +442,33 @@ function _onHostedChatRunning(_event: unknown, tabId: string, running: boolean, 
 }
 
 function _setChatRunning(tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) {
-  const next = new Set(workingTabIds.value);
+  if (workingTabIds.value.has(tabId) !== running) {
+    const next = new Set(workingTabIds.value);
 
-  if (running) next.add(tabId);
-  else next.delete(tabId);
-  workingTabIds.value = next;
-  if (isChatTabActivitySnapshot(activity)) chatActivityByTab.set(tabId, activity);
+    if (running) next.add(tabId);
+    else next.delete(tabId);
+    workingTabIds.value = next;
+  }
+  if (isChatTabActivitySnapshot(activity)) {
+    const previous = chatActivityByTab.get(tabId);
+
+    if (previous?.state !== activity.state || previous?.detail !== activity.detail) chatActivityByTab.set(tabId, activity);
+  }
 }
 
-function _tabCtxBridge(...args: any[]) { _onTabCtxAction?.(...args) }
+function _tabCtxBridge(event: Electron.IpcRendererEvent, action: string, data: Record<string, unknown>) {
+  if (action.startsWith('attention:')) attentionOwner.select(data.attentionMenuId, action.slice('attention:'.length));
+  else _onTabCtxAction?.(event, action, data);
+}
+
+function _attentionClosedBridge(_event: Electron.IpcRendererEvent, id: string) { attentionOwner.close(id) }
 function _moreBridge(...args: any[]) { _onMoreAction?.(...args) }
 function _moreHistBridge(...args: any[]) { _onMoreFetchHist?.(...args) }
 
 function _mountIpcListeners() {
   if (_ipcMountCount++ === 0) {
-    ipcRenderer.on('tab-context-menu:selected' as any, _tabCtxBridge as any);
+    ipcRenderer.on('tab-context-menu:selected', _tabCtxBridge);
+    ipcRenderer.on('tab-context-menu:attention-closed', _attentionClosedBridge);
     ipcRenderer.on('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
   }
@@ -467,7 +481,8 @@ function _mountIpcListeners() {
 function _unmountIpcListeners() {
   if (--_ipcMountCount <= 0) {
     _ipcMountCount = 0;
-    ipcRenderer.removeListener('tab-context-menu:selected' as any, _tabCtxBridge as any);
+    ipcRenderer.removeListener('tab-context-menu:selected', _tabCtxBridge);
+    ipcRenderer.removeListener('tab-context-menu:attention-closed', _attentionClosedBridge);
     ipcRenderer.removeListener('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.removeListener('more-menu:fetch-history' as any, _moreHistBridge as any);
     _onTabCtxAction = null;
@@ -692,14 +707,16 @@ function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
     const position = popupAnchor.locate(anchor, getScrollEl() ?? undefined);
 
     if (!current || !position) return undefined;
-    const state = current.activity && current.activity !== 'idle' ? current.activity : current.working ? 'working' : 'idle';
+    const state = groupDotState(current) ?? 'idle';
+    const status = state === 'idle' && current.loading ? 'Loading' : ACTIVITY_LABEL[state];
+    const detail = current.statusLine === status ? '' : current.statusLine;
 
     return {
       ...position,
       id:     crypto.randomUUID(),
       title:  current.label,
-      status: ACTIVITY_LABEL[state],
-      detail: current.statusLine,
+      status: current.preview ? `Preview · ${ status }` : status,
+      detail,
     };
   });
 }
@@ -725,10 +742,19 @@ function publishAttentionMenu(id: string, update: boolean): void {
     hideAttentionMenu();
     return;
   }
+  if (!update) {
+    attentionOwner.open({
+      id,
+      select: tabId => {
+        if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
+      },
+      onClosed: () => {
+        if (attentionMenuId.value === id) attentionMenuId.value = undefined;
+      },
+    });
+  }
   attentionMenuId.value = id;
   ipcRenderer.send('tab-context-menu:show', {
-    screenX:   0,
-    screenY:   0,
     items:     needsYouRows.value,
     tabData:   { attentionMenuId: id },
     attention: { ...position, id },
@@ -739,19 +765,9 @@ function publishAttentionMenu(id: string, update: boolean): void {
 function hideAttentionMenu(): void {
   const id = attentionMenuId.value;
 
-  attentionMenuId.value = undefined;
-  if (id) ipcRenderer.send('tab-context-menu:hide-attention', id);
-}
-
-function onAttentionClosed(_event: unknown, id: string): void {
-  if (attentionMenuId.value === id) attentionMenuId.value = undefined;
-}
-
-function onAttentionSelected(_event: unknown, action: string, data: Record<string, unknown>): void {
-  if (!attentionMenuId.value || data.attentionMenuId !== attentionMenuId.value || !action.startsWith('attention:')) return;
-  const tabId = action.slice('attention:'.length);
-
-  if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
+  if (!id) return;
+  attentionOwner.close(id);
+  ipcRenderer.send('tab-context-menu:hide-attention', id);
 }
 
 function hideStripPopups(): void {
@@ -767,9 +783,6 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeyboardShortcuts);
   window.addEventListener('blur', hideTabHover);
   document.addEventListener('visibilitychange', onStripVisibilityChange);
-  ipcRenderer.on('tab-context-menu:attention-closed', onAttentionClosed);
-  ipcRenderer.on('tab-context-menu:selected', onAttentionSelected);
-  window.addEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 
   // Point the module-level IPC bridges at THIS instance's handlers.
@@ -804,10 +817,7 @@ onUnmounted(() => {
   hideStripPopups();
   window.removeEventListener('blur', hideTabHover);
   document.removeEventListener('visibilitychange', onStripVisibilityChange);
-  ipcRenderer.removeListener('tab-context-menu:attention-closed', onAttentionClosed);
-  ipcRenderer.removeListener('tab-context-menu:selected', onAttentionSelected);
   window.removeEventListener('keydown', handleKeyboardShortcuts);
-  window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
   _unmountIpcListeners();
 
@@ -930,6 +940,7 @@ interface HeaderTab {
   isActive:   boolean;
   pinned:     boolean;
   working:    boolean;
+  loading?:   boolean;
   /** Chat tabs only: what the thread is doing, for the tab's activity dot. */
   activity?:  ThreadActivityState;
   statusLine: string;
@@ -1009,8 +1020,10 @@ function toggleGroup(id: TabGroupId): void {
   setGroupFolded(id, !isGroupFolded(id));
 }
 
-function isActiveTabActivity(tab: HeaderTab): boolean {
-  return Boolean(tab.activity && tab.activity !== 'idle');
+function groupDotState(tab: HeaderTab): ThreadActivityState | undefined {
+  if (tab.activity && tab.activity !== 'idle') return tab.activity;
+  if (tab.working) return 'working';
+  return undefined;
 }
 
 function activateTab(tab: HeaderTab): void {
@@ -1098,8 +1111,9 @@ const allTabsById = computed(() => {
       preview:    previewTabId.value === bt.id,
       pinned,
       working,
+      loading: bt.loading,
       activity,
-      statusLine: previewTabId.value === bt.id ? `preview · ${ statusLine }` : statusLine,
+      statusLine,
     });
   }
 
@@ -1109,13 +1123,13 @@ const allTabsById = computed(() => {
 /** Saved order is reconciled and sorted into visual order by the group model. */
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
 
-watch(() => JSON.stringify(needsYouRows.value), () => {
-  if (attentionMenuId.value) publishAttentionMenu(attentionMenuId.value, true);
+watch(() => attentionMenuId.value ? JSON.stringify(needsYouRows.value) : null, (rows, previous) => {
+  if (attentionMenuId.value && previous !== null && rows !== null) publishAttentionMenu(attentionMenuId.value, true);
 }, { flush: 'post' });
 watch(() => route.path, hideStripPopups, { flush: 'sync' });
 watch(() => orderedTabs.value.find(tab => tab.isActive)?.mode, hideStripPopups, { flush: 'sync' });
 watch(foldedGroupIds, hideTabHover);
-watch(() => orderedTabs.value.map(tab => tab.id).join('\0'), hideTabHover);
+watch(() => orderedTabs.value.map(tab => `${ tab.id }:${ tab.mode }`).join('\0'), hideTabHover);
 
 const visibleTabs = computed(() => orderedTabs.value.filter(tab => tab.pinned || !isGroupFolded(tabGroupModel.groupForMode(tab.mode))));
 
@@ -1148,7 +1162,14 @@ watch(
   () => {
     nextTick(() => {
       updateScrollButtons();
-      syncTabStrip();
+      const dragging = dragState.value;
+      const container = getScrollEl();
+
+      if (dragging?.active && !dragging.detached && dragging.tabEl.isConnected && container) {
+        positionDraggedTab(dragging, container);
+      } else {
+        syncTabStrip();
+      }
     });
   },
   { flush: 'post' },
@@ -1223,19 +1244,24 @@ interface DragState {
 const dragState = ref<DragState | null>(null);
 let currentDragCancel: (() => void) | null = null;
 const transferPayload = new TabTransferPayload();
-const transferSnapshots = new Map<string, TabEditorTransferSnapshot>();
 const suppressDragClick = new TabDragClickSuppression(window);
 const dragEdgeScroll = new TabDragAutoScroll(window);
 
-function onTransferSnapshot(event: Event) {
-  const detail = (event as CustomEvent<TabEditorTransferSnapshot>).detail;
-
-  if (detail?.tabId && detail.fileEditor) transferSnapshots.set(detail.tabId, detail);
-}
-
 function captureTransferState(tabId: string) {
-  window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId } }));
-  return transferPayload.transient(transferSnapshots.get(tabId), isTabPinned(`browser-${ tabId }`));
+  let snapshot: TabEditorTransferSnapshot | undefined;
+  const collect = (event: Event) => {
+    const detail = (event as CustomEvent<TabEditorTransferSnapshot>).detail;
+
+    if (detail?.tabId === tabId && detail.fileEditor) snapshot = detail;
+  };
+
+  window.addEventListener('sulla:tab-transfer-state', collect);
+  try {
+    window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId } }));
+  } finally {
+    window.removeEventListener('sulla:tab-transfer-state', collect);
+  }
+  return transferPayload.transient(snapshot, isTabPinned(`browser-${ tabId }`));
 }
 
 watch(() => visibleTabs.value.map(tab => tab.id).join('\0'), () => {
@@ -1470,6 +1496,7 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
   hideStripPopups();
+  _onTabCtxAction = handleTabContextMenuAction;
   // Build the list of menu items for this tab
   const items: string[] = [tab.pinned ? 'unpin' : 'pin'];
 
@@ -1488,7 +1515,7 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
     items.push('reload', 'copyUrl');
   }
 
-  ipcRenderer.send('tab-context-menu:show' as any, {
+  ipcRenderer.send('tab-context-menu:show', {
     screenX:  event.screenX,
     screenY:  event.screenY,
     items,
@@ -1542,7 +1569,6 @@ function handleTabContextMenuAction(
   action: string,
   tabData: Record<string, unknown>,
 ): void {
-  if (action.startsWith('attention:')) return;
   const tabId = tabData.id as string;
   const browserId = tabData.browserId as string | null;
   const tabRoute = tabData.route as string;
