@@ -2,11 +2,18 @@
  * Copyright (c) 2025-2026 Merchant Protocol LLC.
  * SPDX-License-Identifier: GPL-2.0-or-later */
 /* A2 grouped capsules. The titlebar stays 44px high; capsules rise behind 34px tabs. */
+.app-titlebar {
+  justify-content: flex-start;
+  gap: calc(var(--spacing) * 3);
+}
+.app-titlebar .titlebar-controls {
+  margin-left: auto;
+}
 .app-titlebar .tab-scroll-wrapper {
   flex: 1 1 auto;
   min-width: 0;
   height: 44px;
-  margin-left: 8px;
+  margin-left: 0;
   padding: 0;
   gap: 4px;
   align-items: center;
@@ -21,7 +28,7 @@
   height: 44px;
   align-items: flex-end;
   gap: 8px;
-  padding: 0 8px;
+  padding: 0 8px 0 0;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-behavior: auto;

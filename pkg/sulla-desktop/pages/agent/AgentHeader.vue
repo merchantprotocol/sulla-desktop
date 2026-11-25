@@ -6,7 +6,7 @@
 -->
 <template>
   <header
-    class="app-titlebar relative flex flex-none items-end justify-between pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 z-99"
+    class="app-titlebar relative flex flex-none items-end justify-start pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
   >
     <div class="relative flex shrink-0 items-center self-stretch">
@@ -2176,7 +2176,7 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
 }
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
-.app-titlebar .tab-scroll-wrapper { margin-left: 14px; height: 44px; padding: 0; align-items: center; }
+.app-titlebar .tab-scroll-wrapper { margin-left: 0; height: 44px; padding: 0; align-items: center; }
 .app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
 .app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
