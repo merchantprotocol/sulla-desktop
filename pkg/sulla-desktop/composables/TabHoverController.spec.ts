@@ -17,7 +17,7 @@ describe('TabHoverController', () => {
     return { show, hide, hover: new TabHoverController(clock, show, hide) };
   };
   const request = (id: string) => ({
-    id, anchor: { x: 20, y: 45 }, palette: {}, title: 'Tab', status: 'Idle', detail: '',
+    id, anchor: { x: 20, y: 45, aboveY: 5 }, palette: {}, title: 'Tab', status: 'Idle', detail: '',
   });
 
   it('does not show a parked or detached anchor whose visibility changed during the delay', () => {
