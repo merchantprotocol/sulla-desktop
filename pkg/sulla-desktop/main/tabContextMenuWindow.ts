@@ -25,15 +25,19 @@ class TabContextMenuWindow {
   private loaded?:  Promise<void>;
   private pending?: MenuRequest;
   private rendered?: MenuRequest;
+  private detachOpener?: () => void;
 
   async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
+    if (!this.liveContents(opener)) return;
     if (typeof payload.requestId !== 'string' || !payload.requestId || !Array.isArray(payload.items) || !payload.items.length) return;
     if (payload.update && (!payload.attention || this.pending?.opener !== opener || this.pending.payload.requestId !== payload.requestId)) return;
     const request = { opener, payload };
 
     const previous = this.pending;
 
+    this.detachOpener?.();
     this.pending = request;
+    this.detachOpener = this.watchOpener(request);
     if (previous && (previous.opener !== opener || previous.payload.requestId !== payload.requestId)) {
       this.notifyClosed(previous);
     }
@@ -52,8 +56,8 @@ class TabContextMenuWindow {
       } catch { /* keep the default theme */ }
     }
     if (this.pending !== request || popup.isDestroyed()) return;
-    if (opener.isDestroyed()) {
-      this.close();
+    if (!this.liveContents(opener)) {
+      this.close(undefined, false);
       return;
     }
     const bounds = this.bounds(opener, payload);
@@ -95,21 +99,48 @@ class TabContextMenuWindow {
     if (sender === this.popup?.webContents && this.rendered === this.pending && this.pending?.payload.requestId === id) this.close();
   }
 
-  private close(action?: string): void {
+  private close(action?: string, notify = true): void {
     const closed = this.pending;
 
     this.pending = undefined;
     this.rendered = undefined;
+    this.detachOpener?.();
+    this.detachOpener = undefined;
     if (this.popup && !this.popup.isDestroyed()) this.popup.hide();
-    if (!closed) return;
+    if (!closed || !notify) return;
     if (action === undefined) this.notifyClosed(closed);
-    else if (!closed.opener.isDestroyed()) closed.opener.webContents.send('tab-context-menu:selected', closed.payload.requestId, action);
+    else this.liveContents(closed.opener)?.send('tab-context-menu:selected', closed.payload.requestId, action);
   }
 
   private notifyClosed(closed: MenuRequest): void {
-    if (!closed.opener.isDestroyed()) {
-      closed.opener.webContents.send('tab-context-menu:closed', closed.payload.requestId);
-    }
+    this.liveContents(closed.opener)?.send('tab-context-menu:closed', closed.payload.requestId);
+  }
+
+  private liveContents(opener: BrowserWindow): Electron.WebContents | undefined {
+    if (opener.isDestroyed()) return undefined;
+    const contents = opener.webContents;
+
+    return !contents.isDestroyed() && !contents.isCrashed() ? contents : undefined;
+  }
+
+  private watchOpener(request: MenuRequest): () => void {
+    const { opener } = request;
+    const contents = opener.webContents;
+    const onGone = () => {
+      if (this.pending === request) this.close(undefined, false);
+    };
+    const onNavigate = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>, _url: string, _inPlace: boolean, mainFrame: boolean) => {
+      if ((details.isMainFrame ?? mainFrame) && this.pending === request) this.close();
+    };
+
+    contents.on('did-start-navigation', onNavigate);
+    contents.on('render-process-gone', onGone);
+    opener.on('closed', onGone);
+    return () => {
+      contents.removeListener('did-start-navigation', onNavigate);
+      contents.removeListener('render-process-gone', onGone);
+      opener.removeListener('closed', onGone);
+    };
   }
 
   private bounds(opener: BrowserWindow, payload: TabContextMenuRequest): Electron.Rectangle | undefined {
