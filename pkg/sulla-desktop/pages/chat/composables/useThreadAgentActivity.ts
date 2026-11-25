@@ -153,7 +153,7 @@ class ThreadAgentActivityMapper {
   private traceItem(row: TraceRow, byId: ReadonlyMap<string, Message>, threadId: string, agentName: string, now: number): StatusRollupItem {
     const message = byId.get(String(row.id));
     const agentRow = row.kind === 'subagent' ? row.subagent : undefined;
-    const name = message?.kind === 'tool' ? (message.recordedToolName ?? message.tool) : row.kind === 'subagent' ? row.target : agentName.trim() || 'Sulla';
+    const name = row.kind === 'subagent' ? row.target : agentName.trim() || 'Sulla';
     const kind = this.traceKind(row, message);
     const text = this.traceText(row, message);
     const at = Number.isFinite(row.at) ? row.at! : now;
@@ -186,9 +186,7 @@ class ThreadAgentActivityMapper {
     switch (row.kind) {
       case 'tool': {
         if (message?.kind !== 'tool') return `${row.verb} ${row.target}`;
-        const phase = row.status === 'running' ? 'Running' : row.status === 'failed' ? 'Failed' : 'Finished';
-        const name = message.recordedToolName ?? message.tool;
-        return `${phase} ${name}${message.desc?.trim() ? `: ${message.desc.trim()}` : ''}`;
+        return message.desc?.trim() || message.recordedToolName || message.tool;
       }
       case 'thought': return row.target;
       case 'activity': return row.target;
@@ -483,7 +481,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
         return;
       }
       items.forEach(append);
-    }, { immediate: true, deep: true, flush: 'sync' });
+    }, { immediate: true, deep: true, flush: 'pre' });
 
   if (getCurrentScope()) onScopeDispose(() => {
     if (historyTimer !== undefined) clearInterval(historyTimer);

@@ -170,9 +170,13 @@ const showItem = (item: StatusRollupItem | null, fromQueue = false): void => {
   currentItem.value = item;
   if (item) {
     typeText(item, fromQueue);
-    if (dotTimer !== undefined) window.clearTimeout(dotTimer);
+    if (dotTimer !== undefined && typeof window !== 'undefined') window.clearTimeout(dotTimer);
     dotPopping.value = fromQueue && !reducedMotion.value;
-    dotTimer = window.setTimeout(() => { dotPopping.value = false; dotTimer = undefined; }, 160);
+    if (fromQueue && typeof window !== 'undefined') {
+      dotTimer = window.setTimeout(() => { dotPopping.value = false; dotTimer = undefined; }, 160);
+    } else {
+      dotTimer = undefined;
+    }
     if (fromQueue) emitShown(item);
   } else {
     typedText.value = '';
@@ -190,7 +194,8 @@ const refresh = (): void => {
 
 const syncInput = (): void => {
   const now = Date.now();
-  if (activeThreadId !== props.threadId) {
+  const threadChanged = activeThreadId !== props.threadId;
+  if (threadChanged) {
     activeThreadId = props.threadId;
     queue.reset(activeThreadId);
     showItem(null);
@@ -202,6 +207,10 @@ const syncInput = (): void => {
 
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
   queue.observe(props.checkIns, props.threadId, now, visible);
+  if (threadChanged && !mounted.value) {
+    const seeded = queue.seed(props.checkIns, props.threadId, now);
+    if (seeded) showItem(seeded);
+  }
   historyItems.value = queue.history;
   if (mounted.value) refresh();
 };

@@ -109,6 +109,9 @@ export class StatusRollupQueue {
       agentId: item.agentId,
       agentName,
       ...(item.lane ? { lane: this.cleanLabel(item.lane) } : {}),
+      ...(item.kind ? { kind: item.kind } : {}),
+      ...(item.phase ? { phase: item.phase } : {}),
+      ...(item.correlationId ? { correlationId: item.correlationId } : {}),
       text,
       observedAt: Number.isFinite(item.observedAt) ? item.observedAt : now,
       urgency: this.normalizeUrgency(item.urgency),
@@ -155,7 +158,9 @@ export class StatusRollupQueue {
 
   /** Seeds an idle/thread-switched roll-up from its newest scoped check-in, regardless of age. */
   seed(items: readonly StatusRollupItem[], threadId: string, now: number): StatusRollupItem | null {
-    if (this.visible || !threadId || this.queued.length) return this.current;
+    // A single initial item can render during setup/SSR; with a real backlog,
+    // keep FIFO playback intact instead of jumping to the newest event.
+    if (this.visible || !threadId || this.queued.length > 1) return this.current;
     const newest = [...items]
       .filter(item => item.threadId === threadId)
       .sort((left, right) => right.observedAt - left.observedAt)[0];

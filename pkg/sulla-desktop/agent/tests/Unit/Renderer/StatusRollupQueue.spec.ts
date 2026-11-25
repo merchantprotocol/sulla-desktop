@@ -77,6 +77,18 @@ describe('StatusRollupQueue', () => {
     expect(fixture.queue.pending.some(item => item.text.includes('Other thread'))).toBe(false);
   });
 
+  // risk: availability — an initial single check-in must render during setup without being replayed after mount.
+  it('seeds one initial event while preserving its recorded history', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const initial = fixture.item('initial', 'agent-a', 'Ready', 0);
+    fixture.queue.observe([initial], fixture.threadId, 0);
+
+    expect(fixture.queue.seed([initial], fixture.threadId, 0)?.key).toBe('initial');
+    expect(fixture.queue.current?.key).toBe('initial');
+    expect(fixture.queue.pending).toEqual([]);
+    expect(fixture.queue.history.map(item => item.key)).toEqual(['initial']);
+  });
+
   // risk: data accuracy — only an identical event key may be collapsed, not repeated text from the same agent.
   it('collapses exact duplicate keys but preserves distinct repeated actions', () => {
     const fixture = new StatusRollupQueueFixture();
@@ -87,6 +99,23 @@ describe('StatusRollupQueue', () => {
     ], fixture.threadId, 1);
 
     expect(fixture.queue.pending.map(item => item.key)).toEqual(['same', 'again']);
+  });
+
+  // risk: event delivery — each displayed tool step must retain its label and start/result correlation for the glow.
+  it('preserves action labels and tool correlation through presentation', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const item = {
+      ...fixture.item('tool-start', 'agent-a', 'Reading file', 0),
+      kind: 'read' as const,
+      phase: 'start' as const,
+      correlationId: 'primary:thread-a:tool-1',
+    };
+
+    expect(fixture.queue.present(item, fixture.threadId, 0)).toMatchObject({
+      kind: 'read',
+      phase: 'start',
+      correlationId: 'primary:thread-a:tool-1',
+    });
   });
 
   // risk: privacy — event text remains inert plain text and foreign root fallbacks are rejected.

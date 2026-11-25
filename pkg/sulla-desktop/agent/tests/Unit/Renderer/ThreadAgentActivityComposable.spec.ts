@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
-import { ref } from 'vue';
+import { nextTick, ref } from 'vue';
 
 import { StatusRollupQueue } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 import { useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
@@ -46,7 +46,7 @@ function flatten(root: WorkerChartAgent | null): string[] {
 }
 
 describe('useThreadAgentActivity', () => {
-  it('keeps chart, status items, and root fallback inside the active thread', () => {
+  it('keeps chart, status items, and root fallback inside the active thread', async() => {
     // risk: cross-thread agent/check-in disclosure
     const rows = new RowFactory();
     const rootA = rows.create('job-a:0', 'thread-a', 'thread-a');
@@ -73,7 +73,7 @@ describe('useThreadAgentActivity', () => {
     expect(texts()).toEqual(expect.arrayContaining(['check-in job-a:0', 'check-in job-a-child:0']));
     // risk: privacy — the primary agent's tool step shows with its readable description, never raw input.
     const primary = activity.checkIns.value.filter(item => item.role === 'root');
-    expect(primary.map(item => [item.agentName, item.text])).toEqual([['Sulla', 'Reading ChatPage.vue']]);
+    expect(primary.map(item => [item.agentName, item.kind, item.text])).toEqual([['Sulla', 'read', 'Reading ChatPage.vue']]);
     expect(texts().some(text => text.includes('secret-a'))).toBe(false);
     expect(texts()).not.toContain('Editing thread-b file');
     expect(activity.rootFallback.value?.key).toBe('job-a:0:fallback');
@@ -81,6 +81,7 @@ describe('useThreadAgentActivity', () => {
 
     threadId.value = 'thread-b';
     transcript.value = transcripts['thread-b'];
+    await nextTick();
     expect(activity.projection.value.agents.map(agent => agent.row.key)).toEqual(['job-b:0']);
     expect(flatten(activity.chartRoot.value)).toEqual(['chat:thread-b', 'job-b:0']);
     expect(activity.checkIns.value.every(item => item.threadId === 'thread-b')).toBe(true);
