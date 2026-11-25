@@ -12,7 +12,7 @@
   <div :class="['approval', decisionClass]">
     <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
     <div class="head">{{ msg.title || 'Approval required' }}</div>
-    <p v-if="msg.requestedBy" class="requester">Requested by {{ msg.requestedBy.agentId }}<template v-if="msg.requestedBy.label"> · {{ msg.requestedBy.label }}</template></p>
+    <p v-if="msg.requestedBy" class="requester">Requested by {{ requesterName }}<template v-if="requesterLabel"> · {{ requesterLabel }}</template></p>
     <div class="what">{{ msg.reason }}</div>
     <div class="cmd">{{ msg.command }}</div>
     <p v-if="expiresAtLabel" class="expires">Expires {{ expiresAtLabel }}</p>
@@ -26,14 +26,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed } from 'vue';
 import type { ToolApprovalMessage } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
 
-const props = defineProps<{ msg: ToolApprovalMessage; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void>; showDecideLink?: boolean }>();
+const props = defineProps<{ msg: ToolApprovalMessage; now?: number; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void>; showDecideLink?: boolean }>();
 const controller = useChatController();
-const now = ref(Date.now());
-let expiryTimer: ReturnType<typeof setInterval> | undefined;
+const now = computed(() => props.now ?? Date.now());
+const requesterName = computed(() => props.msg.requestedBy?.agentId || props.msg.requestedBy?.label || 'default agent');
+const requesterLabel = computed(() => {
+  const label = props.msg.requestedBy?.label;
+  return label && label !== requesterName.value ? label : '';
+});
 const effectiveDecision = computed(() => props.msg.decision === 'pending' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value
   ? 'timed_out'
   : props.msg.decision);
@@ -43,17 +47,6 @@ const expiresAtLabel = computed(() => props.msg.expiresAt === undefined
 const effectiveStateLabel = computed(() => effectiveDecision.value === 'timed_out' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value
   ? 'Expired'
   : props.stateLabel || 'Timed out');
-onMounted(() => {
-  if (props.msg.expiresAt === undefined) return;
-  expiryTimer = setInterval(() => {
-    now.value = Date.now();
-    if (props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value && expiryTimer) {
-      clearInterval(expiryTimer);
-      expiryTimer = undefined;
-    }
-  }, 1000);
-});
-onBeforeUnmount(() => { if (expiryTimer) clearInterval(expiryTimer) });
 function settle(action: 'approved' | 'denied'): void {
   if (props.blocked || effectiveDecision.value !== 'pending') return;
   if (props.decide) void props.decide(action);

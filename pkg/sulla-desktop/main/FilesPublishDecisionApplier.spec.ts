@@ -29,7 +29,10 @@ class InlineApprovalFlowHarness {
     }),
     expirePending: vi.fn(async(id: string) => {
       const previous = this.records.get(id);
-      if (previous) this.records.set(id, { ...previous, status: 'expired' });
+      if (!previous || !['pending', 'deferred'].includes(previous.status)) return undefined;
+      const expired = { ...previous, status: 'expired' };
+      this.records.set(id, expired);
+      return expired;
     }),
     listRecent: vi.fn(async() => [...this.records.values()]),
   };

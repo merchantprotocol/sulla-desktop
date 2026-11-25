@@ -232,9 +232,9 @@ export class DecisionService {
     clearTimeout(entry.timer);
     entry.cleanup();
     entry.settle({ status: 'expired', answers: [] });
-    this.changed({ ...entry.record, status: 'expired', ...(entry.record.kind === 'question' && !entry.record.attention ? { attention: 'active' as const } : {}) });
     try {
-      await this.decisions.expirePending(id);
+      const expired = await this.decisions.expirePending(id);
+      if (expired) this.changed(expired);
     } catch { /* Fail closed even if persistence is temporarily unavailable. list() reconciles below. */ }
   }
 
