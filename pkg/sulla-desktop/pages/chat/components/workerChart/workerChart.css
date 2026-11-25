@@ -10,23 +10,46 @@
   --mk-std: cubic-bezier(.22, 1, .36, 1);
   --mk-enter: cubic-bezier(.16, 1, .3, 1);
   --mk-exit: cubic-bezier(.7, 0, .84, 0);
-  --mk-bg: var(--bg-surface, #fff);
-  --mk-cd: var(--bg-surface, #fff);
-  --mk-soft: var(--bg-surface-alt, #f3f6f9);
-  --mk-sf: var(--bg-surface-hover, #f1f2f6);
-  --mk-line: var(--border-subtle, #dfe6ee);
-  --mk-line2: var(--border-strong, #c9d4df);
-  --mk-text: var(--text-primary, #1c2630);
-  --mk-text2: var(--text-secondary, #55626f);
-  --mk-text3: var(--text-muted, #8593a1);
+  --mk-bg: #fff;
+  --mk-cd: #fff;
+  --mk-soft: #f3f6f9;
+  --mk-sf: #f1f2f6;
+  --mk-line: #dfe6ee;
+  --mk-line2: #c9d4df;
+  --mk-text: #1c2630;
+  --mk-text2: #55626f;
+  --mk-text3: #8593a1;
   --mk-ac: var(--accent-primary, var(--accent, #2b7694));
-  --mk-on-ac: var(--text-on-accent, #fff);
-  --mk-warn: var(--status-warning, #a8660a);
+  --mk-on-ac: #fff;
+  --mk-warn: #a8660a;
   --mk-warn-f: #f0a020;
-  --mk-bad: var(--status-error, #c2372f);
+  --mk-ok: #237a47;
+  --mk-bad: #c2372f;
   --mk-sh1: 0 1px 2px rgba(20, 26, 44, .08), 0 4px 12px rgba(20, 26, 44, .06);
   --mk-sh2: 0 1px 2px rgba(20, 26, 44, .07), 0 14px 34px rgba(20, 26, 44, .12);
   --mk-sh3: 0 20px 48px rgba(20, 26, 44, .14), 0 3px 10px rgba(20, 26, 44, .06);
+}
+html.dark .worker-chart,
+html.dark .worker-chart__surface--overlay,
+html.dark .worker-chart__popover {
+  --mk-bg: #15181c;
+  --mk-cd: #1c1f26;
+  --mk-soft: #1d2126;
+  --mk-sf: #282c35;
+  --mk-line: #262b31;
+  --mk-line2: #363d45;
+  --mk-text: #e8ecf0;
+  --mk-text2: #a3adb8;
+  --mk-text3: #737e8a;
+  --mk-ac: color-mix(in oklab, var(--accent-primary, var(--accent, #2b7694)) 62%, #fff);
+  --mk-on-ac: #0d1114;
+  --mk-warn: #ffc566;
+  --mk-warn-f: #ffb43a;
+  --mk-ok: #5cc98a;
+  --mk-bad: #f2665c;
+  --mk-sh1: 0 1px 2px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.06);
+  --mk-sh2: 0 14px 34px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.07);
+  --mk-sh3: 0 20px 48px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.08);
 }
 .worker-chart {
   position: absolute;
@@ -179,7 +202,7 @@
 }
 .worker-chart__name { min-width: 0; max-width: 54px; overflow: hidden; color: var(--mk-text2); font-size: 11px; text-overflow: ellipsis; }
 .worker-chart__node[data-depth="0"] .worker-chart__name, .worker-chart__node[data-depth="1"] .worker-chart__name { color: var(--mk-text); font-weight: 500; }
-.worker-chart__name[data-state="waiting"], .worker-chart__name[data-state="done"] { color: var(--mk-text3); }
+.worker-chart__name[data-state="waiting"], .worker-chart__name[data-state="done"], .worker-chart__name[data-state="idle"] { color: var(--mk-text3); }
 .worker-chart__name[data-state="blocked"] { color: var(--mk-warn); font-weight: 500; }
 .worker-chart__name[data-state="failed"] { color: var(--mk-bad); font-weight: 500; }
 .worker-chart__rail-trigger {
@@ -201,7 +224,7 @@
 .worker-chart__rail-dot[data-state="working"] { background: var(--mk-ac); box-shadow: none; }
 .worker-chart__rail-dot[data-state="blocked"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--mk-warn-f) 30%, transparent); }
 .worker-chart__rail-dot.worker-chart__marker--chip { width: 8px; height: 8px; min-width: 0; padding: 0; background: none; border-radius: 50%; }
-.worker-chart--hidden *, .worker-chart__surface--hidden *, .worker-chart__popover--hidden { animation-play-state: paused !important; transition: none !important; }
+.worker-chart--hidden *, .worker-chart__surface--hidden *, .worker-chart__popover--hidden { animation-play-state: paused !important; }
 .worker-chart__popover {
   position: fixed;
   z-index: 60;

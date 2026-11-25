@@ -5,6 +5,7 @@ import { nextTick, ref } from 'vue';
 import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
 
 import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
+import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import { StatusRollupQueue, type StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -113,6 +114,80 @@ describe('useThreadAgentActivity', () => {
     threadId.value = undefined;
     expect(activity.checkIns.value).toEqual([]);
     expect(activity.rootFallback.value).toBeNull();
+  });
+
+  it('uses launch labels and definition/child metadata for stable chart roles, regardless of model', async() => {
+    // risk: misleading agent identity — model overrides must not turn coding workers into reviewers.
+    const rows = new RowFactory();
+    const opusWorker = {
+      ...rows.create('opus-worker-job:0', 'thread-a', null),
+      agentId: 'opus-worker', label: 'Implement the chart',
+      modelStatus: { model: 'claude-opus-4-1', provider: 'anthropic', effort: null, source: 'requested' as const },
+      stateReason: 'scheduled wake-up', lastCheckinSummary: 'Checking the next test failure',
+    };
+    const childManager = {
+      ...rows.create('coding-manager-job:0', 'thread-a', null),
+      agentId: 'coding-manager-sol', label: 'Implement parity fixes', canLaunchAgents: false,
+      modelStatus: { model: 'claude-opus-4-1', provider: 'anthropic', effort: null, source: 'requested' as const },
+    };
+    const managerChild = rows.create('coding-manager-child:0', 'thread-a', null, childManager.key);
+    const capableManager = {
+      ...rows.create('ui-test-manager-job:0', 'thread-a', null),
+      agentId: 'ui-test-manager', label: 'Run the behavior tests', canLaunchAgents: true,
+      modelStatus: { model: 'claude-opus-4-1', provider: 'anthropic', effort: null, source: 'requested' as const },
+    };
+    const reviewer = {
+      ...rows.create('review-agent-job:0', 'thread-a', null),
+      agentId: 'opus-worker', label: 'Review: chart and thread title', canLaunchAgents: false,
+      modelStatus: { model: 'claude-opus-4-1', provider: 'anthropic', effort: null, source: 'requested' as const },
+    };
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [
+      opusWorker, childManager, managerChild, capableManager, reviewer,
+    ] });
+    const activity = useActivityWithConsumer({ snapshot, threadId: ref('thread-a') });
+
+    await nextTick();
+    const agents = new Map(activity.chartRoot.value?.children?.map(agent => [agent.id, agent]));
+    expect(agents.get(opusWorker.key)).toMatchObject({ role: 'wrk', task: 'Implement the chart' });
+    expect(agents.get(childManager.key)?.role).toBe('mgr');
+    expect(agents.get(capableManager.key)?.role).toBe('mgr');
+    expect(agents.get(reviewer.key)?.role).toBe('rev');
+    expect(agents.get(opusWorker.key)?.task).not.toBe('scheduled wake-up');
+    expect(agents.get(opusWorker.key)?.task).not.toBe(opusWorker.lastCheckinSummary);
+  });
+
+  it('retains activity for the full 44-bucket chart window and prunes only older samples', () => {
+    // risk: misleading live activity — the first visible bucket must not lose samples the chart can display.
+    const presenter = new ThreadAgentActivityPresenter();
+    const rows = new RowFactory();
+    const now = Date.parse('2026-11-23T17:02:00.000Z');
+    const visibleAt = new Date(now - 153_999).toISOString();
+    const staleAt = new Date(now - 154_001).toISOString();
+    const row = { ...rows.create('activity-job:0', 'thread-a', null), lastActivityAt: visibleAt };
+    const current = presenter.project({ version: 1, generatedAt: new Date(now).toISOString(), rows: [row] }, 'thread-a', now);
+    expect(current.agents[0]?.activity).toContain(visibleAt);
+
+    const next = presenter.project({ version: 2, generatedAt: new Date(now).toISOString(), rows: [{ ...row, lastActivityAt: staleAt }] }, 'thread-a', now);
+    expect(next.agents[0]?.activity).toContain(visibleAt);
+    expect(next.agents[0]?.activity).not.toContain(staleAt);
+  });
+
+  it('publishes each mounted status snippet as a monotonic, thread-scoped chart tick', async() => {
+    // risk: missed visual feedback — every shown status item must tick its matching chart agent exactly once.
+    const threadId = ref<string | undefined>('thread-a');
+    const activity = useThreadAgentActivity({
+      snapshot: ref<AgentStateSnapshot>({ version: 0, generatedAt: '2026-11-23T17:02:00.000Z', rows: [] }),
+      threadId,
+    });
+    activity.statusItemShown({ key: 'one', agentId: 'job-one:0', threadId: 'thread-a' });
+    expect(activity.snippetTick.value).toEqual({ agentId: 'job-one:0', sequence: 1 });
+    activity.statusItemShown({ key: 'two', agentId: 'job-two:0', threadId: 'thread-a' });
+    expect(activity.snippetTick.value).toEqual({ agentId: 'job-two:0', sequence: 2 });
+    activity.statusItemShown({ key: 'stale', agentId: 'job-old:0', threadId: 'thread-old' });
+    expect(activity.snippetTick.value).toEqual({ agentId: 'job-two:0', sequence: 2 });
+    threadId.value = 'thread-b';
+    await nextTick();
+    expect(activity.snippetTick.value).toBeNull();
   });
 
   it('keeps a grandchild snapshot check-in when authorized history returns null', async() => {

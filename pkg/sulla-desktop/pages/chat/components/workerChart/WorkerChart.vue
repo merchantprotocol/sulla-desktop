@@ -122,9 +122,10 @@ import WorkerChartNode from './WorkerChartNode.vue';
 import WorkerChartPopover from './WorkerChartPopover.vue';
 import { WorkerChartActivityBuckets, WorkerChartGeometry, WorkerChartLayout } from './workerChartModel';
 import { WorkerChartController } from './WorkerChartController';
+import { WorkerChartOverlayController } from './WorkerChartOverlayController';
 import { WorkerChartTimeFormatter } from './WorkerChartTimeFormatter';
 import type { WorkerChartAgent } from './workerChartModel';
-import type { WorkerChartSnippetTick } from './WorkerChartController';
+import type { WorkerChartControllerSources, WorkerChartSnippetTick } from './WorkerChartController';
 
 const props = defineProps<{
   /** Current chat's real agent tree, mapped by the caller from its live presenter. */
@@ -135,13 +136,22 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ 'open-agent': [payload: { agentId: string }] }>();
-const controller = new WorkerChartController({
+const sources: WorkerChartControllerSources = {
   root: computed(() => props.root),
   chatColumnWidth: computed(() => props.chatColumnWidth),
   snippetTick: computed(() => props.snippetTick),
   instanceId: useId(),
   openAgent: payload => emit('open-agent', payload),
-}, new WorkerChartLayout(), new WorkerChartGeometry(), new WorkerChartActivityBuckets(), new WorkerChartTimeFormatter());
+};
+const interaction = new WorkerChartOverlayController(sources);
+const controller = new WorkerChartController(
+  sources,
+  new WorkerChartLayout(),
+  new WorkerChartGeometry(),
+  new WorkerChartActivityBuckets(),
+  new WorkerChartTimeFormatter(),
+  interaction,
+);
 
 onMounted(() => controller.mount());
 onBeforeUnmount(() => controller.unmount());

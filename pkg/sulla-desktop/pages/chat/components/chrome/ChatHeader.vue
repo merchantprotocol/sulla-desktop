@@ -156,7 +156,8 @@ function cancelTitle(): void {
 .ch-title {
   /* Fit the title and its padding, then shrink to the available grid space. */
   flex: 0 1 auto; min-width: 0; height: auto; margin: 0; padding: 4px 10px; text-align: left;
-  background: var(--bg-surface-alt, #f3f6f9);
+  --chat-title-chip-bg: #f3f6f9;
+  background: var(--chat-title-chip-bg);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   border: 0; border-radius: 8px; outline: none; cursor: text;
   color: var(--text-primary);
@@ -165,9 +166,10 @@ function cancelTitle(): void {
 }
 .ch-title:focus {
   text-overflow: clip;
-  background: var(--bg-surface-alt, #f3f6f9);
+  background: var(--chat-title-chip-bg);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
+html.dark .ch-title { --chat-title-chip-bg: #1d2126; }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);

@@ -39,6 +39,8 @@ export interface AgentStateRow extends ResultTracking {
  /** 0 = launched directly from the root chat. */
  depth: number;
  agentId: string | null;
+ /** True when this agent definition's live can_call policy permits delegation. */
+ canLaunchAgents?: boolean;
  /** Explicit existing Projects task assignment. */
  taskId?:            string;
  modelStatus?:       AgentModelStatusValue;

@@ -80,6 +80,24 @@ describe('WorkerChartGeometry', () => {
     expect(geometry.links(rows, true)).toEqual([]);
   });
 
+  it('keeps a grandchild connector scoped to its parent after another sibling collapses', () => {
+    // risk: hierarchy visibility — a nested worker must never connect to a grandparent or a removed sibling.
+    const layout = new WorkerChartLayout();
+    const geometry = new WorkerChartGeometry();
+    const root = agent('root', 'working', [
+      agent('parent-a', 'working', [agent('grandchild-a', 'working')]),
+      agent('finished-sibling', 'done'),
+      agent('parent-b', 'working'),
+    ]);
+    const rows = layout.layout(root, false, new Set(['finished-sibling'])).rows;
+    const links = geometry.links(rows, false);
+
+    expect(links).toContainEqual(expect.objectContaining({ kind: 'stem', key: 'stem:parent-a' }));
+    expect(links).toContainEqual(expect.objectContaining({ kind: 'elbow', key: 'elbow:parent-a:grandchild-a' }));
+    expect(links.some(link => link.kind === 'elbow' && link.key.includes(':root:grandchild-a'))).toBe(false);
+    expect(rows.some(row => row.kind === 'agent' && row.agent.id === 'finished-sibling')).toBe(false);
+  });
+
   it('pings only working agents, not waiting, idle, blocked, failed or done agents', () => {
     // risk: status misrepresentation — non-working jobs must not look live
     const geometry = new WorkerChartGeometry();

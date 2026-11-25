@@ -5,6 +5,7 @@
 
 import { computed, nextTick, ref, watch, type ComputedRef } from 'vue';
 
+import type { WorkerChartOverlayController } from './WorkerChartOverlayController';
 import type { WorkerChartTimeFormatter } from './WorkerChartTimeFormatter';
 import {
   WorkerChartActivityBuckets,
@@ -29,32 +30,19 @@ export interface WorkerChartControllerSources {
 }
 
 export class WorkerChartController {
-  public readonly host = ref<HTMLElement | null>(null);
-  public readonly railTrigger = ref<HTMLButtonElement | null>(null);
-  public readonly chartSurface = ref<HTMLElement | null>(null);
-  public readonly tree = ref<HTMLElement | null>(null);
-  public readonly popover = ref<HTMLElement | null>(null);
   public readonly collapsedDoneIds = ref<Set<string>>(new Set());
   public readonly expandedGroupIds = ref<Set<string>>(new Set());
-  public readonly selectedAgentId = ref<string | null>(null);
-  public readonly hoveredRowKey = ref<string | null>(null);
-  public readonly chartOverlayOpen = ref(false);
   public readonly now = ref(Date.now());
   public readonly pageHidden = ref(false);
-  public readonly popoverReady = ref(false);
-  public readonly overlayStyle = ref<Record<string, string>>({ right: '0px' });
-  public readonly popoverStyle = ref<Record<string, string>>({ left: '-10000px', top: '0px' });
 
-  private readonly nodeButtons = new Map<string, HTMLButtonElement>();
   private readonly doneTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly nodeAnimations = new Map<string, Animation>();
+  private readonly pausedAnimations = new Set<Animation>();
   private readonly chartValue: ComputedRef<WorkerChartLayoutResult>;
   private readonly doneIdsValue: ComputedRef<string[]>;
-  private readonly activeRowValue: ComputedRef<WorkerChartRow | null>;
   private readonly stopWatches: (() => void)[] = [];
   private nowTimer: ReturnType<typeof setInterval> | null = null;
-  private tooltipCloseTimer: ReturnType<typeof setTimeout> | null = null;
-  private suppressTooltipOnFocus = false;
+  private previousRows: readonly WorkerChartRow[] = [];
 
   public constructor(
     private readonly sources: WorkerChartControllerSources,
@@ -62,6 +50,7 @@ export class WorkerChartController {
     private readonly geometry: WorkerChartGeometry,
     private readonly activityBuckets: WorkerChartActivityBuckets,
     private readonly timeFormatter: WorkerChartTimeFormatter,
+    public readonly interaction: WorkerChartOverlayController,
   ) {
     this.chartValue = computed(() => this.layout.layout(
       this.sources.root.value,
@@ -70,38 +59,35 @@ export class WorkerChartController {
       this.expandedGroupIds.value,
     ));
     this.doneIdsValue = computed(() => this.layout.doneChildIds(this.sources.root.value));
-    this.activeRowValue = computed(() => {
-      const key = this.selectedAgentId.value ?? this.hoveredRowKey.value;
-      return this.chartValue.value.rows.find(row => row.key === key) ?? null;
-    });
+    this.previousRows = this.chartValue.value.rows;
+    this.interaction.connect(this.chartValue, computed(() => this.isNarrow));
     this.watchModelChanges();
   }
 
   public get chart(): WorkerChartLayoutResult { return this.chartValue.value }
   public get links(): WorkerChartLink[] { return this.geometry.links(this.chart.rows, this.isRail) }
   public get isNarrow(): boolean { return this.sources.chatColumnWidth.value < 900 }
-  public get isRail(): boolean { return this.isNarrow && !this.chartOverlayOpen.value }
-  public get overlayOpen(): boolean { return this.chartOverlayOpen.value }
+  public get isRail(): boolean { return this.isNarrow && !this.interaction.chartOverlayOpen.value }
+  public get overlayOpen(): boolean { return this.interaction.overlayOpen }
   public get hidden(): boolean { return this.pageHidden.value }
-  public get ready(): boolean { return this.popoverReady.value }
-  public get overlayPosition(): Record<string, string> { return this.overlayStyle.value }
-  public get popoverPosition(): Record<string, string> { return this.popoverStyle.value }
-  public get selectedId(): string | null { return this.selectedAgentId.value }
-  public get hoveredKey(): string | null { return this.hoveredRowKey.value }
-  public get isPopoverOpen(): boolean { return this.activeRowValue.value !== null }
-  public get popoverId(): string { return `worker-chart-${this.sources.instanceId}-popover` }
-  public get activePopoverAgent(): WorkerChartAgent | null {
-    const row = this.activeRowValue.value;
-    return row?.kind === 'agent' ? row.agent : null;
-  }
-  public get activePopoverGroup(): WorkerChartGroupRow | null {
-    const row = this.activeRowValue.value;
-    return row?.kind === 'group' ? row : null;
-  }
+  public get ready(): boolean { return this.interaction.ready }
+  public get overlayPosition(): Record<string, string> { return this.interaction.overlayPosition }
+  public get popoverPosition(): Record<string, string> { return this.interaction.popoverPosition }
+  public get selectedId(): string | null { return this.interaction.selectedId }
+  public get hoveredKey(): string | null { return this.interaction.hoveredKey }
+  public get isPopoverOpen(): boolean { return this.interaction.isPopoverOpen }
+  public get popoverId(): string { return this.interaction.popoverId }
+  public get activePopoverAgent(): WorkerChartAgent | null { return this.interaction.activePopoverAgent }
+  public get activePopoverGroup(): WorkerChartGroupRow | null { return this.interaction.activePopoverGroup }
+  public get host() { return this.interaction.host }
+  public get railTrigger() { return this.interaction.railTrigger }
+  public get chartSurface() { return this.interaction.chartSurface }
+  public get tree() { return this.interaction.tree }
+  public get popover() { return this.interaction.popover }
   public get activityValues(): number[] {
     return this.activityBuckets.values(this.activePopoverAgent?.activity, this.now.value);
   }
-  public get selected(): boolean { return this.selectedAgentId.value !== null }
+  public get selected(): boolean { return this.interaction.selected }
 
   public rowStyle(row: WorkerChartRow): Record<string, string> {
     return { left: `${this.isRail ? 7.5 : 8 + row.x}px`, top: `${row.y}px` };
@@ -123,11 +109,10 @@ export class WorkerChartController {
   }
 
   public registerButton(key: string, element: HTMLButtonElement | null): void {
-    if (element) this.nodeButtons.set(key, element);
-    else this.nodeButtons.delete(key);
+    this.interaction.registerButton(key, element);
   }
 
-  public registerPopover(element: HTMLElement | null): void { this.popover.value = element }
+  public registerPopover(element: HTMLElement | null): void { this.interaction.registerPopover(element) }
 
   public elapsed(agent: WorkerChartAgent): string { return this.timeFormatter.elapsed(agent, this.now.value) }
   public lastCheckInTime(agent: WorkerChartAgent): string { return this.timeFormatter.lastCheckIn(agent, this.now.value) }
@@ -138,21 +123,16 @@ export class WorkerChartController {
       if (!document.hidden) this.now.value = Date.now();
     }, 1_000);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
-    document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
-    document.addEventListener('keydown', this.onDocumentKeyDown, true);
-    window.addEventListener('resize', this.onWindowResize);
+    this.interaction.mount();
   }
 
   public unmount(): void {
     if (this.nowTimer) clearInterval(this.nowTimer);
-    if (this.tooltipCloseTimer) clearTimeout(this.tooltipCloseTimer);
     for (const timer of this.doneTimers.values()) clearTimeout(timer);
     for (const animation of this.nodeAnimations.values()) animation.cancel();
     for (const stop of this.stopWatches) stop();
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
-    document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
-    document.removeEventListener('keydown', this.onDocumentKeyDown, true);
-    window.removeEventListener('resize', this.onWindowResize);
+    this.interaction.unmount();
   }
 
   private watchModelChanges(): void {
@@ -174,28 +154,8 @@ export class WorkerChartController {
       }
     }, { immediate: true }));
 
-    this.stopWatches.push(watch(this.chartValue, () => {
-      const rows = this.chart.rows;
-      if (this.selectedAgentId.value && !rows.some(row => row.kind === 'agent' && row.agent.id === this.selectedAgentId.value)) {
-        this.dismissPopover(true, true);
-      } else if (this.hoveredRowKey.value && !rows.some(row => row.key === this.hoveredRowKey.value)) {
-        this.dismissPopover(false);
-      }
-      void nextTick(() => this.repositionPopover());
-    }));
-
-    this.stopWatches.push(watch(() => this.isNarrow, () => {
-      this.chartOverlayOpen.value = false;
-      if (this.selected || this.hoveredRowKey.value) this.dismissPopover(true, true);
-    }));
-    this.stopWatches.push(watch(this.sources.chatColumnWidth, () => void nextTick(() => {
-      if (this.chartOverlayOpen.value) this.positionChartOverlay();
-      this.repositionPopover();
-    })));
-    this.stopWatches.push(watch([this.selectedAgentId, this.hoveredRowKey], () => {
-      this.popoverReady.value = false;
-      const row = this.activeRowValue.value;
-      if (row) void this.positionPopover(row.key);
+    this.stopWatches.push(watch(this.chartValue, (_current, previous) => {
+      this.previousRows = previous.rows;
     }));
     this.stopWatches.push(watch(() => this.sources.snippetTick.value?.sequence, sequence => {
       const agentId = this.sources.snippetTick.value?.agentId;
@@ -206,170 +166,66 @@ export class WorkerChartController {
 
   private animateActivityNode(agentId: string): void {
     if (document.hidden || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const button = this.nodeButtons.get(agentId);
+    const group = this.chart.rows.find(row => row.kind === 'group' && row.hiddenAgents.some(agent => this.containsAgent(agent, agentId)));
+    const buttonKey = group?.key ?? agentId;
+    const button = this.interaction.button(buttonKey);
     const marker = button?.querySelector<HTMLElement>('.worker-chart__marker');
     if (!marker) return;
-    this.nodeAnimations.get(agentId)?.cancel();
+    this.nodeAnimations.get(buttonKey)?.cancel();
     const animation = marker.animate(
       [{ transform: 'scale(1)' }, { transform: 'scale(1.28)' }, { transform: 'scale(1)' }],
       { duration: 320, easing: 'cubic-bezier(.22, 1, .36, 1)' },
     );
-    this.nodeAnimations.set(agentId, animation);
-    animation.onfinish = () => this.nodeAnimations.delete(agentId);
+    this.nodeAnimations.set(buttonKey, animation);
+    animation.onfinish = () => this.nodeAnimations.delete(buttonKey);
   }
 
-  public toggleOverlay(): void {
-    this.chartOverlayOpen.value = !this.chartOverlayOpen.value;
-    if (this.chartOverlayOpen.value) {
-      void nextTick(() => {
-        this.positionChartOverlay();
-        this.focusWithoutTooltip(this.tree.value?.querySelector<HTMLButtonElement>('[data-agent-id]') ?? null);
-      });
-    } else this.dismissPopover(false);
+  private containsAgent(agent: WorkerChartAgent, id: string): boolean {
+    return agent.id === id || (agent.children ?? []).some(child => this.containsAgent(child, id));
   }
 
-  public closeChartOverlay(restoreFocus: boolean): void {
-    this.chartOverlayOpen.value = false;
-    this.dismissPopover(false);
-    if (restoreFocus) void nextTick(() => this.focusWithoutTooltip(this.railTrigger.value));
-  }
+  public toggleOverlay(): void { this.interaction.toggleOverlay() }
+  public closeChartOverlay(restoreFocus: boolean): void { this.interaction.closeChartOverlay(restoreFocus) }
 
   public activate(row: WorkerChartRow): void {
     if (row.kind === 'group') {
       const next = new Set(this.expandedGroupIds.value);
       row.expanded ? next.delete(row.agent.id) : next.add(row.agent.id);
       this.expandedGroupIds.value = next;
-      this.dismissPopover(false);
+      this.interaction.dismissPopover(false);
       return;
     }
-    this.toggleAgentPopover(row.agent.id);
+    this.interaction.toggleAgentPopover(row.agent.id);
   }
 
-  public onNodeEnter(row: WorkerChartRow): void {
-    this.cancelTooltipClose();
-    if (!this.selectedAgentId.value) this.hoveredRowKey.value = row.key;
-  }
-
-  public onNodeLeave(row: WorkerChartRow): void {
-    if (!this.selectedAgentId.value && this.hoveredRowKey.value === row.key) this.scheduleTooltipClose();
-  }
-
-  public onNodeFocus(row: WorkerChartRow): void {
-    if (!this.suppressTooltipOnFocus) this.onNodeEnter(row);
-  }
-
-  private focusWithoutTooltip(element: HTMLElement | null): void {
-    if (!element?.isConnected) return;
-    this.suppressTooltipOnFocus = true;
-    try { element.focus({ preventScroll: true }) }
-    finally { this.suppressTooltipOnFocus = false }
-  }
-
-  public scheduleTooltipClose(): void {
-    if (this.tooltipCloseTimer) clearTimeout(this.tooltipCloseTimer);
-    this.tooltipCloseTimer = setTimeout(() => {
-      if (this.selectedAgentId.value || this.popover.value?.contains(document.activeElement)) return;
-      this.hoveredRowKey.value = null;
-    }, 140);
-  }
-
-  public cancelTooltipClose(): void {
-    if (this.tooltipCloseTimer) clearTimeout(this.tooltipCloseTimer);
-    this.tooltipCloseTimer = null;
-  }
-
-  public onNodeBlur(event: FocusEvent): void {
-    if (this.selectedAgentId.value) return;
-    if (event.relatedTarget instanceof Node && this.popover.value?.contains(event.relatedTarget)) return;
-    this.scheduleTooltipClose();
-  }
-
-  private toggleAgentPopover(id: string): void {
-    if (this.selectedAgentId.value === id) {
-      this.dismissPopover(true);
-      return;
-    }
-    this.selectedAgentId.value = id;
-    this.hoveredRowKey.value = null;
-    void nextTick(() => (this.popover.value ?? document.getElementById(this.popoverId))?.focus({ preventScroll: true }));
-  }
-
-  private dismissPopover(restoreFocus: boolean, fallback = false): void {
-    const oldKey = this.selectedAgentId.value ?? this.hoveredRowKey.value;
-    this.selectedAgentId.value = null;
-    this.hoveredRowKey.value = null;
-    this.popoverReady.value = false;
-    if (!restoreFocus) return;
-    void nextTick(() => {
-      const trigger = oldKey ? this.nodeButtons.get(oldKey) : null;
-      if (trigger?.isConnected && !fallback) { this.focusWithoutTooltip(trigger); return }
-      if (this.isNarrow && this.railTrigger.value?.isConnected) { this.focusWithoutTooltip(this.railTrigger.value); return }
-      const first = this.chart.rows[0];
-      const firstButton = first ? this.nodeButtons.get(first.key) : null;
-      if (firstButton?.isConnected) this.focusWithoutTooltip(firstButton);
-      else if (this.host.value) { this.host.value.tabIndex = -1; this.focusWithoutTooltip(this.host.value) }
-    });
-  }
-
-  public openAgent(agentId: string): void {
-    this.sources.openAgent({ agentId });
-    this.dismissPopover(true);
-  }
-
-  private async positionPopover(key: string): Promise<void> {
-    await nextTick();
-    const trigger = this.nodeButtons.get(key);
-    const content = this.popover.value ?? document.getElementById(this.popoverId);
-    if (!trigger || !content || !trigger.isConnected) return;
-    const triggerRect = trigger.getBoundingClientRect();
-    const contentRect = content.getBoundingClientRect();
-    const gap = 8;
-    const margin = 8;
-    let left = triggerRect.left - contentRect.width - gap;
-    const flipRight = left < margin;
-    if (flipRight) left = Math.min(window.innerWidth - contentRect.width - margin, triggerRect.right + gap);
-    const top = Math.max(margin, Math.min(triggerRect.top - (this.selected ? 12 : 4), window.innerHeight - contentRect.height - margin));
-    this.popoverStyle.value = { left: `${Math.max(margin, left)}px`, top: `${top}px`, transformOrigin: `${flipRight ? '0%' : '100%'} 20px` };
-    this.popoverReady.value = true;
-  }
-
-  public repositionPopover(): void {
-    const row = this.activeRowValue.value;
-    if (row) void this.positionPopover(row.key);
-  }
-
-  private positionChartOverlay(): void {
-    const bounds = this.host.value?.getBoundingClientRect();
-    if (bounds) this.overlayStyle.value = { right: `${Math.max(0, window.innerWidth - bounds.right)}px` };
-  }
-
-  private onWindowResize = (): void => {
-    this.positionChartOverlay();
-    this.repositionPopover();
-  };
-
-  private onDocumentPointerDown = (event: PointerEvent): void => {
-    const target = event.target;
-    if (!(target instanceof Node)) return;
-    if (this.host.value?.contains(target) || this.chartSurface.value?.contains(target) || this.popover.value?.contains(target)) return;
-    if (this.selected || this.hoveredRowKey.value) this.dismissPopover(false);
-    if (this.chartOverlayOpen.value && !this.chartSurface.value?.contains(target)) this.closeChartOverlay(false);
-  };
-
-  private onDocumentKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return;
-    if (this.selected || this.hoveredRowKey.value) {
-      event.stopPropagation();
-      this.dismissPopover(true);
-    } else if (this.chartOverlayOpen.value) {
-      event.stopPropagation();
-      this.closeChartOverlay(true);
-    }
-  };
+  public onNodeEnter(row: WorkerChartRow): void { this.interaction.onNodeEnter(row) }
+  public onNodeLeave(row: WorkerChartRow): void { this.interaction.onNodeLeave(row) }
+  public onNodeFocus(row: WorkerChartRow): void { this.interaction.onNodeFocus(row) }
+  public onNodeBlur(event: FocusEvent): void { this.interaction.onNodeBlur(event) }
+  public scheduleTooltipClose(): void { this.interaction.scheduleTooltipClose() }
+  public cancelTooltipClose(): void { this.interaction.cancelTooltipClose() }
+  public openAgent(agentId: string): void { this.interaction.openAgent(agentId) }
+  public repositionPopover(): void { this.interaction.repositionPopover() }
 
   private onVisibilityChange = (): void => {
     this.pageHidden.value = document.hidden;
     if (!document.hidden) this.now.value = Date.now();
+    const animations = new Set([
+      ...this.nodeAnimations.values(),
+      ...(typeof document.getAnimations === 'function' ? document.getAnimations() : []),
+    ]);
+    if (document.hidden) {
+      for (const animation of animations) {
+        if (animation.playState !== 'running') continue;
+        animation.pause();
+        this.pausedAnimations.add(animation);
+      }
+      return;
+    }
+    for (const animation of this.pausedAnimations) {
+      if (animation.playState === 'paused') animation.play();
+    }
+    this.pausedAnimations.clear();
   };
 
   public beforeRowEnter(element: Element): void {
@@ -385,8 +241,9 @@ export class WorkerChartController {
   public beforeRowLeave(element: Element): void {
     const row = element as HTMLElement;
     const parentId = row.dataset.parentId;
-    const parentRow = this.chart.rows.find(candidate => candidate.kind === 'agent' && candidate.agent.id === parentId);
-    const leavingRow = this.chart.rows.find(candidate => candidate.key === row.dataset.rowKey);
+    const parentRow = this.chart.rows.find(candidate => candidate.kind === 'agent' && candidate.agent.id === parentId)
+      ?? this.previousRows.find(candidate => candidate.kind === 'agent' && candidate.agent.id === parentId);
+    const leavingRow = this.previousRows.find(candidate => candidate.key === row.dataset.rowKey);
     if (parentRow && leavingRow) {
       row.style.setProperty('--worker-chart-leave-x', `${parentRow.x + 14 - leavingRow.x}px`);
       row.style.setProperty('--worker-chart-leave-y', `${parentRow.y - leavingRow.y}px`);

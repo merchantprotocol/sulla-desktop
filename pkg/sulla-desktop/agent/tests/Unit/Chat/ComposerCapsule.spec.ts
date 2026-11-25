@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { ref } from 'vue';
+import { nextTick, ref, type Ref } from 'vue';
 
 const fixture = vi.hoisted(() => ({
   ipc: {
@@ -109,6 +109,11 @@ describe('Capsule chat composer', () => {
   let controller: ChatController;
   let wrapper: VueWrapper | undefined;
   let focus: ReturnType<typeof vi.spyOn> | undefined;
+  let activityFixture: {
+    threadId: Ref<string | undefined>;
+    checkIns: Ref<StatusRollupItem[]>;
+    statusItemShown: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     fixture.ipc.invoke.mockClear();
@@ -118,13 +123,25 @@ describe('Capsule chat composer', () => {
     fixture.useCases = null;
     focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     controller = new ChatController();
+    const statusThreadId = ref<string | undefined>();
+    const checkIns = ref<StatusRollupItem[]>([]);
+    const statusItemShown = vi.fn();
+    activityFixture = { threadId: statusThreadId, checkIns, statusItemShown };
     wrapper = mount(Composer, {
       props: { reportingLevel: 'debug' },
       global: {
         provide: {
           [ChatControllerKey as symbol]: controller,
           [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot: ref({ rows: [] }) },
-          'chat:activity-context': { backendThreadId: ref(undefined) },
+          [THREAD_AGENT_ACTIVITY_KEY as symbol]: {
+            checkIns,
+            rootFallback: ref<StatusRollupItem | null>(null),
+            attachConsumer: vi.fn(),
+            detachConsumer: vi.fn(),
+            consumeCheckIns: vi.fn(),
+            statusItemShown,
+          },
+          'chat:activity-context': { backendThreadId: statusThreadId },
           'chat:is-active': ref(true),
         },
         stubs: {
@@ -203,6 +220,34 @@ describe('Capsule chat composer', () => {
     remote.running.value = false;
     await flushPromises();
     expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running');
+  });
+
+  it('relays a newly shown mounted roll-up item through the shared chat activity path', async() => {
+    // risk: missed live feedback — the status line must notify shared chart activity only when it actually shows an item.
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    activityFixture.threadId.value = 'thread-1';
+    const first: StatusRollupItem = {
+      key: 'rollup-one', threadId: 'thread-1', agentId: 'agent-one', agentName: 'Worker One',
+      text: 'First check-in', observedAt: Date.now(),
+    };
+    const second: StatusRollupItem = {
+      ...first, key: 'rollup-two', agentId: 'agent-two', agentName: 'Worker Two', text: 'Second check-in', observedAt: Date.now() + 1,
+    };
+    activityFixture.checkIns.value = [first];
+    await flushPromises();
+    expect(activityFixture.statusItemShown).not.toHaveBeenCalled();
+
+    activityFixture.checkIns.value = [first, second];
+    await nextTick();
+    vi.advanceTimersByTime(1_500);
+    await flushPromises();
+
+    expect(activityFixture.statusItemShown).toHaveBeenCalledWith(expect.objectContaining({
+      key: second.key,
+      agentId: second.agentId,
+      threadId: second.threadId,
+    }));
   });
 
   it('pulses stream and observed check-in events even when the parent fills the status slot', async() => {

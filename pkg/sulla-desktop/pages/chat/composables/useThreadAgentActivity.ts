@@ -10,10 +10,11 @@ import {
   type ThreadAgentActivityNode,
   type ThreadAgentActivityProjection,
 } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
-import type { StatusRollupItem, StatusRollupKind } from '../components/composer/StatusRollupQueue';
+import type { StatusRollupItem, StatusRollupKind, StatusRollupShownEvent } from '../components/composer/StatusRollupQueue';
 import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
 import type { TraceRow } from '../components/transcript/traceTypes';
 import type { Message } from '../models/Message';
+import type { WorkerChartSnippetTick } from '../components/workerChart/WorkerChartController';
 import type { WorkerChartAgent, WorkerChartRole, WorkerChartState } from '../components/workerChart/workerChartModel';
 
 export interface ThreadAgentActivitySources {
@@ -42,6 +43,9 @@ export interface ThreadAgentActivity {
   consumeCheckIns(): void;
   readonly rootFallback: ComputedRef<StatusRollupItem | null>;
   readonly chartRoot: ComputedRef<WorkerChartAgent | null>;
+  readonly snippetTick: Readonly<Ref<WorkerChartSnippetTick | null>>;
+  /** Relays each newly shown status snippet as a sequenced chart marker tick. */
+  statusItemShown(event: StatusRollupShownEvent): void;
 }
 
 /** Diffs mutable source projections while retaining only the previous projection's keys. */
@@ -402,11 +406,11 @@ class ThreadAgentActivityMapper {
       id: row.key,
       name: row.label?.trim() || row.agentId || 'Agent',
       initials: agent.initials,
-      role: this.chartRole(agent),
+      role: this.chartRole(agent, node.children.length > 0),
       lane: agent.lane,
       state: this.chartState(agent),
       model: row.modelStatus?.model ?? null,
-      task: row.stateReason || row.lastCheckinSummary || undefined,
+      task: row.label?.trim() || undefined,
       startedAt: this.timestamp(row.startedAt),
       finishedAt: this.timestamp(row.endedAt),
       lastCheckIn: latestCheckin ? { timestamp: this.timestamp(latestCheckin.at)!, text: latestCheckin.summary } : null,
@@ -418,10 +422,10 @@ class ThreadAgentActivityMapper {
     };
   }
 
-  private chartRole(agent: PresentedThreadAgent): WorkerChartRole {
-    const identity = `${agent.row.agentId ?? ''} ${agent.row.label} ${agent.row.modelStatus?.model ?? ''}`.toLowerCase();
-    if (identity.includes('opus') || identity.includes('review')) return 'rev';
-    if (identity.includes('manager')) return 'mgr';
+  private chartRole(agent: PresentedThreadAgent, hasChildren: boolean): WorkerChartRole {
+    const row = agent.row;
+    if (/^review/i.test(row.label.trim())) return 'rev';
+    if (hasChildren || row.canLaunchAgents) return 'mgr';
     return 'wrk';
   }
 
@@ -493,6 +497,8 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let historyTimer: ReturnType<typeof setInterval> | undefined;
   let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingTranscript: { threadId: string; messages: readonly Message[]; agentName: string } | undefined;
+  let snippetSequence = 0;
+  const snippetTick = ref<WorkerChartSnippetTick | null>(null);
 
   const resetThread = (threadId: string | undefined): void => {
     if (activeThreadId === threadId) return;
@@ -503,6 +509,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     pendingTranscript = undefined;
     activeThreadId = threadId;
     eventBuffer.clear();
+    snippetTick.value = null;
     previousRows.clear();
     snapshotCheckinDiffs.clear();
     historyCursors.clear();
@@ -724,5 +731,10 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     consumeCheckIns: () => eventBuffer.consume(),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
     chartRoot: computed(() => mapper.chartRoot(projection.value, sources.threadId.value)),
+    snippetTick,
+    statusItemShown: (event: StatusRollupShownEvent) => {
+      if (!event.agentId || event.threadId !== sources.threadId.value) return;
+      snippetTick.value = { agentId: event.agentId, sequence: ++snippetSequence };
+    },
   };
 }
