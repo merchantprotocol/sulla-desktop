@@ -11,23 +11,25 @@ const harness = vi.hoisted(() => ({
   resolve: vi.fn(),
   legacyResolve: vi.fn(),
   applierStart: vi.fn(),
+  started: [] as string[],
 }));
 
 vi.mock('electron', () => ({ BrowserWindow: { fromWebContents: () => true, getAllWindows: () => [] } }));
 vi.mock('@pkg/agent/services/DecisionService', () => ({ decisionService: { subscribe: vi.fn(() => () => undefined), find: harness.find, resolve: harness.resolve } }));
-vi.mock('@pkg/agent/tools/toolRuntime', () => ({ toolRuntime: { start: vi.fn() } }));
-vi.mock('@pkg/agent/services/DecisionExpirySweeper', () => ({ DecisionExpirySweeper: class { start() { /* expiry is covered by its own spec */ } } }));
+vi.mock('@pkg/agent/tools/toolRuntime', () => ({ toolRuntime: { start: () => { harness.started.push('outcome listener') } } }));
+vi.mock('@pkg/agent/services/DecisionExpirySweeper', () => ({ DecisionExpirySweeper: class { start() { harness.started.push('expiry sweep') } } }));
 vi.mock('@pkg/agent/tools', () => ({ toolRegistry: { getCategories: () => [], getToolNamesForCategory: () => [], getToolDescription: () => '' } }));
 vi.mock('@pkg/agent/services/ApprovalService', () => ({ ApprovalService: { getInstance: () => ({ resolve: harness.legacyResolve }) } }));
 vi.mock('@pkg/main/ipcMain', () => ({ getIpcMainProxy: () => ({ handle: (name: string, handler: (...args: any[]) => any) => harness.handlers.set(name, handler) }) }));
 vi.mock('@pkg/utils/logging', () => ({ default: { background: { error: vi.fn() } } }));
-vi.mock('@pkg/main/FilesPublishDecisionApplier', () => ({ FilesPublishDecisionApplier: class { start() { harness.applierStart() } } }));
+vi.mock('@pkg/main/FilesPublishDecisionApplier', () => ({ FilesPublishDecisionApplier: class { start() { harness.applierStart(); harness.started.push('files applier') } } }));
 
 import { initSullaApprovalEvents } from '@pkg/main/sullaApprovalEvents';
 
 describe('approval:resolve legacy IPC guard', () => {
   beforeEach(() => {
     harness.handlers.clear();
+    harness.started.length = 0;
     vi.clearAllMocks();
     harness.find.mockResolvedValue({ id: 'decision-1', kind: 'approval', conversationId: 'child-thread' });
     harness.resolve.mockResolvedValue({ settled: true });
@@ -54,5 +56,10 @@ describe('approval:resolve legacy IPC guard', () => {
 
     await expect(harness.handlers.get('approval:resolve')!(event(), { approvalId: 'legacy-id', decision: 'denied' })).resolves.toEqual({ settled: true });
     expect(harness.legacyResolve).toHaveBeenCalledWith('legacy-id', 'denied', undefined);
+  });
+
+  it('subscribes the Files applier and the outcome listener before the first expiry sweep', () => {
+    // risk: irreversible side effects — an approval that expired while the app was closed is announced once; a listener that subscribes later misses it.
+    expect(harness.started).toEqual(['files applier', 'outcome listener', 'expiry sweep']);
   });
 });
