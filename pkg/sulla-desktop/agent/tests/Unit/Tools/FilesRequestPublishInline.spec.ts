@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +19,7 @@ vi.mock('../../../tools/files/common', () => ({
   },
 }));
 vi.mock('../../../tools/toolRuntime', () => ({ toolRuntime: { publishApprovalCoordinator: { start: () => undefined } } }));
+vi.mock('../../../database/models/AgentJobMessagingModel', () => ({ AgentJobMessagingModel: { taskForThread: vi.fn() } }));
 vi.mock('../../../services/DecisionService', async(importOriginal) => {
   const actual = await importOriginal<typeof import('../../../services/DecisionService')>();
   return { ...actual, decisionService: {} };
@@ -26,6 +28,10 @@ vi.mock('../../../services/DecisionService', async(importOriginal) => {
 import { DecisionService } from '../../../services/DecisionService';
 import { FilesRequestPublishWorker } from '../../../tools/files/request_publish';
 import { PublishApprovalCoordinator } from '../../../tools/files/PublishApprovalCoordinator';
+import { PublishApprovalOutcomeMessage } from '../../../tools/files/PublishApprovalOutcomeMessage';
+import { PublishApprovalRouter } from '../../../tools/files/PublishApprovalRouter';
+
+const wording = new PublishApprovalOutcomeMessage({ name: async() => 'Jonathon' });
 
 class DecisionServiceFixture {
   readonly records = new Map<string, any>();
@@ -49,8 +55,14 @@ class DecisionServiceFixture {
 class PublishWorkerHarness extends FilesRequestPublishWorker {
   posted = 0;
 
-  constructor(coordinator: any, decisions: any, metadata: Record<string, unknown> = { threadId: 'chat-thread', wsChannel: 'chat-channel' }) {
-    super(coordinator, decisions);
+  constructor(
+    coordinator: any,
+    decisions: any,
+    metadata: Record<string, unknown> = { threadId: 'chat-thread', wsChannel: 'chat-channel' },
+    resolver = new PublishApprovalRouter({ taskForThread: async() => null }),
+    readonly rootCards = { send: vi.fn(async(_target: { channel: string; threadId: string }, _card: Record<string, unknown>) => true) },
+  ) {
+    super(coordinator, decisions, resolver, rootCards);
     (this as any).state = { metadata };
   }
 
@@ -69,7 +81,7 @@ describe('Files request publish inline approval', () => {
   it('emits a tool approval card bound to the exact DecisionService id and expiry', async() => {
     // risk: irreversible side effects — the visible card must resolve the same durable approval that gates publication.
     const fixture = new DecisionServiceFixture();
-    const coordinator = new PublishApprovalCoordinator(fixture.service);
+    const coordinator = new PublishApprovalCoordinator(fixture.service, { deliver: async() => true }, wording);
     const worker = new PublishWorkerHarness(coordinator, fixture.service);
     try {
       const result = await worker.execute({ file_id: 'file-7', version_id: 'version-7' });
@@ -78,7 +90,8 @@ describe('Files request publish inline approval', () => {
 
       expect(decision).toMatchObject({ request_id: 'files-request-7', status: 'pending' });
       expect(record).toMatchObject({ id: decision.decision_id, kind: 'approval', status: 'pending', conversationId: 'chat-thread', payload: { filesPublishRequestId: 'files-request-7' } });
-      expect(record.expiresAt - record.createdAt).toBe(30 * 60_000);
+      expect(record.expiresAt - record.createdAt).toBe(7 * 24 * 60 * 60_000);
+      expect(record.approvalPresentation).toMatchObject({ reason: 'Publishing this draft will make it available to agents.', command: 'Files draft publication', origin: { kind: 'files_publish' } });
       expect((worker as any).sentMessages).toHaveLength(1);
       expect((worker as any).sentMessages[0]).toMatchObject({
         content: '',
@@ -87,15 +100,56 @@ describe('Files request publish inline approval', () => {
       });
       const final = await fixture.service.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' });
       expect(final.settled).toBe(true);
-      await vi.waitFor(() => expect((worker as any).sentMessages).toHaveLength(2));
-      expect((worker as any).sentMessages[1]).toMatchObject({ kind: 'file_publish_result', content: 'File version publish approved.' });
+    } finally { coordinator.dispose() }
+  });
+
+  it('emits a child approval into its root chat and records who requested it', async() => {
+    // risk: approval routing — hidden child threads have no human tab, so consent must reach the ancestry root with durable requester identity.
+    const fixture = new DecisionServiceFixture();
+    fixture.pendingRepository.ancestry.mockResolvedValue(['child-thread', 'root-thread']);
+    const job = {
+      jobId: 'job-child', taskIndex: 2, jobStatus: 'running', taskStatus: 'running', threadId: 'child-thread',
+      parentThreadId: 'root-thread', parentChannel: 'root-channel', agentId: 'codex-luna-worker', label: 'Publish the agent',
+    };
+    const resolver = new PublishApprovalRouter({ taskForThread: async(threadId) => threadId === 'child-thread' ? job : null });
+    const coordinator = new PublishApprovalCoordinator(fixture.service, { deliver: async() => true }, wording);
+    const worker = new PublishWorkerHarness(coordinator, fixture.service, { threadId: 'child-thread', wsChannel: 'child-channel' }, resolver);
+    try {
+      const result = await worker.execute({ file_id: 'file-7', version_id: 'version-7' });
+      const record = fixture.records.get(JSON.parse(result.responseString).decision_id);
+      expect(record).toMatchObject({
+        conversationId: 'child-thread', relatedConversationIds: ['child-thread', 'root-thread'],
+        requestedBy: { agentId: 'codex-luna-worker', label: 'Publish the agent', jobId: 'job-child', taskIndex: 2 },
+      });
+      expect(worker.rootCards.send).toHaveBeenCalledWith({ channel: 'root-channel', threadId: 'root-thread' }, expect.objectContaining({ approvalId: record.id, origin: { kind: 'files_publish' } }));
+      expect((worker as any).sentMessages ?? []).toHaveLength(0);
+    } finally { coordinator.dispose() }
+  });
+
+  it('records the requesting task even when the job was launched with the default agent', async() => {
+    // risk: agent continuity — a task with no agent id must keep its job mailbox route, or its outcome goes to a hidden thread nobody reads.
+    const fixture = new DecisionServiceFixture();
+    const job = {
+      jobId: 'job-default', taskIndex: 1, jobStatus: 'running', taskStatus: 'running', threadId: 'child-thread',
+      parentThreadId: 'root-thread', parentChannel: 'root-channel',
+    };
+    const coordinator = new PublishApprovalCoordinator(fixture.service, { deliver: async() => true }, wording);
+    const worker = (label?: string) => new PublishWorkerHarness(coordinator, fixture.service, { threadId: 'child-thread', wsChannel: 'child-channel' },
+      new PublishApprovalRouter({ taskForThread: async(threadId) => threadId === 'child-thread' ? { ...job, label } : null }));
+    try {
+      const labelled = fixture.records.get(JSON.parse((await worker('Publish the agent').execute({ file_id: 'file-7', version_id: 'version-7' })).responseString).decision_id);
+      expect(labelled.requestedBy).toEqual({ agentId: 'Publish the agent', label: 'Publish the agent', jobId: 'job-default', taskIndex: 1 });
+
+      fixture.records.clear();
+      const unnamed = fixture.records.get(JSON.parse((await worker().execute({ file_id: 'file-7', version_id: 'version-7' })).responseString).decision_id);
+      expect(unnamed.requestedBy).toEqual({ agentId: 'default agent', jobId: 'job-default', taskIndex: 1 });
     } finally { coordinator.dispose() }
   });
 
   it('does not report a request as delivered when the chat transport rejects the card', async() => {
     // risk: approval routing — a publish request must not look actionable in chat when its card was dropped.
     const fixture = new DecisionServiceFixture();
-    const coordinator = new PublishApprovalCoordinator(fixture.service);
+    const coordinator = new PublishApprovalCoordinator(fixture.service, { deliver: async() => true }, wording);
     const worker = new PublishWorkerHarness(coordinator, fixture.service);
     (worker as any).delivery = false;
 
@@ -114,7 +168,7 @@ describe('Files request publish inline approval', () => {
     };
     const fixture = new DecisionServiceFixture();
     fixture.records.set(record.id, record);
-    const coordinator = new PublishApprovalCoordinator(fixture.service);
+    const coordinator = new PublishApprovalCoordinator(fixture.service, { deliver: async() => true }, wording);
     const worker = new PublishWorkerHarness(coordinator, fixture.service);
 
     try {
@@ -129,7 +183,7 @@ describe('Files request publish inline approval', () => {
 
   it('refuses a mismatched CLI thread before creating a publish request', async() => {
     // risk: tenant isolation — a valid decision must never be displayed or approved from another thread.
-    const worker = new PublishWorkerHarness({ start: vi.fn(), register: vi.fn() }, {}, { threadId: 'unrelated-thread', wsChannel: 'other-channel' });
+    const worker = new PublishWorkerHarness({ start: vi.fn() }, {}, { threadId: 'unrelated-thread', wsChannel: 'other-channel' });
     (worker as any).executionContext = { thread_id: 'verified-thread' };
 
     await expect(worker.execute({ file_id: 'file-7', version_id: 'version-7' })).rejects.toThrow(/does not match the original conversation/i);

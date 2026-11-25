@@ -32,6 +32,10 @@
     <template v-if="$slots.sources" #sources><slot name="sources" /></template>
   </TurnStreaming>
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
+  <div v-else-if="msg.kind === 'tool_approval' && decisionId && !inlineRecord && !inboxRecord" class="approval-unavailable" role="status">
+    <span>{{ checking ? 'Loading approval details…' : 'Approval details are unavailable.' }}</span>
+    <button v-if="checking && decisions.inlineReadFailed.value" type="button" @click="decisions.refreshInline">Retry loading request</button>
+  </div>
   <div v-else-if="decisionId && (mainDecisionTranscript || msg.kind === 'tool_approval') && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
       v-if="msg.kind === 'tool_approval'"
@@ -55,7 +59,7 @@
     <button v-if="checking && decisions.inlineReadFailed.value" type="button" @click="decisions.refreshInline">Retry loading request</button>
   </div>
   <DecisionReference v-else-if="inboxRecord && (msg.kind === 'tool_question' || msg.kind === 'tool_approval')" :msg="msg" />
-  <ToolApproval v-else-if="msg.kind === 'tool_approval'" :msg="msg" />
+  <ToolApproval v-else-if="msg.kind === 'tool_approval' && !decisionId" :msg="msg" />
   <ToolTask v-else-if="TaskAsks.isTask(msg)" :msg="msg" :draft="questionDraft(msg)" />
   <ToolQuestion v-else-if="msg.kind === 'tool_question'" :msg="msg" :draft="questionDraft(msg)" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
@@ -112,7 +116,8 @@ const inboxRecord = computed(() => decisions.decisions.value.find(record => reco
 const inlineRecord = computed(() => {
   const kind = props.msg.kind === 'tool_question' ? 'question' : 'approval';
   const canInline = mainDecisionTranscript.value || props.msg.kind === 'tool_approval';
-  return canInline && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
+  const record = canInline && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
+  return record?.kind === kind ? record : undefined;
 });
 const checking = computed(() => !!((mainDecisionTranscript.value || props.msg.kind === 'tool_approval') && decisionId.value && decisions.checkingInline(decisionId.value)));
 const decisionCardKey = computed(() => inlineRecord.value ? 'saved' : checking.value ? 'loading' : 'original');
@@ -131,7 +136,18 @@ function approvalMessage(message: ToolApprovalMessage): ToolApprovalMessage {
   const record = inlineRecord.value;
   if (!record) return message;
   const decision = record.status === 'approved' || record.status === 'denied' ? record.status : active.value ? 'pending' : 'timed_out';
-  return { ...message, title: record.title, expiresAt: record.expiresAt, decision, resolutionError: decisions.actionError(record.id) };
+  const presentation = record.approvalPresentation;
+  return {
+    ...message,
+    title: record.title,
+    expiresAt: record.expiresAt,
+    reason: presentation?.reason ?? `Approval details for ${ record.toolName || record.title }.`,
+    command: presentation?.command ?? record.toolName ?? record.title,
+    origin: presentation?.origin,
+    requestedBy: record.requestedBy ? { agentId: record.requestedBy.agentId || record.requestedBy.label || 'default agent', label: record.requestedBy.label } : undefined,
+    decision,
+    resolutionError: decisions.actionError(record.id),
+  };
 }
 function questionMessage(message: ToolQuestionMessage): ToolQuestionMessage {
   const record = inlineRecord.value;
@@ -173,3 +189,8 @@ function onErrorAction(kind: 'retry' | 'continue' | 'dismiss' | 'connect'): void
   if (kind === 'connect') window.dispatchEvent(new CustomEvent('sulla:open-ai-connections'));
 }
 </script>
+
+<style scoped>
+.approval-unavailable { display: flex; align-items: center; gap: 10px; color: var(--text-secondary); font-size: 12px; padding: 8px 0; }
+.approval-unavailable button { border: 0; padding: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+</style>

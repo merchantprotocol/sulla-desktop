@@ -12,6 +12,7 @@
   <div :class="['approval', decisionClass]">
     <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
     <div class="head">{{ msg.title || 'Approval required' }}</div>
+    <p v-if="msg.requestedBy" class="requester">Requested by {{ msg.requestedBy.agentId }}<template v-if="msg.requestedBy.label"> · {{ msg.requestedBy.label }}</template></p>
     <div class="what">{{ msg.reason }}</div>
     <div class="cmd">{{ msg.command }}</div>
     <p v-if="expiresAtLabel" class="expires">Expires {{ expiresAtLabel }}</p>
@@ -93,6 +94,7 @@ const decisionClass = computed(() => {
   font-family: var(--font-display); font-style: italic; font-size: 16px;
   color: var(--text-primary); line-height: 1.55; margin-bottom: 12px;
 }
+.requester { margin: -4px 0 10px; color: var(--text-secondary); font-size: 12px; }
 .expires { margin: -5px 0 14px; color: var(--text-secondary); font-size: 12px; }
 .cmd {
   font-family: var(--font-mono); font-size: 12px;

@@ -6,6 +6,8 @@
 import { FilesTool } from './common';
 import { decisionService } from '../../services/DecisionService';
 import { PublishApprovalCoordinator } from './PublishApprovalCoordinator';
+import type { PublishApprovalRouter } from './PublishApprovalRouter';
+import { PublishApprovalRootChatSender, type PublishApprovalCardSender } from './PublishApprovalRootChatSender';
 import { toolRuntime } from '../toolRuntime';
 import type { ToolResponse } from '../base';
 import type { DecisionService } from '../../services/DecisionService';
@@ -15,6 +17,8 @@ export class FilesRequestPublishWorker extends FilesTool {
   constructor(
     private readonly approvalCoordinator: PublishApprovalCoordinator = toolRuntime.publishApprovalCoordinator,
     private readonly decisions: Pick<DecisionService, 'pendingApprovalForPayload' | 'request'> = decisionService,
+    private readonly router: PublishApprovalRouter = toolRuntime.publishApprovalRouter,
+    private readonly rootChat: PublishApprovalCardSender = new PublishApprovalRootChatSender(),
   ) {
     super();
     this.approvalCoordinator.start();
@@ -31,6 +35,8 @@ export class FilesRequestPublishWorker extends FilesTool {
     if (typeof conversationId !== 'string' || !conversationId.trim()) throw new Error('Approval requires the original conversation. No action was executed.');
     const boundThreadId = typeof callerMetadata.threadId === 'string' ? callerMetadata.threadId.trim() : '';
     if (boundThreadId && boundThreadId !== conversationId) throw new Error('Approval transport does not match the original conversation. No action was executed.');
+    const callerChannel = typeof callerMetadata.wsChannel === 'string' && callerMetadata.wsChannel ? callerMetadata.wsChannel : 'sulla-desktop';
+    const requestedBy = await this.router.requester(conversationId);
     const draft = await this.containerJson<{ file?: { path?: string }; content_base64?: string }>(`/v1/agent-files/${ encodeURIComponent(input.file_id) }?versionId=${ encodeURIComponent(input.version_id) }`, input);
     const path = draft.file?.path ?? `file ${ input.file_id }`;
     const match = /^(?:Sulla\/)?Use Cases\/(agents|skills|workflows|functions|recipes)\/([^/]+)/.exec(path);
@@ -54,7 +60,6 @@ export class FilesRequestPublishWorker extends FilesTool {
     const pending = await this.decisions.pendingApprovalForPayload('filesPublishRequestId', requestId);
     if (pending) {
       if (pending.conversationId !== conversationId) throw new Error('This file version already has an approval pending in its original conversation. No approval was moved or executed.');
-      this.approvalCoordinator.register(pending.id, message => this.emitMessage(message, 'file_publish_result'));
       await this.emitApprovalMessage(pending);
       return { successBoolean: true, responseString: JSON.stringify({ request_id: requestId, decision_id: pending.id, status: 'pending' }) };
     }
@@ -63,25 +68,32 @@ export class FilesRequestPublishWorker extends FilesTool {
       title: `${ label }?`,
       toolName: 'files_request_publish',
       conversationId,
-      channel: callerMetadata.threadId === conversationId && typeof metadata.wsChannel === 'string' && metadata.wsChannel ? metadata.wsChannel : 'sulla-desktop',
+      channel: callerChannel,
       payload: { filesPublishRequestId: requestId, fileId: input.file_id, versionId: input.version_id },
-    }, 30 * 60_000);
-    this.approvalCoordinator.register(record.id, message => this.emitMessage(message, 'file_publish_result'));
+      requestedBy,
+      approvalPresentation: {
+        reason: 'Publishing this draft will make it available to agents.',
+        command: 'Files draft publication',
+        origin: { kind: 'files_publish' },
+      },
+    }, 7 * 24 * 60 * 60_000);
     await this.emitApprovalMessage(record);
     return { successBoolean: true, responseString: JSON.stringify({ request_id: requestId, decision_id: record.id, status: 'pending' }) };
   }
 
   private async emitApprovalMessage(record: DecisionRecord): Promise<void> {
-    const delivered = await this.emitMessage('', 'tool_approval', {
-      toolApproval: {
-        approvalId: record.id,
-        title: record.title,
-        expiresAt: record.expiresAt,
-        reason: 'Publishing this draft will make it available to agents.',
-        command: 'Files draft publication',
-        origin: { kind: 'files_publish' },
-      },
-    });
+    const toolApproval = {
+      approvalId: record.id,
+      title: record.title,
+      expiresAt: record.expiresAt,
+      reason: record.approvalPresentation?.reason ?? 'Publishing this draft will make it available to agents.',
+      command: record.approvalPresentation?.command ?? 'Files draft publication',
+      origin: record.approvalPresentation?.origin ?? { kind: 'files_publish' },
+    };
+    const target = await this.router.cardTarget(record);
+    const delivered = target.kind === 'requester_chat'
+      ? await this.emitMessage('', 'tool_approval', { toolApproval })
+      : await this.rootChat.send({ channel: target.channel, threadId: target.threadId }, toolApproval);
     if (!delivered) throw new Error(`Files publish request ${ record.id } was saved, but its inline approval card could not be delivered. It remains available in Decide.`);
   }
 }
