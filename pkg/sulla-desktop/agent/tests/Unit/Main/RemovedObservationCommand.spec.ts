@@ -38,10 +38,12 @@ class RecordedResponse {
 
 /** Sends one `sulla <category>/<tool>` call to the real internal-tool route handler. */
 class InternalToolRoute {
+  constructor(private readonly removedObservationCommand = new RemovedObservationCommand()) {}
+
   async call(category: string, tool: string): Promise<RecordedResponse> {
     const response = new RecordedResponse();
     const request = { params: { accountId: 'internal', slug: category, endpoint: tool }, body: {}, headers: {}, get: () => undefined };
-    await (ChatCompletionsServer.prototype as any).handleIntegrationCall.call({}, request, response);
+    await (ChatCompletionsServer.prototype as any).handleIntegrationCall.call({ removedObservationCommand: this.removedObservationCommand }, request, response);
     return response;
   }
 }
@@ -51,7 +53,7 @@ describe('RemovedObservationCommand', () => {
     // risk: stale agents can still invoke removed commands through either old namespace.
     const handler = new RemovedObservationCommand();
 
-    for (const category of ['observation', 'meta']) {
+    for (const category of ['observation', 'meta', 'memory']) {
       for (const command of REMOVED_COMMANDS) {
         expect(handler.errorFor(category, command), `${ category }/${ command }`)
           .toBe(REMOVED_OBSERVATION_MEMORY_MESSAGE);
@@ -64,7 +66,8 @@ describe('RemovedObservationCommand', () => {
 
     expect(handler.errorFor('observation', 'search_conversation_keywords')).toBeNull();
     expect(handler.errorFor('meta', 'exec')).toBeNull();
-    expect(handler.errorFor('memory', 'search_observations')).toBeNull();
+    expect(handler.errorFor('memory', 'search_observations')).toBe(REMOVED_OBSERVATION_MEMORY_MESSAGE);
+    expect(handler.errorFor('memory', 'no_such_tool_ever')).toBeNull();
   });
 });
 
@@ -74,13 +77,23 @@ describe('old observation commands through the sulla CLI tool route', () => {
     const route = new InternalToolRoute();
 
     expect(REMOVED_OBSERVATION_MEMORY_MESSAGE).toBe('Observation memory has been removed from Sulla.');
-    for (const category of ['observation', 'meta']) {
+    for (const category of ['observation', 'meta', 'memory']) {
       for (const command of REMOVED_COMMANDS) {
         const response = await route.call(category, command);
         expect(response.statusCode, `${ category }/${ command }`).toBe(404);
         expect(response.body, `${ category }/${ command }`).toMatchObject({ success: false, error: REMOVED_OBSERVATION_MEMORY_MESSAGE });
       }
     }
+  });
+
+  it('uses the constructor-injected retirement command in the real route handler', async() => {
+    // risk: route handling bypasses its injected command instance and creates one per request
+    const command = new RemovedObservationCommand();
+    const errorFor = vi.spyOn(command, 'errorFor');
+    const response = await new InternalToolRoute(command).call('memory', 'add_observational_memory');
+
+    expect(errorFor).toHaveBeenCalledOnce();
+    expect(response.body.error).toBe(REMOVED_OBSERVATION_MEMORY_MESSAGE);
   });
 
   it('keeps the normal not-found answer for a command that never existed', async() => {

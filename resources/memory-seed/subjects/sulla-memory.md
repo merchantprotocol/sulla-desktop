@@ -18,7 +18,7 @@ Sulla's v7 memory is a subject-scoped PostgreSQL store in the `subject_memory` s
 - A per-thread sent ledger suppresses repeated memory until conversation summarization or provider compaction clears it.
 - Subject kinds include global, major, project, person, client, system, and tool.
 - The active recall implementation uses the bundled Potion embedder and PostgreSQL; it does not need a network embedding call.
-- Observation memory and identity observations have been removed; subject memory is the only memory store.
+- The old observation and identity-observation systems are retired. Subject memory is the structured, automatic recall store; Sulla Files under `Memory/` remains the document store.
 
 ## Rules
 - DO: Treat recalled user-stated rules as authoritative unless the human changes them.

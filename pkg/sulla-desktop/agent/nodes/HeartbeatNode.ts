@@ -44,7 +44,7 @@ const NEEDS_USER_INPUT_REGEX = /Needs user input:\s*(yes|no)/i;
  * Mirrors AgentNode's execution pattern:
  *   1. Builds system prompt with channel awareness + completion wrappers
  *   2. Enriches with agent identity from dreaming-protocol config
- *   3. Runs subconscious middleware (memory recall, observations)
+ *   3. Runs subconscious middleware (memory and skill recall)
  *   4. Calls LLM, processes tool calls, extracts outcome
  *   5. Shows desktop notification instead of WebSocket chat
  *
@@ -75,15 +75,15 @@ export class HeartbeatNode extends BaseNode {
     });
 
     // ----------------------------------------------------------------
-    // 2. SUBCONSCIOUS MIDDLEWARE (memory recall, observations)
+    // 2. SUBCONSCIOUS MIDDLEWARE (memory and skill recall)
     // ----------------------------------------------------------------
     // Same pattern as AgentNode: skip during tool-call loops, and the
     // middleware itself bails when state.metadata.workflowNodeId is set
     // so a routine-triggered heartbeat path stays fast.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
     if (!isToolCallLoop) {
-      const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
-      await runSubconsciousMiddleware(state, { includeObservations: shouldInjectObservations });
+      const includeObservations = await this.shouldInjectObservationsForAgent(state);
+      await runSubconsciousMiddleware(state, { includeObservations });
     }
 
     // Inject the compact per-turn <turn_context> block (current time, agent
@@ -93,8 +93,8 @@ export class HeartbeatNode extends BaseNode {
       await this.injectTurnContext(state, { isHeartbeat: true });
     }
 
-    // Subconscious recall and dream-consolidated identity are always carried
-    // by a dedicated assistant message, never the Heartbeat system prompt.
+    // Subconscious recall is carried by a dedicated assistant message, never
+    // the Heartbeat system prompt.
     this.injectSubconsciousAssistantContext(state);
     // Inject the deterministic, zero-LLM routine-stewardship digest (issue
     // #499). The heartbeat prompt tells the agent "a routine digest is in your

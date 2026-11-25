@@ -4,6 +4,8 @@
 // The real loadAgentPromptData, BaseNode.enrichPrompt and SystemPromptBuilder run; the definition
 // lookup, settings, DB prompt-section rows, the provider lookup and the memory/skills/Files/extension/
 // integration context reads are the faked boundaries.
+import '../../Support/TestHomeEnv';
+
 import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

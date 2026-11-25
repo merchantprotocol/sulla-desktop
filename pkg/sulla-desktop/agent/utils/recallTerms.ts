@@ -9,9 +9,8 @@
  * Recall used to hand the conversation to a blocking LLM agent per domain
  * (~45s each). The SQL path instead scores rows by which distinctive terms
  * of the current turn they contain, weighted by inverse document frequency
- * This module turns recent
- * user text into those terms: lowercase words of 4+ chars, minus common
- * filler words, most recent message first. Stopwords are 4 letters or fewer:
+ * This module turns recent user text into those terms: lowercase words of
+ * 4+ chars, minus common filler words, most recent message first. Stopwords are 4 letters or fewer:
  * longer words are rare enough to carry signal, and IDF weighting handles
  * the rest (Jonathon, 2026-10-27).
  */

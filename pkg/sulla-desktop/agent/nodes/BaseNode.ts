@@ -772,6 +772,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             priority:       row.priority,
             cacheStability: (row.cache_stability as DbPromptSection['cacheStability']) || 'stable',
             isGenerated:    row.is_generated,
+            source:         row.source,
           });
         }
       }
@@ -1026,10 +1027,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return reply.content;
   }
 
-  /**
-   * Check if the current agent opts into observation injection.
-   * Planning pipeline agents (observer, thinker, etc.) opt out via config.yaml.
-   */
+  /** Check whether the current agent uses subconscious memory and recall. */
   protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
     const started = Date.now();
     const agentId = resolveAgentIdentity(state.metadata);
@@ -1081,8 +1079,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Otherwise route by graph-stamped model slot: work-executing sub-agents
     // (workflow nodes, spawned workers) stamp
     // modelSlot='primary' so autonomous work runs on the primary chain on
-    // every install; only subconscious observers (observation writer/recall,
-    // summarizer) keep the fast subconscious chat peer.
+    // every install; only subconscious memory recall and summarization keep
+    // the fast subconscious chat peer.
     TurnHopTiming.mark(state, 'resolveLoopProvider.start');
     this.llm = await this.resolveLoopProvider(state);
     TurnHopTiming.mark(state, 'resolveLoopProvider.end');
@@ -2071,7 +2069,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     extras?: Record<string, unknown>,
     // Wire type. Defaults to 'assistant_message' (the primary orchestration
     // path — flips graphRunning on the frontend). Subconscious agents
-    // (memory-recall, observation, etc.) pass 'subconscious_message' so
+    // (memory-recall, V7 memory, etc.) pass 'subconscious_message' so
     // their emissions render in the chat bubble but don't affect run-state.
     messageType: 'assistant_message' | 'subconscious_message' = 'assistant_message',
   ): Promise<boolean> {
@@ -2168,7 +2166,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // If this agent is running inside a workflow, also emit a node_thinking
     // event so the workflow canvas can display the conversation in a bubble.
     // Subconscious subagents set `workflowThinkingLabel` so the frontend
-    // can show e.g. "memory-recall" / "observation" as the badge instead
+    // can show e.g. "memory-recall" / "v7-memory" as the badge instead
     // of attributing silently to the orchestrator node.
     const workflowNodeId = (state.metadata as any).workflowNodeId;
     const workflowParentChannel = (state.metadata as any).workflowParentChannel;

@@ -120,15 +120,14 @@ export class AgentNode extends BaseNode {
     preModelPhases.enrichPrompt = Date.now() - enrichStart;
     const promptSectionTimings = (state.metadata as any).__promptSectionTimings as Array<{ id: string; durationMs: number }> | undefined;
 
-    // Run subconscious middleware: parallel agents for summarization,
-    // memory recall, and observation management.
+    // Run subconscious middleware for summarization, memory recall, and skill recall.
     // Recall context is merged into the last assistant message so the
     // primary agent treats it as its own knowledge, not external info.
     // Skip during tool-call loops (consecutiveSameNode > 0) — only run
     // on fresh user turns to avoid redundant LLM calls.
     // Also skipped inside workflow runs (see the gate at the top of
-    // runSubconsciousMiddleware) so routines aren't slowed by recall/
-    // observation sub-agents on every orchestrator turn.
+    // runSubconsciousMiddleware) so routines aren't slowed by recall work on
+    // every orchestrator turn.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
 
 
@@ -136,10 +135,10 @@ export class AgentNode extends BaseNode {
     if (!isToolCallLoop) {
       const subStart = phaseStart();
       const observationSettingStart = phaseStart();
-      const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+      const includeObservations = await this.shouldInjectObservationsForAgent(state);
       preModelPhases.observationSettings = Date.now() - observationSettingStart;
       await runSubconsciousMiddleware(state, {
-        includeObservations: shouldInjectObservations,
+        includeObservations,
         // Surface each subconscious launch/completion as a thinking line.
         // The mobile relay translates these into activity frames, so the
         // phone's status line moves during the (unbounded) recall wait

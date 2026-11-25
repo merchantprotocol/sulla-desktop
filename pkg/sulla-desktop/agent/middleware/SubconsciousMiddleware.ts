@@ -17,8 +17,7 @@
  *     Two agents, at most three model calls per turn, single-flight per
  *     conversation. See memory/V7MemoryTurnPipeline.ts.
  *
- * The legacy observation/identity-memory systems are retired. V7 subject
- * memory remains on its independent recall and post-turn writer path.
+ * V7 subject memory remains on its independent recall and post-turn writer path.
  */
 
 import { isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
@@ -159,7 +158,7 @@ const estimateTokensFromChars = (chars: number) => Math.ceil(Math.max(0, chars) 
 // ============================================================================
 
 export interface SubconsciousMiddlewareOptions {
-  /** Whether memory recall and the v7 writer run (false for planning agents) */
+  /** Whether v7 memory/skill recall and the v7 writer run (false for planning agents). */
   includeObservations: boolean;
   /**
    * Live progress sink. The awaited subconscious phase blocks the primary
@@ -178,7 +177,7 @@ export interface SubconsciousMiddlewareOptions {
  */
 /**
  * True when the state carries at least one real user text message — the
- * thing the recall/observation agents exist to analyze. Tool-result-only
+ * thing the recall agents exist to analyze. Tool-result-only
  * user turns and messages injected by the subconscious itself don't count.
  */
 function hasAnalyzableUserMessage(state: BaseThreadState): boolean {
@@ -219,8 +218,8 @@ export async function runSubconsciousMiddleware(
 ): Promise<void> {
   // Workflow-bound agents skip the entire subconscious pipeline. A
   // running routine already has deterministic inputs (the workflow
-  // definition + node prompts) and doesn't need memory-recall /
-  // observation / summarization on every turn — those only slow the
+  // definition + node prompts) and doesn't need memory recall or
+  // summarization on every turn — those only slow the
   // run down and muddy the live event stream.
   //
   // Three signals all mean "inside a routine":
@@ -329,7 +328,7 @@ export async function runSubconsciousMiddleware(
     background.inFlight = task;
   }
 
-  // The recall/observation agents analyze the conversation's user messages.
+  // The recall agents analyze the conversation's user messages.
   // When a cycle carries none (channel-join pings, system-triggered turns),
   // dispatching them sends only the bare instruction text — the agent
   // correctly returns nothing, but a whole subconscious LLM round-trip is
@@ -346,9 +345,7 @@ export async function runSubconsciousMiddleware(
   // reply for the model.
 
   // Memory recall is v7 subject memory only: one deterministic lookup, no
-  // LLM call. The legacy per-domain observation/identity recalls (and the
-  // 'sql' / 'agent' / 'ranked' recall modes) were removed; any stored
-  // subconsciousRecallMode value now behaves as v7.
+  // LLM call. Any stored subconsciousRecallMode value now behaves as v7.
   if (options.includeObservations && analyzable) {
     launched.push('v7-subject-memory');
     const threadId = String(meta.threadId || meta.conversationId || 'unknown');

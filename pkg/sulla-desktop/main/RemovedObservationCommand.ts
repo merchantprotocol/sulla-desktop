@@ -20,7 +20,7 @@ export class RemovedObservationCommand {
   ]);
 
   errorFor(category: string, command: string): string | null {
-    if (category !== 'observation' && category !== 'meta') return null;
+    if (category !== 'observation' && category !== 'meta' && category !== 'memory') return null;
     return this.retiredCommands.has(command) ? REMOVED_OBSERVATION_MEMORY_MESSAGE : null;
   }
 }

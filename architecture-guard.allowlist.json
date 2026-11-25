@@ -176,12 +176,6 @@
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
     },
-    "pkg/sulla-desktop/agent/database/models/IdentityObservationsModel.ts": {
-      "rules": {
-        "long-file": 739
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/agent/database/models/IntegrationValueModel.ts": {
       "rules": {
         "long-file": 504,
@@ -651,14 +645,6 @@
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
     },
-    "pkg/sulla-desktop/agent/memory/MemoryRecallService.ts": {
-      "rules": {
-        "mutable-state": 3,
-        "raw-sql": 3,
-        "procedural-module": 2
-      },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing raw SQL outside a repository; move into app/Repositories; pre-existing procedural module; convert to a Service/Repository class"
-    },
     "pkg/sulla-desktop/agent/memory/V7SubjectMemory.ts": {
       "rules": {
         "long-file": 451,
@@ -756,12 +742,6 @@
         "mutable-state": 1
       },
       "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider"
-    },
-    "pkg/sulla-desktop/agent/prompts/sections/observationalMemory.ts": {
-      "rules": {
-        "procedural-module": 1
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/agent/prompts/systemPromptSectionDefaults.ts": {
       "rules": {
@@ -1144,12 +1124,6 @@
     "pkg/sulla-desktop/agent/tools/meta/askUserQuestionShared.ts": {
       "rules": {
         "procedural-module": 4
-      },
-      "reason": "pre-existing procedural module; convert to a Service/Repository class"
-    },
-    "pkg/sulla-desktop/agent/tools/meta/rankedSearch.ts": {
-      "rules": {
-        "procedural-module": 1
       },
       "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },

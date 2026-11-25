@@ -16,6 +16,7 @@ import * as subconscious from '../../../middleware/SubconsciousMiddleware';
 import { v7MemoryScheduler } from '../../../memory/V7MemoryAgents';
 import { BaseNode } from '../../../nodes/BaseNode';
 import { toolRegistry } from '../../../tools/registry';
+import { MemorySyncV1 } from '../../../../main/cloud/memorySyncV1';
 
 import type { BaseThreadState, NodeResult } from '../../../nodes/Graph';
 
@@ -123,11 +124,28 @@ describe('post-turn memory after observation memory removal', () => {
   });
 });
 
+describe('cloud memory sync after observation memory removal', () => {
+  it('ignores pulled records and tombstones for both retained legacy tables', async() => {
+    // risk: a background sync path keeps writing or archiving rows in the removed systems
+    const sync = MemorySyncV1 as any;
+
+    await sync.apply({ table: 'observations', id: 'observations:old', generation: 1, value: { id: 'old' } });
+    await sync.apply({ table: 'identity_observations', id: 'identity_observations:old', generation: 1, value: { id: 'old' } });
+    await sync.tombstone('observations:old');
+    await sync.tombstone('identity_observations:old');
+
+    expect(f.db.observationStatements()).toEqual([]);
+    expect(f.db.statements).toEqual([]);
+  });
+});
+
 describe('memory recall after identity observation removal', () => {
   it('recalls v7 subject memory into brain_memory without reading any observation table', async() => {
     // risk: recall breaks, or silently keeps reading identity observations into the prompt
     const state = completedTurn();
     state.messages = [{ role: 'user', content: 'What did we decide about updates?' }] as any;
+    (state.metadata as any).agentId = 'conversationalist';
+    (state.metadata as any).inputSource = 'voice';
 
     await subconscious.runSubconsciousMiddleware(state, { includeObservations: true });
     const metadata = state.metadata as any;

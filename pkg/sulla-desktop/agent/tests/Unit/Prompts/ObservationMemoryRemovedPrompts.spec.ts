@@ -31,6 +31,7 @@ vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
 }));
 
 const IDENTITY_PROFILE = 'IDENTITY_PROFILE_FROM_DREAMED_OBSERVATIONS';
+const HUMAN_PROFILE = 'HUMAN_AUTHORED_PROFILE_FROM_PERSONALITY_SETTINGS';
 const STALE_OBSERVATION = 'STALE_TOP_TEN_OBSERVATION';
 const BRAIN_FACT = '[memory:42] durable subject-memory rule';
 
@@ -112,6 +113,19 @@ describe('prompts after observation memory removal', () => {
     expect(`${ system }\n${ injected }`).not.toContain(IDENTITY_PROFILE);
     expect(`${ system }\n${ injected }`).not.toContain(STALE_OBSERVATION);
     expect(injected).toContain(`<brain_memory>\n${ BRAIN_FACT }\n</brain_memory>`);
+  });
+
+  it('keeps a human-authored user section while excluding dreamer-generated identity rows', async() => {
+    // risk: removing identity observations also silently removes the user's own Personality notes
+    (SystemPromptSectionModel.list as any).mockResolvedValue([{
+      id: 'user', title: 'User', content: HUMAN_PROFILE, priority: 15, enabled: true, cache_stability: 'stable',
+      is_builtin: true, is_generated: false, is_customized: true, source: 'user', created_at: '2026-01-01', updated_at: null,
+    }]);
+
+    const { system } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
+
+    expect(system).toContain(HUMAN_PROFILE);
+    expect(system).not.toContain(IDENTITY_PROFILE);
   });
 
   it('gives a Claude Code runtime agent no instruction to call observation tools', async() => {

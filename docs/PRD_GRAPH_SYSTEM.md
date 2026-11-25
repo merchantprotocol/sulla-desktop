@@ -44,7 +44,7 @@ User message
 
 ### Services (30+)
 
-AbortService, ActiveAgentsRegistry, BackendGraphWebSocketService, CalendarClient, ConversationLogger, ConversationSummaryService, ExtensionService, FrontendGraphWebSocketService, GraphRegistry, HeartbeatService, HumanHeartbeatBridge, HumanPresenceTracker, IntegrationService, JsonParseService, LlamaCppService, N8nBridgeService, N8nService, N8nVueBridgeService, OAuthCallbackServer, OAuthService, ObservationalSummaryService, PlaywrightClient, ProjectService, SchedulerService, SkillService, TextToSpeechService, TrainingDataLogger, TrainingDataPreprocessor, TrainingQueueWorker, TranscriptionService, WebSocketClientService, WorkflowSchedulerService.
+AbortService, ActiveAgentsRegistry, BackendGraphWebSocketService, CalendarClient, ConversationLogger, ConversationSummaryService, ExtensionService, FrontendGraphWebSocketService, GraphRegistry, HeartbeatService, HumanHeartbeatBridge, HumanPresenceTracker, IntegrationService, JsonParseService, LlamaCppService, N8nBridgeService, N8nService, N8nVueBridgeService, OAuthCallbackServer, OAuthService, PlaywrightClient, ProjectService, SchedulerService, SkillService, TextToSpeechService, TrainingDataLogger, TrainingDataPreprocessor, TrainingQueueWorker, TranscriptionService, WebSocketClientService, WorkflowSchedulerService.
 
 ### Graph Types
 
@@ -84,11 +84,11 @@ Current implementation (InputHandlerNode.ts):
 
 ### 2.2 Conversation Summarization and Token Budget
 
-**As a user, I want my long conversations to continue working without errors even after hundreds of messages, because the system compresses old messages into observational memory format.**
+**As a user, I want my long conversations to continue working without errors even after hundreds of messages, because the system compresses old messages into a compact conversation summary.**
 
 Current implementation (InputHandlerNode.ts):
 - Rolling window: MAX_WINDOW_SIZE = 80 messages
-- Batch summarization: when hitting max window, oldest 25% are compressed via LLM into observational memory entries (priority-tagged facts)
+- Batch summarization: when hitting max window, oldest 25% are compressed via LLM into a compact conversation summary
 - Token budget ceiling: 96,000 tokens (estimated at 4 chars/token)
 - Hard ceiling fallback: fast character-weight trimming that preserves system messages and the latest user message
 - Summaries stored on `state.metadata.conversationSummaries` and appended as a special `_conversationSummary` message
@@ -224,16 +224,9 @@ Current implementation (TrainingDataLogger service):
 - Sessions are tied to conversation IDs; system prompt is only logged once per session
 - Training data is post-processed by TrainingDataPreprocessor and queued by TrainingQueueWorker
 
-### 2.11 Observational Memory
+### 2.11 V7 Subject Memory
 
-**As a user, I want Sulla to remember important facts, preferences, and decisions from past conversations without me repeating them, because the system extracts and stores observational memories.**
-
-Current implementation (ObservationalSummaryService + enrichPrompt):
-- Observational memories are priority-tagged facts (Critical/Valuable/Low) stored in SullaSettingsModel
-- During prompt enrichment (`enrichPrompt()`), recent observations are injected into the system prompt as awareness context
-- Memories are generated from: conversation batch summarization (InputHandlerNode), explicit `add_observational_memory` tool calls, and conversation summary service
-- Agent config can opt out of observation injection (`injectObservations: false`)
-- SOP for observation creation is defined in `OBSERVATIONAL_MEMORY_SOP` constant
+Sulla's current automatic memory system is V7 subject memory. Deterministic recall injects matching subject memory into `<brain_memory>`; the post-turn V7 writer consolidates completed exchanges back into the subject-memory store. The retired observation and identity-observation systems are not part of prompt construction or background synchronization.
 
 ### 2.12 Sub-Agent Orchestration
 
@@ -270,7 +263,7 @@ Current implementation (BaseNode.enrichPrompt + AgentNode):
 - Agent prompt files: per-agent `.md` files loaded from `~/sulla/agents/{agentId}/`, cached with 30s TTL
 - Template variable substitution: `{{botName}}`, `{{primaryUserName}}`, `{{formattedTime}}`, `{{skills_index}}`, `{{tool_categories}}`, `{{installed_extensions}}`, etc.
 - Environment prompt: system capabilities, integrations index, active extensions
-- Awareness injection: observational memories, conversation summaries
+- Awareness injection: V7 subject-memory recall, conversation summaries
 - Voice mode prompts: VOICE_MODE_PROMPT, SECRETARY_MODE_PROMPT, INTAKE_MODE_PROMPT appended when input source is microphone
 - Channel awareness: active agents registry context block
 - Trust level enforcement: different prompt blocks for trusted/untrusted/verify users

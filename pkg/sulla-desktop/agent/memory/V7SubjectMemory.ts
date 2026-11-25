@@ -277,7 +277,7 @@ export async function recallV7SubjectMemory(
   const c = await (dependencies.load || load)();
   const e = (dependencies.embedder || embedder)();
   if (!e) return null;
-  const measureBrain = options.measureBrain || ((brain: string) => measureInjectedMemoryBlocks('', brain));
+  const measureBrain = options.measureBrain || measureInjectedMemoryBlocks;
   const packer = dependencies.packer || new MemoryBudgetPacker(options.budget ?? MEMORY_CHAR_BUDGET, measureBrain);
   const cue = context.join('\n');
   const q = e.embed(cue);
