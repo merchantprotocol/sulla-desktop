@@ -5,7 +5,7 @@ import type { DecisionRecord } from '@pkg/shared/decisions';
 const record: DecisionRecord = { id: 'question-1', conversationId: 'thread-1', channel: 'sulla-desktop', title: 'Pick a color', kind: 'question', status: 'expired', attention: 'active', createdAt: 1, expiresAt: 2, questions: [{ question: 'Color?', options: [{ label: 'Blue' }] }] };
 const response = { id: record.id, conversationId: record.conversationId, action: 'answered' as const, answers: [{ question: 'Color?', selected: ['Blue'] }] };
 function fixture() {
-  const decisions = { queueLateAnswer: vi.fn().mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued' }), findById: vi.fn() };
+  const decisions = { queueLateAnswer: vi.fn().mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued' }), findById: vi.fn(), markJobAnswerDelivered: vi.fn().mockResolvedValue(true) };
   const send = vi.fn().mockResolvedValue(true); const conversations = { find: vi.fn().mockResolvedValue({ id: 'thread-1' }) };
   return { decisions, send, conversations, handler: new LateDecisionAnswerHandler(decisions, conversations, { send }) };
 }
