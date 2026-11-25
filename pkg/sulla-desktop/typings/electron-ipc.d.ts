@@ -250,11 +250,11 @@ export interface IpcMainEvents {
 
   // #region Tab context menu (popup window)
   'tab-context-menu:show':           (payload: TabContextMenuRequest) => void;
-  'tab-context-menu:hide-attention': (id: string) => void;
+  'tab-context-menu:hide':           (id: string) => void;
   'tab-hover:show':                  (payload: TabHoverRequest) => void;
   'tab-hover:hide':                  (id: string) => void;
-  'tab-context-menu:action':  (action: string) => void;
-  'tab-context-menu:dismiss': () => void;
+  'tab-context-menu:action':  (requestId: string, action: string) => void;
+  'tab-context-menu:dismiss': (requestId: string) => void;
   // #endregion
 
   // #region More menu (popup window)
@@ -1420,8 +1420,8 @@ export interface IpcRendererEvents {
   'claude-oauth:result':            (result: import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
-  'tab-context-menu:attention-closed': (id: string) => void;
-  'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;
+  'tab-context-menu:closed':        (requestId: string) => void;
+  'tab-context-menu:selected':      (requestId: string, action: string) => void;
   'more-menu:selected':             (action: string, extra: Record<string, unknown> | null) => void;
   'more-menu:fetch-history':        () => void;
   'browser-context-menu:ai-action': (payload: {

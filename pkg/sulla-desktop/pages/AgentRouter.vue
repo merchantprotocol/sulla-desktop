@@ -124,6 +124,7 @@ import { ConversationShellPolicy } from './conversations/ConversationShellPolicy
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
+import { tabContextMenuBridge } from '@pkg/composables/TabContextMenuBridge';
 import { TabGroupModel } from '@pkg/composables/TabGroupModel';
 import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
@@ -152,6 +153,7 @@ const route = useRoute();
 const router = useRouter();
 
 onUnmounted(chatActivityStore.connect(window, ipcRenderer));
+onUnmounted(tabContextMenuBridge.connect(ipcRenderer));
 const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabStripLayoutStorageKey, isTabPinned } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
