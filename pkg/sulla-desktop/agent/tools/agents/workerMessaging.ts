@@ -54,6 +54,7 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
 
   if (pending.length > 0) {
     try {
+      const { AgentJobMessagingModel } = await import('../../database/models/AgentJobMessagingModel');
       await AgentJobMessagingModel.markMessagesDelivered(pending.map(message => message.id), threadId);
     } catch (err) {
       console.warn('[workerMessaging] delivery receipt write failed; continuing worker turn:', (err as Error).message);

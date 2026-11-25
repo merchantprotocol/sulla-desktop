@@ -172,8 +172,15 @@ export function formatQuestionResolution(
 }
 
 /** A question receipt contains no inferred choice and never asks the model to keep a tool connection open. */
-export function formatQuestionReceipt(id: string, answerSaved = false, parked = false): string {
-  const state = answerSaved ? 'An answer is saved' : 'The question is saved';
-  const destination = parked ? 'the delegated task mailbox' : 'the original conversation';
-  return `${ state } in For You (request ${ id }); delivery is through ${ destination }. Your parent agent may answer or pass it; your human may answer at any time. Replies name who answered. End this turn and wait; do not re-ask or continue dependent work.`;
+export function formatQuestionReceipt(id: string, answerSaved = false, parked = false, parentMayAnswer = false): string {
+  const state = answerSaved
+    ? `The answer is already saved and queued (request ${ id }).`
+    : `The question is saved in For You (request ${ id }); it remains open until answered or dismissed.`;
+  const answerer = answerSaved
+    ? 'The answer identifies who answered.'
+    : parentMayAnswer
+      ? 'The agent that launched you may answer or pass plain questions; the human can answer anytime. Replies identify who answered.'
+      : 'Only the human may answer; the reply identifies who answered.';
+  const destination = parked ? 'It arrives in the job mailbox.' : 'It arrives in this conversation.';
+  return `${ state } ${ answerer } ${ destination } End this turn and wait; don’t re-ask, infer consent, or do dependent work.`;
 }

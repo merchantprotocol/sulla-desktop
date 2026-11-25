@@ -74,6 +74,6 @@ export class AskUserQuestionWorker extends BaseTool {
       channel: this.state?.metadata?.wsChannel || '',
     }, this.state?.metadata?.options?.abort?.signal);
     if (!reused) await this.emitMessage('', 'tool_question', { toolQuestion: { questionId: record.id, questions } });
-    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked) };
+    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, record.route?.authority === 'any') };
   }
 }

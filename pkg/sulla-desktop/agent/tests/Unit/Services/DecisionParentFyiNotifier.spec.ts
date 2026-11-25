@@ -9,9 +9,16 @@ import { AgentCompletionInboxService } from '../../../app/Services/AgentCompleti
 import { CompletionIdleDispatcher } from '../../../app/Services/CompletionIdleDispatcher';
 import { DecisionService } from '../../../services/DecisionService';
 import { DecisionParentFyiNotifier, type DecisionParentFyiDelivery, type DecisionParentFyiMailbox } from '../../../services/DecisionParentFyiNotifier';
+import { prepareWorkerTurnPrompt } from '../../../tools/agents/workerMessaging';
 
 import type { AgentJobTaskTarget } from '../../../database/models/AgentJobMessagingModel';
 import type { DecisionRecord } from '@pkg/shared/decisions';
+
+const messaging = vi.hoisted(() => ({ messages: [] as any[], markDelivered: vi.fn(async() => undefined) }));
+vi.mock('../../../database/models/AgentJobMessagingModel', () => ({ AgentJobMessagingModel: {
+  pendingMessagesForThread: async() => messaging.messages,
+  markMessagesDelivered: messaging.markDelivered,
+} }));
 
 const asker: AgentJobTaskTarget = {
   jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', threadId: 'child-thread',
@@ -56,7 +63,7 @@ function approval(id: string): DecisionRecord {
 }
 
 describe('DecisionParentFyiNotifier', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { messaging.messages = []; vi.restoreAllMocks() });
 
   it('queues one FYI for approvals, task questions, and consent, but none for a plain question', async() => {
     // risk: authority — parents must know a human-only decision is pending without gaining approval authority.
@@ -107,6 +114,19 @@ describe('DecisionParentFyiNotifier', () => {
 
     expect(dispatch).not.toHaveBeenCalled();
     expect(inbox.take('sulla-desktop', 'parent-thread')).toHaveLength(1);
+  });
+
+  it('delivers a worker-parent FYI unchanged at the next tool boundary', async() => {
+    // risk: decision delivery — the parent must read the queued FYI as an informational note, not a new command envelope.
+    const note = '[FYI from worker] asked the human to approve: Run an action? No action needed; you cannot approve it.';
+    messaging.messages = [{ id: 'parent-message', jobId: 'parent-job', taskIndex: 1, message: note, createdAt: 1 }];
+    messaging.markDelivered.mockClear();
+    const prompt = await prepareWorkerTurnPrompt({ metadata: { isSubAgent: true, threadId: 'parent-thread', delegatedJobId: 'parent-job', delegatedTaskIndex: 1 } }, 'next parent turn');
+
+    expect(prompt).toContain(`\n\n${ note }\n\nnext parent turn`);
+    expect(prompt).not.toContain(`[Message from orchestrator]\n${ note }`);
+    expect(messaging.markDelivered).toHaveBeenCalledWith(['parent-message'], 'parent-thread');
+    messaging.messages = [];
   });
 
   it('does not let FYI queue failure change the pending approval result', async() => {
