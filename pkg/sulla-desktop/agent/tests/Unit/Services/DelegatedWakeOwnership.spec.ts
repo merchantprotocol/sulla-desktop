@@ -57,7 +57,7 @@ function harness() {
     waitForWake:            (...args) => lifecycle.waitForWake(...args),
     rerouteCompletions:     noop,
     acknowledgeCompletions: noop,
-    alertRoot:              deadline => rootNotice.send('worker-job', 0, taskThread, deadline),
+    alertRoot:              (deadline, missing) => rootNotice.send('worker-job', 0, taskThread, deadline, missing),
     repairInput:            noop,
     logWake:                facts => logger.wake({ ...facts, cacheHit: false, graphCache: 'live_runner' }),
   };
@@ -107,6 +107,43 @@ describe('live delegated wake ownership', () => {
     h.lifecycle.deliver(taskThread, timer());
     await run;
     expect(h.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed alert on a bounded timer with the same episode deadline', async() => {
+    vi.useFakeTimers();
+    const h = harness();
+    const alert = vi.fn(h.ports.alertRoot!).mockRejectedValueOnce(new Error('ancestry unavailable'));
+    h.ports.alertRoot = alert;
+    const run = h.run();
+    try {
+      await vi.advanceTimersByTimeAsync(209_999);
+      expect(alert).toHaveBeenCalledTimes(1);
+      expect(h.inbox.pendingCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(alert).toHaveBeenCalledTimes(2);
+      expect(alert.mock.calls[0][0]).toBe(alert.mock.calls[1][0]);
+      expect(h.inbox.take('po-channel', 'po')).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect(alert).toHaveBeenCalledTimes(2);
+      expect(h.execute).not.toHaveBeenCalled();
+    } finally { h.abort.abort(); await run }
+  });
+
+  it('suppresses an obsolete alert when input arrives during ancestry lookup', async() => {
+    vi.useFakeTimers();
+    const h = harness();
+    let finish!: () => void;
+    const lookup = new Promise<undefined>(resolve => { finish = () => resolve(undefined) });
+    const notice = new DelegatedWakeRepairNotice(id => id === taskThread
+      ? Promise.resolve({ parentThreadId: 'po' }) : lookup, h.inbox);
+    h.ports.alertRoot = (deadline, missing) => notice.send('job', 0, taskThread, deadline, missing);
+    const run = h.run();
+    await vi.advanceTimersByTimeAsync(180_000);
+    h.lifecycle.deliver(taskThread, timer());
+    finish();
+    await run;
+    expect(h.inbox.pendingCount()).toBe(0);
+    expect(h.execute).toHaveBeenCalledOnce();
   });
 
   it.each(['task stop', 'runtime drain'])('releases an evicted parked runner on %s without a zombie or provider call', async(reason) => {
