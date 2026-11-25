@@ -2051,23 +2051,6 @@ function handleTabContextMenuAction(
   display: none;
 }
 
-/* Pinned tabs keep their title (shortened) and show a pin plus an accent
-   underline, so they read as pinned instead of collapsing to a bare icon. */
-.tab-pinned:not(.tab-active):not(.tab-active-native) {
-  min-width: 0;
-  max-width: 150px;
-  flex: 0 0 auto;
-  gap: 6px;
-  box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.tab-pin {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  color: var(--accent);
-}
-
 .tab-pinned-boundary {
   margin-left: 10px;
 }
@@ -2265,7 +2248,6 @@ function handleTabContextMenuAction(
   background: color-mix(in srgb, var(--border-default) 55%, transparent);
 }
 .app-titlebar .tab-active-indicator { display: none; }
-.app-titlebar .tab-pinned:not(.tab-active):not(.tab-active-native) { min-width: 64px; max-width: none; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
 .app-titlebar .tab-pinned.tab-active { box-shadow: none; }
 .app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
 .app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
