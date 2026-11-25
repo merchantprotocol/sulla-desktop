@@ -130,6 +130,7 @@ import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutReposit
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId, type BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
+import { chatActivityStore } from '@pkg/pages/chat/messages/chatActivityStore';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
@@ -149,6 +150,8 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
+
+onUnmounted(chatActivityStore.connect(window, ipcRenderer));
 const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabStripLayoutStorageKey, isTabPinned } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
