@@ -387,6 +387,9 @@ import { isTabCloseable } from './tabStrip';
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
+import { TabDragAutoScroll } from '@pkg/composables/TabDragAutoScroll';
+import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
+import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composables/TabTransferPayload';
 import { TabHoverController } from '@pkg/composables/TabHoverController';
 import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
 import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
@@ -646,7 +649,7 @@ function onTabStripScroll() {
 /** Restore the shared offset, then reveal the active tab without resetting the strip. */
 function syncTabStrip() {
   const el = getScrollEl();
-  if (!el || !isStripVisible(el)) return;
+  if (!el || !isStripVisible(el) || dragState.value?.active) return;
 
   let left = sharedTabScrollLeft;
   const active = el.querySelector<HTMLElement>('.tab-active, .tab-active-native');
@@ -790,10 +793,14 @@ onMounted(() => {
   nextTick(syncTabStrip);
 });
 onActivated(() => nextTick(syncTabStrip));
-onDeactivated(hideStripPopups);
+onDeactivated(() => {
+  hideStripPopups();
+  cancelCurrentDrag();
+  suppressDragClick.cancel();
+});
 onUnmounted(() => {
   cancelCurrentDrag();
-  document.documentElement.classList.remove('tab-pointer-dragging');
+  suppressDragClick.cancel();
   hideStripPopups();
   window.removeEventListener('blur', hideTabHover);
   document.removeEventListener('visibilitychange', onStripVisibilityChange);
@@ -1200,12 +1207,11 @@ async function closeAnyTab(tab: HeaderTab) {
 
 interface DragState {
   active:       boolean;
-  originIndex:  number;
-  currentIndex: number;
   startX:       number;
   startY:       number;
   pointerId:    number;
   grabOffsetX:  number;
+  grabOffsetY:  number;
   lastClientX:  number;
   tabEl:        HTMLElement;
   tabId:        string;
@@ -1216,12 +1222,29 @@ interface DragState {
 
 const dragState = ref<DragState | null>(null);
 let currentDragCancel: (() => void) | null = null;
-const transferSnapshots = ref<Record<string, Record<string, unknown>>>({});
+const transferPayload = new TabTransferPayload();
+const transferSnapshots = new Map<string, TabEditorTransferSnapshot>();
+const suppressDragClick = new TabDragClickSuppression(window);
+const dragEdgeScroll = new TabDragAutoScroll(window);
+
 function onTransferSnapshot(event: Event) {
-  const detail = (event as CustomEvent<Record<string, unknown>>).detail;
-  const tabId = String(detail?.tabId || '');
-  if (tabId) transferSnapshots.value = { ...transferSnapshots.value, [tabId]: detail };
+  const detail = (event as CustomEvent<TabEditorTransferSnapshot>).detail;
+
+  if (detail?.tabId && detail.fileEditor) transferSnapshots.set(detail.tabId, detail);
 }
+
+function captureTransferState(tabId: string) {
+  window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId } }));
+  return transferPayload.transient(transferSnapshots.get(tabId), isTabPinned(`browser-${ tabId }`));
+}
+
+watch(() => visibleTabs.value.map(tab => tab.id).join('\0'), () => {
+  const dragging = dragState.value;
+
+  if (dragging && !visibleTabs.value.some(tab => tab.id === dragging.tabHeaderId)) cancelCurrentDrag();
+}, { flush: 'post' });
+watch(() => route.path, cancelCurrentDrag, { flush: 'sync' });
+
 const DRAG_DEADZONE = 5;
 
 function offsetLeftWithin(element: HTMLElement, ancestor: HTMLElement): number {
@@ -1256,42 +1279,39 @@ function positionDraggedTab(state: DragState, container: HTMLElement): void {
 }
 
 function onPointerDown(event: PointerEvent, index: number): void {
-  if (event.button !== 0 || (event.target as HTMLElement).closest('.tab-close')) return;
+  if (event.button !== 0 || (event.target as HTMLElement).closest('.tab-close, input')) return;
+  cancelCurrentDrag();
   const tabEl = event.currentTarget as HTMLElement;
-  const tab = orderedTabs.value[index];
-  if (!tab) return;
+  const tab = orderedTabs.value.find(item => item.id === tabEl.dataset.tabId) ?? orderedTabs.value[index];
 
-  const initial: DragState = {
-    active:       false,
-    originIndex:  index,
-    currentIndex: index,
-    startX:       event.clientX,
-    startY:       event.clientY,
-    pointerId:    event.pointerId,
-    grabOffsetX:  0,
-    lastClientX:  event.clientX,
+  if (!tab) return;
+  const bounds = tabEl.getBoundingClientRect();
+
+  dragState.value = {
+    active:      false,
+    startX:      event.clientX,
+    startY:      event.clientY,
+    pointerId:   event.pointerId,
+    grabOffsetX: Math.max(0, Math.min(event.clientX - bounds.left, bounds.width)),
+    grabOffsetY: Math.max(0, Math.min(event.clientY - bounds.top, bounds.height)),
+    lastClientX: event.clientX,
     tabEl,
-    tabId:        tab.browserId || '',
-    tabHeaderId:  tab.id,
-    detached:     false,
+    tabId:       tab.browserId || '',
+    tabHeaderId: tab.id,
+    detached:    false,
     initialOrder: orderedTabs.value.map(item => item.id),
   };
-  dragState.value = initial;
-  // `ref` proxies object values. Event closures must compare/mutate the same
-  // proxy stored in the ref, not the raw object assigned above.
+  // Ref object values are proxied: keep identity checks on the same object.
   const state = dragState.value;
-  if (!state) return;
 
+  if (!state) return;
   let finished = false;
   const removeListeners = () => {
+    dragEdgeScroll.stop();
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
     window.removeEventListener('keydown', onEscape);
-  };
-  const restoreOrder = () => {
-    const liveTabs = [...allTabsById.value.values()];
-    tabOrder.value = tabGroupModel.orderTabs(liveTabs, state.initialOrder).map(item => item.id);
   };
   const resetVisuals = () => {
     tabEl.style.pointerEvents = '';
@@ -1300,49 +1320,84 @@ function onPointerDown(event: PointerEvent, index: number): void {
     if (dragState.value === state) dragState.value = null;
     currentDragCancel = null;
   };
-  const suppressClick = () => {
-    const preventClick = (clickEvent: Event) => {
-      clickEvent.preventDefault();
-      clickEvent.stopImmediatePropagation();
-    };
-    tabEl.addEventListener('click', preventClick, { capture: true, once: true });
-  };
-  const cancel = (preventFollowingClick: boolean) => {
+  const cancel = (waitForGestureClick: boolean) => {
     if (finished) return;
     finished = true;
     removeListeners();
-    if (state.active) restoreOrder();
+    if (state.active) tabOrder.value = tabGroupModel.orderTabs([...allTabsById.value.values()], state.initialOrder).map(item => item.id);
     if (state.detached) ipcRenderer.send('tabs:drag-cancel', { tabId: state.tabId });
     resetVisuals();
-    if (preventFollowingClick && state.active) suppressClick();
+    if (waitForGestureClick && state.active) suppressDragClick.arm(tabEl, state.pointerId, true);
   };
+  const stillPresent = () => tabEl.isConnected && tabEl.offsetWidth > 0 && visibleTabs.value.some(tab => tab.id === state.tabHeaderId);
   const commit = (upEvent: PointerEvent) => {
     if (finished) return;
+    if (!stillPresent()) {
+      cancel(false);
+      return;
+    }
     finished = true;
     removeListeners();
-    if (dragState.value === state) dragState.value = null;
-    document.documentElement.classList.remove('tab-pointer-dragging');
     if (state.detached) {
-      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: state.tabId } }));
       ipcRenderer.send('tabs:drag-end', {
         tabId:     state.tabId,
         screenX:   upEvent.screenX,
         screenY:   upEvent.screenY,
-        transient: { ...transferSnapshots.value[state.tabId], pinned: isTabPinned(`browser-${ state.tabId }`) },
+        transient: captureTransferState(state.tabId),
       });
     }
     resetVisuals();
-    if (state.active) suppressClick();
+    if (state.active) suppressDragClick.arm(tabEl, state.pointerId);
+  };
+
+  const reposition = (container: HTMLElement, rect: DOMRect) => {
+    const peers = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'))
+      .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0);
+    const fromIndex = orderedTabs.value.findIndex(item => item.id === state.tabHeaderId);
+    const pointerX = state.lastClientX - rect.left + container.scrollLeft;
+    const target = peers.find(element => pointerX < offsetLeftWithin(element, container) + element.offsetWidth / 2) ?? peers.at(-1);
+    const targetIndex = Number(target?.dataset.tabIndex);
+
+    if (fromIndex >= 0 && Number.isFinite(targetIndex) && targetIndex !== fromIndex) {
+      reorderTabs(fromIndex, targetIndex);
+      nextTick(() => {
+        if (dragState.value === state && state.active && !state.detached) positionDraggedTab(state, container);
+      });
+    }
+    positionDraggedTab(state, container);
+  };
+  const scrollAtEdge = () => {
+    if (!stillPresent()) {
+      cancel(false);
+      return false;
+    }
+    const container = getScrollEl();
+
+    if (!container || state.detached) return false;
+    const rect = container.getBoundingClientRect();
+    const direction = state.lastClientX > rect.right - 30 ? 1 : state.lastClientX < rect.left + 30 ? -1 : 0;
+    const before = container.scrollLeft;
+
+    if (!direction) return false;
+    container.scrollLeft += direction * 8;
+    if (container.scrollLeft === before) return false;
+    updateScrollButtons();
+    reposition(container, rect);
+    return true;
   };
 
   const onMove = (moveEvent: PointerEvent): void => {
     if (moveEvent.pointerId !== state.pointerId || dragState.value !== state) return;
+    if (!stillPresent()) {
+      cancel(false);
+      return;
+    }
     const dx = moveEvent.clientX - state.startX;
     const dy = moveEvent.clientY - state.startY;
+
     if (!state.active) {
       if (Math.hypot(dx, dy) < DRAG_DEADZONE) return;
       state.active = true;
-      state.grabOffsetX = moveEvent.clientX - tabEl.getBoundingClientRect().left;
       tabEl.style.pointerEvents = 'none';
       document.documentElement.classList.add('tab-pointer-dragging');
       hideStripPopups();
@@ -1351,58 +1406,33 @@ function onPointerDown(event: PointerEvent, index: number): void {
 
     const detached = moveEvent.clientY < -30 || moveEvent.clientY > window.innerHeight + 30 ||
       moveEvent.clientX < 0 || moveEvent.clientX > window.innerWidth || Math.abs(dy) > 30;
+
     if (detached && !state.detached && state.tabId) {
       const descriptor = getTab(state.tabId);
+
       if (descriptor) {
         state.detached = true;
-        window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
-        const bounds = tabEl.getBoundingClientRect();
+        dragEdgeScroll.stop();
         ipcRenderer.send('tabs:drag-start', {
           tabId:       descriptor.id,
-          descriptor:  { ...descriptor },
-          title:       descriptor.label,
+          descriptor:  transferPayload.descriptor(descriptor),
+          title:       descriptor.customTitle || descriptor.title,
           favicon:     descriptor.favicon,
           tabCount:    browserTabs.length,
           screenX:     moveEvent.screenX,
           screenY:     moveEvent.screenY,
-          grabOffsetX: Math.max(0, Math.min(moveEvent.clientX - bounds.left, bounds.width)),
-          grabOffsetY: Math.max(0, Math.min(moveEvent.clientY - bounds.top, bounds.height)),
+          grabOffsetX: state.grabOffsetX,
+          grabOffsetY: state.grabOffsetY,
         });
       }
     }
     if (state.detached) return;
-
     const container = getScrollEl();
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    if (moveEvent.clientX > rect.right - 30) container.scrollLeft += 8;
-    else if (moveEvent.clientX < rect.left + 30) container.scrollLeft -= 8;
-    updateScrollButtons();
 
-    const visibleTabs = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'))
-      .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0);
-    if (!visibleTabs.length) return;
-
-    const fromIndex = orderedTabs.value.findIndex(item => item.id === state.tabHeaderId);
-    if (fromIndex < 0) return;
-    const pointerX = moveEvent.clientX - rect.left + container.scrollLeft;
-    let targetIndex = Number(visibleTabs[visibleTabs.length - 1].dataset.tabIndex);
-    for (const element of visibleTabs) {
-      const center = offsetLeftWithin(element, container) + element.offsetWidth / 2;
-      if (pointerX < center) {
-        targetIndex = Number(element.dataset.tabIndex);
-        break;
-      }
+    if (container) {
+      reposition(container, container.getBoundingClientRect());
+      dragEdgeScroll.start(scrollAtEdge);
     }
-    if (!Number.isFinite(targetIndex)) return;
-    if (targetIndex !== fromIndex) {
-      reorderTabs(fromIndex, targetIndex);
-      state.currentIndex = targetIndex;
-      nextTick(() => {
-        if (dragState.value === state && state.active && !state.detached) positionDraggedTab(state, container);
-      });
-    }
-    positionDraggedTab(state, container);
   };
 
   const onEscape = (keyEvent: KeyboardEvent): void => {
@@ -1417,7 +1447,6 @@ function onPointerDown(event: PointerEvent, index: number): void {
     else commit(upEvent);
   };
 
-  currentDragCancel?.();
   currentDragCancel = () => cancel(false);
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp);
@@ -1573,8 +1602,12 @@ function handleTabContextMenuAction(
   case 'moveNewWindow': {
     const descriptor = browserId ? getTab(browserId) : undefined;
     if (descriptor) {
-      window.dispatchEvent(new CustomEvent('sulla:tab-transfer-request', { detail: { tabId: descriptor.id } }));
-      ipcRenderer.send('tabs:move-to-new-window', { tabId: browserId, descriptor: { ...descriptor }, tabCount: browserTabs.length, transient: { ...transferSnapshots.value[browserId!], pinned: isTabPinned(`browser-${ browserId }`) } });
+      ipcRenderer.send('tabs:move-to-new-window', {
+        tabId:      descriptor.id,
+        descriptor: transferPayload.descriptor(descriptor),
+        tabCount:   browserTabs.length,
+        transient:  captureTransferState(descriptor.id),
+      });
     }
     break;
   }
