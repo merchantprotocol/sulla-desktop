@@ -408,6 +408,7 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   width: min(470px, 100%);
   height: 44px;
   overflow: hidden;
@@ -506,7 +507,7 @@ onBeforeUnmount(() => {
   transition: transform 420ms cubic-bezier(.22, 1, .36, 1), opacity 700ms cubic-bezier(.22, 1, .36, 1);
 }
 
-.rollup-trail-enter-from,
+.rollup-trail-enter-from { opacity: 0; transform: translateY(22px); }
 .rollup-trail-leave-to { opacity: 0; transform: translateY(-22px); }
 .rollup-trail-leave-active { position: absolute; left: 0; right: 0; }
 
