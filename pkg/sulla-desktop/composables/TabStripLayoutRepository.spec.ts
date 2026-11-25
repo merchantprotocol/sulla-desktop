@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 
+import { TabGroupModel } from './TabGroupModel';
+import { TabGroupReveal } from './TabGroupReveal';
 import { TabStripLayoutRepository } from './TabStripLayoutRepository';
 
 class MemoryStorage implements Pick<Storage, 'getItem' | 'setItem'> {
@@ -10,6 +12,28 @@ class MemoryStorage implements Pick<Storage, 'getItem' | 'setItem'> {
 }
 
 describe('TabStripLayoutRepository', () => {
+  it('reveals only a changed unpinned selection, preserving a restored or manually folded active group', () => {
+    const storage = new MemoryStorage();
+    const layout = new TabStripLayoutRepository(storage, 'window');
+    const chat = { id: 'chat', mode: 'chat' };
+    const browser = { id: 'first-browser', mode: 'browser' };
+    const reveal = new TabGroupReveal(new TabGroupModel(), layout, chat.id);
+
+    layout.setFoldedGroups(['chats', 'browser', 'tools']);
+    reveal.select(chat);
+    expect(layout.foldedGroups.value).toEqual(['chats', 'browser', 'tools']);
+    reveal.select(browser);
+    expect(layout.foldedGroups.value).toEqual(['chats', 'tools']);
+
+    layout.setFoldedGroups(['chats', 'browser', 'tools']);
+    reveal.select({ ...browser }); // The native browser header replaces the shell header.
+    expect(layout.foldedGroups.value).toContain('browser');
+    reveal.select({ id: 'pinned-tool', mode: 'vault', pinned: true });
+    expect(layout.foldedGroups.value).toContain('tools');
+    reveal.select(browser);
+    expect(layout.foldedGroups.value).not.toContain('browser');
+  });
+
   it('defaults only Tools to folded on a fresh profile', () => {
     const storage = new MemoryStorage();
     expect(new TabStripLayoutRepository(storage, 'sulla:win:main:tab-strip-layout').loadFoldedGroups()).toEqual(['tools']);
