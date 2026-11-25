@@ -1291,9 +1291,6 @@ const TOOL_VERB_MAP: Record<string, string> = {
   calendar_list:               'Checking calendar',
   calendar_create:             'Creating event',
   calendar_list_upcoming:      'Checking schedule',
-  // Memory
-  add_observational_memory:    'Remembering',
-  remove_observational_memory: 'Forgetting',
   // Skills / Projects
   create_skill:                'Creating skill',
   // Channel

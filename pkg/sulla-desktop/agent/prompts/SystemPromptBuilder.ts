@@ -35,9 +35,9 @@ export interface PromptSection {
   /**
    * Cache tier:
    * - 'stable'      — effectively frozen for the session (soul, safety, tooling)
-   * - 'semi-stable' — changes occasionally, not per turn (observational memory).
-   *                   Gets its own cache breakpoint so an update only
-   *                   invalidates this segment, not the whole stable prefix.
+   * - 'semi-stable' — changes occasionally, not per turn. Gets its own cache
+   *                   breakpoint so an update only invalidates this segment,
+   *                   not the whole stable prefix.
    * - 'dynamic'     — changes every turn (runtime, channel awareness); sits
    *                   after the cache boundary.
    */
@@ -73,9 +73,7 @@ export interface PromptBuildContext {
   excludeSections:       Set<string>;
   /**
    * DB-backed prompt sections (SystemPromptSectionModel), keyed by id — the
-   * editable CORE layer. Enabled rows only. The subconscious-produced `user`
-   * row is returned as assistant context instead of system content. For any
-   * other REGISTERED section id the
+   * editable CORE layer. Enabled rows only. For any REGISTERED section id the
    * content replaces the baked factory content (unless an agent .md override is
    * present, which still wins, or the section is generated — see isGenerated).
    * A row whose id has no registered factory is injected as a NEW section using
@@ -117,11 +115,7 @@ export interface BuiltPrompt {
   anthropicSystem?:         AnthropicSystemBlock[];
   /** Which sections were included in the build */
   includedSections:         string[];
-  /**
-   * Contextual sections that must be delivered as assistant-role context,
-   * never as system instructions. This includes the `observational_memory`
-   * recall section and the dream-consolidated DB `user` section.
-   */
+  /** Contextual sections delivered as assistant-role context, not system instructions. */
   assistantContextSections: PromptSection[];
   /**
    * Heartbeat-only: runtime invariant check of the composed prompt — confirms
@@ -354,16 +348,6 @@ class SystemPromptBuilderImpl {
       }
     }
 
-    // Observational memory is subconscious context, not governing policy.
-    // Factories still build it normally, but it leaves the system section list
-    // here and travels through the same assistant-role carrier as the DB user
-    // identity section.
-    for (let i = builtSections.length - 1; i >= 0; i--) {
-      if (builtSections[i].id !== 'observational_memory') continue;
-      assistantContextSections.unshift(builtSections[i]);
-      builtSections.splice(i, 1);
-    }
-
     // Sort by priority
     builtSections.sort((a, b) => a.priority - b.priority);
 
@@ -395,10 +379,7 @@ class SystemPromptBuilderImpl {
     const includedSections = orderedSections.map(s => s.id);
 
     // Build Anthropic-optimized blocks: stable (cached) → semi-stable (own
-    // cache breakpoint) → dynamic (uncached, after the boundary). Prompt
-    // caching is a prefix match, so giving semi-stable content (observational
-    // memory) its own breakpoint means a memory update only re-writes that
-    // segment — the stable prefix's cache entry stays valid.
+    // cache breakpoint) → dynamic (uncached, after the boundary).
     let anthropicSystem: AnthropicSystemBlock[] | undefined;
     if (ctx.provider === 'anthropic') {
       anthropicSystem = [];

@@ -13,7 +13,7 @@
  *
  * Rules are NEVER hard-deleted — they are soft-archived via `archived`
  * so the full history is always recoverable. An `enabled` flag lets a
- * rule be toggled off without archiving it. Mirrors ObservationsModel.
+ * rule be toggled off without archiving it.
  *
  * DUAL-STORE NOTE: reads and writes ONLY Postgres — no Redis hash.
  */
