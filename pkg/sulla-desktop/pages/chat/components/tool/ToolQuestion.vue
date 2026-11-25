@@ -8,11 +8,14 @@
 <template>
   <section
     class="qc"
-    :class="{ 'qc-settled': locked, 'qc-original': retainOptions }"
+    :class="{ 'qc-settled': locked, 'qc-original': retainOptions, 'qc-route': routePresentation }"
     :aria-disabled="locked"
-    aria-label="Question from Sulla"
+    :aria-label="routePresentation ? `Question from ${routePresentation.requesterLabel}` : 'Question from Sulla'"
   >
-    <header class="qc-status">
+    <template v-if="routePresentation">
+      <DecisionHolderLine :presentation="routePresentation" /><p class="qc-route-from"><span class="qc-route-avatar">{{ routePresentation.requesterInitial }}</span><span>Question from <b>{{ routePresentation.requesterLabel }}</b></span></p><DecisionTrail :rows="routePresentation.trail" />
+    </template>
+    <header v-else class="qc-status">
       <span
         class="qc-state"
         :class="stateTone"
@@ -29,6 +32,7 @@
       >Expires in {{ countdown }}</span>
     </header>
 
+    <div :class="{ 'qc-route-body': routePresentation }">
     <p
       v-if="msg.resolutionError"
       class="qc-error"
@@ -187,6 +191,7 @@
         v-else-if="!canSubmit"
         class="qc-hint"
       >Pick an option or write an answer{{ msg.questions.length > 1 ? ' for each question' : '' }} to continue.</span>
+      <span v-if="routePresentation?.turn === 'with-agent'" class="qc-hint qc-route-hint">You can answer now. Your answer goes straight to {{ routePresentation.requesterLabel }} and {{ routePresentation.holderLabel }} stops.</span>
     </footer>
 
     <dl
@@ -201,32 +206,38 @@
         <dd>{{ a.selected.join(', ') || 'No selection' }}</dd>
       </template>
     </dl>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
 import { answerSelection } from '../../messages/questionAnswer';
+import { ChatDecisions } from '../../composables/useChatDecisions';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
+import DecisionHolderLine from './DecisionHolderLine.vue';
+import DecisionTrail from './DecisionTrail.vue';
 
-const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
+const props = defineProps<{ msg: ToolQuestionMessage; decision?: DecisionRecord; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
+const decisionStore = ChatDecisions.useChatDecisions();
+const routePresenter = useDecisionRoutePresenter({ now: () => decisionStore.now.value });
+const routePresentation = computed(() => { const record = props.decision ?? (props.msg.questionId ? decisionStore.inlineRecord(props.msg.questionId, 'question') : undefined); return record?.route ? routePresenter.present(record) : undefined });
 const currentStep = ref(0);
-
 // Per-question selected option labels and free-text. Index-aligned with
 // msg.questions. reactive so the template updates on toggle.
 const picks = reactive<string[][]>(props.draft?.picks ?? props.msg.questions.map(() => []));
 const otherText = reactive<string[]>(props.draft?.other ?? props.msg.questions.map(() => ''));
 const customSelected = reactive<boolean[]>(props.draft?.customSelected ?? props.msg.questions.map((q, qi) => !!otherText[qi]?.trim() && (!!q.multiSelect || !picks[qi]?.length)));
-
 function selectCustom(qi: number, selected: boolean): void {
   if (locked.value) return;
   customSelected[qi] = selected;
   if (selected && !props.msg.questions[qi].multiSelect) picks[qi] = [];
 }
 function customAnswer(qi: number): string { return customSelected[qi] ? (otherText[qi] ?? '') : '' }
-
 function selectedLabels(qi: number): readonly string[] {
   if (props.retainOptions && props.msg.status !== 'pending') {
     const question = props.msg.questions[qi].question;
@@ -234,9 +245,7 @@ function selectedLabels(qi: number): readonly string[] {
   }
   return picks[qi] ?? [];
 }
-
 function isPicked(qi: number, label: string): boolean { return selectedLabels(qi).includes(label) }
-
 // Countdown to the backend's deadline; the card used to give no sign it would expire.
 const now = ref(Date.now());
 const ticker = setInterval(() => { now.value = Date.now() }, 1_000);
@@ -270,17 +279,14 @@ function sendAsMessage(): void {
   }).filter(Boolean);
   if (lines.length) controller.send(`My answers to your expired question:\n${ lines.join('\n') }`);
 }
-
 // Locks the card the moment Submit is pressed, before the backend confirms,
 // so the answered card can't read as a second open prompt or be re-submitted.
 const sending = ref(false);
 const locked = computed(() => !!props.blocked || sending.value || props.msg.status !== 'pending');
-
 // The backend rejected the answer: reopen the card so it can be fixed and resent.
 watch(() => props.msg.resolutionError, (error) => {
   if (error && props.msg.status !== 'answered' && props.msg.status !== 'timed_out') sending.value = false;
 });
-
 function toggle(qi: number, label: string, multi: boolean): void {
   if (locked.value) return;
   if (!multi) customSelected[qi] = false;
@@ -296,7 +302,6 @@ function toggle(qi: number, label: string, multi: boolean): void {
 const canSubmit = computed(() =>
   props.msg.questions.every((_q, qi) =>
     (picks[qi]?.length ?? 0) > 0 || customAnswer(qi).trim().length > 0));
-
 /** Questions still without an answer, named by their short header when they have one. */
 const missing = computed(() => props.msg.questions
   .map((q, qi) => ({ qi, name: q.header || `Question ${ qi + 1 }`, done: (picks[qi]?.length ?? 0) > 0 || customAnswer(qi).trim().length > 0 }))
@@ -308,7 +313,6 @@ function jumpTo(qi: number): void {
   el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   el?.querySelector<HTMLElement>('.qc-option')?.focus({ preventScroll: true });
 }
-
 async function submit(): Promise<void> {
   if (locked.value || !canSubmit.value) return;
   const answers: ToolQuestionAnswerItem[] = props.msg.questions.map((q, qi) => {
@@ -334,6 +338,10 @@ async function submit(): Promise<void> {
   font-family: var(--font-body);
   transition: opacity 0.2s ease;
 }
+.qc-route { max-width: 640px; min-width: 0; padding: 12px 16px 14px; border-color: var(--border-strong); border-radius: 12px; background: var(--bg-surface); } .qc-route.qc-settled { opacity: 1; border-color: var(--border-default); background: var(--bg-surface); }
+.qc-route-from { display: flex; align-items: flex-start; gap: 7px; margin: 8px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 20px; } .qc-route-from b { color: var(--text-primary); font: 500 11.5px var(--font-mono); } .qc-route-avatar { display: grid; place-items: center; width: 18px; height: 18px; flex: none; margin-top: 1px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface)); color: var(--accent); font-size: 10px; font-weight: 700; }
+.qc-route-body { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-default); } .qc-route-body .qc-block { margin: 0; padding: 0; border: 0; border-radius: 0; } .qc-route-body .qc-block + .qc-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-default); } .qc-route-body .qc-block + .qc-block::before { display: none; }
+.qc-route-body .qc-question { float: none; font-size: 15px; line-height: 1.55; } .qc-route-body .qc-options { margin: 10px 0 0; } .qc-route-body .qc-option { padding: 10px 14px; background: var(--bg-surface); } .qc-route-body .qc-actions { flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; } .qc-route-body .qc-submit { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; } .qc-route-hint { flex: 1 1 220px; min-width: 0; color: var(--text-muted); line-height: 18px; }
 .qc-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
 .qc-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-secondary); }
 .qc-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
@@ -341,7 +349,6 @@ async function submit(): Promise<void> {
 .qc-state.closed .qc-state-dot { background: var(--text-muted); }
 .qc-countdown { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .qc-countdown.urgent { color: var(--status-warning); font-weight: 600; }
-
 /*
  * Each question sits in a padded box (pulled out by the same amount, so text
  * stays aligned with the card) with a transparent border, so the "needs an
@@ -358,7 +365,6 @@ async function submit(): Promise<void> {
 .qc-question + * { clear: both; }
 .qc-topic { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
 .qc-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--text-muted); }
-
 .qc-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 10px; }
 .qc-option {
   display: flex; align-items: flex-start; gap: 12px; width: 100%;
@@ -383,7 +389,6 @@ async function submit(): Promise<void> {
 .qc-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .qc-label { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .qc-desc { font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
-
 .qc-custom { align-items: center; }
 .qc-custom-choice { appearance: none; cursor: pointer; padding: 0; }
 .qc-custom-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
@@ -397,7 +402,6 @@ async function submit(): Promise<void> {
 }
 .qc-other::placeholder { color: var(--text-muted); }
 .qc-other:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-
 .qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .qc-actions .qc-hint { margin: 0; }
 .qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--primary-color-text-override, var(--accent)); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
@@ -410,7 +414,6 @@ async function submit(): Promise<void> {
 .qc-submit:hover { filter: brightness(1.08); }
 .qc-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .qc-submit:disabled { cursor: default; filter: none; opacity: 0.45; }
-
 .qc-error { margin: 0 0 12px; font-size: 13px; color: var(--status-error); }
 .qc-note { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
 .qc-late {
@@ -418,11 +421,9 @@ async function submit(): Promise<void> {
   border: 1px solid var(--accent); border-radius: 8px; background: transparent;
   color: var(--text-primary); font: 600 13px var(--font-body);
 }
-
 .qc-answers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px 0; margin: 14px 0 0; font-size: 13px; }
 .qc-answers dt { color: var(--text-secondary); }
 .qc-answers dd { margin: 0 0 8px; font-weight: 600; color: var(--text-primary); }
-
 /* Answered or expired: quieter and inert, so it never reads as a second open prompt. */
 .qc-settled { opacity: 0.62; background: transparent; }
 .qc-settled .qc-option { cursor: default; }
@@ -430,7 +431,6 @@ async function submit(): Promise<void> {
 .qc-settled:not(.qc-original) .qc-option:not(.picked) { display: none; }
 .qc-settled .qc-option:hover { border-color: var(--border-default); }
 .qc-settled:has(.qc-late) { opacity: 0.9; }
-
 @media (prefers-reduced-motion: reduce) {
   .qc, .qc-option { transition: none; }
 }
