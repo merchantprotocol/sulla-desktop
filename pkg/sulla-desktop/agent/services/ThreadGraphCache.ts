@@ -26,6 +26,10 @@ export class ThreadGraphCache {
 
   get size(): number { return this.records.size; }
   has(threadId: string): boolean { return this.records.has(threadId); }
+  containsState(threadId: string, state: BaseThreadState): boolean {
+    return this.records.get(threadId)?.record.state === state;
+  }
+
   get(threadId: string): ThreadGraphRecord | undefined {
     const entry = this.records.get(threadId);
     if (!entry) return undefined;

@@ -103,7 +103,8 @@ export class DelegatedFreshTurnRunner {
     const progress = new DelegatedTurnProgressProbe(state);
     const wake = currentInputs.at(-1);
     const identity = {
- source: entries.length ? 'sub_agent_completion' : wake?.metadata?.source,
+      cacheHit: wake?.metadata?.wakeCacheHit,
+      source: entries.length ? 'sub_agent_completion' : wake?.metadata?.source,
       wakeId: wake?.metadata?.wakeId ?? wake?.metadata?.jobMessageId ?? wake?.id ?? (entries[0] && CompletionKey.of(entries[0])),
 };
     let attempt = 0;

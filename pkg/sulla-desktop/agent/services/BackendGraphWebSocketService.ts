@@ -339,7 +339,10 @@ timestamp: Date.now(),
         firstDelivered: entry => agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now()),
         acknowledge:    entry => agentJobProvider.completionAcknowledgements.acknowledge(entry),
       },
-      (state, message) => { injectSteer(state as any, message) },
+      (state, message) => {
+        message.metadata.wakeCacheHit = GraphRegistry.containsState(state.metadata?.threadId, state as AgentGraphState);
+        injectSteer(state as AgentGraphState, message);
+      },
       nextMessageId,
     );
   }
