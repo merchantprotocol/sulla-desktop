@@ -23,10 +23,12 @@
         'tab-preview': tab.preview,
         'tab-busy': tab.working || ['you', 'stalled', 'working', 'waiting'].includes(tab.activity ?? ''),
         'tab-idle': !renaming && !tab.working && (!tab.activity || tab.activity === 'idle' || tab.activity === 'quiet'),
+        'tab-compact': compact,
+        'tab-size-icon': iconOnly,
       },
     ]"
     :aria-label="accessibleLabel"
-    @pointerdown="emit('pointerdown', $event, index)"
+    @pointerdown="onPointerDown($event, index)"
     @pointerenter="emit('hover', $event, tab)"
     @pointerleave="emit('hoverEnd')"
     @dragstart.prevent
@@ -171,6 +173,8 @@ const props = defineProps<{
   renaming:       boolean;
   renameDraft:    string;
   activityLabels: Record<ThreadActivityState, string>;
+  compact?:       boolean;
+  iconOnly?:      boolean;
 }>();
 
 const emit = defineEmits<{
@@ -189,6 +193,10 @@ const emit = defineEmits<{
 
 const renameInput = ref<HTMLInputElement | null>(null);
 const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
+function onPointerDown(event: PointerEvent, index: number): void {
+  if (!props.compact) emit('pointerdown', event, index);
+}
+
 const accessibleLabel = computed(() => [
   props.tab.label,
   props.tab.activity && props.tab.activity !== 'idle' ? props.activityLabels[props.tab.activity] : '',
