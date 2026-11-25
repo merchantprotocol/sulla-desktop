@@ -13,7 +13,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
-import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
+import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -452,6 +452,9 @@ export class ChatCompletionsServer {
         worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);
+          if (graph?.state && !this.agentAwarenessPolicy.allowsTool(graph.state.metadata, toolName)) {
+            return res.status(403).json({ success: false, error: { code: 'tool_not_available', message: 'not available to this agent' } });
+          }
           if (graph?.state) worker.setState?.(graph.state);
         }
         const deadline = AbortSignal.timeout(deadlineMs);
@@ -1136,6 +1139,13 @@ export class ChatCompletionsServer {
 
   // ── CLI help handler ─────────────────────────────────────────────
 
+  /** Tool names the calling session may see; agents with "Sees other agents" off never see launch tools. */
+  private visibleToolNames(req: Request, names: string[]): string[] {
+    const token = req.header('X-Sulla-Tool-Session')?.trim();
+    const session = token ? getMCPServerHost().getToolSession(token) : null;
+    return session ? this.agentAwarenessPolicy.filterToolNames(names, session.state.metadata as AgentAwarenessSetting) : names;
+  }
+
   private async handleHelp(req: Request, res: Response) {
     try {
       const { toolRegistry } = await import('@pkg/agent/tools/registry');
@@ -1143,7 +1153,7 @@ export class ChatCompletionsServer {
 
       if (category) {
         // Category-specific help: list tools with descriptions and parameters
-        const toolNames = toolRegistry.getToolNamesForCategory(category);
+        const toolNames = this.visibleToolNames(req, toolRegistry.getToolNamesForCategory(category));
         if (toolNames.length === 0) {
           return res.status(404).json({ success: false, error: `Unknown category "${ category }"` });
         }
@@ -1205,7 +1215,7 @@ export class ChatCompletionsServer {
         text += `${ '─'.repeat(60) }\n`;
 
         for (const { category: cat, description } of categories) {
-          const toolCount = toolRegistry.getToolNamesForCategory(cat).length;
+          const toolCount = this.visibleToolNames(req, toolRegistry.getToolNamesForCategory(cat)).length;
           text += `  ${ cat.padEnd(22) } (${ toolCount } tools) ${ description.slice(0, 80) }\n`;
         }
 

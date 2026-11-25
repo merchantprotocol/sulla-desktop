@@ -504,16 +504,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   private currentNodeRunContext: NodeRunContext | null = null;
   private _chatController:       ChatController | null = null;
   private _toolExecutor:         ToolExecutor | null = null;
-  private readonly agentAwarenessPolicy = new AgentAwarenessPolicy();
+  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
 
   /** Subclasses set true to run batched tool calls concurrently (results are
    *  still appended in call order). See ToolExecutorContext.parallelToolCalls. */
   protected parallelToolCalls = false;
   private routingCandidates: ModelCandidate[] = [];
 
-  constructor(id: string, name: string) {
+  constructor(id: string, name: string, agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy()) {
     this.id = id;
     this.name = name;
+    this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
 
   /** Resolve the provider that owns this graph turn. */
@@ -612,7 +613,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         get currentNodeRunContext() { return null }, // overridden below
         wsChatMessage:         (state, content, role, kind) => this.wsChatMessage(state, content, role, kind),
         bumpStateVersion:      (state) => this.bumpStateVersion(state),
-      });
+      }, this.agentAwarenessPolicy);
       // Wire live currentNodeRunContext via property descriptor
       Object.defineProperty(this._toolExecutor['ctx'], 'currentNodeRunContext', {
         get:          () => this.currentNodeRunContext,

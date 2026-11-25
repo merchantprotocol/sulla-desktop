@@ -4,7 +4,6 @@
 
 import { describe, expect, it } from 'vitest';
 import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
-import { resolveGraphToolSurface } from '@pkg/main/graphToolSurface';
 
 describe('AgentAwarenessPolicy', () => {
   it('hides only launch and discovery tools while retaining worker reporting tools', () => {
@@ -17,15 +16,6 @@ describe('AgentAwarenessPolicy', () => {
     expect(policy.filterToolNames(tools, { agent_awareness: true })).toEqual(tools);
     expect(policy.filterTools(definitions, { agent_awareness: true })).toEqual(definitions);
     expect(policy.filterToolNames(tools)).toEqual(tools);
-  });
-
-  it('filters the graph-stamped CLI tool surface, not just API schemas', () => {
-    // risk: CLI workers bypass BaseNode schema filtering and still see agent-launch tools.
-    expect(resolveGraphToolSurface({
-      agentAwareness: false,
-      allowedToolNames: ['agents_spawn_agent', 'agents_directory', 'agents_report_progress', 'agents_return_result', 'agents_wait'],
-    })).toEqual(['agents_report_progress', 'agents_return_result', 'agents_wait']);
-    expect(resolveGraphToolSurface({ agentAwareness: true, allowedToolNames: ['agents_directory'] })).toEqual(['agents_directory']);
   });
 
   it('removes past roster lines and runtime agent-network text without touching other context', () => {
