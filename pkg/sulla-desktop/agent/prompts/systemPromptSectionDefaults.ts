@@ -94,7 +94,7 @@ export const SYSTEM_PROMPT_SECTION_DEFAULTS: SystemPromptSectionDefault[] = [
     title:            'Soul',
     priority:         20,
     cacheStability:   'stable',
-    isGenerated:      false,
+    isGenerated:      true,
     enabledByDefault: true,
     resolveContent:   () => SOUL_CONTENT,
   },

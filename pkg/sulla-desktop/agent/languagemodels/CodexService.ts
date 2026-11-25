@@ -18,6 +18,7 @@ import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCom
 import { CliFaultError, isCliFault, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
@@ -92,6 +93,7 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * of a turn and no idle process is kept between turns, to keep VM memory low.
  */
 export class CodexService extends BaseLanguageModel {
+  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -301,8 +303,9 @@ export class CodexService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor() {
+  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) {
     super({ id: 'codex', model: 'codex', baseUrl: 'local-vm' });
+    this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
 
   /** Non-streaming chat — buffers the whole response and returns it. */
@@ -555,6 +558,7 @@ export class CodexService extends BaseLanguageModel {
     opts: { convId: string; isNewSession: boolean },
   ): Promise<{ prefix: string; stableHash: string }> {
     const stableParts: string[] = [];
+    const agentNetworkDirective = this.agentAwarenessPolicy.agentNetworkDirective(state?.metadata);
 
     stableParts.push(`<platform_context>
 You are operating inside Sulla Desktop — an autonomous agentic platform built by Jonathon Byrdziak. You are not a chatbot or a brain being asked questions. You are an agent with real tools and real execution capability.
@@ -578,7 +582,7 @@ Rules that apply on every turn:
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
 - Files: /mnt/sulla-files is your Human's own versioned file system, not your workspace. Save only finished work there, in the right existing folder, updated in place. Scratch goes in /mnt/worktrees/_scratch (or /tmp for throwaway files, which is on disk); the VM root and home don't survive a restart
-- You are part of a live multi-agent network — Heartbeat and other agents are active
+${ agentNetworkDirective }
 - Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there; never rely on the VM's ephemeral home directory.
 </platform_context>`);
 

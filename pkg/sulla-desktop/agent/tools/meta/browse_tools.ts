@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '../../services/AgentAwarenessPolicy';
 import { BaseTool, ToolResponse } from '../base';
 import { toolRegistry } from '../registry';
 import { IntegrationCredentialStatus, LazyIntegrationIdSource } from './IntegrationCredentialStatus';
-import { ToolCatalogIndex } from './ToolCatalogIndex';
+import { ToolCatalogIndex, type ToolCatalogEntry } from './ToolCatalogIndex';
 import { ToolSearchRanker } from './ToolSearchRanker';
 
 /**
@@ -61,6 +62,7 @@ export interface BrowseToolsDependencies {
   catalog?:     ToolCatalogIndex;
   credentials?: IntegrationCredentialStatus;
   ranker?:      ToolSearchRanker;
+  awareness?:   AgentAwarenessPolicy;
 }
 
 export class BrowseToolsWorker extends BaseTool {
@@ -70,12 +72,19 @@ export class BrowseToolsWorker extends BaseTool {
   private readonly catalog: ToolCatalogIndex;
   private readonly credentials: IntegrationCredentialStatus;
   private readonly ranker: ToolSearchRanker;
+  private readonly awareness: AgentAwarenessPolicy;
 
   constructor(deps: BrowseToolsDependencies = {}) {
     super();
     this.catalog = deps.catalog ?? new ToolCatalogIndex(toolRegistry);
     this.credentials = deps.credentials ?? new IntegrationCredentialStatus(new LazyIntegrationIdSource());
     this.ranker = deps.ranker ?? new ToolSearchRanker();
+    this.awareness = deps.awareness ?? new AgentAwarenessPolicy();
+  }
+
+  /** Catalog entries this agent may run: agents with "Sees other agents" off never see launch tools. */
+  private visible(entries: ToolCatalogEntry[]): ToolCatalogEntry[] {
+    return this.awareness.filterTools(entries, (this.state?.metadata ?? null) as AgentAwarenessSetting | null);
   }
 
   // ────────────────────────────────────────────────────────────────
@@ -93,7 +102,7 @@ export class BrowseToolsWorker extends BaseTool {
   /** Query mode: ranked keyword search. No credential lookup. */
   private searchTools(query: string): ToolResponse {
     const allCategories = this.catalog.categories();
-    const matches = this.ranker.rank(this.catalog.allEntries(), query);
+    const matches = this.ranker.rank(this.visible(this.catalog.allEntries()), query);
     if (matches.length === 0) {
       return {
         successBoolean: false,
@@ -140,7 +149,7 @@ export class BrowseToolsWorker extends BaseTool {
     lines.push(`## ${ category }${ connected ? ' ✓ credentials connected' : '' }`);
     if (catDesc) lines.push(catDesc);
     lines.push('');
-    for (const entry of this.catalog.entriesFor(category)) {
+    for (const entry of this.visible(this.catalog.entriesFor(category))) {
       lines.push(entry.line);
     }
     return { successBoolean: true, responseString: lines.join('\n').trim() };
@@ -156,7 +165,7 @@ export class BrowseToolsWorker extends BaseTool {
     lines.push('## Available Tool Categories');
     lines.push('');
     for (const cat of this.catalog.categories()) {
-      const count = this.catalog.entriesFor(cat).length;
+      const count = this.visible(this.catalog.entriesFor(cat)).length;
       const catDesc = catDescs.find(c => c.category === cat)?.description || '';
       const integSlug = CATEGORY_TO_INTEGRATION[cat];
       const connected = Boolean(integSlug && connectedIntegrations?.has(integSlug));
