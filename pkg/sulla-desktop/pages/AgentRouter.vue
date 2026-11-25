@@ -287,10 +287,12 @@ const hasTitlebar = computed(() => isBrowserRoute.value || [
 
 // This shell outlives both the hosted and native-browser headers. Remember
 // the restored selection so reopening the window preserves a manual fold.
+const restoredTabId = getPersistedActiveTabId();
+const restoredTab = browserTabs.find(tab => tab.id === restoredTabId);
 const tabGroupReveal = new TabGroupReveal(
   new TabGroupModel(),
   new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey),
-  getPersistedActiveTabId() ?? undefined,
+  restoredTab && { id: restoredTab.id, mode: restoredTab.mode, pinned: isTabPinned(`browser-${ restoredTab.id }`) },
 );
 watch(() => {
   const id = /^\/Browser\/(.+)$/.exec(route.path)?.[1];
