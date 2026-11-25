@@ -32,7 +32,7 @@
     @dragstart.prevent
     @dblclick="tab.browserId && emit('promote', tab.browserId)"
     @auxclick.prevent="emit('auxclick', $event, tab)"
-    @contextmenu.prevent="emit('contextmenu', $event, tab, index)"
+    @contextmenu.prevent="emit('contextmenu', $event, tab)"
   >
     <span class="tab-accent-bar" />
     <svg
@@ -174,7 +174,7 @@ const emit = defineEmits<{
   hoverEnd:             [];
   promote:              [browserId: string];
   auxclick:             [event: MouseEvent, tab: TabStripTabData];
-  contextmenu:          [event: MouseEvent, tab: TabStripTabData, index: number];
+  contextmenu:          [event: MouseEvent, tab: TabStripTabData];
   close:                [tab: TabStripTabData];
   'update:renameDraft': [value: string];
   commitRename:         [];

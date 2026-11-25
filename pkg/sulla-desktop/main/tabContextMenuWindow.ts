@@ -24,16 +24,17 @@ class TabContextMenuWindow {
   private popup?:   BrowserWindow;
   private loaded?:  Promise<void>;
   private pending?: MenuRequest;
+  private rendered?: MenuRequest;
 
   async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
-    if (!Array.isArray(payload.items) || !payload.items.length) return;
-    if (payload.update && (!payload.attention || this.pending?.opener !== opener || this.pending.payload.attention?.id !== payload.attention.id)) return;
+    if (typeof payload.requestId !== 'string' || !payload.requestId || !Array.isArray(payload.items) || !payload.items.length) return;
+    if (payload.update && (!payload.attention || this.pending?.opener !== opener || this.pending.payload.requestId !== payload.requestId)) return;
     const request = { opener, payload };
 
     const previous = this.pending;
 
     this.pending = request;
-    if (previous && (previous.opener !== opener || previous.payload.attention?.id !== payload.attention?.id)) {
+    if (previous && (previous.opener !== opener || previous.payload.requestId !== payload.requestId)) {
       this.notifyClosed(previous);
     }
     const popup = this.popup ?? this.create();
@@ -63,47 +64,51 @@ class TabContextMenuWindow {
     }
     popup.setBounds(bounds);
     popup.webContents.send('tab-context-menu:data', {
-      items: payload.items, theme: themeId.includes('-light') ? 'light' : 'dark', themeId, attention: payload.attention,
+      requestId: payload.requestId, items: payload.items, theme: themeId.includes('-light') ? 'light' : 'dark', themeId, attention: payload.attention,
     });
+    this.rendered = request;
     if (!popup.isVisible() || !payload.update) {
       popup.showInactive();
       setTimeout(() => {
         if (popup.isDestroyed() || this.pending?.opener !== opener) return;
-        if (this.pending !== request && (!payload.attention || this.pending.payload.attention?.id !== payload.attention.id)) return;
+        if (this.pending.payload.requestId !== payload.requestId) return;
         if (!opener.isDestroyed() && (opener.isFocused() || popup.isFocused())) popup.focus();
         else this.close();
       }, 50);
     }
   }
 
-  hideAttention(opener: BrowserWindow, id: string): void {
-    if (this.pending?.opener === opener && this.pending.payload.attention?.id === id) this.close();
+  hide(opener: BrowserWindow, id: string): void {
+    if (this.pending?.opener === opener && this.pending.payload.requestId === id) this.close();
   }
 
-  act(sender: Electron.WebContents, action: string): void {
-    if (sender !== this.popup?.webContents || !this.pending) return;
-    const { opener, payload } = this.pending;
-    const allowed = payload.items.some(item => typeof item === 'string' ? item !== '---' && item === action : `attention:${ item?.id }` === action);
+  act(sender: Electron.WebContents, id: string, action: string): void {
+    const request = this.rendered;
 
-    if (allowed && !opener.isDestroyed()) opener.webContents.send('tab-context-menu:selected', action, payload.tabData);
-    this.close();
+    if (sender !== this.popup?.webContents || !request || request !== this.pending || request.payload.requestId !== id) return;
+    const allowed = request.payload.items.some(item => typeof item === 'string' ? item !== '---' && item === action : `attention:${ item?.id }` === action);
+
+    if (allowed) this.close(action);
   }
 
-  dismiss(sender: Electron.WebContents): void {
-    if (sender === this.popup?.webContents) this.close();
+  dismiss(sender: Electron.WebContents, id: string): void {
+    if (sender === this.popup?.webContents && this.rendered === this.pending && this.pending?.payload.requestId === id) this.close();
   }
 
-  private close(): void {
+  private close(action?: string): void {
     const closed = this.pending;
 
     this.pending = undefined;
+    this.rendered = undefined;
     if (this.popup && !this.popup.isDestroyed()) this.popup.hide();
-    if (closed) this.notifyClosed(closed);
+    if (!closed) return;
+    if (action === undefined) this.notifyClosed(closed);
+    else if (!closed.opener.isDestroyed()) closed.opener.webContents.send('tab-context-menu:selected', closed.payload.requestId, action);
   }
 
   private notifyClosed(closed: MenuRequest): void {
-    if (closed.payload.attention && !closed.opener.isDestroyed()) {
-      closed.opener.webContents.send('tab-context-menu:attention-closed', closed.payload.attention.id);
+    if (!closed.opener.isDestroyed()) {
+      closed.opener.webContents.send('tab-context-menu:closed', closed.payload.requestId);
     }
   }
 
@@ -177,13 +182,13 @@ export function registerTabContextMenuIpc(): void {
 
     if (opener && payload) menu.show(opener, payload).catch(logPopupError);
   });
-  ipcMain.on('tab-context-menu:hide-attention', (event, id: string) => {
+  ipcMain.on('tab-context-menu:hide', (event, id: string) => {
     const opener = agentWindowFromSender(event.sender);
 
-    if (opener && typeof id === 'string') menu.hideAttention(opener, id);
+    if (opener && typeof id === 'string') menu.hide(opener, id);
   });
-  ipcMain.on('tab-context-menu:action', (event, action: string) => menu.act(event.sender, action));
-  ipcMain.on('tab-context-menu:dismiss', event => menu.dismiss(event.sender));
+  ipcMain.on('tab-context-menu:action', (event, id: string, action: string) => menu.act(event.sender, id, action));
+  ipcMain.on('tab-context-menu:dismiss', (event, id: string) => menu.dismiss(event.sender, id));
   ipcMain.on('tab-hover:show', (event, payload) => {
     const owner = agentWindowFromSender(event.sender);
 
