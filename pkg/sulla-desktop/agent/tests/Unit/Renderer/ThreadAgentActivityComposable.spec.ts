@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 
+import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
+
 import { StatusRollupQueue, type StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -46,7 +48,7 @@ function flatten(root: WorkerChartAgent | null): string[] {
 }
 
 describe('useThreadAgentActivity', () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
   it('keeps chart, status items, and root fallback inside the active thread', async() => {
     // risk: cross-thread agent/check-in disclosure
@@ -270,6 +272,41 @@ describe('useThreadAgentActivity', () => {
     expect(activity.checkIns.value).toEqual([]);
     queue.observe(activity.checkIns.value, 'thread-a', 2);
     expect(queue.pending).toHaveLength(pendingCount);
+  });
+
+  // risk: event throughput — rapid streamed revisions must share one expensive trace projection per coalesce window.
+  it('coalesces rapid transcript changes into one trace projection', async() => {
+    vi.useFakeTimers();
+    const createdAt = Date.parse('2026-11-23T17:01:00.000Z');
+    const original: Message = {
+      id: 'thought-coalesced' as Message['id'],
+      kind: 'thinking',
+      createdAt,
+      thoughts: ['Initial thought'],
+      startedAt: createdAt,
+      completed: false,
+    };
+    const transcript = ref<readonly Message[]>([original]);
+    const project = vi.spyOn(DetailedTraceProjection.prototype, 'project');
+    const activity = useThreadAgentActivity({
+      snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: new Date(createdAt).toISOString(), rows: [] }),
+      threadId: ref<string | undefined>('thread-a'),
+      transcript,
+      now: () => createdAt,
+    });
+    expect(project).toHaveBeenCalledTimes(1);
+    project.mockClear();
+
+    for (let index = 0; index < 8; index++) {
+      transcript.value = [{ ...original, thoughts: [`Streaming thought revision ${index}`] } as Message];
+      await nextTick();
+    }
+    expect(project).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
+    expect(project).toHaveBeenCalledTimes(1);
+    expect(activity.checkIns.value.find(item => item.kind === 'thought')?.text).toBe('Streaming thought revision 7');
   });
 
   // risk: data accuracy — a streaming thought must update one stable status event rather than freeze or flood duplicates.

@@ -455,7 +455,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let transcriptPrimed = false;
   let historyTimer: ReturnType<typeof setInterval> | undefined;
   let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
-  let pendingTranscript: { threadId: string; items: StatusRollupItem[] } | undefined;
+  let pendingTranscript: { threadId: string; messages: readonly Message[]; agentName: string } | undefined;
 
   const resetThread = (threadId: string | undefined): void => {
     if (activeThreadId === threadId) return;
@@ -616,9 +616,9 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     setHistoryTimer(agents, threadId);
   }, { immediate: true, flush: 'sync' });
 
-  const applyTranscript = (pending: { threadId: string; items: StatusRollupItem[] }): void => {
-    if (activeThreadId !== pending.threadId) return;
-    const items = pending.items;
+  const applyTranscript = (pending: { threadId: string; messages: readonly Message[]; agentName: string }): void => {
+    if (activeThreadId !== pending.threadId || !pending.messages.length) return;
+    const items = mapper.primaryTrace(pending.messages, pending.threadId, pending.agentName, now());
     if (!transcriptPrimed) {
       if (!items.length) return;
       const latest = items[items.length - 1];
@@ -639,15 +639,26 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
 
   watch(() => {
     const threadId = sources.threadId.value;
-    const messages = (sources.transcript?.value ?? []).slice(-40);
     const agentName = sources.primaryAgentName?.value ?? 'Sulla';
-    const items = threadId ? mapper.primaryTrace(messages, threadId, agentName, now()) : [];
-    return { threadId, items };
-  }, projection => {
-    const { threadId, items } = projection;
+    const messages = (sources.transcript?.value ?? []).slice(-40);
+    const messageStates = messages.map(message => [
+      String(message.id), message.kind,
+      'status' in message ? String(message.status) : 'decision' in message ? String(message.decision) : '',
+    ]);
+    const last = messages[messages.length - 1];
+    const lastTextLength = last && 'text' in last && typeof last.text === 'string' ? last.text.length : 0;
+    const thoughtText = last?.kind === 'thinking' ? last.thoughts.join('\u0000') : '';
+    const thoughtCompleted = last?.kind === 'thinking' ? last.completed : false;
+    return JSON.stringify([threadId, agentName, messageStates, lastTextLength, thoughtText, thoughtCompleted]);
+  }, () => {
+    const threadId = sources.threadId.value;
     resetThread(threadId);
     if (!threadId) return;
-    const pending = { threadId, items };
+    const pending = {
+      threadId,
+      messages: (sources.transcript?.value ?? []).slice(-40),
+      agentName: sources.primaryAgentName?.value ?? 'Sulla',
+    };
     if (!transcriptPrimed) {
       applyTranscript(pending);
       return;
