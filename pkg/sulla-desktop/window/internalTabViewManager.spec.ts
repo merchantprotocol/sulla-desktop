@@ -72,6 +72,27 @@ describe('InternalTabViewManager', () => {
     });
   });
 
+  it.each([true, false])('preserves rich activity across boolean events and transfer (legacy first: %s)', legacyFirst => {
+    const source = ownerWindow(215);
+    const target = ownerWindow(216);
+    const instance = manager() as any;
+    instance.activate(source, 'chat-tab', 'main', { x: 0, y: 0, width: 20, height: 20 }, { mode: 'chat' });
+    const sender = instance.tabs.get('chat-tab').view.webContents;
+    const working = { state: 'working', detail: 'Child agent is working' };
+    const attention = { state: 'you', detail: 'Reply requested' };
+    if (legacyFirst) instance.notifyChatRunning(sender, 'chat-tab', true);
+    instance.notifyChatRunning(sender, 'chat-tab', true, working);
+    instance.notifyChatRunning(sender, 'chat-tab', false);
+    expect(source.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat-tab', false, working);
+
+    instance.moveToWindow('chat-tab', target);
+    instance.markChromeReady(target);
+    expect(target.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat-tab', false, working);
+    instance.notifyChatRunning(sender, 'chat-tab', false, attention);
+    instance.notifyChatRunning(sender, 'chat-tab', true);
+    expect(target.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat-tab', true, attention);
+  });
+
   it('finds the single Capture Studio host by descriptor and focuses its owner', () => {
     // risk: duplicate studios could split media ownership and agent RPC state
     const owner = ownerWindow(201);
