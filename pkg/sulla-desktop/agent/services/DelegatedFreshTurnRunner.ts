@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { AgentJobFailureLogger, type WakeObservation } from '../app/Services/AgentJobFailureLogger';
 import { CompletionKey } from '../app/Services/CompletionKey';
 import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { DeferredStallInput } from '../app/Services/DeferredStallInput';
@@ -24,7 +25,10 @@ export interface DelegatedFreshTurnPorts {
   pendingWait(jobId: string, taskIndex: number): Promise<unknown>;
   updateJobTask(jobId: string, taskIndex: number, patch: Record<string, unknown>): Promise<unknown>;
   endWakeTurn(jobId: string, taskIndex: number): Promise<unknown>;
-  waitForWake(threadId: string, signal?: AbortSignal): Promise<unknown>;
+  waitForWake(threadId: string, signal?: AbortSignal, timeoutMs?: number): Promise<unknown>;
+  repairInput?(): Promise<void>;
+  alertRoot?(deadline: number): Promise<void>;
+  logWake?(facts: Omit<WakeObservation, 'graphCache'>): void;
   resume(jobId: string, taskIndex: number): Promise<unknown>;
   rerouteCompletions(manager: any, taskIndex: number, reason: string, entries: any[]): Promise<unknown>;
   acknowledgeCompletions(entries: PendingCompletion[]): Promise<unknown>;
@@ -57,15 +61,73 @@ export class DelegatedFreshTurnRunner {
     // Actual inputs (including reminders and orchestrator steers) make a mixed
     // wake actionable, even if the notice expires before provider dispatch.
     let currentInputs = DeferredStallInput.actionableMessages(state);
+    if (jobId && !entries.length && !currentInputs.length) {
+      let attempt = 0;
+      let alerted = false;
+      await ports.endWakeTurn(jobId, taskIndex);
+      while (!ports.signal?.aborted) {
+        const returned = await ports.returnedTask();
+        if (returned) return { finalState: currentState, returned };
+        entries = this.claimWakeEntries(entries);
+        currentInputs = DeferredStallInput.actionableMessages(state);
+        if (entries.length || currentInputs.length) break;
+        const timeout = [30_000, 60_000, 90_000][attempt];
+        if (!alerted) {
+          const deadline = Date.now() + (timeout ?? 300_000);
+          const waitReason = timeout ? 'waiting for missing wake input' : 'wake repair exhausted; PO response requested';
+          await ports.updateJobTask(jobId, taskIndex, { waitReason, wakeAt: deadline });
+          await this.log({ wakeId: `${ jobId }:${ taskIndex }:repair`, source: 'missing_input' }, attempt + 1, false);
+          if (!timeout) {
+            try {
+              await ports.alertRoot?.(deadline);
+            } catch {
+              await ports.updateJobTask(jobId, taskIndex, { waitReason: 'wake repair exhausted; root notification unavailable' });
+            }
+            alerted = true;
+          }
+        }
+        await ports.waitForWake(ports.threadId, ports.signal, timeout);
+        if (timeout && !ports.signal?.aborted) {
+          attempt++;
+          try { await ports.repairInput?.() } catch { /* keep parked; the next repair or PO can supply input */ }
+        }
+      }
+      if (ports.signal?.aborted) return { finalState: currentState, returned: undefined };
+      await ports.resume(jobId, taskIndex);
+      await ports.updateJobTask(jobId, taskIndex, { waitReason: undefined, wakeAt: undefined });
+    }
     const progress = new DelegatedTurnProgressProbe(state);
-    currentState = await this.executeOnce();
-    let returned = await ports.returnedTask();
-    if (!returned && !progress.madeProgress()) {
-      entries = this.claimWakeEntries(entries);
-      currentInputs = [...currentInputs, ...DeferredStallInput.actionableMessages(state)];
+    const wake = currentInputs.at(-1);
+    const identity = { source: entries.length ? 'sub_agent_completion' : wake?.metadata?.source,
+      wakeId: wake?.metadata?.wakeId ?? wake?.metadata?.jobMessageId ?? wake?.id ?? (entries[0] && CompletionKey.of(entries[0])) };
+    let attempt = 0;
+    const before = Number(state.metadata?.delegatedProviderDispatchCount ?? 0);
+    let returned;
+    let finished = false;
+    try {
+      attempt++;
       currentState = await this.executeOnce();
       returned = await ports.returnedTask();
-      if (!returned && !progress.madeProgress()) return this.settleEmptyTurn(currentState, entries, currentInputs.length > 0, currentInputs.at(-1)?.metadata?.source);
+      if (!returned && !progress.madeProgress()) {
+        entries = this.claimWakeEntries(entries);
+        currentInputs = [...currentInputs, ...DeferredStallInput.actionableMessages(state)];
+        attempt++;
+        currentState = await this.executeOnce();
+        returned = await ports.returnedTask();
+      }
+      finished = true;
+    } catch (error) {
+      if (ports.signal?.aborted || state.metadata?.runtimeInterrupted) throw error;
+      // Provider exceptions may echo the prompt. Do not forward raw text to the job-failure sink.
+      throw new Error('Delegated wake execution failed');
+    } finally {
+      if (!finished || (!returned && !progress.madeProgress())) {
+        await this.log(identity, attempt, Number(state.metadata?.delegatedProviderDispatchCount ?? 0) > before);
+      }
+    }
+    if (!returned && !progress.madeProgress()) {
+      DeferredStallInput.settledInputs(state, currentInputs);
+      return this.settleEmptyTurn(currentState, entries, currentInputs.length > 0, identity.source);
     }
     if (jobId && (returned || progress.madeProgress())) {
       const currentTask = (await ports.getJob(jobId))?.tasks[taskIndex];
@@ -75,6 +137,16 @@ export class DelegatedFreshTurnRunner {
     const completions = entries.filter(entry => CompletionKey.isTaskCompletion(entry));
     if (completions.length) await ports.acknowledgeCompletions(completions);
     return { finalState: currentState, returned };
+  }
+
+  private async log(identity: { wakeId: unknown; source: unknown }, attempt: number, providerDispatched: boolean): Promise<void> {
+    const { ports } = this;
+    if (!ports.logWake || !ports.jobId) return;
+    try {
+      const usage = providerDispatched ? ports.state.metadata?.delegatedProviderUsage : undefined;
+      ports.logWake({ ...identity, jobId: ports.jobId, taskIndex: ports.taskIndex, attempt, providerDispatched,
+        liveChildCount: await ports.openChildren(ports.threadId), inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens });
+    } catch { /* diagnostics must not change settlement */ }
   }
 
   private async executeOnce(): Promise<any> {
@@ -122,7 +194,7 @@ export class DelegatedFreshTurnRunner {
       await ports.updateJobTask(jobId, taskIndex, { emptyWakeCount });
       return { finalState: currentState, returned: undefined };
     }
-    const wakeReason = String(completionEntries.length ? 'sub_agent_completion' : wakeSource || 'unknown_wake');
+    const wakeReason = String(completionEntries.length ? 'sub_agent_completion' : AgentJobFailureLogger.wakeSource(wakeSource));
     const completionIds = completionEntries.map((entry: any) => entry?.jobId).filter(Boolean).join(',') || 'none';
     const failureReason = `Delegated wake turn produced no assistant output after retry: job=${ jobId }, wake=${ wakeReason }, unconsumedCompletionJobs=${ completionIds }`;
     if (completionEntries.length && job) await ports.rerouteCompletions(job, taskIndex, failureReason, completionEntries);

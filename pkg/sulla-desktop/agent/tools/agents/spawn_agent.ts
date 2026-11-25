@@ -54,7 +54,9 @@ import {
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import { saveThreadState } from '../../nodes/ThreadStateStore';
 import { combineAborts } from '../../services/AbortService';
-import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
+import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
+import { DelegatedWakeRepairNotice } from '../../services/DelegatedWakeRepairNotice';
+import { completionInboxStore, notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
 import { agentExecutionReadiness, executionAbort } from '../../services/AgentExecutionReadiness';
@@ -642,7 +644,6 @@ export class SpawnAgentWorker extends BaseTool {
       }
 
       let subStateRef: any;
-      let unregister: (() => void) | undefined;
       let containerLifecycle: ParkedContainerLifecycle | undefined;
       let taskResult: AgentJobResult | undefined;
       const returnedTask = async() => {
@@ -653,12 +654,7 @@ export class SpawnAgentWorker extends BaseTool {
       const cancelScheduledWait = () => {
         if (activityJobId) void agentWaitProvider.cancel(activityJobId, index).catch(() => {});
       };
-      try {
-        const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
-          agentConfigChannel,
-          threadId,
-        ) as { graph: any; state: any };
-        unregister = agentJobLifecycle.registerRunner(threadId, subState);
+      const runGraph = async(graph: any, subState: any): Promise<AgentJobResult> => {
         subStateRef = subState;
         installWorkerRoute(subState, input.task.workerModelRoute, activityJobId ? { jobId: activityJobId, taskIndex: index, generation: input.generation } : undefined);
         subState.metadata.modelDecision = input.task.modelDecision;
@@ -796,7 +792,18 @@ export class SpawnAgentWorker extends BaseTool {
           pendingWait:            (jobId, taskIndex) => agentWaitProvider.repository.pending(jobId, taskIndex),
           updateJobTask,
           endWakeTurn:            (jobId, taskIndex) => agentJobLifecycle.endWakeTurn(jobId, taskIndex),
-          waitForWake:            (wakeThreadId, signal) => agentJobLifecycle.waitForWake(wakeThreadId, signal),
+          waitForWake:            (wakeThreadId, signal, timeout) => agentJobLifecycle.waitForWake(wakeThreadId, signal, timeout),
+          repairInput:            async() => {
+            notifyAgentCompletionsReady(selector || parentChannel, threadId);
+            for (const row of await AgentJobMessagingModel.pendingMessagesForThread(threadId)) {
+              agentJobLifecycle.deliver(threadId, { role: 'user', content: `[Message from orchestrator]\n${ row.message }`,
+                metadata: { source: 'orchestrator_job_message', inputSource: 'system', jobMessageId: row.id, jobMessageThreadId: threadId } });
+            }
+          },
+          alertRoot: deadline => new DelegatedWakeRepairNotice(id => agentJobProvider.jobs.findByTaskThread(id), completionInboxStore)
+            .send(activityJobId!, index, threadId, deadline),
+          logWake: facts => agentJobProvider.failureLogger.wake({ ...facts, graphCache: agentJobLifecycle.liveState(threadId) === subState ? 'live_runner'
+            : GraphRegistry.get(threadId)?.state === subState ? 'registry' : 'miss' }),
           resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
           rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
           acknowledgeCompletions: entries => Promise.all(entries.map(entry =>
@@ -914,6 +921,13 @@ export class SpawnAgentWorker extends BaseTool {
           });
         }
         return taskResult;
+      };
+      try {
+        const { graph, state: subState } = await GraphRegistry.getOrCreateAgentGraph(
+          agentConfigChannel,
+          threadId,
+        ) as { graph: any; state: any };
+        return await agentJobLifecycle.withRunner(threadId, subState, () => runGraph(graph, subState));
       } catch (err) {
         // return_result is the completion commit point. A graph/provider error
         // racing after it must not overwrite the valid contract with failure.
@@ -961,7 +975,6 @@ export class SpawnAgentWorker extends BaseTool {
         };
         return taskResult;
       } finally {
-        unregister?.();
         try {
           const cleanupReason = taskResult?.status === 'completed'
             ? 'delegated-job-completed'

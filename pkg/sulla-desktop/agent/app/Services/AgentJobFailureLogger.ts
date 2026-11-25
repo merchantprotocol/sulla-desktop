@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { createHash } from 'crypto';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 
 /** Receives every committed job write so task failures can be reported at one choke point. */
@@ -11,6 +12,19 @@ export interface AgentJobFailureObserver {
 /** The background-log writer (Logging.background in production). */
 export interface AgentJobFailureLogSink {
   error(message: string): void;
+}
+
+export interface WakeObservation {
+  jobId: string;
+  taskIndex: number;
+  wakeId: unknown;
+  source: unknown;
+  attempt: number;
+  graphCache: 'live_runner' | 'registry' | 'miss';
+  providerDispatched: boolean;
+  liveChildCount: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 export type AgentJobFailureReason = 'dead_run' | 'lost' | 'recovery_exhausted' | 'empty_wake' | 'unprocessed_result' | 'contract_missing' | 'deadline' | 'provider_transport' | 'stopped' | 'error';
@@ -58,6 +72,21 @@ export class AgentJobFailureLogger implements AgentJobFailureObserver {
   ];
 
   constructor(private readonly sink: AgentJobFailureLogSink) {}
+
+  /** Opaque IDs may be caller-provided. Only a correlation hash and known source categories leave the runner. */
+  wake(facts: WakeObservation): void {
+    const source = AgentJobFailureLogger.wakeSource(facts.source);
+    const wakeId = createHash('sha256').update(typeof facts.wakeId === 'string' ? facts.wakeId : 'unknown').digest('hex').slice(0, 16);
+    const { jobId, taskIndex, attempt, graphCache, providerDispatched, liveChildCount, inputTokens, outputTokens } = facts;
+    this.sink.error(`[agent-job] wake ${ JSON.stringify({ jobId, taskIndex, wakeId, source, attempt, graphCache,
+      providerDispatched, liveChildCount, inputTokens: Number.isFinite(inputTokens) ? inputTokens : undefined,
+      outputTokens: Number.isFinite(outputTokens) ? outputTokens : undefined }) }`);
+  }
+
+  static wakeSource(value: unknown): string {
+    return typeof value === 'string' && ['missing_input', 'agent_wait_timer', 'sub_agent_completion', 'orchestrator_job_message',
+      'contract_reminder', 'auto_park_resume', 'inject'].includes(value) ? value : 'unknown_wake';
+  }
 
   observe(previous: AgentJob, next: AgentJob): void {
     try {

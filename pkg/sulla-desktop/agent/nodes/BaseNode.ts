@@ -1898,8 +1898,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       TurnHopTiming.mark(state, 'steerHandling.end');
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
+      // This counter changes only at the provider boundary, after local checks,
+      // policy filters and credential/context preparation have all succeeded.
+      const delegatedMeta = state.metadata as any;
+      if (delegatedMeta.delegatedJobId) {
+        delete delegatedMeta.delegatedProviderUsage;
+        delegatedMeta.delegatedProviderDispatchCount =
+          (Number.isFinite(delegatedMeta.delegatedProviderDispatchCount) ? delegatedMeta.delegatedProviderDispatchCount : 0) + 1;
+      }
       TurnHopTiming.mark(state, 'provider.chatStream.start');
       reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness }, { ...options, state, executionContext });
+      if (delegatedMeta.delegatedJobId && reply?.metadata) {
+        delegatedMeta.delegatedProviderUsage = {
+          inputTokens: reply.metadata.prompt_tokens,
+          outputTokens: reply.metadata.completion_tokens,
+        };
+      }
       TurnHopTiming.mark(state, 'provider.chatStream.end');
     } catch (error) {
       // Once a provider-owned tool began, replaying this call could repeat a side effect,
