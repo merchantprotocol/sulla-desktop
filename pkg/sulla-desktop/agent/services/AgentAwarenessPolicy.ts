@@ -45,7 +45,36 @@ export class AgentAwarenessPolicy {
 
   filterTurnContext(text: string, setting?: AgentAwarenessSetting | null): string {
     if (this.canSeeOtherAgents(setting)) return text;
-    return text.split('\n').filter(line => !line.startsWith('agents:')).join('\n');
+    const openingTag = '<turn_context>';
+    const closingTag = '</turn_context>';
+    const output: string[] = [];
+    let cursor = 0;
+
+    while (cursor < text.length) {
+      const blockStart = text.indexOf(openingTag, cursor);
+      if (blockStart < 0) {
+        output.push(text.slice(cursor));
+        break;
+      }
+
+      const contentStart = blockStart + openingTag.length;
+      const blockEnd = text.indexOf(closingTag, contentStart);
+      if (blockEnd < 0) {
+        output.push(text.slice(cursor));
+        break;
+      }
+
+      output.push(text.slice(cursor, contentStart));
+      output.push(this.removeRosterLines(text.slice(contentStart, blockEnd)));
+      output.push(closingTag);
+      cursor = blockEnd + closingTag.length;
+    }
+
+    return output.join('');
+  }
+
+  private removeRosterLines(context: string): string {
+    return context.split('\n').filter(line => !line.trimStart().startsWith('agents:')).join('\n');
   }
 
   filterToolNames(names: readonly string[], setting?: AgentAwarenessSetting | null): string[] {

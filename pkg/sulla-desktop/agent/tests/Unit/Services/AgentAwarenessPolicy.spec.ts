@@ -18,16 +18,14 @@ describe('AgentAwarenessPolicy', () => {
     expect(policy.filterToolNames(tools)).toEqual(tools);
   });
 
-  it('removes past roster lines and runtime agent-network text without touching other context', () => {
+  it('removes every past roster line from turn-context blocks without touching surrounding text', () => {
     // risk: an opt-out is ineffective if a prior turn's roster remains in CLI transcript history.
     const policy = new AgentAwarenessPolicy();
-    const turn = '<turn_context>\nnow="Tue" tz=UTC\nJonathon (human): Busy\nagents: sibling@worker (running)\n</turn_context>';
-    expect(policy.filterTurnContext(turn, { agentAwareness: false })).not.toContain('agents:');
-    const runtime = policy.filterRuntimeContext([
-      '- You are part of a live multi-agent network — Heartbeat and other agents are active',
-      '- Keep the task in scope',
-    ], { agentAwareness: false });
-    expect(runtime.join('\n')).not.toContain('multi-agent network');
-    expect(runtime.join('\n')).toContain('Keep the task in scope');
+    const turn = 'agents: user-authored prose\n<turn_context>\nnow="Tue" tz=UTC\nJonathon (human): Busy\nagents: first@worker (running)\n  agents: second@worker (running)\n</turn_context>\nagents: trailing prose';
+    const filteredTurn = policy.filterTurnContext(turn, { agentAwareness: false });
+    expect(filteredTurn).not.toContain('first@worker');
+    expect(filteredTurn).not.toContain('second@worker');
+    expect(filteredTurn).toContain('agents: user-authored prose');
+    expect(filteredTurn).toContain('agents: trailing prose');
   });
 });
