@@ -22,6 +22,7 @@ import { getBuiltinAgentSpecs, renderBuiltinAgent } from '../../../builtinAgents
 import { BaseNode } from '../../../nodes/BaseNode';
 import { SystemPromptBuilder, type PromptBuildContext } from '../../../prompts/SystemPromptBuilder';
 import { SOUL_CONTENT } from '../../../prompts/sections/soul';
+import { AgentAwarenessPolicy } from '../../../services/AgentAwarenessPolicy';
 import { buildTurnContext } from '../../../prompts/turnContext';
 import { WorkerPromptBuilder } from '../../../tools/agents/workerMessaging';
 
@@ -36,16 +37,31 @@ class PromptContextNode extends BaseNode {
 const specs = getBuiltinAgentSpecs();
 const worker = specs.find(agent => agent.slug === 'codex-luna-worker')!;
 const manager = specs.find(agent => agent.slug === 'coding-manager')!;
+const agentNetworkDirective = new AgentAwarenessPolicy().agentNetworkDirective({ agent_awareness: true });
+const legacySoulContentWithoutNetworkDirective = `${ SOUL_CONTENT }\n\nUser-edited soul note.\n\n\nAdditional user-edited instruction.`;
+const legacySoulRow = {
+  content: `${ SOUL_CONTENT }\n\nUser-edited soul note.\n\n${ agentNetworkDirective }\n\nAdditional user-edited instruction.`,
+  priority: 20,
+  cacheStability: 'stable' as const,
+  isGenerated: false,
+};
 
-function promptContext(spec: typeof worker, aware: boolean): PromptBuildContext {
+function promptContext(spec: typeof worker, aware: boolean, soulRow: typeof legacySoulRow | null = {
+  content: SOUL_CONTENT,
+  priority: 20,
+  cacheStability: 'stable' as const,
+  isGenerated: true,
+}): PromptBuildContext {
   const content = renderBuiltinAgent(spec, '/tmp/agent-awareness-test', { name: '', email: '' });
+  const dbSections: NonNullable<PromptBuildContext['dbSections']> = new Map();
+  if (soulRow !== null) dbSections.set('soul', soulRow);
   return {
     mode: 'full', agentId: spec.slug, agentConfig: { name: content.name, prompt: content.prompt_content },
     provider: 'openai', chatMode: 'text', trustLevel: 'trusted', isSubAgent: true, isHeartbeat: false,
     wsChannel: 'sulla-desktop', agentAwareness: aware, templateVars: {}, agentSectionOverrides: new Map(),
     // observational_memory reads Postgres; every other registered section builds for real.
     excludeSections: new Set(['observational_memory']), basePrompt: '',
-    dbSections: new Map([['soul', { content: SOUL_CONTENT, priority: 20, cacheStability: 'stable' as const, isGenerated: true }]]),
+    dbSections,
   };
 }
 
@@ -64,8 +80,8 @@ function promptState(agentId: string, aware: boolean): any {
   };
 }
 
-async function builtPrompt(spec: typeof worker, aware: boolean): Promise<string> {
-  const built = await SystemPromptBuilder.build(promptContext(spec, aware));
+async function builtPrompt(spec: typeof worker, aware: boolean, soulRow?: typeof legacySoulRow | null): Promise<string> {
+  const built = await SystemPromptBuilder.build(promptContext(spec, aware, soulRow === undefined ? undefined : soulRow));
   const state = promptState(spec.slug, aware);
   await new PromptContextNode(spec.slug, spec.name).inject(state);
   const conversation = state.messages.map((message: any) => typeof message.content === 'string'
@@ -75,6 +91,47 @@ async function builtPrompt(spec: typeof worker, aware: boolean): Promise<string>
 }
 
 describe('per-agent prompt awareness', () => {
+  it('removes the exact legacy soul network line for an unaware worker', async() => {
+    // risk: stored legacy prompt rows bypass the opt-out and reveal multi-agent network access.
+    const prompt = await builtPrompt(worker, false, legacySoulRow);
+    expect(prompt).not.toContain(agentNetworkDirective);
+    expect(prompt).toContain(legacySoulContentWithoutNetworkDirective);
+  });
+
+  it('keeps exactly one policy-owned network line for an aware worker with a legacy soul row', async() => {
+    // risk: seeded legacy wording is duplicated when the live directive is appended.
+    const prompt = await builtPrompt(worker, true, legacySoulRow);
+    expect(prompt.split(agentNetworkDirective).length - 1).toBe(1);
+    expect(prompt).toContain(`${ legacySoulContentWithoutNetworkDirective }\n\n${ agentNetworkDirective }`);
+  });
+
+  it('keeps the baked soul fallback when no row exists and adds no empty interpolation line', async() => {
+    // risk: no-row installs regress to a prompt without its soul or network policy.
+    const prompt = await builtPrompt(worker, true, null);
+    expect(prompt).toContain(`${ SOUL_CONTENT }\n\n${ agentNetworkDirective }`);
+    expect(prompt.split(agentNetworkDirective).length - 1).toBe(1);
+    expect(SOUL_CONTENT).toContain("- You operate inside a Sulla VM with full access to the Sulla CLI ('sulla <category>/<tool>')\n\nThink of yourself");
+
+    const unawarePrompt = await builtPrompt(worker, false, null);
+    expect(unawarePrompt).toContain(SOUL_CONTENT);
+    expect(unawarePrompt).not.toContain(agentNetworkDirective);
+  });
+
+  it('applies the same policy to user-edited local soul rows', async() => {
+    // risk: local-mode workers keep a stale legacy row even when full-mode rows are normalized.
+    const disabledContext = promptContext(worker, false, legacySoulRow);
+    disabledContext.mode = 'local';
+    const disabled = await SystemPromptBuilder.build(disabledContext);
+    expect(disabled.text).not.toContain(agentNetworkDirective);
+    expect(disabled.text).toContain(legacySoulContentWithoutNetworkDirective);
+
+    const enabledContext = promptContext(worker, true, legacySoulRow);
+    enabledContext.mode = 'local';
+    const enabled = await SystemPromptBuilder.build(enabledContext);
+    expect(enabled.text.split(agentNetworkDirective).length - 1).toBe(1);
+    expect(enabled.text).toContain(`${ legacySoulContentWithoutNetworkDirective }\n\n${ agentNetworkDirective }`);
+  });
+
   it('builds a shorter real codex-luna-worker prompt when disabled, retaining time, presence and task identity', async() => {
     // risk: worker prompts expose other jobs or lose the context needed to do and return their own task.
     const before = await builtPrompt(worker, true);

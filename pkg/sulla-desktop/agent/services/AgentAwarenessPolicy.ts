@@ -64,6 +64,15 @@ export class AgentAwarenessPolicy {
     return statement ? `- ${ statement }` : '';
   }
 
+  normalizeSoulContent(content: string, setting?: AgentAwarenessSetting | null): string {
+    const legacyDirective = this.agentNetworkDirective({ agent_awareness: true });
+    const withoutLegacyDirective = content.split('\n').filter(line => line !== legacyDirective).join('\n');
+    const directive = this.agentNetworkDirective(setting);
+    if (!directive) return withoutLegacyDirective;
+    if (!withoutLegacyDirective) return directive;
+    return `${ withoutLegacyDirective }${ withoutLegacyDirective.endsWith('\n') ? '' : '\n\n' }${ directive }`;
+  }
+
   agentBackgroundWorkDirective(setting?: AgentAwarenessSetting | null): string {
     return this.canSeeOtherAgents(setting)
       ? '- Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later'

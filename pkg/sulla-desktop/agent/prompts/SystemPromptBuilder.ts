@@ -326,14 +326,14 @@ class SystemPromptBuilderImpl {
       if (!section) continue;
 
       // Layer 2: DB row content replaces the baked factory content, keeping the
-      // factory's priority/cacheStability. Generated sections (isGenerated) are
-      // left as-is — their factory already composed the DB static preamble with
-      // the live runtime tail (it reads ctx.dbSections directly).
+      // factory's priority/cacheStability. Generated sections and soul stay
+      // factory-owned — soul normalizes legacy rows before policy is applied.
+      // Other generated sections compose DB content with their live runtime tails.
       // The compiled Heartbeat contract is replace-only from source control.
       // A DB row is install-local state just like an agent markdown override;
       // accepting it here would silently bypass the frozen section guard above.
       const dbRow = isFrozenHeartbeatSection ? undefined : ctx.dbSections?.get(id);
-      const content = dbRow && !dbRow.isGenerated && dbRow.content?.trim()
+      const content = id !== 'soul' && dbRow && !dbRow.isGenerated && dbRow.content?.trim()
         ? dbRow.content
         : section.content;
       if (content?.trim()) {
