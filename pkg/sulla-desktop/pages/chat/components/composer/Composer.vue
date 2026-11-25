@@ -44,7 +44,6 @@
               :thread-id="statusThreadId"
               :check-ins="statusCheckIns"
               :root-fallback="statusRootFallback"
-              @shown="onStatusItemShown"
             />
             <span class="dock-divider" aria-hidden="true" />
             <button
@@ -252,7 +251,7 @@ import QueueStrip         from './QueueStrip.vue';
 import ShelfPanel         from './ShelfPanel.vue';
 import StatusRollup       from './StatusRollup.vue';
 import ThreadStatusLine   from './ThreadStatusLine.vue';
-import type { StatusRollupShownEvent } from './StatusRollupQueue';
+import type { StatusRollupItem } from './StatusRollupQueue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
@@ -342,13 +341,34 @@ watch(isRunActive, (active) => {
   glow.setActive(active, !active && finished);
 }, { immediate: true });
 watch(() => isDocumentHidden.value || tabActive?.value === false, paused => glow.setPaused(paused), { immediate: true });
-function onStatusItemShown(item: StatusRollupShownEvent): void {
+function onStatusItemObserved(item: StatusRollupItem): void {
   if (item.threadId !== statusThreadId.value) return;
   if (item.role !== 'root') { glow.checkIn(); return; }
   if (item.phase === 'start' && item.correlationId) { glow.toolStarted(item.correlationId); return; }
   if (item.phase === 'result' && item.correlationId) { glow.toolFinished(item.correlationId); return; }
   glow.action();
 }
+
+const observedStatusKeys = new Set<string>();
+let observedStatusThreadId: string | undefined;
+function rememberObservedStatusKey(key: string): void {
+  if (observedStatusKeys.has(key)) return;
+  observedStatusKeys.add(key);
+  if (observedStatusKeys.size > 500) observedStatusKeys.delete(observedStatusKeys.values().next().value!);
+}
+watch(() => [statusThreadId.value, statusCheckIns.value] as const, ([threadId, items]) => {
+  if (threadId !== observedStatusThreadId) {
+    observedStatusThreadId = threadId;
+    observedStatusKeys.clear();
+    items.forEach(item => rememberObservedStatusKey(item.key));
+    return;
+  }
+  for (const item of items) {
+    if (observedStatusKeys.has(item.key)) continue;
+    rememberObservedStatusKey(item.key);
+    onStatusItemObserved(item);
+  }
+}, { immediate: true });
 const streamedTextLengths = new Map<string, number>();
 const glowSubscriptions = [
   controller.on('runStateChanged', ({ from, to }) => {
