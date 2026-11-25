@@ -60,10 +60,11 @@ class ThreadAgentActivityMapper {
   }
 
   primaryTrace(messages: readonly Message[], threadId: string, agentName: string, now: number): StatusRollupItem[] {
-    const byId = new Map(messages.map(message => [String(message.id), message]));
-    const rows = this.traceProjection.project(messages, []).flatMap(turn => turn.rows);
+    const recentMessages = messages.slice(-40);
+    const byId = new Map(recentMessages.map(message => [String(message.id), message]));
+    const rows = this.traceProjection.project(recentMessages, []).flatMap(turn => turn.rows);
     const items = rows.map(row => this.traceItem(row, byId, threadId, agentName, now));
-    for (const message of messages) {
+    for (const message of recentMessages) {
       if (message.kind === 'streaming') {
         items.push({
           key: `reply-start:${threadId}:${String(message.id)}`,
@@ -326,11 +327,16 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let snapshotPrimed = false;
   let transcriptPrimed = false;
   let historyTimer: ReturnType<typeof setInterval> | undefined;
+  let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingTranscript: { threadId: string; messages: readonly Message[]; agentName: string } | undefined;
 
   const resetThread = (threadId: string | undefined): void => {
     if (activeThreadId === threadId) return;
     if (historyTimer !== undefined) clearInterval(historyTimer);
     historyTimer = undefined;
+    if (transcriptTimer !== undefined) clearTimeout(transcriptTimer);
+    transcriptTimer = undefined;
+    pendingTranscript = undefined;
     activeThreadId = threadId;
     eventItems.value = [];
     seenEventKeys.clear();
@@ -481,26 +487,53 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     setHistoryTimer(agents, threadId);
   }, { immediate: true, flush: 'sync' });
 
-  watch(() => [sources.threadId.value, sources.transcript?.value ?? [], sources.primaryAgentName?.value ?? 'Sulla'] as const,
-    ([threadId, messages, agentName]) => {
-      resetThread(threadId);
-      if (!threadId || !messages.length) return;
-      const items = mapper.primaryTrace(messages, threadId, agentName, now());
-      if (!transcriptPrimed) {
-        const latest = items[items.length - 1];
-        for (const item of items) {
-          if (item === latest) append(item);
-          else seenEventKeys.add(item.key);
-        }
-        transcriptPrimed = true;
-        return;
+  const applyTranscript = (pending: { threadId: string; messages: readonly Message[]; agentName: string }): void => {
+    if (activeThreadId !== pending.threadId || !pending.messages.length) return;
+    const items = mapper.primaryTrace(pending.messages, pending.threadId, pending.agentName, now());
+    if (!transcriptPrimed) {
+      const latest = items[items.length - 1];
+      for (const item of items) {
+        if (item === latest) append(item);
+        else seenEventKeys.add(item.key);
       }
-      items.forEach(append);
-    }, { immediate: true, deep: true, flush: 'pre' });
+      transcriptPrimed = true;
+      return;
+    }
+    items.forEach(append);
+  };
+
+  const flushTranscript = (): void => {
+    transcriptTimer = undefined;
+    const pending = pendingTranscript;
+    pendingTranscript = undefined;
+    if (pending) applyTranscript(pending);
+  };
+
+  watch(() => {
+    const messages = sources.transcript?.value ?? [];
+    const last = messages[messages.length - 1];
+    const lastStatus = last && 'status' in last ? String(last.status) : last?.kind ?? '';
+    const lastText = last && 'text' in last && typeof last.text === 'string' ? last.text : '';
+    return [sources.threadId.value, messages.length, last?.id ? String(last.id) : '', lastStatus, lastText.length,
+      sources.primaryAgentName?.value ?? 'Sulla'] as const;
+  }, ([threadId, _length, _lastId, _lastStatus, _lastTextLength, agentName]) => {
+    resetThread(threadId);
+    if (!threadId) return;
+    const pending = { threadId, messages: (sources.transcript?.value ?? []).slice(-40), agentName };
+    if (!transcriptPrimed) {
+      applyTranscript(pending);
+      return;
+    }
+    pendingTranscript = pending;
+    if (transcriptTimer === undefined) transcriptTimer = setTimeout(flushTranscript, 100);
+  }, { immediate: true, flush: 'pre' });
 
   if (getCurrentScope()) onScopeDispose(() => {
     if (historyTimer !== undefined) clearInterval(historyTimer);
     historyTimer = undefined;
+    if (transcriptTimer !== undefined) clearTimeout(transcriptTimer);
+    transcriptTimer = undefined;
+    pendingTranscript = undefined;
   });
 
   return {
