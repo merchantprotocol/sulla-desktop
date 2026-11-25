@@ -28,8 +28,9 @@ describe('DecisionService', () => {
     } as any;
     let stored = record;
     const decisions = {
-      settle: vi.fn(async(_id: string, action: string, next: any, sessionId?: string) => {
-        if (stored.status !== 'pending' || sessionId !== undefined) return false;
+      settle: vi.fn(async() => true),
+      settleDurablePublish: vi.fn(async(_id: string, action: string, next: any, now: number) => {
+        if (stored.status !== 'pending' || now >= stored.expiresAt) return false;
         stored = next;
         return action === 'approved';
       }),
@@ -40,7 +41,9 @@ describe('DecisionService', () => {
     service.subscribe(next => changed.push(next));
 
     await expect(service.resolve({ id: record.id, conversationId: 'child-thread', action: 'approved' })).resolves.toMatchObject({ settled: true });
-    expect(decisions.settle).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved' }));
+    // The session-free write is the publish-only one; the general settle keeps its session owner.
+    expect(decisions.settleDurablePublish).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved' }), expect.any(Number));
+    expect(decisions.settle).not.toHaveBeenCalled();
     expect(stored.status).toBe('approved');
     expect(changed).toEqual([expect.objectContaining({ id: record.id, status: 'approved' })]);
   });
@@ -62,14 +65,14 @@ describe('DecisionService', () => {
       listTranscriptDecisions: (...args: [string, string[]]) => pendingRepository.listTranscriptDecisions(...args),
     };
     const decisions = {
-      settle: vi.fn(async(_id: string, action: string, next: any) => { stored = next; return action === 'approved' }),
+      settleDurablePublish: vi.fn(async(_id: string, action: string, next: any) => { stored = next; return action === 'approved' }),
     };
     const service = new DecisionService(undefined, { decisions: decisions as any, pendingDecisions: pendingDecisions as any });
 
     const cards = await service.listTranscriptDecisions('root-thread', [record.id]);
     expect(cards).toEqual([record]);
     await expect(service.resolve({ id: cards[0].id, conversationId: cards[0].conversationId, action: 'approved' })).resolves.toMatchObject({ settled: true });
-    expect(decisions.settle).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ conversationId: 'child-thread', status: 'approved' }));
+    expect(decisions.settleDurablePublish).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ conversationId: 'child-thread', status: 'approved' }), expect.any(Number));
     expect(stored.status).toBe('approved');
   });
 

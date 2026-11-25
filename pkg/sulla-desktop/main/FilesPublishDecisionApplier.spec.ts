@@ -1,11 +1,14 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 
 import { describe, expect, it, vi } from 'vitest';
 import type { DecisionRecord } from '@pkg/shared/decisions';
 import { DecisionService } from '@pkg/agent/services/DecisionService';
+import { DecisionExpirySweeper } from '@pkg/agent/services/DecisionExpirySweeper';
 import { PublishApprovalCoordinator } from '@pkg/agent/tools/files/PublishApprovalCoordinator';
+import { PublishApprovalOutcomeMessage } from '@pkg/agent/tools/files/PublishApprovalOutcomeMessage';
 import { FilesPublishDecisionApplier } from './FilesPublishDecisionApplier';
 
 class InlineApprovalFlowHarness {
@@ -15,6 +18,12 @@ class InlineApprovalFlowHarness {
     settle: vi.fn(async(id: string, _action: string, next: DecisionRecord) => {
       const previous = this.records.get(id);
       if (!previous || previous.status !== 'pending') return false;
+      this.records.set(id, next);
+      return true;
+    }),
+    settleDurablePublish: vi.fn(async(id: string, _action: string, next: DecisionRecord, now: number) => {
+      const previous = this.records.get(id);
+      if (!previous || previous.status !== 'pending' || now >= previous.expiresAt) return false;
       this.records.set(id, next);
       return true;
     }),
@@ -34,7 +43,8 @@ class InlineApprovalFlowHarness {
   readonly errors: string[] = [];
   readonly publisher = new FilesPublishDecisionApplier(this.decisions, async() => ({ request: this.request }), message => this.errors.push(message));
   readonly notifications: string[] = [];
-  readonly coordinator = new PublishApprovalCoordinator(this.decisions, { deliver: async(_record, message) => { this.notifications.push(message); return true } });
+  readonly wording = new PublishApprovalOutcomeMessage({ name: async() => 'Jonathon' });
+  readonly coordinator = new PublishApprovalCoordinator(this.decisions, { deliver: async(_record, message) => { this.notifications.push(message); return true } }, this.wording);
 
   constructor() {
     this.publisher.start();
@@ -70,7 +80,7 @@ describe('Files publish decision flow', () => {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       });
       expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved' }), expect.any(String));
-      expect(flow.notifications).toEqual(['File version publish approved.']);
+      expect(flow.notifications).toEqual([`[Human decision] Jonathon approved publishing "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }).`]);
       expect(flow.errors).toEqual([]);
     } finally { flow.dispose() }
   });
@@ -83,7 +93,7 @@ describe('Files publish decision flow', () => {
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
       expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'denied', expect.objectContaining({ status: 'denied' }), expect.any(String));
       expect(flow.request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
-      expect(flow.notifications).toEqual(['File version publish request denied.']);
+      expect(flow.notifications).toEqual([`[Human decision] Jonathon denied publishing "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }).`]);
     } finally { flow.dispose() }
   });
 
@@ -94,7 +104,7 @@ describe('Files publish decision flow', () => {
       const record = await flow.decide('expired');
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
       expect(flow.repository.expirePending).toHaveBeenCalledWith(record.id);
-      expect(flow.notifications).toEqual(['File version publish request expired. If you still need to publish, request a fresh publish approval.']);
+      expect(flow.notifications).toEqual([`[Human decision] The request to publish "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }) expired: request a fresh publish if still needed.`]);
     } finally { flow.dispose() }
   });
 
@@ -112,10 +122,37 @@ describe('Files publish decision flow', () => {
       await flow.decisions.list();
       await vi.waitFor(() => expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F8/reject', expect.any(Object)));
       await vi.waitFor(() => expect(flow.notifications).toEqual([
-        'File version publish request expired. If you still need to publish, request a fresh publish approval.',
+        '[Human decision] The request to publish "Publish" (decision expired-after-restart) expired: request a fresh publish if still needed.',
       ]));
       expect(flow.pending.expireOpenDecisions).toHaveBeenCalledOnce();
     } finally { flow.dispose() }
+  });
+
+  it('expires an overdue publish approval at startup and on the next sweep with nobody opening Decide', async() => {
+    // risk: irreversible side effects — after a restart nothing else times a 7-day approval, so the startup sweep must reject it in Files and tell its asker.
+    const flow = new InlineApprovalFlowHarness();
+    const expired = (id: string, requestId: string): DecisionRecord => ({
+      id, conversationId: 'child-thread', channel: 'root-channel',
+      kind: 'approval', status: 'expired', title: 'Publish?', toolName: 'files_request_publish', createdAt: 100, expiresAt: 200,
+      payload: { filesPublishRequestId: requestId },
+      requestedBy: { agentId: 'codex-luna-worker', label: 'Publish the agent', jobId: 'job-1', taskIndex: 0 },
+    });
+    flow.pending.expireOpenDecisions.mockResolvedValueOnce([expired('expired-while-closed', 'request/8')]);
+    const ticks: (() => void)[] = [];
+    const sweeper = new DecisionExpirySweeper(flow.decisions, { every: (_ms, tick) => { ticks.push(tick); return () => undefined } });
+    try {
+      sweeper.start();
+      await vi.waitFor(() => expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F8/reject', expect.any(Object)));
+      await vi.waitFor(() => expect(flow.notifications).toEqual([
+        '[Human decision] The request to publish "Publish" (decision expired-while-closed) expired: request a fresh publish if still needed.',
+      ]));
+
+      flow.pending.expireOpenDecisions.mockResolvedValueOnce([expired('expired-while-open', 'request/9')]);
+      ticks[0]();
+      await vi.waitFor(() => expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F9/reject', expect.any(Object)));
+      await vi.waitFor(() => expect(flow.notifications).toHaveLength(2));
+      expect(flow.repository.listRecent).not.toHaveBeenCalled();
+    } finally { sweeper.dispose(); flow.dispose() }
   });
 
   it('resolves and publishes from a persisted record after restart with no in-memory waiter', async() => {
@@ -129,14 +166,14 @@ describe('Files publish decision flow', () => {
     const restarted = new DecisionService(undefined, { decisions: flow.repository as any, pendingDecisions: flow.pending as any });
     const publisher = new FilesPublishDecisionApplier(restarted, async() => ({ request: flow.request }), message => flow.errors.push(message));
     const notifications: string[] = [];
-    const coordinator = new PublishApprovalCoordinator(restarted, { deliver: async(_decision, message) => { notifications.push(message); return true } });
+    const coordinator = new PublishApprovalCoordinator(restarted, { deliver: async(_decision, message) => { notifications.push(message); return true } }, flow.wording);
     publisher.start();
     coordinator.start();
     try {
       await expect(restarted.resolve({ id: record.id, conversationId: 'child-thread', action: 'approved' })).resolves.toMatchObject({ settled: true });
       await vi.waitFor(() => expect(flow.request).toHaveBeenCalledTimes(1));
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/approve', expect.any(Object));
-      expect(notifications).toEqual(['File version publish approved.']);
+      expect(notifications).toEqual([`[Human decision] Jonathon approved publishing "Publish" (decision ${ record.id }).`]);
     } finally { publisher.dispose(); coordinator.dispose(); flow.dispose() }
   });
 

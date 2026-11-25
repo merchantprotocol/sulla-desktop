@@ -119,7 +119,8 @@ export class DecisionService {
     } finally { if (entry) entry.busy = false; }
   }
 
-  private async reconcileExpired(): Promise<void> {
+  /** Expire overdue requests and announce each one, so Files and the asker hear about it. */
+  async reconcileExpired(): Promise<void> {
     for (const record of await this.pendingDecisions.expireOpenDecisions(this.session, Date.now())) this.changed(record);
   }
 
@@ -158,7 +159,8 @@ export class DecisionService {
       // A Files publish approval has no blocked tool waiting on it, so it stays decidable after an app restart.
       if (record?.kind === 'approval' && record.payload?.filesPublishRequestId && record.conversationId === response.conversationId && ['pending', 'deferred'].includes(record.status)) {
         if (!['approved', 'denied', 'deferred'].includes(response.action)) throw new Error('Choose approve or deny');
-        if (Date.now() >= record.expiresAt) {
+        const now = Date.now();
+        if (now >= record.expiresAt) {
           await this.reconcileExpired();
           return { settled: false, reason: 'This request expired. Ask for a fresh request in the original conversation.' };
         }
@@ -167,7 +169,7 @@ export class DecisionService {
           status: response.action,
           ...(response.action !== 'deferred' ? { attention: 'answered' } : {}),
         };
-        if (!await this.decisions.settle(response.id, response.action, next)) return { settled: false, reason: 'Request is no longer pending.' };
+        if (!await this.decisions.settleDurablePublish(response.id, response.action, next, now)) return { settled: false, reason: 'Request is no longer pending.' };
         this.changed(next);
         return { settled: true, conversationId: next.conversationId };
       }

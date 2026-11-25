@@ -4,8 +4,10 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BrowserWindow } from 'electron';
+import { DecisionExpirySweeper } from '@pkg/agent/services/DecisionExpirySweeper';
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import { toolRegistry } from '@pkg/agent/tools';
+import { toolRuntime } from '@pkg/agent/tools/toolRuntime';
 import { FilesPublishDecisionApplier } from './FilesPublishDecisionApplier';
 /**
  * Sulla approval IPC handlers.
@@ -46,6 +48,10 @@ export function initSullaApprovalEvents(): void {
     (message, error) => error === undefined ? console.error(message) : console.error(message, error),
   );
   filePublishApplier.start();
+  // Both listeners must be subscribed before the first sweep: an approval that expired while the
+  // app was closed is announced once, and that announcement rejects it in Files and tells its asker.
+  toolRuntime.start();
+  new DecisionExpirySweeper(decisionService, undefined, (message, error) => console.error(message, error)).start();
   const trusted = (event: Electron.IpcMainInvokeEvent) => {
     if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame ||
         !/^(file:|app:)/.test(event.senderFrame?.url || '')) throw new Error('Only the Desktop application can decide.');
@@ -81,7 +87,7 @@ export function initSullaApprovalEvents(): void {
     }
 
     const record = await decisionService.find(approvalId);
-    if (record) return decisionService.resolve({ id: approvalId, conversationId: record.conversationId, action: decision });
+    if (record) throw new Error('Use decisions:resolve');
     const settled = ApprovalService.getInstance().resolve(approvalId, decision, note);
     return { settled };
   });

@@ -32,7 +32,7 @@
     <template v-if="$slots.sources" #sources><slot name="sources" /></template>
   </TurnStreaming>
   <TurnInterim     v-else-if="msg.kind === 'interim'"   :msg="msg" />
-  <div v-if="filesPublishApproval && !inlineRecord" class="approval-unavailable" role="status">
+  <div v-else-if="msg.kind === 'tool_approval' && decisionId && !inlineRecord && !inboxRecord" class="approval-unavailable" role="status">
     <span>{{ checking ? 'Loading approval details…' : 'Approval details are unavailable.' }}</span>
     <button v-if="checking && decisions.inlineReadFailed.value" type="button" @click="decisions.refreshInline">Retry loading request</button>
   </div>
@@ -59,8 +59,7 @@
     <button v-if="checking && decisions.inlineReadFailed.value" type="button" @click="decisions.refreshInline">Retry loading request</button>
   </div>
   <DecisionReference v-else-if="inboxRecord && (msg.kind === 'tool_question' || msg.kind === 'tool_approval')" :msg="msg" />
-  <ToolApproval v-else-if="msg.kind === 'tool_approval'" :msg="msg"
-    :blocked="msg.origin?.kind === 'files_publish' && (!inlineRecord || checking)" />
+  <ToolApproval v-else-if="msg.kind === 'tool_approval' && !decisionId" :msg="msg" />
   <ToolTask v-else-if="TaskAsks.isTask(msg)" :msg="msg" :draft="questionDraft(msg)" />
   <ToolQuestion v-else-if="msg.kind === 'tool_question'" :msg="msg" :draft="questionDraft(msg)" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
@@ -117,12 +116,12 @@ const inboxRecord = computed(() => decisions.decisions.value.find(record => reco
 const inlineRecord = computed(() => {
   const kind = props.msg.kind === 'tool_question' ? 'question' : 'approval';
   const canInline = mainDecisionTranscript.value || props.msg.kind === 'tool_approval';
-  return canInline && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
+  const record = canInline && decisionId.value ? decisions.inlineRecord(decisionId.value, kind) : undefined;
+  return record?.kind === kind ? record : undefined;
 });
-const filesPublishApproval = computed(() => props.msg.kind === 'tool_approval' && props.msg.origin?.kind === 'files_publish');
 const checking = computed(() => !!((mainDecisionTranscript.value || props.msg.kind === 'tool_approval') && decisionId.value && decisions.checkingInline(decisionId.value)));
 const decisionCardKey = computed(() => inlineRecord.value ? 'saved' : checking.value ? 'loading' : 'original');
-const blocked = computed(() => checking.value || (filesPublishApproval.value && !inlineRecord.value) || !!(inlineRecord.value && decisions.busy(inlineRecord.value.id)));
+const blocked = computed(() => checking.value || !!(inlineRecord.value && decisions.busy(inlineRecord.value.id)));
 const active = computed(() => !!inlineRecord.value && DecisionAttention.active(inlineRecord.value, decisions.now.value));
 const decisionLabel = computed(() => {
   const record = inlineRecord.value;
@@ -142,8 +141,10 @@ function approvalMessage(message: ToolApprovalMessage): ToolApprovalMessage {
     ...message,
     title: record.title,
     expiresAt: record.expiresAt,
-    ...(presentation ? { reason: presentation.reason, command: presentation.command, origin: presentation.origin } : {}),
-    requestedBy: record.requestedBy ? { agentId: record.requestedBy.agentId, label: record.requestedBy.label } : undefined,
+    reason: presentation?.reason ?? `Approval details for ${ record.toolName || record.title }.`,
+    command: presentation?.command ?? record.toolName ?? record.title,
+    origin: presentation?.origin,
+    requestedBy: record.requestedBy ? { agentId: record.requestedBy.agentId || record.requestedBy.label || 'default agent', label: record.requestedBy.label } : undefined,
     decision,
     resolutionError: decisions.actionError(record.id),
   };

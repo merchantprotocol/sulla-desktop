@@ -1,9 +1,11 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
-import { PublishApprovalOutcomeDelivery, type PublishApprovalOutcomeSender } from './PublishApprovalOutcomeDelivery';
+import type { PublishApprovalOutcomeSender } from './PublishApprovalOutcomeDelivery';
+import type { PublishApprovalOutcomeMessage } from './PublishApprovalOutcomeMessage';
 
 type DecisionSource = { subscribe(listener: (record: DecisionRecord) => void): () => void };
 
@@ -16,7 +18,8 @@ export class PublishApprovalCoordinator {
 
   constructor(
     private readonly decisions: DecisionSource,
-    private readonly outcomes: PublishApprovalOutcomeSender = new PublishApprovalOutcomeDelivery(),
+    private readonly outcomes: PublishApprovalOutcomeSender,
+    private readonly wording: Pick<PublishApprovalOutcomeMessage, 'for'>,
   ) {}
 
   start(): void {
@@ -29,17 +32,11 @@ export class PublishApprovalCoordinator {
     if (this.pending.has(record.id) || this.delivered.has(record.id)) return;
     this.pending.add(record.id);
     try {
-      const delivered = await this.outcomes.deliver(record, this.message(record.status));
+      const delivered = await this.outcomes.deliver(record, await this.wording.for(record));
       if (delivered) this.rememberDelivered(record.id);
     } finally {
       this.pending.delete(record.id);
     }
-  }
-
-  private message(status: DecisionRecord['status']): string {
-    if (status === 'approved') return 'File version publish approved.';
-    if (status === 'expired') return 'File version publish request expired. If you still need to publish, request a fresh publish approval.';
-    return 'File version publish request denied.';
   }
 
   private rememberDelivered(decisionId: string): void {

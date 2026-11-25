@@ -33,11 +33,23 @@ export class HumanDecisionRepository {
   }
 
   /** Settle a pending/deferred decision owned by this session. True when a row changed. */
-  async settle(id: string, status: string, next: DecisionRecord, sessionId?: string): Promise<boolean> {
+  async settle(id: string, status: string, next: DecisionRecord, sessionId: string): Promise<boolean> {
     const rows = await this.client.query(`UPDATE human_decisions SET status = $2, record = $3::jsonb, updated_at = NOW()
-        WHERE id = $1 AND status IN ('pending', 'deferred') AND ($4::text IS NULL OR session_id = $4)
-          AND record->>'conversationId' = $5 RETURNING id`,
-    [id, status, JSON.stringify(next), sessionId ?? null, next.conversationId]);
+        WHERE id = $1 AND status IN ('pending', 'deferred') AND session_id = $4 RETURNING id`,
+    [id, status, JSON.stringify(next), sessionId]);
+    return rows.length > 0;
+  }
+
+  /**
+   * Settle a Files publish approval with no session owner, so it stays decidable after a restart.
+   * Only an unexpired publish approval in its own conversation qualifies. True when a row changed.
+   */
+  async settleDurablePublish(id: string, status: string, next: DecisionRecord, now: number): Promise<boolean> {
+    const rows = await this.client.query(`UPDATE human_decisions SET status = $2, record = $3::jsonb, updated_at = NOW()
+        WHERE id = $1 AND status IN ('pending', 'deferred') AND record->>'kind' = 'approval'
+          AND NULLIF(record#>>'{payload,filesPublishRequestId}', '') IS NOT NULL
+          AND (record->>'expiresAt')::bigint > $4 AND record->>'conversationId' = $5 RETURNING id`,
+    [id, status, JSON.stringify(next), now, next.conversationId]);
     return rows.length > 0;
   }
 
