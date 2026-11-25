@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 export * from './definition.js';
+export * from './ownerIdentity.js';
 export {
   type LoopIterationState,
   type PlaybookNodeOutput,
