@@ -6,8 +6,8 @@
 import { ChatHeartbeatBusyWatchdog } from './ChatHeartbeatBusyWatchdog';
 import { ChatHeartbeatExpiryService } from './ChatHeartbeatExpiryService';
 import { HeartbeatNoticeBuilder } from './HeartbeatNoticeBuilder';
+import { ChatHeartbeatRuntimeFactory } from './ChatHeartbeatRuntimeFactory';
 import {
-  CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES,
   normalizeChatHeartbeatConfig,
   type ChatHeartbeatBeat,
   type ChatHeartbeatConfig,
@@ -80,7 +80,8 @@ export class ChatHeartbeatScheduler {
   private readonly setTimer:   typeof setTimeout;
   private readonly clearTimer: typeof clearTimeout;
 
-  constructor(private readonly deps: ChatHeartbeatSchedulerDeps) {
+  constructor(private readonly deps: ChatHeartbeatSchedulerDeps,
+    private readonly runtimeFactory: ChatHeartbeatRuntimeFactory = new ChatHeartbeatRuntimeFactory()) {
     this.now = deps.now ?? Date.now;
     this.setTimer = deps.setTimer ?? setTimeout;
     this.clearTimer = deps.clearTimer ?? clearTimeout;
@@ -116,7 +117,7 @@ export class ChatHeartbeatScheduler {
    */
   register(input: ChatHeartbeatRegistration): ChatHeartbeatStatus {
     const existing = this.runtimes.get(input.threadId);
-    const runtime = existing ?? this.blankRuntime(input);
+    const runtime = existing ?? this.runtimeFactory.create(input);
     this.clearRuntimeTimers(runtime);
     runtime.channel = input.channel;
     if (input.jobId) {
@@ -127,9 +128,9 @@ export class ChatHeartbeatScheduler {
     runtime.onStatus = input.onStatus ?? runtime.onStatus;
     runtime.onBeat = input.onBeat ?? runtime.onBeat;
     runtime.onConfig = input.onConfig ?? runtime.onConfig;
-    const requested = this.boundedConfig(runtime, existing && existing.config.intervalMinutes !== null
+    const requested = this.runtimeFactory.boundConfig(existing && existing.config.intervalMinutes !== null
       ? existing.config
-      : normalizeChatHeartbeatConfig(input.config));
+      : normalizeChatHeartbeatConfig(input.config), this.expiry.targetFor(runtime));
     // A restored registration keeps its original deadline; one that already passed comes up off.
     const { startedAt, expiresAt } = this.expiry.resolveWindow(requested, existing);
     runtime.config = { ...requested, intervalMinutes: expiresAt === null ? null : requested.intervalMinutes, startedAt, expiresAt };
@@ -198,7 +199,8 @@ export class ChatHeartbeatScheduler {
     if (runtime.expiryTimer) this.clearTimer(runtime.expiryTimer);
     runtime.expiryTimer = null;
     // Setting a heartbeat always opens a fresh window; only register() restores an old one.
-    const fresh = { ...this.boundedConfig(runtime, normalizeChatHeartbeatConfig(config)), startedAt: null, expiresAt: null };
+    const fresh = { ...this.runtimeFactory.boundConfig(normalizeChatHeartbeatConfig(config), this.expiry.targetFor(runtime)),
+      startedAt: null, expiresAt: null };
     const window = this.expiry.resolveWindow(fresh);
     runtime.config = { ...fresh, ...window };
     runtime.startedAt = window.startedAt;
@@ -304,21 +306,6 @@ export class ChatHeartbeatScheduler {
   /** True only for the runtime the scheduler still owns; a replaced or unregistered one must go quiet. */
   private isCurrent(runtime: ChatHeartbeatRuntime): boolean {
     return this.runtimes.get(runtime.threadId) === runtime;
-  }
-
-  /** Delegated jobs are woken as whole turns, so they get a longer minimum interval than chats. */
-  private boundedConfig(runtime: ChatHeartbeatRuntime, config: ChatHeartbeatConfig): ChatHeartbeatConfig {
-    if (config.intervalMinutes === null || !this.expiry.targetFor(runtime)) return config;
-    return { ...config, intervalMinutes: Math.max(CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES, config.intervalMinutes) };
-  }
-
-  private blankRuntime(input: ChatHeartbeatRegistration): ChatHeartbeatRuntime {
-    return {
-      threadId: input.threadId, channel: input.channel, config: normalizeChatHeartbeatConfig(null),
-      busy: false, pending: false, paused: false, nextAt: null, timer: null, delivering: false, watchdog: null,
-      idleSince: null, startedAt: null, expiresAt: null, expiryTimer: null, expirationPending: false,
-      expiring: false, pendingFinalBeat: null, finalDeliveryInFlight: false, generation: 0,
-    };
   }
 
   private async attempt(runtime: ChatHeartbeatRuntime): Promise<void> {
