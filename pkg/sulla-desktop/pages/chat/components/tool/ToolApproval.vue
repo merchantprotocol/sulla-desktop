@@ -13,23 +13,35 @@
     <template v-if="routePresentation">
       <DecisionHolderLine :presentation="routePresentation" />
       <p class="route-requester"><DecisionActorMarker :role="routePresentation.requesterRole" :initials="routePresentation.requesterInitial" /><span>Approval request from <code>{{ routePresentation.requesterLabel }}</code></span></p>
+      <DecisionTrail :rows="routePresentation.trail" />
+      <div class="decision-route-body">
+        <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
+        <div class="head">{{ msg.title || 'Approval required' }}</div>
+        <div class="what">{{ msg.reason }}</div>
+        <div class="cmd">{{ msg.command }}</div>
+        <p v-if="effectiveDecision === 'timed_out'" role="status">{{ effectiveStateLabel }}</p>
+        <div v-if="effectiveDecision === 'pending'" class="actions">
+          <button class="approve" type="button" :disabled="blocked" @click="settle('approved')">Approve</button>
+          <button class="deny"    type="button" :disabled="blocked" @click="settle('denied')">Deny</button>
+        </div>
+        <p v-if="routePresentation.turn === 'with-agent'" class="route-hint">You can decide now. {{ routePresentation.holderLabel }} can deny this or pass it up. Only you can approve.</p>
+        <button v-if="showDecideLink" class="open-decide" type="button" @click="openDecide">Open in Decide</button>
+      </div>
     </template>
-    <p v-else-if="msg.requestedBy" class="requester">Requested by {{ requesterName }}<template v-if="requesterLabel"> · {{ requesterLabel }}</template></p>
-    <DecisionTrail v-if="routePresentation" :rows="routePresentation.trail" />
-    <div :class="{ 'decision-route-body': routePresentation }">
+    <template v-else>
       <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
       <div class="head">{{ msg.title || 'Approval required' }}</div>
+      <p v-if="msg.requestedBy" class="requester">Requested by {{ requesterName }}<template v-if="requesterLabel"> · {{ requesterLabel }}</template></p>
       <div class="what">{{ msg.reason }}</div>
       <div class="cmd">{{ msg.command }}</div>
-      <p v-if="expiresAtLabel && !routePresentation" class="expires">Expires {{ expiresAtLabel }}</p>
+      <p v-if="expiresAtLabel" class="expires">Expires {{ expiresAtLabel }}</p>
       <p v-if="effectiveDecision === 'timed_out'" role="status">{{ effectiveStateLabel }}</p>
       <div v-if="effectiveDecision === 'pending'" class="actions">
         <button class="approve" type="button" :disabled="blocked" @click="settle('approved')">Approve</button>
         <button class="deny"    type="button" :disabled="blocked" @click="settle('denied')">Deny</button>
       </div>
-      <p v-if="routePresentation?.turn === 'with-agent'" class="route-hint">You can decide now. {{ routePresentation.holderLabel }} can deny this or pass it up. Only you can approve.</p>
       <button v-if="showDecideLink" class="open-decide" type="button" @click="openDecide">Open in Decide</button>
-    </div>
+    </template>
   </div>
 </template>
 
