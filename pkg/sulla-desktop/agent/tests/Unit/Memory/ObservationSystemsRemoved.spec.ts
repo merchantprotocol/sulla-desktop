@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 // Observation memory and identity observations are removed. The real tool registry, the real
 // pre-turn recall middleware and the real post-turn writer entry run here. Postgres is a recording
 // fake, the v7 subject-memory lookup and the v7 writer scheduler are the faked boundaries.

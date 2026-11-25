@@ -96,7 +96,6 @@ export interface DbPromptSection {
    * the builder does NOT blindly replace it — the factory reads dbSections itself.
    */
   isGenerated:    boolean;
-  source?:        string;
 }
 
 export interface AgentConfig {
@@ -116,6 +115,8 @@ export interface BuiltPrompt {
   anthropicSystem?:         AnthropicSystemBlock[];
   /** Which sections were included in the build */
   includedSections:         string[];
+  /** Contextual sections delivered as assistant-role context, not system instructions. */
+  assistantContextSections: PromptSection[];
   /**
    * Heartbeat-only: runtime invariant check of the composed prompt — confirms
    * the deployed continuous-operator wording is present and the #581 STOP-ceiling
@@ -204,11 +205,13 @@ class SystemPromptBuilderImpl {
       return {
         text:                     ctx.basePrompt || 'You are a personal assistant operating inside Sulla Desktop.',
         includedSections:         [],
+        assistantContextSections: [],
       };
     }
 
     // Collect sections
     const builtSections: PromptSection[] = [];
+    const assistantContextSections: PromptSection[] = [];
     const sectionTimings: Array<{ id: string; durationMs: number }> = [];
 
     // Section factories are independent. Run them concurrently, while consuming
@@ -323,14 +326,13 @@ class SystemPromptBuilderImpl {
     }
 
     // Inject CUSTOM DB sections — enabled rows whose id has no registered
-    // factory (and any user-added sections). Full/local modes only;
+    // factory (e.g. `user` and any user-added sections). Full/local modes only;
     // disabled rows are already absent from ctx.dbSections and excluded ids are
     // skipped. Registered ids were handled in the loop above.
     if (ctx.dbSections && (ctx.mode === 'full' || ctx.mode === 'local')) {
       for (const [id, row] of ctx.dbSections) {
         if (this.sections.has(id)) continue;
         if (ctx.excludeSections.has(id)) continue;
-        if (this.isRetiredGeneratedProfile(id, row)) continue;
         if (!row.content?.trim()) continue;
         const section = {
           id,
@@ -338,7 +340,11 @@ class SystemPromptBuilderImpl {
           priority:       row.priority,
           cacheStability: row.cacheStability,
         };
-        builtSections.push(section);
+        if (id === 'user') {
+          assistantContextSections.push(section);
+        } else {
+          builtSections.push(section);
+        }
       }
     }
 
@@ -423,17 +429,7 @@ class SystemPromptBuilderImpl {
       }
     }
 
-    return { text, anthropicSystem, includedSections, heartbeatInvariants, sectionTimings };
-  }
-
-  /**
-   * The `user` slot holds the human's own Personality notes, which still reach
-   * agents. A profile written by the retired dreamer / update_identity_section
-   * path (source 'dreamer' or is_generated) is identity-observation output and
-   * is skipped.
-   */
-  private isRetiredGeneratedProfile(id: string, row: DbPromptSection): boolean {
-    return id === 'user' && (row.isGenerated || row.source === 'dreamer');
+    return { text, anthropicSystem, includedSections, assistantContextSections, heartbeatInvariants, sectionTimings };
   }
 }
 

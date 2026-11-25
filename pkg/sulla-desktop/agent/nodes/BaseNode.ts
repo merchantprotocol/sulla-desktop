@@ -772,7 +772,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             priority:       row.priority,
             cacheStability: (row.cache_stability as DbPromptSection['cacheStability']) || 'stable',
             isGenerated:    row.is_generated,
-            source:         row.source,
           });
         }
       }
@@ -801,6 +800,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const built = await measured('SystemPromptBuilder.build', SystemPromptBuilder.build(buildCtx));
     perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).map(([key, ms]) => `${ key }=${ ms }ms`).join(' ') }`);
     (state.metadata as any).__promptSectionTimings = built.sectionTimings || [];
+
+    // The human's Personality notes are contextual, not system instructions.
+    // Keep the historical assistant-role wrapper while observational memory is removed.
+    const routedAssistantSections = new Map(
+      built.assistantContextSections.map(section => [section.id, section.content.trim()]),
+    );
+    (state.metadata as any).humanIdentityContext = routedAssistantSections.get('user') || '';
 
     // Store Anthropic cache blocks on state metadata for AnthropicService pickup
     if (built.anthropicSystem) {
@@ -970,6 +976,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     const fields: [string, string][] = [
+      ['human_identity_context', 'humanIdentityContext'],
       ['installed_skills', 'skillRecallContext'],
       // Remote support restrictions are control context, not historical recall.
       ['support_context', 'supportContext'],

@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 // Old observation commands must fail with one clear message. The first block checks the class;
 // the second sends each old `sulla <category>/<tool>` call through the real internal-tool route
 // handler (ChatCompletionsServer.handleIntegrationCall) with the real tool registry.

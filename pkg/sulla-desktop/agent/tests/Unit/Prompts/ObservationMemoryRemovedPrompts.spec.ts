@@ -1,9 +1,11 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 // Observation memory and identity observations are removed. The prompt a graph agent, a Claude
 // Code agent and a Codex agent receive must carry no observation block and no instruction to use
-// observation tools, while the v7 brain_memory recall still arrives. The real BaseNode.enrichPrompt,
+// observation tools, while v7 brain_memory recall still arrives. The human's `user` Personality
+// row remains assistant context under its original wrapper. The real BaseNode.enrichPrompt,
 // SystemPromptBuilder, context injector and both CLI prefix builders run; the definition lookup,
 // settings, DB prompt-section rows and the skills/Files/extension/integration reads are faked.
 import '../../Support/TestHomeEnv';
@@ -40,7 +42,6 @@ class ObservationPromptAudit {
   private readonly forbidden = [
     /<\/?observational_memory>/i,
     /<\/?[a-z_]*observations?(?:_context)?>/i,
-    /<\/?human_identity_context>/i,
     /top-10 observations/i,
     /observational[- ]memory tool/i,
     /add_observational_memory|remove_observational_memory/,
@@ -96,51 +97,51 @@ beforeEach(() => {
   vi.spyOn(SullaSettingsModel, 'get').mockImplementation(async(_key: string, fallback?: unknown) => fallback as any);
   // The dreamed identity profile row that older builds wrote with update_identity_section.
   vi.spyOn(SystemPromptSectionModel, 'list').mockResolvedValue([{
-    id: 'user', title: 'Human', content: IDENTITY_PROFILE, priority: 50, enabled: true, cache_stability: 'semi-stable',
-    is_builtin: false, is_generated: true, is_customized: false, source: 'dreamer', created_at: '2026-01-01', updated_at: null,
+    // This is the real persisted shape for both a human edit and an old dreamer-written profile.
+    id: 'user', title: 'User', content: IDENTITY_PROFILE, priority: 15, enabled: true, cache_stability: 'stable',
+    is_builtin: true, is_generated: false, is_customized: true, source: 'baked-default', created_at: '2026-01-01', updated_at: null,
   }] as any);
 });
 afterEach(() => { vi.restoreAllMocks() });
 
 describe('prompts after observation memory removal', () => {
-  it('gives a normal graph agent brain_memory recall and no observation or identity block', async() => {
-    // risk: a removed memory system keeps steering agents through stale thread metadata or the dreamed profile row
+  it('keeps the real persisted user Personality row in assistant context, not the system prompt', async() => {
+    // risk: an old dreamed profile is moved into high-authority system instructions or purged with human notes
     const { system, injected } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
 
     expect(system.length).toBeGreaterThan(500);
     expect(audit.violations(system)).toEqual([]);
     expect(audit.violations(injected)).toEqual([]);
-    expect(`${ system }\n${ injected }`).not.toContain(IDENTITY_PROFILE);
+    expect(system).not.toContain(IDENTITY_PROFILE);
+    expect(injected).toContain(`<human_identity_context>\n${ IDENTITY_PROFILE }\n</human_identity_context>`);
     expect(`${ system }\n${ injected }`).not.toContain(STALE_OBSERVATION);
     expect(injected).toContain(`<brain_memory>\n${ BRAIN_FACT }\n</brain_memory>`);
   });
 
-  it('keeps a human-authored user section while excluding dreamer-generated identity rows', async() => {
+  it('keeps human-authored Personality notes in the same assistant-context wrapper', async() => {
     // risk: removing identity observations also silently removes the user's own Personality notes
     (SystemPromptSectionModel.list as any).mockResolvedValue([{
       id: 'user', title: 'User', content: HUMAN_PROFILE, priority: 15, enabled: true, cache_stability: 'stable',
       is_builtin: true, is_generated: false, is_customized: true, source: 'user', created_at: '2026-01-01', updated_at: null,
     }]);
 
-    const { system } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
+    const { system, injected } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
 
-    expect(system).toContain(HUMAN_PROFILE);
-    expect(system).not.toContain(IDENTITY_PROFILE);
+    expect(system).not.toContain(HUMAN_PROFILE);
+    expect(injected).toContain(`<human_identity_context>\n${ HUMAN_PROFILE }\n</human_identity_context>`);
   });
 
-  it('excludes a user row marked by either generated flag: source dreamer or is_generated', async() => {
-    // risk: a dreamer-written identity profile slips back into the system prompt through only one of its two markers
-    for (const marker of [{ is_generated: false, source: 'dreamer' }, { is_generated: true, source: 'baked-default' }]) {
-      (SystemPromptSectionModel.list as any).mockResolvedValue([{
-        id: 'user', title: 'User', content: IDENTITY_PROFILE, priority: 15, enabled: true, cache_stability: 'stable',
-        is_builtin: true, is_customized: true, created_at: '2026-01-01', updated_at: null, ...marker,
-      }]);
+  it('still excludes a disabled user section', async() => {
+    // risk: disabled Personality notes are accidentally restored while preserving the enabled-row contract
+    (SystemPromptSectionModel.list as any).mockResolvedValue([{
+      id: 'user', title: 'User', content: HUMAN_PROFILE, priority: 15, enabled: false, cache_stability: 'stable',
+      is_builtin: true, is_generated: false, is_customized: true, source: 'baked-default', created_at: '2026-01-01', updated_at: null,
+    }]);
 
-      const { system } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
+    const { system, injected } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
 
-      expect(system.length, JSON.stringify(marker)).toBeGreaterThan(500);
-      expect(system, JSON.stringify(marker)).not.toContain(IDENTITY_PROFILE);
-    }
+    expect(system).not.toContain(HUMAN_PROFILE);
+    expect(injected).not.toContain(HUMAN_PROFILE);
   });
 
   it('gives a Claude Code runtime agent no instruction to call observation tools', async() => {
