@@ -7,8 +7,10 @@
     ref="menuRoot"
     class="tab-needs-menu"
     @pointerdown.stop
+    @keydown.esc.prevent.stop="closeMenu(true)"
   >
     <button
+      ref="triggerButton"
       class="tab-needs-button"
       type="button"
       aria-haspopup="listbox"
@@ -50,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 
 interface NeedsYouTab {
   id:         string;
@@ -60,21 +62,32 @@ interface NeedsYouTab {
 }
 
 defineProps<{ tabs: NeedsYouTab[]; count: number }>();
-const emit = defineEmits<{ select: [id: string] }>();
 const isOpen = ref(false);
 const menuRoot = ref<HTMLElement | null>(null);
+const triggerButton = ref<HTMLButtonElement | null>(null);
+
+const emit = defineEmits<{ select: [id: string]; 'open-change': [open: boolean] }>();
+watch(isOpen, open => emit('open-change', open), { flush: 'sync' });
+
+function closeMenu(restoreFocus = false): void {
+  isOpen.value = false;
+  if (restoreFocus) triggerButton.value?.focus();
+}
 
 function onDocumentPointerDown(event: PointerEvent): void {
-  if (event.target instanceof Node && !menuRoot.value?.contains(event.target)) isOpen.value = false;
+  if (event.target instanceof Node && !menuRoot.value?.contains(event.target)) closeMenu();
 }
 
 function selectTab(id: string): void {
-  isOpen.value = false;
+  closeMenu();
   emit('select', id);
 }
 
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
-onUnmounted(() => document.removeEventListener('pointerdown', onDocumentPointerDown));
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown);
+  if (isOpen.value) emit('open-change', false);
+});
 </script>
 
 <style scoped>

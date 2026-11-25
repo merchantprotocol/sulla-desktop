@@ -75,7 +75,7 @@
         alt=""
       >
       <svg
-        v-else-if="tab.iconPath"
+        v-else
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -83,7 +83,7 @@
         stroke-linecap="round"
         stroke-linejoin="round"
         class="tab-favicon-svg"
-      ><path :d="tab.iconPath" /></svg>
+      ><path :d="tab.iconPath || GENERIC_TAB_ICON_PATH" /></svg>
       <span
         v-if="tab.activity && tab.activity !== 'idle' && tab.activity !== 'working'"
         class="tab-activity-dot"
@@ -183,6 +183,7 @@ const emit = defineEmits<{
 }>();
 
 const renameInput = ref<HTMLInputElement | null>(null);
+const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
 const accessibleLabel = computed(() => [
   props.tab.label,
   props.tab.activity && props.tab.activity !== 'idle' ? props.activityLabels[props.tab.activity] : '',
