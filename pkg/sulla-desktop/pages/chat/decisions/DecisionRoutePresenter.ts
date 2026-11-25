@@ -5,8 +5,10 @@
 
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 import type { DecisionRecord, DecisionRouteEntry, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
+import type { WorkerChartRole } from '../components/workerChart/workerChartModel';
 
 export type DecisionRouteTurn = 'yours' | 'with-agent' | 'settled';
+export type DecisionRouteActorRole = WorkerChartRole | 'you';
 
 export interface DecisionRouteTrailRow {
   key: string;
@@ -15,6 +17,7 @@ export interface DecisionRouteTrailRow {
   actorLabel: string;
   actorInitial: string;
   actorKind: 'agent' | 'human';
+  actorRole: DecisionRouteActorRole;
   actionLabel: string;
   note?: string;
   current?: boolean;
@@ -26,15 +29,20 @@ export interface DecisionRoutePresentation {
   holderLabel?: string;
   holderKind: 'agent' | 'human';
   holderInitial: string;
+  holderRole: DecisionRouteActorRole;
   settledTone?: 'success' | 'warning' | 'muted' | 'neutral';
   holderLine: string;
   secondaryLine?: string;
   compactLine: string;
   compactSecondaryLine?: string;
+  statusLabel: string;
   requesterLabel?: string;
   requesterInitial: string;
+  requesterRole: DecisionRouteActorRole;
   answeredByLabel?: string;
   answerSummary?: string;
+  statusTimeLabel: string;
+  routeDetail?: string;
   trail: readonly DecisionRouteTrailRow[];
 }
 
@@ -76,6 +84,14 @@ export class DecisionRoutePresenter {
         turn === 'with-agent' ? holder?.agentId : answererEntry?.agentId || (answerer?.kind === 'agent' ? answerer.agentId : undefined),
       )
       : this.humanInitial();
+    const answererAgentId = answerer?.kind === 'agent' ? answererEntry?.agentId || answerer.agentId : undefined;
+    const displayedAgentEntry = turn === 'with-agent' ? holder : answerer?.kind === 'agent' ? answererEntry : holder;
+    const holderRole = holderKind === 'human'
+      ? 'you'
+      : this.actorRole(record, displayedAgentEntry, turn === 'with-agent' ? holder?.agentId : answererAgentId);
+    const requesterRole = record.requestedBy?.agentId
+      ? this.actorRole(record, undefined, record.requestedBy.agentId)
+      : this.actorRole(record, this.rootAgent(record));
     const tail = holder && route ? this.tailLabel(route.chain, route.holderIndex) : '';
     const answeredByLabel = this.answererLabel(record);
     const line = this.holderLine(record, turn, holderLabel, deadline, answeredByLabel, expired);
@@ -87,6 +103,7 @@ export class DecisionRoutePresenter {
       holderLabel,
       holderKind,
       holderInitial,
+      holderRole,
       settledTone: this.settledTone(record, turn, expired),
       holderLine: line,
       secondaryLine: secondary,
@@ -94,12 +111,21 @@ export class DecisionRoutePresenter {
       compactSecondaryLine: turn === 'with-agent'
         ? [deadline ? `until ${deadline}` : '', tail].filter(Boolean).join(' · ')
         : secondary,
+      statusLabel: this.statusLabel(record, turn),
       requesterLabel,
       requesterInitial: this.actorInitial(requesterLabel, 'agent', record.requestedBy?.agentId || record.channel),
+      requesterRole,
       answeredByLabel,
       answerSummary: record.answers?.map(answer => answer.selected.join(', ')).filter(Boolean).join(' · ') || undefined,
+      statusTimeLabel: this.statusTimeLabel(record, route, turn, deadlineAt),
+      routeDetail: this.routeDetail(record, route, turn, requesterLabel),
       trail: route ? this.trailRows(record, route, turn, holderLabel, deadline, requesterLabel, expired) : [],
     };
+  }
+
+  counts(records: readonly DecisionRecord[], legacyYourTurnCount = 0): { yourTurn: number; withAgent: number } {
+    const groups = this.group(records);
+    return { yourTurn: groups.yourTurn.length + legacyYourTurnCount, withAgent: groups.withAgent.length };
   }
 
   group(records: readonly DecisionRecord[]): {
@@ -140,6 +166,39 @@ export class DecisionRoutePresenter {
     return time || (record.status === 'expired' ? this.formatTime(deadlineAt) : undefined);
   }
 
+  private statusTimeLabel(record: DecisionRecord, route: DecisionRecord['route'], turn: DecisionRouteTurn, deadlineAt: number): string {
+    if (turn === 'with-agent') return `until ${this.formatTime(deadlineAt)}`;
+    if (turn === 'yours') return `expires ${this.formatTime(record.expiresAt)}`;
+    return this.formatTime(route?.history.at(-1)?.at ?? (record.status === 'expired' ? record.expiresAt : record.createdAt));
+  }
+
+  private statusLabel(record: DecisionRecord, turn: DecisionRouteTurn): string {
+    if (turn === 'with-agent') return 'With an agent';
+    if (turn === 'yours') return 'Your turn';
+    if (record.status === 'answered') return 'Answered';
+    if (record.status === 'approved') return 'Approved';
+    if (record.status === 'denied') return 'Denied';
+    if (record.status === 'expired') return 'Expired';
+    return `${record.status.charAt(0).toUpperCase()}${record.status.slice(1)}`;
+  }
+
+  private routeDetail(record: DecisionRecord, route: DecisionRecord['route'], turn: DecisionRouteTurn, requesterLabel: string): string | undefined {
+    if (!route) return undefined;
+    if (turn === 'with-agent') return this.tailLabel(route.chain, route.holderIndex) || undefined;
+    if (turn === 'yours') {
+      const passedBy = route.history
+        .filter(item => ['passed', 'timeout', 'unavailable'].includes(item.action))
+        .map(item => this.entryLabel(this.entryForThread(record, item.threadId) ?? route.chain.find(entry => entry.agentId === item.agentId), item.agentId));
+      return passedBy.length ? `passed up by ${passedBy.join(', then ')}` : 'asked you directly, no chain';
+    }
+    if (record.answeredBy?.kind === 'agent' && record.status === 'answered') {
+      const summary = record.answers?.map(answer => answer.selected.join(', ')).filter(Boolean).join(' · ');
+      return [summary, 'you were not asked'].filter(Boolean).join(' · ');
+    }
+    if (record.status === 'denied') return `final · from ${requesterLabel}`;
+    return undefined;
+  }
+
   private answererLabel(record: DecisionRecord): string | undefined {
     if (!record.answeredBy || !['answered', 'approved', 'denied'].includes(record.status)) return undefined;
     const actor = record.answeredBy;
@@ -165,6 +224,7 @@ export class DecisionRoutePresenter {
       actorLabel: requesterLabel,
       actorInitial: this.actorInitial(requesterLabel, 'agent', record.requestedBy?.agentId || record.channel),
       actorKind: 'agent',
+      actorRole: record.requestedBy?.agentId ? this.actorRole(record, undefined, record.requestedBy.agentId) : this.actorRole(record, this.rootAgent(record)),
       actionLabel: 'asked',
     }];
     for (const [index, item] of route.history.entries()) {
@@ -172,12 +232,17 @@ export class DecisionRoutePresenter {
       rows.push(this.historyRow(record, route.chain, item, index, item.at - heldSince));
     }
     if (turn !== 'settled') {
-      const isHuman = route.chain[route.holderIndex]?.kind === 'human';
+      const currentHolder = route.chain[route.holderIndex];
+      const isHuman = currentHolder?.kind === 'human';
+      const reachedAt = route.holderSince ?? route.history.at(-1)?.at ?? route.deliveredAt ?? record.createdAt;
       rows.push({
         key: `current-${record.id}`,
-        time: 'now',
+        time: isHuman ? this.formatTime(reachedAt) : 'now',
+        ...(isHuman ? { timestamp: reachedAt } : {}),
         actorLabel: isHuman ? this.humanLabel() : holderLabel || 'An agent',
+        actorInitial: isHuman ? this.humanInitial() : this.actorInitial(holderLabel || 'An agent', 'agent', currentHolder?.agentId),
         actorKind: isHuman ? 'human' : 'agent',
+        actorRole: isHuman ? 'you' : this.actorRole(record, currentHolder, currentHolder?.agentId),
         actionLabel: isHuman ? `Your turn until ${deadline}` : `With ${holderLabel || 'an agent'} until ${deadline}`,
         current: true,
       });
@@ -204,7 +269,7 @@ export class DecisionRoutePresenter {
     const actorKind = entry?.kind ?? (item.agentId === 'human' ? 'human' : 'agent');
     const actorLabel = actorKind === 'human' ? this.humanLabel() : this.entryLabel(entry, item.agentId);
     const actionLabel = item.action === 'passed' ? `passed it up after ${this.formatDuration(heldMs)}`
-      : item.action === 'timeout' ? `ran out of time after ${this.formatDuration(heldMs)}; moved up with no note`
+      : item.action === 'timeout' ? `ran out of time after ${this.formatDuration(heldMs)}. Moved up with no note.`
       : item.action === 'unavailable' ? `was unavailable after ${this.formatDuration(heldMs)}; moved up with no note`
       : item.action === 'denied' ? 'denied it'
       : 'answered';
@@ -215,6 +280,7 @@ export class DecisionRoutePresenter {
       actorLabel,
       actorInitial: this.actorInitial(actorLabel, actorKind, item.agentId),
       actorKind,
+      actorRole: actorKind === 'human' ? 'you' : this.actorRole(record, entry, item.agentId),
       actionLabel,
       note: this.sanitizeNote(item.note),
     };
@@ -234,6 +300,29 @@ export class DecisionRoutePresenter {
 
   private entryForThread(record: DecisionRecord, threadId: string | undefined): DecisionRouteEntry | undefined {
     return record.route?.chain.find(entry => entry.threadId === threadId);
+  }
+
+  private rootAgent(record: DecisionRecord): DecisionRouteEntry | undefined {
+    const chain = record.route?.chain ?? [];
+    const humanIndex = chain.findIndex(entry => entry.kind === 'human');
+    const beforeHuman = humanIndex < 0 ? chain : chain.slice(0, humanIndex);
+    return [...beforeHuman].reverse().find(entry => entry.kind === 'agent');
+  }
+
+  private actorRole(record: DecisionRecord, entry?: DecisionRouteEntry, agentId?: string): DecisionRouteActorRole {
+    if (entry?.kind === 'human' || agentId === 'human') return 'you';
+    const chain = record.route?.chain ?? [];
+    const humanIndex = chain.findIndex(item => item.kind === 'human');
+    const beforeHuman = humanIndex < 0 ? chain : chain.slice(0, humanIndex);
+    const root = [...beforeHuman].reverse().find(item => item.kind === 'agent');
+    const id = agentId || entry?.agentId;
+    if (id && root?.agentId === id) return 'main';
+    if (id && record.requestedBy?.agentId === id) return 'wrk';
+    const entryIndex = entry
+      ? chain.findIndex(item => item.threadId === entry.threadId && item.agentId === entry.agentId)
+      : chain.findIndex(item => item.agentId === id);
+    if (entryIndex >= 0 && entryIndex < beforeHuman.length - 1) return 'mgr';
+    return 'wrk';
   }
 
   private agentLabel(agentId: string): string {
