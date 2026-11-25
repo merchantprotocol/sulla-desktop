@@ -10,6 +10,7 @@ export class DecisionAnswererLabel {
     if (!actor) return undefined;
     if (actor.kind === 'human') return 'your human';
     const label = actor.label?.trim() || actor.agentId?.trim() || 'agent';
-    return actor.note ? `${ label }: ${ actor.note.slice(0, 500) }` : label;
+    const identity = `agent ${ label }`;
+    return actor.note ? `${ identity }: ${ actor.note.slice(0, 500) }` : identity;
   }
 }

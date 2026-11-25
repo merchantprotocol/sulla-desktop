@@ -18,9 +18,9 @@ describe('durable late answers', () => {
   });
   it('uses a named decision envelope for an agent answering a chat asker', async() => {
     const f = fixture();
-    const answered = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'worker', label: 'Worker' } };
+    const answered = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'worker', label: 'Jonathon' } };
     await f.handler.handle(answered, response);
-    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(answered, response.answers, '[Decision answered by Worker]\nPick a color\nColor?: Blue');
+    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(answered, response.answers, '[Decision answered by agent Jonathon]\nPick a color\nColor?: Blue');
   });
   it('keeps a committed answer queued if the wake connection fails', async() => {
     const f = fixture(); f.send.mockRejectedValue(new Error('bus unavailable'));
@@ -77,7 +77,7 @@ describe('durable late answers', () => {
 
     await expect(handler.handle(delegated, response)).resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });
     expect(decisions.recordJobAnswer).toHaveBeenCalledWith(delegated, response.answers);
-    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, '[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
+    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, '[Decision answered by agent Coding Manager]\nPick a color\nColor?: Blue');
     expect(decisions.markJobAnswerDelivered).toHaveBeenCalledExactlyOnceWith(record.id);
     expect(jobMessages.send.mock.invocationCallOrder[0]).toBeLessThan(decisions.markJobAnswerDelivered.mock.invocationCallOrder[0]);
     expect(sender.send).not.toHaveBeenCalled();
