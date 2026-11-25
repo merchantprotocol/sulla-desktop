@@ -52,6 +52,7 @@ import {
   emitQuestionCardViaWs,
   formatQuestionReceipt,
   normalizeQuestions,
+  QuestionReceiptPolicy,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
@@ -441,7 +442,7 @@ export class MCPServerHost {
         // The durable record is authoritative even if the transient transcript notification fails.
         if (!reused) await emitQuestionCardViaWs(session.state.metadata.wsChannel, session.state.metadata.threadId, record.id, normalized);
         return {
-          content: [{ type: 'text' as const, text: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, record.route?.authority === 'any') }],
+          content: [{ type: 'text' as const, text: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, new QuestionReceiptPolicy().parentMayAnswer(record)) }],
         };
       },
     );

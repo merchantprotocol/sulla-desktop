@@ -153,4 +153,23 @@ databaseDescribe('PendingDecisionRepository human override delivery against Post
       status: 'answered', attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers,
     });
   });
+
+  it('recovers only answered routed questions whose mailbox delivery was never queued', async() => {
+    // risk: user communication — startup recovery must target the exact crash window and leave already-queued answers alone.
+    const id = 'routed-answer-recovery';
+    const record: DecisionRecord = {
+      id, conversationId: 'recovery-asker', channel: 'chat', title: 'Which?', kind: 'question', status: 'answered', attention: 'answered',
+      createdAt: 1, expiresAt: 10, answeredBy: { kind: 'human' }, answers: [{ question: 'Which?', selected: ['A'] }],
+      route: { authority: 'any', holderIndex: 0, holderSince: 1, chain: [
+        { threadId: 'parent', channel: 'chat', agentId: 'manager', kind: 'agent' },
+        { threadId: 'root', channel: 'chat', agentId: 'human', kind: 'human' },
+      ], history: [] },
+    };
+    await database.query('INSERT INTO human_decisions(id,session_id,status,record) VALUES($1,$2,$3,$4::jsonb)',
+      [id, 'answer-recovery-session', 'answered', JSON.stringify(record)]);
+
+    await expect(repository.answeredRoutedQuestionsWithoutDelivery()).resolves.toEqual([expect.objectContaining({ id })]);
+    await database.query("UPDATE human_decisions SET record=jsonb_set(record,'{answerDelivery}','\"queued\"') WHERE id=$1", [id]);
+    await expect(repository.answeredRoutedQuestionsWithoutDelivery()).resolves.toEqual([]);
+  });
 });

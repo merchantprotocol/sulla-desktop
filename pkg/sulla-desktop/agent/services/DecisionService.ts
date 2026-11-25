@@ -19,6 +19,7 @@ import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './Decisio
 import { DecisionEscalationService } from './DecisionEscalationService';
 import { DecisionHolderNotifier } from './DecisionHolderNotifier';
 import { DecisionParentFyiNotifier } from './DecisionParentFyiNotifier';
+import { RoutedQuestionAnswerRecovery } from './RoutedQuestionAnswerRecovery';
 import type { DecisionActor, DecisionAgentAction, DecisionOutcome, DecisionRecord, DecisionResponse, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import type { DecisionSettlementStatus, DecisionTransitionActor } from '../repositories/DecisionRouteTransitionSqlBuilder';
 
@@ -195,6 +196,7 @@ export class DecisionService {
   /** Expire overdue requests and announce each one, so Files and the asker hear about it. */
   async reconcileExpired(): Promise<void> {
     for (const record of await this.pendingDecisions.expireOpenDecisions(this.session, Date.now())) this.changed(record);
+    await new RoutedQuestionAnswerRecovery(this.pendingDecisions, this.lateAnswerHandler, record => this.changed(record)).reconcile();
     await this.escalation.reconcile();
   }
 
@@ -238,8 +240,7 @@ export class DecisionService {
     if (entry) entry.record = record;
     const agentHolder = record.kind === 'question' && record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent';
     if (record.kind === 'question' && record.attention === 'answered') return { settled: false, reason: 'This question was already answered.' };
-    const agentAction: DecisionAgentAction | undefined = response.action === 'answered' ? 'answer' : response.action === 'denied' ? 'deny'
-      : response.action === 'passed' ? 'pass' : response.action === 'approved' ? 'approve' : response.action === 'deferred' ? 'pass' : undefined;
+    const agentAction: DecisionAgentAction | undefined = response.action === 'answered' ? 'answer' : response.action === 'passed' ? 'pass' : undefined;
     if (actor.kind === 'agent' && (!agentHolder || !agentAction || !await this.escalation.authorize(record, actor, agentAction))) {
       return { settled: false, reason: 'Only the authorized holder may take that action.' };
     }

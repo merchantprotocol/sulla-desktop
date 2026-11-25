@@ -125,6 +125,22 @@ describe('DecisionParentFyiNotifier', () => {
     expect(delivery.queueAgentMessage).not.toHaveBeenCalled();
   });
 
+  it('bounds the remembered FYI ids and evicts oldest attempts', async() => {
+    // risk: memory growth — a long-lived desktop session must not retain every settled decision id forever.
+    const delivery = new FyiDelivery();
+    const notifier = new DecisionParentFyiNotifier(delivery);
+    const limit = DecisionParentFyiNotifier.ATTEMPTED_DECISION_LIMIT;
+    const first = approval('bounded-fyi-0');
+
+    for (let index = 0; index <= limit; index++) {
+      await notifier.notify(index === 0 ? first : approval(`bounded-fyi-${ index }`));
+    }
+
+    expect((notifier as any).attemptedDecisionIds.size).toBe(limit);
+    await notifier.notify(first);
+    expect(delivery.queueAgentMessage).toHaveBeenCalledTimes(limit + 2);
+  });
+
   it('skips a missing parent and a parent with Sees other agents turned off', async() => {
     // risk: privacy — a decision note must not enter an absent or explicitly unaware parent's mailbox.
     const delivery = new FyiDelivery();

@@ -25,6 +25,7 @@ export interface DecisionParentFyiDelivery {
 
 /** Best-effort, non-waking heads-up for a delegated request that only a human may settle. */
 export class DecisionParentFyiNotifier {
+  static readonly ATTEMPTED_DECISION_LIMIT = 2048;
   private readonly attemptedDecisionIds = new Set<string>();
 
   constructor(
@@ -33,8 +34,7 @@ export class DecisionParentFyiNotifier {
   ) {}
 
   async notify(record: DecisionRecord): Promise<void> {
-    if (!this.isHumanOnly(record) || this.attemptedDecisionIds.has(record.id)) return;
-    this.attemptedDecisionIds.add(record.id);
+    if (!this.isHumanOnly(record) || !this.rememberAttempt(record.id)) return;
     try {
       const asker = await this.delivery.askerForThread(record.conversationId);
       if (!asker || !this.isLive(asker) || !asker.parentChannel || !asker.parentThreadId) return;
@@ -54,6 +54,17 @@ export class DecisionParentFyiNotifier {
         });
       }
     } catch { /* An FYI failure never changes or blocks the human decision. */ }
+  }
+
+  private rememberAttempt(id: string): boolean {
+    if (this.attemptedDecisionIds.has(id)) return false;
+    this.attemptedDecisionIds.add(id);
+    while (this.attemptedDecisionIds.size > DecisionParentFyiNotifier.ATTEMPTED_DECISION_LIMIT) {
+      const oldest = this.attemptedDecisionIds.values().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.attemptedDecisionIds.delete(oldest);
+    }
+    return true;
   }
 
   private isHumanOnly(record: DecisionRecord): boolean {

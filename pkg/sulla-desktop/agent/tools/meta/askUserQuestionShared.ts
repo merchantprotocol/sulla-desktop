@@ -25,6 +25,7 @@ import type {
   UserQuestionOption,
   UserQuestionResolution,
 } from '@pkg/agent/services/ApprovalService';
+import type { DecisionRecord } from '@pkg/shared/decisions';
 import { getWebSocketClientService } from '@pkg/agent/services/WebSocketClientService';
 
 export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -183,4 +184,11 @@ export function formatQuestionReceipt(id: string, answerSaved = false, parked = 
       : 'Only the human may answer; the reply identifies who answered.';
   const destination = parked ? 'It arrives in the job mailbox.' : 'It arrives in this conversation.';
   return `${ state } ${ answerer } ${ destination } End this turn and wait; don’t re-ask, infer consent, or do dependent work.`;
+}
+
+/** Prevents receipts from implying a launch parent exists for top-level agents. */
+export class QuestionReceiptPolicy {
+  parentMayAnswer(record: Pick<DecisionRecord, 'route'>): boolean {
+    return record.route?.chain.some(entry => entry.kind === 'agent') ?? false;
+  }
 }

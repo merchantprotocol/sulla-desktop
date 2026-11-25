@@ -19,7 +19,7 @@ describe('DecisionAuthorityPolicy', () => {
     const consent = { ...question, payload: { decisionAuthority: 'human' } };
     const cases: [typeof question | typeof approval, 'answer' | 'approve' | 'deny' | 'pass', 'agent' | 'human', boolean][] = [
       [approval, 'approve', 'human', true], [approval, 'deny', 'human', true], [approval, 'pass', 'human', false], [approval, 'answer', 'human', false],
-      [approval, 'approve', 'agent', false], [approval, 'deny', 'agent', true], [approval, 'pass', 'agent', true], [approval, 'answer', 'agent', false],
+      [approval, 'approve', 'agent', false], [approval, 'deny', 'agent', false], [approval, 'pass', 'agent', false], [approval, 'answer', 'agent', false],
       [question, 'answer', 'human', true], [question, 'approve', 'human', false], [question, 'deny', 'human', false], [question, 'pass', 'human', false],
       [question, 'answer', 'agent', true], [question, 'approve', 'agent', false], [question, 'deny', 'agent', false], [question, 'pass', 'agent', true],
       [task, 'answer', 'human', true], [task, 'answer', 'agent', false],

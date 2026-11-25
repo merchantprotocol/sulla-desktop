@@ -45,6 +45,7 @@ export class DecisionRouteResolver {
         label: parent.label || undefined,
         jobId: parent.jobId,
         taskIndex: parent.taskIndex,
+        ...(parent.spawnMode ? { spawnMode: parent.spawnMode } : {}),
         kind: 'agent',
       });
       parentThreadId = parent.parentThreadId;
@@ -69,10 +70,13 @@ export class DecisionRouteResolver {
   }
 
   /** Missing, finished, stopped or pruned parent jobs are unavailable at advance time. */
-  async liveness(entry: DecisionRouteEntry, askerThreadId?: string): Promise<'available' | 'unavailable'> {
+  async liveness(entry: DecisionRouteEntry, askerThreadId?: string, chain?: DecisionRouteEntry[], holderIndex?: number): Promise<'available' | 'unavailable'> {
     if (entry.kind === 'human') return 'available';
-    const asker = askerThreadId ? await this.taskForThread(askerThreadId) : null;
-    if (asker?.parentThreadId === entry.threadId && asker.spawnMode === 'sync') return 'unavailable';
+    const child = holderIndex && holderIndex > 0 ? chain?.[holderIndex - 1] : undefined;
+    const childTask = child?.kind === 'agent' ? await this.taskForThread(child.threadId)
+      : askerThreadId ? await this.taskForThread(askerThreadId) : null;
+    const childSpawnMode = child?.spawnMode ?? childTask?.spawnMode;
+    if (childSpawnMode === 'sync') return 'unavailable';
     if (!entry.jobId) return 'available';
     const task = await this.taskForThread(entry.threadId);
     if (!task || task.jobId !== entry.jobId || task.taskIndex !== entry.taskIndex) return 'unavailable';

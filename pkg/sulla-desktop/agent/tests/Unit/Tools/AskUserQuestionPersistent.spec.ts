@@ -7,10 +7,20 @@ vi.mock('@pkg/agent/services/DecisionService', () => ({ decisionService: { reque
 vi.mock('@pkg/agent/services/WebSocketClientService', () => ({ getWebSocketClientService: vi.fn() }));
 
 import { AskUserQuestionWorker } from '@pkg/agent/tools/meta/ask_user_question';
+import { QuestionReceiptPolicy } from '@pkg/agent/tools/meta/askUserQuestionShared';
 const questions = [{ question: 'Choose?', options: [{ label: 'A' }, { label: 'B' }] }];
 function worker(): any { const value = new AskUserQuestionWorker() as any; value.state = { metadata: { threadId: 'tool-thread', wsChannel: 'sulla-desktop' } }; value.emitMessage = f.emit; return value }
 beforeEach(() => { vi.clearAllMocks(); f.requestQuestion.mockResolvedValue({ record: { id: 'tool-question' }, reused: false }); f.emit.mockResolvedValue(true) });
 describe('the in-process question tool', () => {
+  it('offers parent answering only when a live agent appears in the resolved chain', () => {
+    // risk: user guidance — a top-level agent must not be told a nonexistent launch parent can answer.
+    const policy = new QuestionReceiptPolicy();
+
+    expect(policy.parentMayAnswer({})).toBe(false);
+    expect(policy.parentMayAnswer({ route: { authority: 'any', chain: [{ kind: 'human' }], holderIndex: 0 } as any })).toBe(false);
+    expect(policy.parentMayAnswer({ route: { authority: 'any', chain: [{ kind: 'agent' }, { kind: 'human' }], holderIndex: 0 } as any })).toBe(true);
+  });
+
   it('saves a persistent question without waiting on the old timeout', async() => {
     const result = await worker()._validatedCall({ questions, timeoutMs: 1 });
     expect(result.successBoolean).toBe(true);

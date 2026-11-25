@@ -66,6 +66,15 @@ export class PendingDecisionRepository {
     return rows.map(row => row.record);
   }
 
+  /** Recover the human-settlement/send crash window for routed questions. */
+  async answeredRoutedQuestionsWithoutDelivery(): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE record->>'kind'='question' AND status='answered' AND record->>'answerDelivery' IS NULL
+        AND record ? 'route'
+      ORDER BY (record->>'createdAt')::bigint ASC`);
+    return rows.map(row => row.record);
+  }
+
   async ancestry(conversationId: string): Promise<string[]> {
     const rows = await this.client.query<{ id: string }>(`WITH RECURSIVE ancestors(id) AS (
       SELECT $1::text UNION SELECT job.parent_thread_id FROM agent_jobs job

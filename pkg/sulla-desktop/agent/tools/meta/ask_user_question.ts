@@ -23,11 +23,12 @@ import { decisionService } from '@pkg/agent/services/DecisionService';
 import {
   formatQuestionReceipt,
   normalizeQuestions,
+  QuestionReceiptPolicy,
 } from './askUserQuestionShared';
 
 export class AskUserQuestionWorker extends BaseTool {
   name = 'ask_user_question';
-  description = 'Save persistent questions in For You and return a receipt. Your parent agent may answer or pass a plain question; your human may answer at any time. Replies identify who answered. End this turn and wait; do not re-ask, infer consent, or continue dependent work.';
+  description = 'Save persistent questions in For You and return a receipt. The human may answer any time. An agent in the delegation chain may also answer or pass plain questions when one is available; task questions require the human. Replies identify who answered. End this turn and wait; do not re-ask, infer consent, or continue dependent work.';
 
   schemaDef: InputSchemaDef = {
     questions: {
@@ -74,6 +75,6 @@ export class AskUserQuestionWorker extends BaseTool {
       channel: this.state?.metadata?.wsChannel || '',
     }, this.state?.metadata?.options?.abort?.signal);
     if (!reused) await this.emitMessage('', 'tool_question', { toolQuestion: { questionId: record.id, questions } });
-    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, record.route?.authority === 'any') };
+    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, new QuestionReceiptPolicy().parentMayAnswer(record)) };
   }
 }

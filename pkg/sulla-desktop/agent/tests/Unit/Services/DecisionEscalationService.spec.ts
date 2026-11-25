@@ -385,6 +385,27 @@ describe('DecisionEscalationService', () => {
     expect(harness.delivery.delivered[0].holder).toBe('root-chat');
   });
 
+  it('continues reconciling later decisions after one record throws', async() => {
+    // risk: liveness — one corrupt or temporarily unreadable route must not starve every later decision in the sweep.
+    const chain = [agent('healthy-parent', 'manager', 'healthy-job'), human];
+    const routes = {
+      resolve: async() => chain,
+      liveness: async(holder: DecisionRouteEntry) => {
+        if (holder.threadId === 'broken-parent') throw new Error('temporary repository failure');
+        return 'available' as const;
+      },
+    };
+    const harness = new EscalationHarness(routes);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    harness.store.put(question('broken-record', { authority: 'any', chain: [agent('broken-parent', 'manager', 'broken-job'), human], holderIndex: 0, holderSince: harness.now, history: [] }));
+    harness.store.put(question('healthy-record', { authority: 'any', chain, holderIndex: 0, holderSince: harness.now, history: [] }));
+
+    try {
+      await harness.escalation.reconcile();
+      expect(harness.delivery.delivered.map(delivery => delivery.holder)).toEqual(['healthy-job:0']);
+    } finally { warning.mockRestore() }
+  });
+
   it('settles human answers against the current holder and rejects that holder after settlement or pass', async() => {
     // risk: concurrency — a human answer and a delayed agent response share one waiter and only the first valid transition wins.
     const chain = [agent('parent', 'manager', 'parent-job'), agent('root-chat', 'root-agent'), human];
