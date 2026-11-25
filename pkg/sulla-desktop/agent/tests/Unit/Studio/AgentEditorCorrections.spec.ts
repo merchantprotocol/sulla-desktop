@@ -141,6 +141,7 @@ describe('Sees other agents editor toggle', () => {
   it('saves the awareness opt-out and reloads it from the saved definition', async() => {
     // risk: workers' opt-out is not persisted and their next prompt grows again.
     const wrapper = await openEditor();
+    await button(wrapper, 'Capabilities').trigger('click');
     const toggle = wrapper.find('[role="switch"][aria-label="Sees other agents"]');
     expect(toggle.attributes('aria-checked')).toBe('true');
     await toggle.trigger('click');
@@ -150,6 +151,7 @@ describe('Sees other agents editor toggle', () => {
     wrapper.unmount();
 
     const reloaded = await openEditor();
+    await button(reloaded, 'Capabilities').trigger('click');
     expect(reloaded.find('[role="switch"][aria-label="Sees other agents"]').attributes('aria-checked')).toBe('false');
     reloaded.unmount();
   });

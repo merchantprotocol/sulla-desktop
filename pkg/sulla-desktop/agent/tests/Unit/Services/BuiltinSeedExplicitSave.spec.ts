@@ -38,6 +38,11 @@ const HOME = '/tmp/qa-builtin-home';
 const GIT = { name: '', email: '' };
 const publisher = { announce() {} };
 
+function mockFindBySlug(row: AgentDefinition): void {
+  // The seeder also asks about retired manager slugs; only the fixture's own row exists here.
+  f.findBySlug.mockImplementation(async(slug: string) => slug === row.slug ? row : null);
+}
+
 function spec(overrides: { prompt?: string; card?: Partial<BuiltinAgentSpec['card']>; config?: Record<string, unknown> } = {}): BuiltinAgentSpec {
   return {
     slug:        'qa-builtin',
@@ -135,7 +140,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     expect(BuiltinAgentHasher.hashManagedContent(unmarked)).toBe(unmarked.builtin_hash);
     expect(shouldFillBuiltinFrontDoor(unmarked, false)).toBe(true);
 
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     const summary = await seedBuiltinAgents([bundled]);
     expect(summary.unchanged).toBe(1);
     expect(summary.errors).toEqual([]);
@@ -147,7 +152,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     const bundled = spec();
     const content = renderBuiltinAgent(bundled, HOME, GIT);
     const row = await storedRow(content);
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     await seedBuiltinAgents([bundled]);
     expect(f.update).not.toHaveBeenCalled();
     expect(f.fillFrontDoor).toHaveBeenCalledTimes(1);
@@ -168,7 +173,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     const bundled = spec();
     const content = renderBuiltinAgent(bundled, HOME, GIT);
     const row = await storedRow(content, { when_to_call: '', can_call: [] });
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     const summary = await seedBuiltinAgents([bundled]);
     expect(summary.kept).toBe(1);
     expect(f.update).not.toHaveBeenCalled();
@@ -180,7 +185,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     const content = renderBuiltinAgent(bundled, HOME, GIT);
     const row = await storedRow(content, { when_to_call: '', can_call: [] }, { builtinHash: null });
     expect(decideBuiltinSeedAction(content, row, false)).toEqual({ kind: 'fill-cards', patch: { whenToCall: 'when' } });
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     await seedBuiltinAgents([bundled]);
     expect(f.update).toHaveBeenCalledWith(row.id, { whenToCall: 'when' }, row.updated_at);
     expect(f.fillFrontDoor).toHaveBeenCalledWith('qa-builtin', false);
@@ -194,7 +199,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     expect(BuiltinAgentHasher.hashManagedContent(row)).toBe(row.builtin_hash);
     expect(BuiltinAgentHasher.hashManagedContent(row)).not.toBe(BuiltinAgentHasher.hashManagedContent(nextContent));
     expect(decideBuiltinSeedAction(nextContent, row, true).kind).toBe('refresh');
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     await seedBuiltinAgents([next]);
     expect(f.fillFrontDoor).not.toHaveBeenCalled();
     const patch = f.update.mock.calls[0][1];
@@ -212,7 +217,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     const previous = renderBuiltinAgent(spec({ prompt: 'Old prompt.' }), HOME, GIT);
     const next = spec({ prompt: 'New prompt.' });
     const row = await storedRow(previous);
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     await seedBuiltinAgents([next]);
     expect(f.update.mock.calls[0][1].promptContent).toBe('New prompt.');
     expect(f.update.mock.calls[0][1].config).not.toHaveProperty(FRONT_DOOR_CHOSEN_KEY);
@@ -224,7 +229,7 @@ describe('explicit built-in editor saves survive the next seed', () => {
     const next = spec({ prompt: 'New prompt.' });
     const row = await storedRow(previous, { prompt_content: 'My prompt.', system_prompt: 'My prompt.' });
     expect(decideBuiltinSeedAction(renderBuiltinAgent(next, HOME, GIT), row, true)).toEqual({ kind: 'kept' });
-    f.findBySlug.mockResolvedValue(row);
+    mockFindBySlug(row);
     await seedBuiltinAgents([next]);
     expect(f.update).not.toHaveBeenCalled();
     expect(f.fillFrontDoor).not.toHaveBeenCalled();
@@ -245,14 +250,15 @@ describe('explicit built-in editor saves survive the next seed', () => {
     const bundled = spec();
     const content = renderBuiltinAgent(bundled, HOME, GIT);
     const legacy = await storedRow(content, { when_to_call: '', can_call: [] }, { isBuiltin: false, builtinHash: null });
-    f.findBySlug.mockResolvedValue(legacy);
+    mockFindBySlug(legacy);
     await seedBuiltinAgents([bundled]);
     expect(f.update.mock.calls[0][1]).toMatchObject({ whenToCall: 'when' });
     expect(f.update.mock.calls[0][1]).not.toHaveProperty('canCall');
     expect(f.fillFrontDoor).toHaveBeenCalledWith('qa-builtin', false);
 
     f.update.mockClear(); f.fillFrontDoor.mockClear();
-    f.findBySlug.mockResolvedValue(await storedRow(content, { when_to_call: '', can_call: [] }, { isBuiltin: false, builtinHash: null, frontDoor: null }));
+    const explicitNullRow = await storedRow(content, { when_to_call: '', can_call: [] }, { isBuiltin: false, builtinHash: null, frontDoor: null });
+    mockFindBySlug(explicitNullRow);
     await seedBuiltinAgents([bundled]);
     expect(f.update.mock.calls[0][1]).toMatchObject({ whenToCall: 'when' });
     expect(f.update.mock.calls[0][1]).not.toHaveProperty('canCall');
