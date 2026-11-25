@@ -99,7 +99,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useChatController } from '../../controller/useChatController';
 import { newMessageId } from '../../types/chat';
-import { useHeartbeatControl } from './useHeartbeatControl';
+import { HeartbeatControlState } from './useHeartbeatControl';
 
 import {
   DEFAULT_CHAT_HEARTBEAT_MESSAGE,
@@ -152,10 +152,14 @@ const countdown = computed(() => {
   return `next in ${ Math.floor(seconds / 60) }:${ String(seconds % 60).padStart(2, '0') }`;
 });
 
-const { registeredThreadId, register, apply, onStatus, onConfig } = useHeartbeatControl(
+const heartbeatControl = new HeartbeatControlState(
   controller, () => backendThreadId.value, ipcRenderer,
   { presets, choice, customMinutes, draftMessage, lastMinutes, status, error },
 );
+const registeredThreadId = heartbeatControl.registeredThreadId;
+const register = heartbeatControl.register.bind(heartbeatControl);
+const apply = heartbeatControl.apply.bind(heartbeatControl);
+const { onStatus, onConfig } = heartbeatControl;
 
 function draftMinutes(): number {
   return choice.value === 'custom' ? Number(customMinutes.value) : Number(choice.value);
