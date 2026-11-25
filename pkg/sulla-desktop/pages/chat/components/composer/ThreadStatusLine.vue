@@ -176,6 +176,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
 
 import ThreadAgentActions from './ThreadAgentActions.vue';
+import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
 import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
 
@@ -193,6 +194,7 @@ const NUDGE = 'Status check from the user: report your progress, or what is bloc
 const LIVE = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
 
 const controller = useChatController();
+const { openCount } = ChatDecisions.useChatDecisions();
 const windowTabStrip = inject(windowTabStripKey, null);
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
@@ -321,11 +323,13 @@ function reportTabActivity(snapshot: ChatTabActivitySnapshot): void {
 
 // Include the short reason so the shell can show useful attention summaries
 // even when this chat lives in its own process-per-tab renderer.
-watch(() => `${ activity.value.state }\u0000${ activity.value.parts.slice(0, 2).join(' · ') }`, () => {
-  reportTabActivity({
-    state:  activity.value.state,
-    detail: activity.value.parts.slice(0, 2).join(' · ').slice(0, 240),
-  });
+watch([
+  () => openCount.value ? 'you' as const : activity.value.state === 'you' ? 'waiting' as const : activity.value.state,
+  () => openCount.value
+    ? `${ openCount.value } pending request${ openCount.value === 1 ? '' : 's' }`
+    : activity.value.parts.slice(0, 2).join(' · ').slice(0, 240),
+], ([state, detail]) => {
+  reportTabActivity({ state, detail });
 }, { immediate: true });
 watch(hasItems, has => { if (!has) open.value = false; });
 
