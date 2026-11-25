@@ -466,6 +466,18 @@ export class ChatController {
     this.persist();
   }
 
+  /**
+   * Saves a heartbeat exactly as the backend scheduler confirmed it, including the real start
+   * and six-hour deadline. Tab state must never hold an enabled heartbeat without its deadline:
+   * re-registering one after a crash would open a fresh six-hour window.
+   */
+  confirmHeartbeat(status: ChatHeartbeatConfig): void {
+    this.setHeartbeat({
+      intervalMinutes: status.intervalMinutes, message: status.message,
+      startedAt: status.startedAt ?? null, expiresAt: status.expiresAt ?? null, setBy: status.setBy,
+    });
+  }
+
   setBackendThreadId(threadId: string): void {
     if (!threadId || this.thread.value.backendThreadId === threadId) return;
     this.thread.value = { ...this.thread.value, backendThreadId: threadId, updatedAt: Date.now() };

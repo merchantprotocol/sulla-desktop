@@ -5,7 +5,7 @@
 
 import { CHAT_HEARTBEAT_MAX_DURATION_MS, type ChatHeartbeatConfig, type ChatHeartbeatStatus } from '@pkg/shared/chatHeartbeat';
 
-import type { ChatHeartbeatDeliveryResult, ChatHeartbeatJobTarget, ChatHeartbeatRuntime } from './ChatHeartbeatScheduler';
+import type { ChatHeartbeatDeliver, ChatHeartbeatJobTarget, ChatHeartbeatRuntime } from './ChatHeartbeatScheduler';
 import { HeartbeatNoticeBuilder } from './HeartbeatNoticeBuilder';
 
 /** Owns each heartbeat's bounded six-hour window and its final delivery. */
@@ -14,9 +14,10 @@ export class ChatHeartbeatExpiryService {
     now: () => number;
     setTimer: typeof setTimeout;
     clearTimer: typeof clearTimeout;
-    deliver: (channel: string, threadId: string, message: string, intervalMinutes: number, target?: ChatHeartbeatJobTarget) => Promise<ChatHeartbeatDeliveryResult>;
+    deliver: ChatHeartbeatDeliver;
     setActive?: (threadId: string, active: boolean) => void;
-    isRegistered: (threadId: string) => boolean;
+    isCurrent: (runtime: ChatHeartbeatRuntime) => boolean;
+    jobHeartbeatChanged?: (threadId: string) => void;
     clearTimers: (runtime: ChatHeartbeatRuntime) => void;
     unregisterJobTask: (jobId: string, taskIndex: number) => void;
     emitStatus: (runtime: ChatHeartbeatRuntime) => ChatHeartbeatStatus;
@@ -46,7 +47,7 @@ export class ChatHeartbeatExpiryService {
     const generation = runtime.generation;
     runtime.expiryTimer = this.deps.setTimer(() => {
       runtime.expiryTimer = null;
-      if (runtime.generation !== generation) return;
+      if (runtime.generation !== generation || !this.deps.isCurrent(runtime)) return;
       if (runtime.delivering) {
         runtime.expirationPending = true;
         return;
@@ -57,12 +58,13 @@ export class ChatHeartbeatExpiryService {
   }
 
   async expire(runtime: ChatHeartbeatRuntime): Promise<void> {
-    if (!this.deps.isRegistered(runtime.threadId) || runtime.config.intervalMinutes === null || runtime.expiring) return;
+    if (!this.deps.isCurrent(runtime) || runtime.config.intervalMinutes === null || runtime.expiring) return;
     const intervalMinutes = runtime.config.intervalMinutes;
     const message = runtime.config.message;
     const startedAt = runtime.startedAt ?? this.deps.now();
     const expiresAt = runtime.expiresAt ?? this.deps.now();
     const generation = runtime.generation;
+    const target = this.targetFor(runtime);
     runtime.expiring = true;
     this.deps.clearTimers(runtime);
 
@@ -75,16 +77,18 @@ export class ChatHeartbeatExpiryService {
     this.deps.setActive?.(runtime.threadId, false);
     runtime.onConfig?.(runtime.config);
     this.deps.emitStatus(runtime);
+    // The durable job record goes now, not at the next restart: nothing may rehydrate an expired heartbeat.
+    if (target) this.deps.jobHeartbeatChanged?.(runtime.threadId);
 
     const finalMessage = await this.buildMessage(runtime, message, intervalMinutes, startedAt, expiresAt, true);
     try {
-      const result = await this.deps.deliver(runtime.channel, runtime.threadId, finalMessage, intervalMinutes, this.targetFor(runtime));
+      const result = await this.deps.deliver(runtime.channel, runtime.threadId, finalMessage, intervalMinutes, target, { final: true });
       const delivered = typeof result === 'boolean' ? result : result.delivered;
       if (typeof result !== 'boolean' && result.terminal) {
         this.deps.unregisterJobTask(runtime.jobId ?? '', runtime.taskIndex ?? -1);
         return;
       }
-      if (delivered && this.deps.isRegistered(runtime.threadId)) {
+      if (delivered && this.deps.isCurrent(runtime)) {
         runtime.onBeat?.({ threadId: runtime.threadId, createdAt: this.deps.now(), intervalMinutes, message: finalMessage, autoOff: true });
       } else if (!delivered) {
         console.warn(`[ChatHeartbeat] final beat was not delivered for thread ${ runtime.threadId }`);
@@ -92,7 +96,7 @@ export class ChatHeartbeatExpiryService {
     } catch (error) {
       console.warn(`[ChatHeartbeat] final beat failed for thread ${ runtime.threadId }:`, error);
     } finally {
-      if (runtime.generation === generation && this.deps.isRegistered(runtime.threadId)) {
+      if (runtime.generation === generation && this.deps.isCurrent(runtime)) {
         runtime.expiring = false;
         this.deps.emitStatus(runtime);
       }

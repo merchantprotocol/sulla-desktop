@@ -198,21 +198,33 @@ async function register(threadId: string): Promise<boolean> {
 
 async function apply(config: ChatHeartbeatConfig): Promise<void> {
   const normalized = normalizeChatHeartbeatConfig({ ...config, startedAt: null, expiresAt: null, setBy: 'human' });
-  controller.setHeartbeat(normalized);
   syncForm(normalized);
   // Register on demand — the chat may not have been registered yet (thread
   // id arrived late, or the first attempt failed).
-  if (!registeredThreadId && !await register(backendThreadId.value)) {
-    if (!backendThreadId.value) error.value = 'This chat has no backend thread yet — send a message first.';
-    return;
+  if (!registeredThreadId) {
+    const registered = await register(backendThreadId.value);
+    syncForm(normalized);
+    if (!registered) {
+      // No timer exists yet, so there is no deadline to lose: keep the choice
+      // for the registration that follows.
+      controller.setHeartbeat(normalized);
+      if (!backendThreadId.value) error.value = 'This chat has no backend thread yet — send a message first.';
+      return;
+    }
   }
   try {
     const result = await ipcRenderer.invoke('chat-heartbeat:set', { threadId: registeredThreadId, config: normalized });
     if (!result?.success) throw new Error(result?.error || 'update failed');
     status.value = result.status;
+    // Tab state is saved only now, with the deadline the scheduler really set.
+    // Saving it earlier left an enabled heartbeat with no deadline on disk, and
+    // a crash in that gap handed the next registration a fresh six hours.
+    controller.confirmHeartbeat(result.status);
+    syncForm(controller.heartbeat.value);
     error.value = '';
   } catch (err) {
     error.value = errorText(err);
+    syncForm(controller.heartbeat.value);
   }
 }
 

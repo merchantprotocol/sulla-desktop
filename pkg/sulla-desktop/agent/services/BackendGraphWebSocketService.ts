@@ -232,7 +232,7 @@ export class BackendGraphWebSocketService {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
-        content:   `${ this.orchestratorMessageFormatter.format(message) }`,
+        content:   this.orchestratorMessageFormatter.format(message),
         timestamp: Date.now(),
         metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
       } as any);
@@ -246,7 +246,7 @@ export class BackendGraphWebSocketService {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
-        content:   `${ this.orchestratorMessageFormatter.format(message) }`,
+        content:   this.orchestratorMessageFormatter.format(message),
         timestamp: Date.now(),
         metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
       } as any);
@@ -266,7 +266,7 @@ export class BackendGraphWebSocketService {
       return false;
     }
     const receipt = await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-      `${ this.orchestratorMessageFormatter.format(message) }`, threadId, undefined, agentId || parked.agentId, 'system', {
+      this.orchestratorMessageFormatter.format(message), threadId, undefined, agentId || parked.agentId, 'system', {
         source: 'orchestrator_job_message', ...messageMeta,
       });
     return receipt !== 'deferred';
@@ -821,8 +821,10 @@ export class BackendGraphWebSocketService {
     await awaitAgentContainerRuntimeRehydration();
     await this.subscribeToAgentChannels();
     await agentWaitProvider.scheduler.start();
-    const { chatHeartbeatProvider } = await import('../app/Providers/ChatHeartbeatServiceProvider');
-    await chatHeartbeatProvider.rehydrateJobHeartbeats();
+    // Heartbeat recovery is best-effort: it must never hold up the completion and inbox replay below.
+    await import('../app/Providers/ChatHeartbeatServiceProvider')
+      .then(({ chatHeartbeatProvider }) => chatHeartbeatProvider.rehydrateJobHeartbeats())
+      .catch(error => console.warn('[BackendGraphWS] Job heartbeat recovery failed:', error));
     await recoverPendingAgentCompletions();
     await this.agentInbox.replayPending();
     this.retryDecisionAnswers();

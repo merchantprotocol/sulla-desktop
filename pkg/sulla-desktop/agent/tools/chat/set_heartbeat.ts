@@ -7,7 +7,7 @@ import { chatHeartbeatProvider } from '../../app/Providers/ChatHeartbeatServiceP
 import { getJob } from '../agents/jobRegistry';
 import { BaseTool, ToolResponse } from '../base';
 
-import { DEFAULT_CHAT_HEARTBEAT_MESSAGE, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
+import { CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES, DEFAULT_CHAT_HEARTBEAT_MESSAGE, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 
 export class SetChatHeartbeatWorker extends BaseTool {
   name = '';
@@ -36,16 +36,20 @@ export class SetChatHeartbeatWorker extends BaseTool {
     // Tool calls can come from hidden or tabbed delegated jobs that have no
     // renderer registration. Keep the scheduler keyed by the backend thread;
     // binding the job identity routes its beats through the parked-job wake path.
+    // Register only when something is missing: this tool usually runs inside the
+    // very turn a beat woke, and that beat's delivery is still in flight.
     const current = service.status(threadId);
-    service.register({
-      threadId,
-      channel:  job?.parentChannel || String(metadata?.wsChannel || '').trim() || 'sulla-desktop',
-      config:   current ?? normalizeChatHeartbeatConfig(null),
-      ...(jobId ? { jobId, taskIndex } : {}),
-    });
+    if (!current || (jobId && !service.jobTarget(threadId))) {
+      service.register({
+        threadId,
+        channel:  job?.parentChannel || String(metadata?.wsChannel || '').trim() || 'sulla-desktop',
+        config:   current ?? normalizeChatHeartbeatConfig(null),
+        ...(jobId ? { jobId, taskIndex } : {}),
+      });
+    }
 
     const rawMinutes = Number(input.intervalMinutes);
-    const minimumMinutes = jobId ? 5 : 1;
+    const minimumMinutes = jobId ? CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES : 1;
     const requestedMinutes = Number.isFinite(rawMinutes) && rawMinutes > 0 ? rawMinutes : null;
     const intervalMinutes = requestedMinutes === null ? null : Math.max(minimumMinutes, requestedMinutes);
     const clampedNotice = requestedMinutes !== null && requestedMinutes < minimumMinutes

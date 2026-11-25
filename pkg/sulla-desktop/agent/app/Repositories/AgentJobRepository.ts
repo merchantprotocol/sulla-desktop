@@ -265,6 +265,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         AND EXISTS (
           SELECT 1 FROM jsonb_array_elements(child.tasks) AS child_task(value)
           WHERE child_task.value->>'status' IN ('queued', 'running', 'parked')
+            -- An open blocker is still live work the parent is waiting on (AgentStateService.isOpenBlocker).
+            OR (child_task.value->>'status' = 'blocked'
+              AND child_task.value->>'returnedAt' IS NULL AND child_task.value->>'finishedAt' IS NULL)
         )
     ) AS has_running_children`, [jobId, taskIndex]);
     return rows[0]?.has_running_children === true;

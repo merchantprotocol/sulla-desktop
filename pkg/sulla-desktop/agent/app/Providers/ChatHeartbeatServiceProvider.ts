@@ -5,7 +5,8 @@
 
 import { ChatHeartbeatScheduler } from '../../services/ChatHeartbeatScheduler';
 import { ChatHeartbeatDeliveryService } from '../../services/ChatHeartbeatDeliveryService';
-import { ChatHeartbeatJobRepository, type ChatHeartbeatJobRecordStore } from '../Repositories/ChatHeartbeatJobRepository';
+import { ChatHeartbeatRegistrationService, type ChatHeartbeatThreadTask } from '../../services/ChatHeartbeatRegistrationService';
+import { ChatHeartbeatJobRepository, type ChatHeartbeatJobRecord, type ChatHeartbeatJobRecordStore } from '../Repositories/ChatHeartbeatJobRepository';
 import { GraphRegistry } from '../../services/GraphRegistry';
 import { getWebSocketClientService } from '../../services/WebSocketClientService';
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
@@ -22,17 +23,22 @@ interface ChatHeartbeatProviderDependencies {
   jobHeartbeats?: ChatHeartbeatJobRecordStore;
   getJob?: (jobId: string) => Promise<AgentJob | undefined>;
   hasRunningChildren?: (jobId: string, taskIndex: number) => Promise<boolean>;
+  taskForThread?: (threadId: string) => Promise<ChatHeartbeatThreadTask | null>;
+  queueJobMessage?: (target: { jobId: string; taskIndex: number }, threadId: string, message: string) => Promise<{ id: string }>;
   now?: () => number;
 }
 
 /** Owns the one chat-heartbeat scheduler; built on first use so importing has no side effects. */
 export class ChatHeartbeatServiceProvider {
   private instance: ChatHeartbeatScheduler | null = null;
+  private registrationService: ChatHeartbeatRegistrationService | null = null;
   private subscribedToJobLifecycle = false;
   private subscriptionStart: Promise<void> | null = null;
   private readonly jobHeartbeats: ChatHeartbeatJobRecordStore;
   private readonly getJob: (jobId: string) => Promise<AgentJob | undefined>;
   private readonly hasRunningChildren: (jobId: string, taskIndex: number) => Promise<boolean>;
+  private readonly taskForThread: (threadId: string) => Promise<ChatHeartbeatThreadTask | null>;
+  private readonly queueJobMessage: (target: { jobId: string; taskIndex: number }, threadId: string, message: string) => Promise<{ id: string }>;
   private readonly now: () => number;
 
   constructor(private readonly dependencies: ChatHeartbeatProviderDependencies = {}) {
@@ -45,7 +51,24 @@ export class ChatHeartbeatServiceProvider {
       const { agentJobProvider } = await import('./AgentJobServiceProvider');
       return agentJobProvider.jobs.hasRunningChildren(jobId, taskIndex);
     });
+    this.taskForThread = dependencies.taskForThread ?? (async(threadId) => {
+      const { agentJobProvider } = await import('./AgentJobServiceProvider');
+      return agentJobProvider.messaging.taskForThread(threadId);
+    });
+    this.queueJobMessage = dependencies.queueJobMessage ?? (async(target, threadId, message) => {
+      const { agentJobProvider } = await import('./AgentJobServiceProvider');
+      return agentJobProvider.messaging.queueMessage({ ...target, threadId, jobStatus: 'running', taskStatus: 'running' }, message);
+    });
     this.now = dependencies.now ?? Date.now;
+  }
+
+  /** Heartbeats set from the composer or IPC go through here so a job thread is treated as a job. */
+  registrations(): ChatHeartbeatRegistrationService {
+    this.registrationService ??= new ChatHeartbeatRegistrationService(this.scheduler(), {
+      taskForThread: threadId => this.taskForThread(threadId),
+      persistJobHeartbeat: threadId => this.persistJobHeartbeat(threadId),
+    });
+    return this.registrationService;
   }
 
   scheduler(): ChatHeartbeatScheduler {
@@ -57,6 +80,7 @@ export class ChatHeartbeatServiceProvider {
         const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
         return getBackendGraphWebSocketService().wakeParkedAgent(channel, threadId, message, agentId, metadata);
       },
+      queueJobMessage: (target, threadId, message) => this.queueJobMessage(target, threadId, message),
       send: (channel, message) => getWebSocketClientService().send(channel, message),
       now: this.now,
     });
@@ -71,7 +95,10 @@ export class ChatHeartbeatServiceProvider {
         const record = GraphRegistry.get(threadId);
         return !!record && record.state?.metadata?.cycleComplete !== true;
       },
-      deliver: (channel, threadId, message, intervalMinutes, target) => delivery.deliver(channel, threadId, message, intervalMinutes, target),
+      deliver: (channel, threadId, message, intervalMinutes, target, options) => delivery.deliver(channel, threadId, message, intervalMinutes, target, options),
+      // Set, switched off or auto-expired: the durable record follows straight away.
+      jobHeartbeatChanged: threadId => void this.persistJobHeartbeat(threadId)
+        .catch(error => console.warn(`[ChatHeartbeat] job heartbeat record update failed for thread ${ threadId }:`, error)),
       hasPendingWait: async({ jobId, taskIndex }) => {
         const { agentWaitProvider } = await import('../../services/AgentWaitServices');
         return Boolean(await agentWaitProvider.repository.pending(jobId, taskIndex));
@@ -120,25 +147,44 @@ export class ChatHeartbeatServiceProvider {
     await this.jobHeartbeats.save({ ...record, setBy: record.config.setBy ?? 'agent' });
   }
 
+  /**
+   * Startup recovery. Never throws: one unreadable row, or the table itself being unreachable,
+   * must not fail the runtime recovery that redelivers completions and inbox messages after it.
+   */
   async rehydrateJobHeartbeats(): Promise<void> {
-    await this.ensureJobLifecycleSubscription();
-    for (const record of await this.jobHeartbeats.all()) {
-      const job = await this.getJob(record.jobId);
-      const task = job?.tasks[record.taskIndex];
-      if (!job || !task || task.threadId !== record.threadId || !['running', 'parked'].includes(job.status)
-          || !['running', 'parked'].includes(task.status)) {
-        await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
-        continue;
-      }
-      const status = this.scheduler().register({
-        threadId: record.threadId,
-        channel: job.parentChannel || record.channel || 'sulla-desktop',
-        jobId: record.jobId,
-        taskIndex: record.taskIndex,
-        config: normalizeChatHeartbeatConfig({ ...record.config, startedAt: record.startedAt, expiresAt: record.expiresAt, setBy: record.setBy }),
-      });
-      if (!status.enabled) await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
+    let records: ChatHeartbeatJobRecord[];
+    try {
+      await this.ensureJobLifecycleSubscription();
+      records = await this.jobHeartbeats.all();
+    } catch (error) {
+      console.warn('[ChatHeartbeat] could not load job heartbeats for recovery:', error);
+      return;
     }
+    for (const record of records) {
+      try {
+        await this.rehydrateJobHeartbeat(record);
+      } catch (error) {
+        console.warn(`[ChatHeartbeat] could not restore the heartbeat for job ${ record.jobId } task ${ record.taskIndex }:`, error);
+      }
+    }
+  }
+
+  private async rehydrateJobHeartbeat(record: ChatHeartbeatJobRecord): Promise<void> {
+    const job = await this.getJob(record.jobId);
+    const task = job?.tasks[record.taskIndex];
+    if (!job || !task || task.threadId !== record.threadId || !['running', 'parked'].includes(job.status)
+        || !['running', 'parked'].includes(task.status)) {
+      await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
+      return;
+    }
+    const status = this.scheduler().register({
+      threadId: record.threadId,
+      channel: job.parentChannel || record.channel || 'sulla-desktop',
+      jobId: record.jobId,
+      taskIndex: record.taskIndex,
+      config: normalizeChatHeartbeatConfig({ ...record.config, startedAt: record.startedAt, expiresAt: record.expiresAt, setBy: record.setBy }),
+    });
+    if (!status.enabled) await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
   }
 
   private isOpenTask(task: import('../../tools/agents/jobRegistry').AgentJobTask | undefined): boolean {

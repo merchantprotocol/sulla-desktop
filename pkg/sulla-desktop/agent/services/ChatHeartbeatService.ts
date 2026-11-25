@@ -11,5 +11,4 @@ export function getChatHeartbeatService(): ChatHeartbeatScheduler {
   return chatHeartbeatProvider.scheduler();
 }
 
-
 export { ChatHeartbeatScheduler } from './ChatHeartbeatScheduler';

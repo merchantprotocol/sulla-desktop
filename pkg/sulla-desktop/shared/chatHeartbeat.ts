@@ -7,6 +7,8 @@ export const DEFAULT_CHAT_HEARTBEAT_MESSAGE =
   'Heartbeat: give me a short update on what moved since your last update, then keep working on anything unfinished. If nothing is in flight, reply in one line.';
 
 export const CHAT_HEARTBEAT_MAX_DURATION_MS = 6 * 60 * 60_000;
+/** A delegated job is woken as a whole turn, so its heartbeat may not fire more often than this. */
+export const CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES = 5;
 
 export type ChatHeartbeatSetBy = 'agent' | 'human' | 'manager';
 
