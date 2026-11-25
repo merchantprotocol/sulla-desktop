@@ -12,12 +12,18 @@
     <div class="relative flex shrink-0 items-center self-stretch">
       <WindowDragLogo :size="20" />
     </div>
-    <TabNeedsYouMenu
-      :tabs="needsYouTabs"
-      :count="needsYouCount"
-      @select="activateTabById"
-      @open-change="onNeedsYouMenuOpenChange"
-    />
+    <button
+      v-if="needsYouRows.length"
+      ref="needsYouButton"
+      class="tab-needs-button"
+      type="button"
+      aria-haspopup="menu"
+      :aria-expanded="Boolean(attentionMenuId)"
+      @click="openAttentionMenu"
+    >
+      Needs you
+      <span class="tab-needs-count">{{ needsYouRows.length }}</span>
+    </button>
     <div
       ref="tabScrollWrapper"
       class="tab-scroll-wrapper"
@@ -150,16 +156,6 @@
         </svg>
       </button>
     </div>
-    <Teleport to="body">
-      <div
-        v-if="hoveredTab"
-        class="tab-hover-card"
-        :style="hoverCardStyle"
-      >
-        <strong>{{ hoveredTab.label }}</strong>
-        <span>{{ hoverStatusLine(hoveredTab) }}</span>
-      </div>
-    </Teleport>
     <div class="titlebar-controls relative flex shrink-0 justify-end items-center gap-4">
       <div
         v-if="route.path === '/Filesystem'"
@@ -382,16 +378,18 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import TabNeedsYouMenu from './TabNeedsYouMenu.vue';
 import TabStripTab from './TabStripTab.vue';
 import { isTabCloseable } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
+import { TabHoverController } from '@pkg/composables/TabHoverController';
+import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
+import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
@@ -502,17 +500,6 @@ const {
 const tabGroupModel = new TabGroupModel();
 const tabLayoutRepository = new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey);
 const foldedGroupIds = tabLayoutRepository.foldedGroups;
-const tabStripOverlayIds = { hover: Symbol('tab-hover-card'), needsYou: Symbol('needs-you-menu') };
-
-function setTabStripOverlay(id: symbol, visible: boolean): void {
-  window.dispatchEvent(new CustomEvent('sulla:tab-strip-overlay', { detail: { id, visible } }));
-}
-
-function onNeedsYouMenuOpenChange(open: boolean): void {
-  if (open) hideTabHover();
-  setTabStripOverlay(tabStripOverlayIds.needsYou, open);
-}
-
 defineProps<{
   isDark:         boolean;
   toggleTheme:    () => void;
@@ -649,6 +636,7 @@ function isStripVisible(el: HTMLElement): boolean {
 }
 
 function onTabStripScroll() {
+  hideTabHover();
   const el = getScrollEl();
   if (!el) return;
   if (isStripVisible(el)) sharedTabScrollLeft = el.scrollLeft;
@@ -682,42 +670,102 @@ function onTabWheel(event: WheelEvent) {
   updateScrollButtons();
 }
 
-const hoveredTab = ref<HeaderTab | null>(null);
-const hoverCardStyle = ref<Record<string, string>>({ left: '8px', top: '52px' });
-let hoverTimer: number | undefined;
+const popupAnchor = new TabStripPopupAnchor(window);
+const hover = new TabHoverController(
+  window,
+  request => ipcRenderer.send('tab-hover:show', request),
+  id => ipcRenderer.send('tab-hover:hide', id),
+);
+const needsYouButton = ref<HTMLButtonElement | null>(null);
+const attentionMenuId = ref<string>();
 
 function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
-  hideTabHover();
-  if (dragState.value?.active) return;
-  const tabElement = event.currentTarget as HTMLElement;
-  hoverTimer = window.setTimeout(() => {
-    if (!tabElement.isConnected) return;
-    const tabRect = tabElement.getBoundingClientRect();
-    const left = Math.max(8, Math.min(tabRect.left, window.innerWidth - 328));
-    const top = Math.max(8, Math.min(tabRect.bottom + 6, window.innerHeight - 96));
-    hoverCardStyle.value = { left: `${ left }px`, top: `${ top }px` };
-    hoveredTab.value = tab;
-    setTabStripOverlay(tabStripOverlayIds.hover, true);
-  }, 350);
+  if (dragState.value?.active || attentionMenuId.value || event.pointerType === 'touch') return;
+  const anchor = event.currentTarget as HTMLElement;
+
+  hover.schedule(() => {
+    if (document.hidden) return undefined;
+    const current = orderedTabs.value.find(candidate => candidate.id === tab.id);
+    const position = popupAnchor.locate(anchor, getScrollEl() ?? undefined);
+
+    if (!current || !position) return undefined;
+    const state = current.activity && current.activity !== 'idle' ? current.activity : current.working ? 'working' : 'idle';
+
+    return {
+      ...position,
+      id:     crypto.randomUUID(),
+      title:  current.label,
+      status: ACTIVITY_LABEL[state],
+      detail: current.statusLine,
+    };
+  });
 }
 
 function hideTabHover(): void {
-  const wasVisible = Boolean(hoveredTab.value);
-  if (hoverTimer !== undefined) {
-    window.clearTimeout(hoverTimer);
-    hoverTimer = undefined;
-  }
-  hoveredTab.value = null;
-  if (wasVisible) setTabStripOverlay(tabStripOverlayIds.hover, false);
+  hover.cancel();
 }
 
-function hoverStatusLine(tab: HeaderTab): string {
-  if (tab.statusLine) return tab.statusLine;
-  return tab.activity ? ACTIVITY_LABEL[tab.activity] : 'Idle';
+function openAttentionMenu(): void {
+  if (attentionMenuId.value) {
+    hideAttentionMenu();
+    return;
+  }
+  hideTabHover();
+  publishAttentionMenu(crypto.randomUUID(), false);
+}
+
+function publishAttentionMenu(id: string, update: boolean): void {
+  const button = needsYouButton.value;
+  const position = button && popupAnchor.locate(button);
+
+  if (!position || !needsYouRows.value.length) {
+    hideAttentionMenu();
+    return;
+  }
+  attentionMenuId.value = id;
+  ipcRenderer.send('tab-context-menu:show', {
+    screenX:   0,
+    screenY:   0,
+    items:     needsYouRows.value,
+    tabData:   { attentionMenuId: id },
+    attention: { ...position, id },
+    update,
+  });
+}
+
+function hideAttentionMenu(): void {
+  const id = attentionMenuId.value;
+
+  attentionMenuId.value = undefined;
+  if (id) ipcRenderer.send('tab-context-menu:hide-attention', id);
+}
+
+function onAttentionClosed(_event: unknown, id: string): void {
+  if (attentionMenuId.value === id) attentionMenuId.value = undefined;
+}
+
+function onAttentionSelected(_event: unknown, action: string, data: Record<string, unknown>): void {
+  if (!attentionMenuId.value || data.attentionMenuId !== attentionMenuId.value || !action.startsWith('attention:')) return;
+  const tabId = action.slice('attention:'.length);
+
+  if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
+}
+
+function hideStripPopups(): void {
+  hideTabHover();
+  hideAttentionMenu();
+}
+
+function onStripVisibilityChange(): void {
+  if (document.hidden) hideStripPopups();
 }
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeyboardShortcuts);
+  window.addEventListener('blur', hideTabHover);
+  document.addEventListener('visibilitychange', onStripVisibilityChange);
+  ipcRenderer.on('tab-context-menu:attention-closed', onAttentionClosed);
+  ipcRenderer.on('tab-context-menu:selected', onAttentionSelected);
   window.addEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.addEventListener('sulla:navigate-tab', handleNavigateTab);
 
@@ -742,11 +790,15 @@ onMounted(() => {
   nextTick(syncTabStrip);
 });
 onActivated(() => nextTick(syncTabStrip));
+onDeactivated(hideStripPopups);
 onUnmounted(() => {
   cancelCurrentDrag();
   document.documentElement.classList.remove('tab-pointer-dragging');
-  hideTabHover();
-  setTabStripOverlay(tabStripOverlayIds.needsYou, false);
+  hideStripPopups();
+  window.removeEventListener('blur', hideTabHover);
+  document.removeEventListener('visibilitychange', onStripVisibilityChange);
+  ipcRenderer.removeListener('tab-context-menu:attention-closed', onAttentionClosed);
+  ipcRenderer.removeListener('tab-context-menu:selected', onAttentionSelected);
   window.removeEventListener('keydown', handleKeyboardShortcuts);
   window.removeEventListener('sulla:tab-transfer-state', onTransferSnapshot);
   window.removeEventListener('sulla:navigate-tab', handleNavigateTab);
@@ -927,8 +979,12 @@ interface TabStripSection {
   startIndex: number;
 }
 
-const needsYouTabs = computed(() => orderedTabs.value.filter(tab => tab.activity === 'you' || tab.activity === 'stalled'));
-const needsYouCount = computed(() => tabGroupModel.needsYouCount(orderedTabs.value));
+const needsYouRows = computed<TabAttentionRow[]>(() => orderedTabs.value.flatMap(tab => {
+  const state = tab.activity;
+
+  if (state !== 'you' && state !== 'stalled') return [];
+  return [{ id: tab.id, title: tab.label, state, iconPath: tab.iconPath, reason: [ACTIVITY_LABEL[state], tab.statusLine].filter(Boolean).join(' · ') }];
+}));
 
 function isGroupFolded(id: TabGroupId): boolean {
   return foldedGroupIds.value.includes(id);
@@ -1018,9 +1074,7 @@ const allTabsById = computed(() => {
     const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
     const snapshot = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
     const activity = snapshot?.state ?? (working ? 'working' : undefined);
-    const statusLine = bt.mode === 'chat'
-      ? `chat · ${ activity ? ACTIVITY_LABEL[activity] : 'ready' }${ snapshot?.detail ? ` · ${ snapshot.detail }` : '' }`
-      : bt.url === 'about:blank' ? bt.mode : bt.url;
+    const statusLine = bt.mode === 'chat' ? snapshot?.detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
 
     map.set(id, {
       id,
@@ -1047,6 +1101,14 @@ const allTabsById = computed(() => {
 
 /** Saved order is reconciled and sorted into visual order by the group model. */
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
+
+watch(() => JSON.stringify(needsYouRows.value), () => {
+  if (attentionMenuId.value) publishAttentionMenu(attentionMenuId.value, true);
+}, { flush: 'post' });
+watch(() => route.path, hideStripPopups, { flush: 'sync' });
+watch(() => orderedTabs.value.find(tab => tab.isActive)?.mode, hideStripPopups, { flush: 'sync' });
+watch(foldedGroupIds, hideTabHover);
+watch(() => orderedTabs.value.map(tab => tab.id).join('\0'), hideTabHover);
 
 const visibleTabs = computed(() => orderedTabs.value.filter(tab => tab.pinned || !isGroupFolded(tabGroupModel.groupForMode(tab.mode))));
 
@@ -1283,7 +1345,7 @@ function onPointerDown(event: PointerEvent, index: number): void {
       state.grabOffsetX = moveEvent.clientX - tabEl.getBoundingClientRect().left;
       tabEl.style.pointerEvents = 'none';
       document.documentElement.classList.add('tab-pointer-dragging');
-      hideTabHover();
+      hideStripPopups();
     }
     state.lastClientX = moveEvent.clientX;
 
@@ -1378,6 +1440,7 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 // ── Tab context menu (popup window via IPC) ──
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
+  hideStripPopups();
   // Build the list of menu items for this tab
   const items: string[] = [tab.pinned ? 'unpin' : 'pin'];
 
@@ -1450,6 +1513,7 @@ function handleTabContextMenuAction(
   action: string,
   tabData: Record<string, unknown>,
 ): void {
+  if (action.startsWith('attention:')) return;
   const tabId = tabData.id as string;
   const browserId = tabData.browserId as string | null;
   const tabRoute = tabData.route as string;
