@@ -116,7 +116,7 @@ describe('useThreadAgentActivity', () => {
     expect(activity.rootFallback.value).toBeNull();
   });
 
-  it('uses launch labels and definition/child metadata for stable chart roles, regardless of model', async() => {
+  it('uses definition/child metadata for stable chart roles, regardless of model', async() => {
     // risk: misleading agent identity — model overrides must not turn coding workers into reviewers.
     const rows = new RowFactory();
     const opusWorker = {
@@ -148,12 +148,27 @@ describe('useThreadAgentActivity', () => {
 
     await nextTick();
     const agents = new Map(activity.chartRoot.value?.children?.map(agent => [agent.id, agent]));
-    expect(agents.get(opusWorker.key)).toMatchObject({ role: 'wrk', task: 'Implement the chart' });
+    expect(agents.get(opusWorker.key)?.role).toBe('wrk');
     expect(agents.get(childManager.key)?.role).toBe('mgr');
     expect(agents.get(capableManager.key)?.role).toBe('mgr');
     expect(agents.get(reviewer.key)?.role).toBe('rev');
-    expect(agents.get(opusWorker.key)?.task).not.toBe('scheduled wake-up');
-    expect(agents.get(opusWorker.key)?.task).not.toBe(opusWorker.lastCheckinSummary);
+  });
+
+  it('uses the actual spawn label for Task instead of status reason or last check-in', async() => {
+    // risk: misleading work details — a wake-up reason/check-in must never masquerade as the assigned task.
+    const row = {
+      ...new RowFactory().create('task-label-job:0', 'thread-a', null),
+      label: 'Implement the chart',
+      stateReason: 'scheduled wake-up',
+      lastCheckinSummary: 'Checking the next test failure',
+    };
+    const activity = useActivityWithConsumer({
+      snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] }),
+      threadId: ref('thread-a'),
+    });
+
+    await nextTick();
+    expect(activity.chartRoot.value?.children?.[0]?.task).toBe('Implement the chart');
   });
 
   it('retains activity for the full 44-bucket chart window and prunes only older samples', () => {
