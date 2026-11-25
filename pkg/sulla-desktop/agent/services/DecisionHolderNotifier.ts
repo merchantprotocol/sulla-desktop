@@ -8,7 +8,7 @@ import { enqueueAgentCompletion } from './AgentCompletionInbox';
 import { AgentAwarenessPolicy } from './AgentAwarenessPolicy';
 
 export interface DecisionHolderDelivery {
-  sendJob(input: { jobId: string; taskIndex: number; message: string }): Promise<{ successBoolean: boolean; responseString: string }>;
+  sendJob(input: { jobId: string; taskIndex: number; message: string; waitForWake?: boolean }): Promise<{ successBoolean: boolean; responseString: string }>;
   enqueueChat(channel: string, threadId: string, entry: { jobId: string; taskIndex: number; results: never[]; notice: string; dedupeKey: string }): boolean;
   canUseTool(holder: DecisionRouteEntry): Promise<boolean>;
   humanIsActive(channel: string, threadId: string): Promise<boolean>;
@@ -29,7 +29,7 @@ export class DecisionHolderNotifier {
   async deliver(record: DecisionRecord, holder: DecisionRouteEntry): Promise<boolean> {
     const message = this.message(record);
     if (holder.jobId && holder.taskIndex !== undefined) {
-      const result = await this.delivery.sendJob({ jobId: holder.jobId, taskIndex: holder.taskIndex, message });
+      const result = await this.delivery.sendJob({ jobId: holder.jobId, taskIndex: holder.taskIndex, message, waitForWake: false });
       try {
         const receipt = JSON.parse(result.responseString) as { deliveredLive?: number; queuedForNextBoundary?: number };
         return result.successBoolean && Number(receipt.deliveredLive ?? 0) + Number(receipt.queuedForNextBoundary ?? 0) > 0;
@@ -72,7 +72,7 @@ class RuntimeDecisionHolderDelivery implements DecisionHolderDelivery {
 
   constructor(private readonly awarenessPolicy = new AgentAwarenessPolicy()) {}
 
-  async sendJob(input: { jobId: string; taskIndex: number; message: string }): Promise<{ successBoolean: boolean; responseString: string }> {
+  async sendJob(input: { jobId: string; taskIndex: number; message: string; waitForWake?: boolean }): Promise<{ successBoolean: boolean; responseString: string }> {
     const { sendJobMessage } = await import('../tools/agents/send_job_message');
     return sendJobMessage(input);
   }

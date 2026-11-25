@@ -169,19 +169,32 @@ export class DecisionEscalationService {
     this.delivering.add(key);
     try {
       let available = false;
-      let delivered = false;
       try {
         available = await this.routes.liveness(holder, current.conversationId) === 'available' && await this.notifier.canAnswer(current, holder);
-        if (available) delivered = await this.notifier.deliver(current, holder);
       } catch { /* An untrustworthy notifier cannot hold a decision indefinitely. */ }
-      if (!available || !delivered) {
+      if (!available) {
         await this.advance(current.id, 'unavailable');
         return;
       }
+
+      // Start the holder's clock before sending. A job wake can dispatch a
+      // complete agent turn, so awaiting delivery here would leave no deadline
+      // while that turn runs (and can deadlock if it asks a follow-up question).
       const deliveredAt = this.clock();
       const holderDeadline = Math.min(deliveredAt + DecisionEscalationService.DELIVERY_WINDOW_MS,
         route.holderSince + DecisionEscalationService.LEVEL_CAP_MS);
       if (!await this.records.claimHolder(current.id, route.holderIndex, { kind: 'system', threadId: holder.threadId }, { deliveredAt, holderDeadline })) return;
+
+      let delivered = false;
+      try {
+        const claimed = await this.records.findById(current.id) ?? { ...current, route: { ...route, deliveredAt, holderDeadline } };
+        delivered = await this.notifier.deliver(claimed, holder);
+      } catch { /* A failed delivery advances rather than holding this holder forever. */ }
+      if (!delivered) {
+        await this.advance(current.id, 'unavailable');
+        return;
+      }
+
       const updated = await this.records.findById(current.id);
       if (updated) this.changed(updated);
     } finally { this.delivering.delete(key) }

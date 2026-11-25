@@ -99,13 +99,8 @@ export class DecisionService {
       const existing = await this.pendingDecisions.findOpenQuestion(input);
       if (existing) {
         const parked = existing.attention !== 'answered' && await this.askerWaiter.parkQuestionAsker(asker, existing.id);
-        let current = existing;
-        if (existing.kind === 'question' && existing.route?.authority === 'any' && existing.route.chain[existing.route.holderIndex]?.kind === 'agent') {
-          await this.escalation.start(existing);
-          current = await this.pendingDecisions.findById(existing.id) ?? existing;
-        }
-        this.changed(current);
-        return { record: current, reused: true, ...(parked ? { parked: true } : {}) };
+        const startEscalation = existing.kind === 'question' && existing.route?.authority === 'any' && existing.route.chain[existing.route.holderIndex]?.kind === 'agent';
+        return { record: existing, reused: true, startEscalation, ...(parked ? { parked: true } : {}) };
       }
       const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
       if (signal?.aborted) throw new Error('Request cancelled');
@@ -131,16 +126,19 @@ export class DecisionService {
       await this.decisions.insert(record, this.session);
       await this.parentFyiNotifier.notify(record);
       const parked = await this.askerWaiter.parkQuestionAsker(asker, record.id);
+      const startEscalation = record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent';
+      return { record, reused: false, startEscalation, ...(parked ? { parked: true } : {}) };
+    });
+    this.questionWrites = operation.then(() => undefined, () => undefined);
+    return operation.then(async({ record, reused, startEscalation, parked }) => {
       let current = record;
-      if (record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent') {
+      if (startEscalation) {
         await this.escalation.start(record);
         current = await this.pendingDecisions.findById(record.id) ?? record;
       }
       this.changed(current);
-      return { record: current, reused: false, ...(parked ? { parked: true } : {}) };
+      return { record: current, reused, ...(parked ? { parked: true } : {}) };
     });
-    this.questionWrites = operation.then(() => undefined, () => undefined);
-    return operation;
   }
 
   async request(input: Omit<DecisionRecord, 'id' | 'status' | 'createdAt' | 'expiresAt'>, timeoutMs = 30 * 60_000, signal?: AbortSignal) {

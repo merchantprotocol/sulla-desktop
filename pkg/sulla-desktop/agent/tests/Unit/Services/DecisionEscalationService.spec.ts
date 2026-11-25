@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { DecisionRecord, DecisionRouteEntry, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import { DecisionRouteResolver } from '../../../services/DecisionRouteResolver';
@@ -130,11 +130,13 @@ class RecordingDelivery implements DecisionHolderDelivery {
   queuedForNextBoundary = false;
   throwsOnDelivery = false;
   beforeDeliver?: () => void;
+  deliveryGate?: Promise<void>;
 
   async sendJob(input: { jobId: string; taskIndex: number; message: string }) {
     if (this.throwsOnDelivery) throw new Error('delivery unavailable');
     this.beforeDeliver?.();
     this.delivered.push({ holder: `${ input.jobId }:${ input.taskIndex }`, message: input.message });
+    await this.deliveryGate;
     return { successBoolean: true, responseString: JSON.stringify(this.queuedForNextBoundary ? { deliveredLive: 0, queuedForNextBoundary: 1 } : { deliveredLive: 1 }) };
   }
   enqueueChat(_channel: string, threadId: string, entry: { notice: string }): boolean {
@@ -232,7 +234,7 @@ describe('DecisionEscalationService', () => {
     await Promise.all([harness.escalation.start(record), harness.escalation.start(record)]);
 
     let current = (await harness.store.findById(record.id))!;
-    expect(current.route).toMatchObject({ holderIndex: 0, deliveredAt: 240_100, holderDeadline: 300_100 });
+    expect(current.route).toMatchObject({ holderIndex: 0, deliveredAt: 100, holderDeadline: 180_100 });
     expect(harness.delivery.delivered).toHaveLength(1);
     harness.delivery.beforeDeliver = undefined;
     harness.now = current.route!.holderDeadline!;
@@ -249,6 +251,25 @@ describe('DecisionEscalationService', () => {
       expect.objectContaining({ agentId: 'root-agent', action: 'timeout' }),
     ] });
     expect(harness.delivery.delivered).toHaveLength(2);
+  });
+
+  it('persists the delivery deadline before a parked parent turn finishes', async() => {
+    // risk: liveness — a slow parent turn must not leave the holder without its three/five-minute timeout.
+    const chain = [agent('parent', 'manager', 'parent-job'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    let release!: () => void;
+    harness.delivery.deliveryGate = new Promise<void>(resolve => { release = resolve });
+    const record = question('deadline-before-wake', { authority: 'any', chain, holderIndex: 0, holderSince: harness.now, history: [] });
+    harness.store.put(record);
+
+    const starting = harness.escalation.start(record);
+    await vi.waitFor(() => expect(harness.delivery.delivered).toHaveLength(1));
+    const routeDuringWake = (await harness.store.findById(record.id))?.route;
+    release();
+    await starting;
+
+    expect(routeDuringWake).toMatchObject({ deliveredAt: harness.now,
+      holderDeadline: harness.now + DecisionEscalationService.DELIVERY_WINDOW_MS });
   });
 
   it('skips a finished holder and a parent blocked in a synchronous spawn at once, recording unavailable', async() => {
