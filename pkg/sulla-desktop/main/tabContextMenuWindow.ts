@@ -21,10 +21,10 @@ interface MenuRequest {
 }
 
 class TabContextMenuWindow {
-  private popup?:   BrowserWindow;
-  private loaded?:  Promise<void>;
-  private pending?: MenuRequest;
-  private rendered?: MenuRequest;
+  private popup?:        BrowserWindow;
+  private loaded?:       Promise<void>;
+  private pending?:      MenuRequest;
+  private rendered?:     MenuRequest;
   private detachOpener?: () => void;
 
   async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
