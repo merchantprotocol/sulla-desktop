@@ -26,6 +26,17 @@ function decisions(result: Promise<{ status: string; answers: { selected: string
 }
 
 describe('OrgContactRequestDecisionPrompter', () => {
+  it('marks first-contact consent as human-only in the durable decision record', async () => {
+    // risk: consent — a delegated parent must never grant an organization contact request on the human's behalf.
+    const request = vi.fn(async () => ({ record: { id: 'decision-consent' }, result: new Promise<{ status: string; answers: { selected: string[] }[] }>(() => {}) }));
+    const decisionStore = { request, expire: vi.fn(async () => {}) } as unknown as ContactDecisionStore;
+    const service = new OrgContactRequestDecisionPrompter(decisionStore, { emit: async () => true });
+
+    await service.request(prompt(vi.fn(async () => [])));
+
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ payload: { decisionAuthority: 'human' } }), expect.any(Number));
+  });
+
   it('does not resolve a held request when the question card cannot be sent', async () => {
     // risk: missing UI delivery must never implicitly deny a trusted contact request
     const resolve = vi.fn(async () => []);

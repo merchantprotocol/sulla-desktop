@@ -44,8 +44,16 @@ export class DecisionRouteResolver {
       parentChannel = parent.parentChannel || parentChannel;
     }
 
-    // A missing parent or a corrupt cycle must never create a route with no human fallback.
-    const rootThreadId = parentThreadId && visited.has(parentThreadId) ? parentThreadId : conversationId;
+    // A corrupt cycle has no trustworthy root. Preserve the last distinct ancestor as the human fallback.
+    if (parentThreadId && visited.has(parentThreadId)) {
+      const last = chain[chain.length - 1];
+      if (last) chain[chain.length - 1] = this.humanEntry(last.threadId, last.channel);
+      else chain.push(this.humanEntry(conversationId, channel));
+      return chain;
+    }
+
+    // A missing parent must never create a route with no human fallback.
+    const rootThreadId = conversationId;
     if (chain[chain.length - 1]?.threadId !== rootThreadId || chain[chain.length - 1]?.kind !== 'human') {
       chain.push(this.humanEntry(rootThreadId, parentChannel));
     }

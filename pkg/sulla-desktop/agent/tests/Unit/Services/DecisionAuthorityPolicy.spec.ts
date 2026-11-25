@@ -12,24 +12,25 @@ const question = { kind: 'question' as const, title: 'First contact', questions:
 describe('DecisionAuthorityPolicy', () => {
   const policy = new DecisionAuthorityPolicy();
 
-  it('classifies approvals, task questions and explicit consent as human-only, but not by title', () => {
-    // risk: authorization — only a human may grant approvals, complete task asks or grant contact consent.
-    expect(policy.classify({ ...question, kind: 'approval' })).toBe('human');
-    expect(policy.classify({ ...question, questions: [{ ...question.questions[0], task: true }] })).toBe('human');
-    expect(policy.classify({ ...question, questions: [...question.questions, { question: 'Do this?', task: true, options: [{ label: 'Done' }] }] })).toBe('human');
-    expect(policy.classify({ ...question, payload: { decisionAuthority: 'human' } })).toBe('human');
-    expect(policy.classify(question)).toBe('any');
-  });
-
-  it('allows agents to answer only ordinary questions and to deny or pass approvals, never grant them', () => {
-    // risk: authorization — delegated agents must not grant any human-only approval or answer task/consent questions.
-    expect(policy.allows(question, 'answer', 'agent')).toBe(true);
-    expect(policy.allows({ ...question, questions: [{ ...question.questions[0], task: true }] }, 'answer', 'agent')).toBe(false);
-    expect(policy.allows({ ...question, payload: { decisionAuthority: 'human' } }, 'answer', 'agent')).toBe(false);
+  it('enforces the full actor/action matrix for approvals, ordinary questions, task asks and explicit consent', () => {
+    // risk: authorization — an agent must not grant approvals or answer task/consent questions, while ordinary questions remain parent-answerable.
     const approval = { ...question, kind: 'approval' as const };
-    expect(policy.allows(approval, 'deny', 'agent')).toBe(true);
-    expect(policy.allows(approval, 'pass', 'agent')).toBe(true);
-    expect(policy.allows(approval, 'approve', 'agent')).toBe(false);
-    expect(policy.allows(question, 'answer', 'human')).toBe(true);
+    const task = { ...question, questions: [{ ...question.questions[0], task: true }] };
+    const consent = { ...question, payload: { decisionAuthority: 'human' } };
+    const cases: [typeof question | typeof approval, 'answer' | 'approve' | 'deny' | 'pass', 'agent' | 'human', boolean][] = [
+      [approval, 'approve', 'human', true], [approval, 'deny', 'human', true], [approval, 'pass', 'human', false], [approval, 'answer', 'human', false],
+      [approval, 'approve', 'agent', false], [approval, 'deny', 'agent', true], [approval, 'pass', 'agent', true], [approval, 'answer', 'agent', false],
+      [question, 'answer', 'human', true], [question, 'approve', 'human', false], [question, 'deny', 'human', false], [question, 'pass', 'human', false],
+      [question, 'answer', 'agent', true], [question, 'approve', 'agent', false], [question, 'deny', 'agent', false], [question, 'pass', 'agent', false],
+      [task, 'answer', 'human', true], [task, 'answer', 'agent', false],
+      [consent, 'answer', 'human', true], [consent, 'answer', 'agent', false],
+    ];
+
+    expect(policy.classify(approval)).toBe('human');
+    expect(policy.classify(task)).toBe('human');
+    expect(policy.classify({ ...question, questions: [...question.questions, { question: 'Do this?', task: true, options: [{ label: 'Done' }] }] })).toBe('human');
+    expect(policy.classify(consent)).toBe('human');
+    expect(policy.classify({ ...question, title: 'Run this task?' })).toBe('any');
+    for (const [record, action, actor, allowed] of cases) expect(policy.allows(record, action, actor)).toBe(allowed);
   });
 });

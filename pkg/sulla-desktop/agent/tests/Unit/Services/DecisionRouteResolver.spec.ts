@@ -42,4 +42,16 @@ describe('DecisionRouteResolver', () => {
     await expect(resolver.liveness(chain[0])).resolves.toBe('unavailable');
     await expect(resolver.liveness(chain[1])).resolves.toBe('available');
   });
+
+  it('stops a corrupt ancestry cycle at the last distinct ancestor and retains a human fallback', async() => {
+    // risk: routing — a corrupt parent loop must not return the decision to the asker or loop indefinitely.
+    const resolver = new DecisionRouteResolver(new TaskMap(new Map([
+      ['a', { jobId: 'job-a', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', parentThreadId: 'b', parentChannel: 'channel-b' }],
+      ['b', { jobId: 'job-b', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', parentThreadId: 'a', parentChannel: 'channel-a' }],
+    ])));
+
+    await expect(resolver.resolve('a', 'channel-a')).resolves.toEqual([
+      { threadId: 'b', channel: 'channel-b', agentId: 'human', kind: 'human' },
+    ]);
+  });
 });
