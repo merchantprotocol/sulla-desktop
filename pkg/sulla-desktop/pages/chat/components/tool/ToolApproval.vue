@@ -103,14 +103,14 @@ const decisionClass = computed(() => {
 .route-requester { display: flex; align-items: flex-start; gap: 7px; margin: 8px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 20px; }
 .route-requester__avatar { display: grid; place-items: center; width: 18px; height: 18px; flex: none; margin-top: 1px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface)); color: var(--accent); font-size: 10px; font-weight: 700; }
 .route-requester code { color: var(--text-primary); font: 500 11.5px var(--font-mono); }
-.approval.route-card .head { font-family: var(--font-body); font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--text-primary); margin-bottom: 2px; }
+.approval.route-card .head { font-family: var(--font-body); font-size: 14px; font-weight: 600; line-height: 1.4; letter-spacing: 0; text-transform: none; color: var(--text-primary); margin-bottom: 2px; }
 .approval.route-card .head::before { display: none; }
 .approval.route-card .what { margin: 0; font-family: var(--font-body); font-style: normal; font-size: 15px; color: var(--text-primary); }
 .approval.route-card .cmd { margin: 10px 0 0; padding: 8px 12px; border: 1px solid var(--border-default); border-radius: 8px; background: var(--bg-page); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval.route-card .actions { margin-top: 12px; }
 .approval.route-card .actions button { height: 30px; padding: 0 14px; border-radius: 8px; font: 500 13px var(--font-body); letter-spacing: 0; text-transform: none; }
 .approval.route-card.approved::after, .approval.route-card.denied::after { display: none; }
-.route-hint { margin: 6px 0 12px; color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
+.route-hint { margin: 6px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
 .head {
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em;
   text-transform: uppercase; color: var(--status-warning);
