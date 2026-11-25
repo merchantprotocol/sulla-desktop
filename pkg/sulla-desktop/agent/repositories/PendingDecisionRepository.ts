@@ -5,13 +5,32 @@
 import { randomUUID } from 'node:crypto';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
+import { DecisionRouteTransitionSqlBuilder, type DecisionRoutePatch, type DecisionSettlementStatus, type DecisionTransitionActor } from './DecisionRouteTransitionSqlBuilder';
+import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
 
 interface DecisionQueryClient {
   query<T>(sql: string, params?: unknown[]): Promise<T[]>;
 }
 
 export class PendingDecisionRepository {
-  constructor(private readonly client: DecisionQueryClient) {}
+  constructor(private readonly client: DecisionQueryClient, private readonly transitions = new DecisionRouteTransitionSqlBuilder()) {}
+
+  async claimHolder(id: string, expectedHolderIndex: number, actor: DecisionTransitionActor, routePatch: DecisionRoutePatch): Promise<boolean> {
+    const query = this.transitions.claimHolder('question', id, expectedHolderIndex, actor, routePatch);
+    return (await this.client.query(query.sql, query.params)).length > 0;
+  }
+
+  async advanceHolder(id: string, expectedHolderIndex: number, actor: DecisionTransitionActor, routePatch: DecisionRoutePatch,
+    history: NonNullable<DecisionRecord['route']>['history'][number], deadlineNow?: number): Promise<boolean> {
+    const query = this.transitions.advanceHolder('question', id, expectedHolderIndex, actor, routePatch, history, deadlineNow);
+    return (await this.client.query(query.sql, query.params)).length > 0;
+  }
+
+  async settleAs(id: string, expectedHolderIndex: number, actor: DecisionTransitionActor, status: DecisionSettlementStatus,
+    patch: Partial<Omit<DecisionRecord, 'route'>>, history: NonNullable<DecisionRecord['route']>['history'] = []): Promise<boolean> {
+    const query = this.transitions.settleAs('question', id, expectedHolderIndex, actor, status, { ...patch, status }, history);
+    return (await this.client.query(query.sql, query.params)).length > 0;
+  }
 
   async hasPendingForConversation(conversationId: string, now = Date.now()): Promise<boolean> {
     const rows = await this.client.query<{ id: string }>(`SELECT id FROM human_decisions
@@ -46,6 +65,16 @@ export class PendingDecisionRepository {
       WHERE job.parent_thread_id IS NOT NULL
     ) SELECT id FROM ancestors`, [conversationId]);
     return rows.map(row => row.id);
+  }
+
+  async taskForThread(threadId: string): Promise<AgentJobTaskTarget | null> {
+    const rows = await this.client.query<AgentJobTaskTarget>(`SELECT j.job_id AS "jobId", j.status AS "jobStatus",
+        task.ordinality - 1 AS "taskIndex", task.value->>'status' AS "taskStatus", task.value->>'threadId' AS "threadId",
+        j.parent_channel AS "parentChannel", j.parent_thread_id AS "parentThreadId",
+        task.value->>'label' AS label, task.value->>'agentId' AS "agentId"
+      FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
+      WHERE task.value->>'threadId'=$1 LIMIT 1`, [threadId]);
+    return rows[0] ?? null;
   }
 
   /** Persist expiry transitions and return the authoritative records to every subscribed consumer. */
@@ -154,7 +183,7 @@ export class PendingDecisionRepository {
     const messageId = `decision-answer:${ record.id }`;
     const attempt = randomUUID();
     const rows = await this.client.query<{ record: DecisionRecord }>(`WITH chosen AS (
-      UPDATE human_decisions SET record=record || jsonb_build_object('attention','answered','answerDelivery','queued','answers',$3::jsonb,'answerAttempt',$7::text), updated_at=NOW()
+      UPDATE human_decisions SET record=record || jsonb_build_object('attention','answered','answerDelivery','queued','answers',$3::jsonb,'answerAttempt',$7::text,'answeredBy',$8::jsonb), updated_at=NOW()
       WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$2
         AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox'))
         AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
@@ -166,7 +195,7 @@ export class PendingDecisionRepository {
         (SELECT agent_id FROM conversation_history WHERE (thread_id=$2 OR id=$2) AND deleted_at IS NULL AND NULLIF(agent_id,'') IS NOT NULL
           ORDER BY CASE WHEN thread_id=$2 THEN 0 ELSE 1 END,last_active_at DESC NULLS LAST,id DESC LIMIT 1) FROM chosen
       ON CONFLICT(message_id) DO UPDATE SET body=EXCLUDED.body,ids=EXCLUDED.ids,receiver_agent_id=EXCLUDED.receiver_agent_id,delivered_at=NULL,lease_owner=NULL,lease_expires_at=NULL RETURNING message_id
-    ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt]);
+    ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt, JSON.stringify(record.answeredBy ?? { kind: 'human' })]);
     return rows[0]?.record;
   }
 

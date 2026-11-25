@@ -5,6 +5,7 @@
 
 import type { AgentJobTaskTarget } from '../../database/models/AgentJobMessagingModel';
 import type { DecisionRecord } from '@pkg/shared/decisions';
+import { DecisionRouteResolver } from '../../services/DecisionRouteResolver';
 
 export interface PublishApprovalTaskReader {
   taskForThread(threadId: string): Promise<AgentJobTaskTarget | null>;
@@ -32,8 +33,9 @@ type RoutedDecision = Pick<DecisionRecord, 'conversationId' | 'channel' | 'reque
  */
 export class PublishApprovalRouter {
   private static readonly UNNAMED_AGENT = 'default agent';
+  private readonly routes: DecisionRouteResolver;
 
-  constructor(private readonly tasks: PublishApprovalTaskReader) {}
+  constructor(private readonly tasks: PublishApprovalTaskReader) { this.routes = new DecisionRouteResolver(tasks) }
 
   /** The delegated task that is asking, or undefined for a chat the human talks to directly. */
   async requester(threadId: string): Promise<PublishApprovalRequester | undefined> {
@@ -49,17 +51,11 @@ export class PublishApprovalRouter {
 
   /** A hidden child thread has no tab, so its card climbs job ancestry to the top visible chat. */
   async cardTarget(record: RoutedDecision): Promise<PublishApprovalCardTarget> {
-    const visited = new Set([record.conversationId]);
-    let threadId = record.conversationId;
-    let channel = record.channel;
-    let task = await this.tasks.taskForThread(threadId);
-    while (task?.parentThreadId && !visited.has(task.parentThreadId)) {
-      threadId = task.parentThreadId;
-      channel = task.parentChannel || channel;
-      visited.add(threadId);
-      task = await this.tasks.taskForThread(threadId);
-    }
-    return threadId === record.conversationId ? { kind: 'requester_chat' } : { kind: 'ancestor_chat', channel, threadId };
+    const chain = await this.routes.resolve(record.conversationId, record.channel);
+    const human = chain[chain.length - 1];
+    return human?.threadId === record.conversationId
+      ? { kind: 'requester_chat' }
+      : { kind: 'ancestor_chat', channel: human.channel, threadId: human.threadId };
   }
 
   /** A delegated asker is only ever reached through its job mailbox: a finished job has nobody left to tell. */

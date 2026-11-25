@@ -13,8 +13,10 @@ import { ConversationHistoryModel } from '../database/models/ConversationHistory
 import { getWebSocketClientService } from './WebSocketClientService';
 import { LateDecisionAnswerHandler } from './LateDecisionAnswerHandler';
 import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
+import { DecisionAuthorityPolicy } from './DecisionAuthorityPolicy';
+import { DecisionRouteResolver } from './DecisionRouteResolver';
 
-import type { DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
+import type { DecisionActor, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
 /** Durable human requests retain their context after execution waiters expire.
  * Late question answers enter the original chat mailbox; expired approvals fail closed.
@@ -25,14 +27,24 @@ export class DecisionService {
   private readonly lateAnswerHandler: LateDecisionAnswerHandler;
   private readonly decisions: HumanDecisionRepository;
   private readonly approvalPolicies: ToolApprovalPolicyRepository;
+  private readonly authorityPolicy: DecisionAuthorityPolicy;
+  private readonly routeResolver: DecisionRouteResolver;
 
   constructor(
     lateAnswerHandler?: LateDecisionAnswerHandler,
-    repositories: { decisions?: HumanDecisionRepository; approvalPolicies?: ToolApprovalPolicyRepository; pendingDecisions?: PendingDecisionRepository } = {},
+    repositories: {
+      decisions?: HumanDecisionRepository;
+      approvalPolicies?: ToolApprovalPolicyRepository;
+      pendingDecisions?: PendingDecisionRepository;
+      authorityPolicy?: DecisionAuthorityPolicy;
+      routeResolver?: DecisionRouteResolver;
+    } = {},
   ) {
     this.pendingDecisions = repositories.pendingDecisions ?? new PendingDecisionRepository(postgresClient);
     this.decisions = repositories.decisions ?? new HumanDecisionRepository(postgresClient);
     this.approvalPolicies = repositories.approvalPolicies ?? new ToolApprovalPolicyRepository(postgresClient);
+    this.authorityPolicy = repositories.authorityPolicy ?? new DecisionAuthorityPolicy();
+    this.routeResolver = repositories.routeResolver ?? new DecisionRouteResolver(this.pendingDecisions);
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
       { find: conversationId => this.pendingDecisions.findConversation(conversationId) },
@@ -54,7 +66,7 @@ export class DecisionService {
   private questionWrites = Promise.resolve();
 
   /** Human questions outlive tool transports; answers always use the durable mailbox. */
-  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean }> {
+  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean }> {
     const operation = this.questionWrites.then(async() => {
       if (signal?.aborted) throw new Error('Request cancelled');
       if (!input.conversationId || !input.channel || !input.questions?.length) throw new Error('A question requires its original conversation and options.');
@@ -63,7 +75,16 @@ export class DecisionService {
       const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
       if (signal?.aborted) throw new Error('Request cancelled');
       const now = Date.now();
-      const record: DecisionRecord = { ...input, relatedConversationIds, kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + 30 * 60_000, payload: { answerRoute: 'inbox' } };
+      const candidate = { ...input, kind: 'question' as const };
+      const chain = await this.routeResolver.resolve(input.conversationId, input.channel);
+      const authority = this.authorityPolicy.classify(candidate);
+      const record: DecisionRecord = {
+        ...input,
+        relatedConversationIds,
+        route: { authority, chain, holderIndex: authority === 'human' ? chain.length - 1 : 0, holderSince: now, history: [] },
+        kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now,
+        expiresAt: now + 30 * 60_000, payload: { ...input.payload, answerRoute: 'inbox' },
+      };
       await this.decisions.insert(record, this.session);
       this.changed(record);
       return { record, reused: false };
@@ -77,7 +98,13 @@ export class DecisionService {
     if (!input.conversationId || !input.channel) throw new Error('Approval requires the original conversation. No action was executed.');
     const now = Date.now();
     const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
-    const record: DecisionRecord = { ...input, relatedConversationIds, id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs };
+    const chain = await this.routeResolver.resolve(input.conversationId, input.channel);
+    const authority = this.authorityPolicy.classify(input);
+    const record: DecisionRecord = {
+      ...input, relatedConversationIds,
+      route: { authority, chain, holderIndex: authority === 'human' ? chain.length - 1 : 0, holderSince: now, history: [] },
+      id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs,
+    };
     await this.decisions.insert(record, this.session);
     let settle!: (value: DecisionOutcome) => void;
     const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
@@ -145,13 +172,13 @@ export class DecisionService {
     return this.decisions.listRecent();
   }
 
-  async resolve(response: DecisionResponse): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
+  async resolve(response: DecisionResponse, actor: DecisionActor = { kind: 'human' }): Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }> {
     if (!response || typeof response.id !== 'string' || typeof response.conversationId !== 'string') return { settled: false, reason: 'Request and conversation are required.' };
     const entry = this.waiting.get(response.id);
     if (!entry) {
       const record = await this.pendingDecisions.findById(response.id);
       if (record?.kind === 'question' && (record.status === 'expired' || record.payload?.answerRoute === 'inbox') && response.action === 'answered' && record.conversationId === response.conversationId) {
-        const receipt = await this.lateAnswerHandler.handle(record, response);
+        const receipt = await this.lateAnswerHandler.handle({ ...record, answeredBy: actor }, response);
         const updated = await this.pendingDecisions.findById(record.id);
         if (updated) this.changed(updated);
         return receipt;
@@ -167,6 +194,7 @@ export class DecisionService {
         const next: DecisionRecord = {
           ...record,
           status: response.action,
+          answeredBy: actor,
           ...(response.action !== 'deferred' ? { attention: 'answered' } : {}),
         };
         if (!await this.decisions.settleDurablePublish(response.id, response.action, next, now)) return { settled: false, reason: 'Request is no longer pending.' };
@@ -182,7 +210,7 @@ export class DecisionService {
       await this.expire(response.id);
       const expired = await this.pendingDecisions.findById(response.id);
       if (expired?.kind === 'question' && expired.status === 'expired' && response.action === 'answered') {
-        const receipt = await this.lateAnswerHandler.handle(expired, response);
+        const receipt = await this.lateAnswerHandler.handle({ ...expired, answeredBy: actor }, response);
         const updated = await this.pendingDecisions.findById(expired.id);
         if (updated) this.changed(updated);
         return receipt;
@@ -206,7 +234,11 @@ export class DecisionService {
     }
     entry.busy = true;
     try {
-      const next: DecisionRecord = { ...entry.record, status: action, ...(action !== 'deferred' ? { attention: 'answered' as const } : {}), ...(answers.length ? { answers } : {}) };
+      const next: DecisionRecord = {
+        ...entry.record, status: action,
+        ...(action !== 'deferred' ? { attention: 'answered' as const, answeredBy: actor } : {}),
+        ...(answers.length ? { answers } : {}),
+      };
       if (!await this.decisions.settle(response.id, action, next, this.session)) return { settled: false, reason: 'Request is no longer pending.' };
       entry.record = next;
       this.changed(next);
@@ -214,7 +246,7 @@ export class DecisionService {
         entry.cleanup();
         clearTimeout(entry.timer);
         this.waiting.delete(response.id);
-        entry.settle({ status: action, answers });
+        entry.settle({ status: action, answers, answeredBy: actor });
       }
       return { settled: true, conversationId: next.conversationId };
     } finally { entry.busy = false }

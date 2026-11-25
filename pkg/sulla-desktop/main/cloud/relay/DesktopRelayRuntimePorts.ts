@@ -131,7 +131,7 @@ export class DesktopRelayRuntimePorts {
         admitRelayThread,
         validateSelection:  message => validateChatSelection(message),
         persistAttachments: (conversationId, messageId, turn) => persistMobileAttachments(path.join(resolveSullaHomeDir(), 'uploads', 'mobile'), conversationId, messageId, turn.files),
-        companionRequest:   async(method, params) => (await import('@pkg/main/mobileCompanion')).mobileCompanionRequest(method, params),
+        companionRequest:   async(method, params, actor) => (await import('@pkg/main/mobileCompanion')).mobileCompanionRequest(method, params, actor),
         registerMobileCard: async(threadId, kind, data) => { (await import('@pkg/main/mobileCompanion')).registerMobileCard(threadId, kind, data) },
       },
       files: {

@@ -3,6 +3,33 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+export type DecisionAuthority = 'human' | 'any';
+export type DecisionActor = { kind: 'human' } | { kind: 'agent'; agentId?: string; threadId?: string };
+export type DecisionRouteEntry = {
+  threadId: string;
+  channel: string;
+  agentId: string;
+  jobId?: string;
+  taskIndex?: number;
+  kind: 'agent' | 'human';
+};
+export type DecisionRouteHistoryEntry = {
+  threadId: string;
+  agentId: string;
+  action: 'answered' | 'passed' | 'denied' | 'timeout' | 'unavailable';
+  at: number;
+  note?: string;
+};
+export interface DecisionRoute {
+  authority: DecisionAuthority;
+  chain: DecisionRouteEntry[];
+  holderIndex: number;
+  holderSince: number;
+  holderDeadline?: number;
+  deliveredAt?: number;
+  history: DecisionRouteHistoryEntry[];
+}
+
 export interface DecisionRecord {
   id:                      string;
   conversationId:          string;
@@ -25,6 +52,10 @@ export interface DecisionRecord {
   requestedBy?: { agentId: string; label?: string; jobId?: string; taskIndex?: number };
   /** Trusted card copy persisted with the decision, never recovered from transcript text. */
   approvalPresentation?: { reason: string; command: string; origin: { kind: string } };
+  /** Parent-first authority snapshot and current holder; omitted by legacy records. */
+  route?: DecisionRoute;
+  /** Persisted identity of the actor who completed the decision; omitted by legacy records. */
+  answeredBy?: DecisionActor;
   questions?:              { question: string; header?: string; multiSelect?: boolean; task?: boolean; command?: string; options: { label: string; description?: string }[] }[];
   /** What the user chose, kept so an answer survives even if delivering it fails. */
   answers?:                { question: string; selected: string[] }[];
@@ -40,4 +71,5 @@ export interface DecisionResponse {
 export interface DecisionOutcome {
   status:  DecisionRecord['status'];
   answers: { question: string; selected: string[] }[];
+  answeredBy?: DecisionActor;
 }

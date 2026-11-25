@@ -72,7 +72,8 @@ export class DesktopRelayRequestHandlers {
     try {
       const result = msg.method === 'chat.runs'
         ? { conversations: this.outbox.activeConversationIds().filter(id => !id.startsWith('remote_')) }
-        : await this.chat.companionRequest(msg.method || '', msg.params || {});
+        : await this.chat.companionRequest(msg.method || '', msg.params || {},
+          msg.method === 'chat.answer' || msg.method === 'decisions.resolve' ? { kind: 'human' } : undefined);
       if (msg.method === 'chat.answer' || (msg.method === 'decisions.resolve' && (result as any)?.settled)) {
         const threadId = String(msg.params?.conversationId || '');
         const content = JSON.stringify({ sullaCard: { version: 1, kind: 'decision_result', deviceId: this.identity.deviceId, content: 'Your response was received.', answeredId: msg.params?.id, answers: msg.params?.answers, decision: msg.params?.decision || msg.params?.action } });
