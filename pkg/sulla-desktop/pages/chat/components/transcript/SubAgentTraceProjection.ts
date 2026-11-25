@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
+import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { AgentRowState, AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { AgentJobCheckin } from '@pkg/agent/database/models/AgentJobMessagingModel';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
@@ -28,7 +29,9 @@ interface JobTrace {
 }
 
 const states: Record<AgentRowState, SubAgentTraceStatus> = {
-  queued: 'starting', working: 'working', quiet: 'quiet', parked: 'waiting', blocked: 'blocked',
+  // A parked task is still running (waiting on a timer or its children); the
+  // approved row has exactly seven status words, so it reads as working.
+  queued: 'starting', working: 'working', quiet: 'quiet', parked: 'working', blocked: 'blocked',
   done: 'returned', failed: 'failed', lost: 'failed', stopped: 'stopped',
 };
 const resultStates: Record<AgentResultItem['status'], SubAgentTraceStatus> = {
@@ -39,8 +42,28 @@ const exchangeStates: Record<SubAgentExchangeMessage['status'], SubAgentTraceSta
 };
 const legacyStates: Record<string, SubAgentTraceStatus> = { Done: 'returned', Failed: 'failed', Blocked: 'blocked', Stopped: 'stopped' };
 
+const statusLabels: Record<SubAgentTraceStatus, string> = {
+  starting: 'starting', working: 'working', quiet: 'no check-in', waiting: 'working', blocked: 'blocked',
+  returned: 'returned', failed: 'failed', stopped: 'stopped',
+};
+
 /** Collects related events across the whole chat; the row stays in the first event's turn. */
 export class SubAgentTraceProjection {
+  /** The one status word the approved row shows. */
+  static statusLabel(status: SubAgentTraceStatus): string { return statusLabels[status]; }
+
+  /** "2 agents: 1 returned, 1 working" for the turn header, in first-seen status order. */
+  static summary(statuses: readonly SubAgentTraceStatus[]): string | undefined {
+    if (!statuses.length) return undefined;
+    const counts = new Map<string, number>();
+    for (const status of statuses) {
+      const label = statusLabels[status];
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const parts = [...counts].map(([label, count]) => `${ count } ${ label }`).join(', ');
+    return `${ statuses.length } ${ statuses.length === 1 ? 'agent' : 'agents' }: ${ parts }`;
+  }
+
   rowsByMessage(messages: readonly Message[], input: SubAgentTraceInput): Map<string, TraceRow[]> {
     const agents = new Map(input.agents?.map(row => [row.key, row]));
     const byThread = new Map<string, string>();
@@ -125,7 +148,10 @@ export class SubAgentTraceProjection {
       native ? ({ running: 'working', done: 'returned', error: 'failed' } as const)[native.status] :
       launch?.status && launch.status !== 'running' ? exchangeStates[launch.status] : 'starting');
     const ended = status === 'returned' || status === 'failed' || status === 'stopped';
-    const note = settled?.note ?? (live ? live.stateReason || live.lastCheckinSummary || launch?.summary :
+    const liveNote = live && (live.state === 'parked'
+      ? live.lastCheckinSummary || live.waitReason || live.stateReason
+      : live.stateReason || live.lastCheckinSummary);
+    const note = settled?.note ?? (live ? liveNote || launch?.summary :
       native?.desc ?? exchange?.summary ?? launch?.summary ?? legacy?.headline);
     const modelStatus = live?.modelStatus ?? result?.modelStatus;
     const startedAt = (reopened ? startedLiveAt : result?.startedAt ?? startedLiveAt) ?? launch?.createdAt ?? native?.createdAt;
@@ -133,7 +159,7 @@ export class SubAgentTraceProjection {
     const lastCheckinAt = this.timestamp(live?.lastCheckinAt);
     const report = [exchange?.detail, result?.report].filter((value, index, values) => value && values.indexOf(value) === index).join('\n\n');
     const details: SubAgentTraceDetails = {
-      agentId, conversationId: launch?.conversationId ?? result?.threadId ?? exchange?.conversationId ?? live?.threadId ?? undefined,
+      agentId, marker: ThreadAgentActivityPresenter.initials(agentId, job.key), conversationId: launch?.conversationId ?? result?.threadId ?? exchange?.conversationId ?? live?.threadId ?? undefined,
       jobId: launch?.jobId ?? result?.jobId ?? exchange?.jobId ?? live?.jobId ?? old?.jobId,
       taskIndex: launch?.taskIndex ?? result?.taskIndex ?? exchange?.taskIndex ?? live?.taskIndex,
       model: modelStatus ? AgentModelStatus.label(modelStatus) : result?.model,

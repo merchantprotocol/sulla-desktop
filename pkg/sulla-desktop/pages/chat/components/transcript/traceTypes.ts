@@ -10,6 +10,8 @@ export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'waiting' |
 
 export interface SubAgentTraceDetails {
   agentId?: string;
+  /** Same initials the worker chart draws for this agent. */
+  marker: string;
   conversationId?: string;
   jobId?: string;
   taskIndex?: number;
@@ -38,6 +40,8 @@ export interface TraceRow {
   durationLabel?: string;
   status: TraceRowStatus;
   note?: string;
+  /** Source number, matching the reply's [n] marks and its sources row. */
+  cite?: number;
   subagent?: SubAgentTraceDetails;
   payload?: TracePayload;
   anchorEntryId: string;
@@ -49,4 +53,6 @@ export interface TraceTurn {
   anchorEntryId: string;
   rows: TraceRow[];
   usage?: { model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; durationLabel?: string };
+  /** "2 agents: 1 returned, 1 working" when the turn launched sub-agents. */
+  agentSummary?: string;
 }
