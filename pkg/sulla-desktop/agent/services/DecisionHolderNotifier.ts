@@ -101,7 +101,7 @@ class RuntimeDecisionHolderDelivery implements DecisionHolderDelivery {
     if (!this.awarenessPolicy.allowsTool(awareness, 'agents/answer_decision')) return false;
     const allowed = metadata?.allowedToolNames;
     if (Array.isArray(allowed) && allowed.length > 0 && !this.hasAnswerDecisionTool(allowed)) return false;
-    const configured = definition.allowed_tools ?? [];
+    const configured = definition?.allowed_tools ?? [];
     return configured.length === 0 || this.hasAnswerDecisionTool(configured);
   }
 

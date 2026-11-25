@@ -15,6 +15,7 @@ vi.mock('../../../services/GraphRegistry', () => ({ GraphRegistry: { get: vi.fn(
 vi.mock('../../../database/models/AgentJobMessagingModel', () => ({ AgentJobMessagingModel: { taskForThread: vi.fn(async() => runtime.target) } }));
 vi.mock('../../../services/AgentDefinitionService', () => ({ agentDefinitionService: { findBySlug: vi.fn(async() => runtime.definition) } }));
 vi.mock('../../../services/AgentCompletionInbox', () => ({ enqueueAgentCompletion: vi.fn() }));
+vi.mock('../../../services/HumanHeartbeatBridge', () => ({ getHumanHeartbeatBridge: () => ({ getPresence: async() => ({ available: false, idleMinutes: 10, activeChannel: 'other' }) }) }));
 
 import { DecisionHolderNotifier } from '../../../services/DecisionHolderNotifier';
 
@@ -58,6 +59,24 @@ describe('DecisionHolderNotifier holder capability checks', () => {
   it('allows a running exact-tool holder with a matching graph thread', async() => {
     // risk: availability — a currently reachable and authorized holder should receive its escalation turn.
     await expect(new DecisionHolderNotifier().canAnswer(record as any, holder)).resolves.toBe(true);
+  });
+
+  it('allows an aware top-level chat parent through the runtime capability check', async() => {
+    // risk: availability — the root chat is an agent holder too and must not be skipped because it has no saved agent definition.
+    const rootHolder = { threadId: 'root-chat', channel: 'sulla-desktop', agentId: 'root-chat', kind: 'agent' as const };
+    runtime.graph = { state: { metadata: { threadId: rootHolder.threadId, agentAwareness: true, allowedToolNames: ['agents/answer_decision'] } } };
+    runtime.definition = undefined;
+
+    await expect(new DecisionHolderNotifier().canAnswer(record as any, rootHolder)).resolves.toBe(true);
+  });
+
+  it('skips a top-level chat parent when awareness is off', async() => {
+    // risk: authorization — a root-chat holder without explicit agent-network awareness must remain unavailable.
+    const rootHolder = { threadId: 'root-chat', channel: 'sulla-desktop', agentId: 'root-chat', kind: 'agent' as const };
+    runtime.graph = { state: { metadata: { threadId: rootHolder.threadId, agentAwareness: false, allowedToolNames: ['agents/answer_decision'] } } };
+    runtime.definition = undefined;
+
+    await expect(new DecisionHolderNotifier().canAnswer(record as any, rootHolder)).resolves.toBe(false);
   });
 
   it('contains forged role prefixes and newlines inside capped untrusted note delimiters', () => {
