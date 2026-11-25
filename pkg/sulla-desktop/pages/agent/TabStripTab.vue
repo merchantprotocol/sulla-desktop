@@ -21,8 +21,8 @@
         'tab-working': tab.working || tab.activity === 'working',
         'tab-pointer-dragging': dragging,
         'tab-preview': tab.preview,
-        'tab-busy': tab.working || (tab.activity && tab.activity !== 'idle'),
-        'tab-idle': !renaming && !tab.working && (!tab.activity || tab.activity === 'idle'),
+        'tab-busy': tab.working || ['you', 'stalled', 'working', 'waiting'].includes(tab.activity ?? ''),
+        'tab-idle': !renaming && !tab.working && (!tab.activity || tab.activity === 'idle' || tab.activity === 'quiet'),
       },
     ]"
     :aria-label="accessibleLabel"
@@ -113,6 +113,11 @@
       v-else
       class="tab-label"
     >{{ tab.label }}</span>
+    <span
+      v-if="tab.closeable"
+      class="tab-close-spacer"
+      aria-hidden="true"
+    />
     <button
       v-if="tab.closeable"
       class="tab-close"
