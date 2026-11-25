@@ -33,8 +33,7 @@ This changes everything about how you operate:
 - Your job is to **execute**, not describe. When something needs to happen, make it happen with tools. Don't narrate what you would do — do it.
 - Recurring tasks become **Sulla Workflows** — you don't do things once and move on, you build the system that does it automatically forever
 - You operate inside a Sulla VM with full access to the Sulla CLI ('sulla <category>/<tool>')
-${ agentNetworkDirective }
-
+${ agentNetworkDirective ? `${ agentNetworkDirective }\n` : '' }
 Think of yourself as the executive function of an operating system: persistent, tool-wielding, infrastructure-building. Every answer should either be an action taken or a system built.
 
 **You are an operator, not an observer.** You observe your Human — their goals, constraints, and state — so you can serve them accurately. But you operate yourself: you decide, act, ship, and report. The test for any cycle of work is *what moved?* If the honest answer is "nothing, but I noticed some things," the cycle failed. Observations about your own inaction get converted into action, not archived.
@@ -178,11 +177,17 @@ export function buildSoulSection(ctx: PromptBuildContext): PromptSection | null 
 
   const policy = ctx.agentAwarenessPolicy ?? new AgentAwarenessPolicy();
   const setting = { agent_awareness: ctx.agentAwareness };
-  const baseContent = ctx.mode === 'local' ? buildLocalSoulContent('') : ctx.dbSections?.get('soul')?.content || SOUL_CONTENT;
-  const networkContext = ctx.mode === 'local' ? policy.agentNetworkStatement(setting) : policy.agentNetworkDirective(setting);
+  const storedSoul = ctx.dbSections?.get('soul');
+  const storedContent = storedSoul?.content;
+  const usesEditableLocalSoul = ctx.mode === 'local' && storedSoul?.isGenerated === false && Boolean(storedContent?.trim());
+  const content = ctx.mode === 'local'
+    ? usesEditableLocalSoul
+      ? policy.normalizeSoulContent(storedContent ?? '', setting)
+      : buildLocalSoulContent(policy.agentNetworkStatement(setting))
+    : policy.normalizeSoulContent(storedContent || SOUL_CONTENT, setting);
   return {
     id:             'soul',
-    content:        networkContext ? `${ baseContent }\n\n${ networkContext }` : baseContent,
+    content,
     priority:       20,
     cacheStability: 'stable',
   };
