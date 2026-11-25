@@ -4,12 +4,11 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-
 import type { TabContextMenuRequest } from '@pkg/shared/TabStripPopup';
 
 const electron = vi.hoisted(() => ({
   getTheme: vi.fn(),
-  screen: { getDisplayNearestPoint: vi.fn() },
+  screen:   { getDisplayNearestPoint: vi.fn() },
 }));
 const ipcMain = new EventEmitter();
 const popups: FakeWindow[] = [];
@@ -44,6 +43,7 @@ class FakeWindow extends EventEmitter {
     this.visible = true;
     this.emit('show');
   };
+
   hide = () => {
     this.visible = false;
     this.emit('hide');
@@ -64,8 +64,8 @@ class FakeWindow extends EventEmitter {
 vi.mock('electron', () => ({
   BrowserWindow: class extends FakeWindow { constructor() { super(true) } },
   ipcMain,
-  screen: electron.screen,
-  app: { getAppPath: () => '/app', isPackaged: false },
+  screen:        electron.screen,
+  app:           { getAppPath: () => '/app', isPackaged: false },
 }));
 vi.mock('@pkg/window/agentWindowTrust', () => ({ agentWindowFromSender: (sender: FakeContents) => sender.owner }));
 vi.mock('@pkg/agent/database/models/SullaSettingsModel', () => ({ SullaSettingsModel: { get: electron.getTheme } }));
