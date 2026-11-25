@@ -60,6 +60,16 @@
   align-items: flex-end;
   gap: 2px;
 }
+.app-titlebar .tab-group > .tab-group-tabs {
+  width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.app-titlebar .tab-group-active > .tab-group-tabs { padding-inline: 10px; }
+.app-titlebar .tab-group > .tab-group-tabs::-webkit-scrollbar { display: none; }
 .app-titlebar .tab-pinned-section { min-width: min-content; }
 .app-titlebar .tab-group {
   position: relative;
@@ -141,6 +151,65 @@
 }
 .app-titlebar .tab-group-folded .tab-group-label { height: 30px; margin: 0; }
 .app-titlebar .tab-group-folded .tab-group-tabs { display: none; }
+.app-titlebar .tab-group-compact { flex: 0 0 auto; }
+.app-titlebar .tab-group-compact .tab-item.tab-compact {
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 6px;
+  overflow: visible;
+}
+.app-titlebar .tab-item.tab-compact .tab-label,
+.app-titlebar .tab-item.tab-compact .tab-close-spacer,
+.app-titlebar .tab-item.tab-compact .tab-close,
+.app-titlebar .tab-item.tab-compact .tab-pin,
+.app-titlebar .tab-item.tab-size-icon .tab-label,
+.app-titlebar .tab-item.tab-size-icon .tab-close-spacer,
+.app-titlebar .tab-item.tab-size-icon .tab-close {
+  display: none !important;
+}
+.app-titlebar .tab-item.tab-size-icon:not(.tab-compact) {
+  width: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+}
+.app-titlebar .tab-group-more {
+  display: grid;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  align-self: flex-end;
+  margin: 0 0 4px 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--group-accent);
+  background: color-mix(in srgb, var(--group-accent) 12%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.app-titlebar .tab-group-more:hover,
+.app-titlebar .tab-group-more:focus-visible {
+  background: color-mix(in srgb, var(--group-accent) 20%, transparent);
+  outline: none;
+}
 .app-titlebar .tab-item {
   position: relative;
   display: flex;

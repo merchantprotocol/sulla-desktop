@@ -74,7 +74,16 @@
           <div
             v-else
             class="tab-group"
-            :class="[`tab-group-${section.id}`, { 'tab-group-folded': isGroupFolded(section.id) }]"
+            :class="[
+              `tab-group-${section.id}`,
+              {
+                'tab-group-folded': isGroupFolded(section.id),
+                'tab-group-compact': isGroupCompact(section.id),
+                'tab-group-active': isActiveGroup(section.id),
+              },
+            ]"
+            :style="groupSizingStyle(section.id)"
+            :data-group-id="section.id"
           >
             <button
               class="tab-group-label"
@@ -113,15 +122,18 @@
               class="tab-group-tabs"
             >
               <TabStripTab
-                v-for="(tab, localIndex) in section.tabs"
+                v-for="tab in groupDisplayTabs(section)"
                 :key="tab.id"
                 :tab="tab"
-                :index="section.startIndex + localIndex"
-                :pinned-boundary="section.startIndex + localIndex === pinnedTabCount && pinnedTabCount > 0"
+                :index="section.startIndex + section.tabs.findIndex(candidate => candidate.id === tab.id)"
+                :pinned-boundary="section.startIndex + section.tabs.findIndex(candidate => candidate.id === tab.id) === pinnedTabCount && pinnedTabCount > 0"
                 :dragging="dragState?.active === true && dragState.tabHeaderId === tab.id"
                 :renaming="renamingTabId === tab.id"
                 :rename-draft="renameDraft"
                 :activity-labels="ACTIVITY_LABEL"
+                :compact="isGroupCompact(section.id)"
+                :icon-only="tabIsIconOnly(tab, section.id)"
+                :style="tabSizingStyle(tab, section.id)"
                 @pointerdown="onPointerDown"
                 @hover="scheduleTabHover"
                 @hover-end="hideTabHover"
@@ -135,6 +147,16 @@
                 @rename-blur="onRenameBlur"
               />
             </TransitionGroup>
+            <button
+              v-if="groupOverflowCount(section.id) > 0"
+              class="tab-group-more"
+              type="button"
+              :aria-label="`Show ${groupOverflowCount(section.id)} more ${section.label} tabs`"
+              @pointerdown.stop
+              @click="openGroupTabList(section, $event)"
+            >
+              +{{ groupOverflowCount(section.id) }}
+            </button>
           </div>
         </template>
       </div>
@@ -388,7 +410,7 @@ import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { TabDragAutoScroll } from '@pkg/composables/TabDragAutoScroll';
 import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
-import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
+import { calculateTabStripLayout, TabGroupModel, type TabGroupId, type TabGroupLayoutResult, type TabStripLayoutGroup } from '@pkg/composables/TabGroupModel';
 import { TabHoverController } from '@pkg/composables/TabHoverController';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
@@ -407,6 +429,7 @@ const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
   quiet:   'Quiet',
   idle:    'Idle',
 };
+const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
 
 // Every page and every browser tab mounts its own AgentHeader, so there is one
 // tab strip per page. They share a single scroll offset so switching tabs
@@ -623,6 +646,18 @@ function syncTabStrip() {
   let left = sharedTabScrollLeft;
   const active = el.querySelector<HTMLElement>('.tab-active, .tab-active-native');
   if (active) {
+    const groupScroller = active.closest<HTMLElement>('.tab-group > .tab-group-tabs');
+
+    if (groupScroller) {
+      const scroller = groupScroller.getBoundingClientRect();
+      const tab = active.getBoundingClientRect();
+      const style = getComputedStyle(groupScroller);
+      const contentLeft = scroller.left + (Number.parseFloat(style.paddingLeft) || 0);
+      const contentRight = scroller.right - (Number.parseFloat(style.paddingRight) || 0);
+
+      if (tab.left < contentLeft) groupScroller.scrollLeft += tab.left - contentLeft;
+      else if (tab.right > contentRight) groupScroller.scrollLeft += tab.right - contentRight;
+    }
     const viewport = el.getBoundingClientRect();
     const tab = active.getBoundingClientRect();
     const start = tab.left - viewport.left + el.scrollLeft;
@@ -638,7 +673,12 @@ function syncTabStrip() {
 function onTabWheel(event: WheelEvent) {
   const el = getScrollEl();
   if (!el) return;
-  el.scrollLeft += Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+  const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+  const target = event.target as HTMLElement;
+  const groupScroller = target.closest<HTMLElement>('.tab-group > .tab-group-tabs');
+
+  if (groupScroller && groupScroller.scrollWidth > groupScroller.clientWidth + 1) groupScroller.scrollLeft += delta;
+  else el.scrollLeft += delta;
   updateScrollButtons();
 }
 
@@ -718,6 +758,46 @@ function publishAttentionMenu(id: string, update: boolean): void {
   });
 }
 
+function openGroupTabList(section: TabStripSection, event: MouseEvent): void {
+  const button = event.currentTarget as HTMLElement;
+  const position = popupAnchor.locate(button);
+
+  if (!position) return;
+  hideTabHover();
+  hideTabContextMenu();
+  const id = crypto.randomUUID();
+  const rows: TabAttentionRow[] = section.tabs.map(tab => {
+    const state = groupDotState(tab) ?? 'idle';
+    const status = state === 'idle' && tab.loading ? 'Loading' : ACTIVITY_LABEL[state];
+
+    return {
+      id: tab.id,
+      title: tab.label,
+      state,
+      iconPath: tab.iconPath || GENERIC_TAB_ICON_PATH,
+      reason: [status, tab.statusLine].filter(Boolean).join(' · '),
+    };
+  });
+
+  windowTabStrip.open({
+    id,
+    select: action => {
+      if (!action.startsWith('attention:')) return;
+      const tabId = action.slice('attention:'.length);
+      const tab = orderedTabs.value.find(candidate => candidate.id === tabId && !candidate.pinned && tabGroupModel.groupForMode(candidate.mode) === section.id);
+
+      if (tab) activateTab(tab);
+    },
+    onClosed: trackContextMenu(id),
+  });
+  ipcRenderer.send('tab-context-menu:show', {
+    requestId: id,
+    items: rows,
+    attention: { ...position, title: `${ section.label } tabs` },
+    update: false,
+  });
+}
+
 function trackContextMenu(id: string): () => void {
   contextMenuId = id;
   return () => {
@@ -759,11 +839,13 @@ onMounted(() => {
   const el = getScrollEl();
   if (el) {
     scrollObserver = new ResizeObserver(() => {
+      availableTabWidth.value = el.clientWidth;
       updateScrollButtons();
     });
     scrollObserver.observe(el);
     if (tabScrollWrapper.value) scrollObserver.observe(tabScrollWrapper.value);
     el.addEventListener('scroll', onTabStripScroll, { passive: true });
+    availableTabWidth.value = el.clientWidth;
     updateScrollButtons();
   }
   nextTick(syncTabStrip);
@@ -1085,6 +1167,143 @@ const allTabsById = computed(() => {
 /** Saved order is reconciled and sorted into visual order by the group model. */
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
 
+watch(
+  () => orderedTabs.value.find(tab => tab.isActive && !tab.pinned)?.id,
+  (activeId) => {
+    const active = orderedTabs.value.find(tab => tab.id === activeId);
+
+    if (active) windowTabStrip.setActiveGroup(tabGroupModel.groupForMode(active.mode));
+  },
+  { immediate: true, flush: 'sync' },
+);
+
+const availableTabWidth = ref<number | null>(null);
+const textMeasureCanvas = document.createElement('canvas');
+const textMeasureContext = navigator.userAgent.includes('jsdom') ? null : textMeasureCanvas.getContext('2d');
+
+function measureTextWidth(text: string, font: string, fallbackSize = 7): number {
+  if (textMeasureContext) {
+    textMeasureContext.font = font;
+    return textMeasureContext.measureText(text).width;
+  }
+
+  return Array.from(text).reduce((total, character) => total + (/[^\u0000-\u024f]/u.test(character) ? fallbackSize * 1.8 : fallbackSize), 0);
+}
+
+function tabWidth(tab: HeaderTab): number {
+  const sample = document.querySelector<HTMLElement>('.app-titlebar .tab-label');
+  const labelStyle = sample ? getComputedStyle(sample) : undefined;
+  const fontFamily = labelStyle?.fontFamily || 'system-ui, sans-serif';
+  const fontSize = labelStyle?.fontSize || '13px';
+  const fontWeight = tab.isActive ? '600' : labelStyle?.fontWeight || '500';
+  const maxLabelWidth = tab.isActive ? 440 : 240;
+  const textWidth = Math.min(maxLabelWidth, measureTextWidth(tab.label, `${ fontWeight } ${ fontSize } ${ fontFamily }`));
+  const isBusy = tab.working || ['you', 'stalled', 'working', 'waiting'].includes(tab.activity ?? '');
+  const fixedWidth = 16 + 8 + 20 + (tab.closeable ? 24 : 0) + (tab.pinned ? 21 : 0) + (tab.isActive ? 2 : 0);
+  const minimum = tab.isActive ? 120 : isBusy ? 110 : 36;
+
+  return Math.ceil(Math.max(minimum, textWidth + fixedWidth));
+}
+
+function groupBaseWidth(section: TabStripSection): { baseWidth: number; foldedWidth: number } {
+  const labelFont = '600 12px system-ui, sans-serif';
+  const countFont = '600 11px system-ui, sans-serif';
+  const labelTextWidth = measureTextWidth(section.label, labelFont, 6.5);
+  const countTextWidth = measureTextWidth(String(section.tabs.length), countFont, 6);
+  const labelButtonWidth = 14 + 12 + labelTextWidth + Math.max(16, countTextWidth + 12) + 16;
+  const dots = section.tabs.filter(tab => Boolean(groupDotState(tab))).length;
+  const dotsWidth = dots ? dots * 6 + Math.max(0, dots - 1) * 3 : 0;
+
+  return { baseWidth: labelButtonWidth + 10, foldedWidth: labelButtonWidth + (dots ? 6 : 0) + dotsWidth };
+}
+
+const tabStripLayout = computed(() => {
+  const availableWidth = availableTabWidth.value ? availableTabWidth.value - 8 : Number.POSITIVE_INFINITY;
+  const sections = tabSections.value.filter((section): section is TabStripSection & { id: TabGroupId } => section.id !== 'pinned');
+  const pinned = tabSections.value.find(section => section.id === 'pinned');
+  const pinnedWidth = pinned
+    ? pinned.tabs.reduce((total, tab) => total + tabWidth(tab), 0) + Math.max(0, pinned.tabs.length - 1) * 2 + (sections.length ? 8 : 0)
+    : 0;
+  let hasPinnedBoundary = Boolean(pinned);
+  const activeGroup = windowTabStrip.activeGroup.value;
+  const groups: TabStripLayoutGroup[] = sections.map(section => {
+    const { baseWidth, foldedWidth } = groupBaseWidth(section);
+    const leadingBoundary = hasPinnedBoundary ? 12 : 0;
+    const activeTabEars = section.id === activeGroup ? 20 : 0;
+
+    hasPinnedBoundary = false;
+    return {
+      id: section.id,
+      tabs: section.tabs.map(tab => ({
+        id: tab.id,
+        width: tabWidth(tab),
+        active: tab.isActive,
+        busy: tab.working || ['you', 'stalled', 'working', 'waiting'].includes(tab.activity ?? ''),
+      })),
+      baseWidth: baseWidth + leadingBoundary + activeTabEars,
+      foldedWidth,
+      folded: isGroupFolded(section.id),
+    };
+  });
+
+  return new Map(calculateTabStripLayout({
+    groups,
+    activeGroup: windowTabStrip.activeGroup.value,
+    availableWidth,
+    reservedWidth: pinnedWidth,
+  }).map(layout => [layout.id, layout]));
+});
+
+function layoutForGroup(id: TabGroupId): TabGroupLayoutResult | undefined {
+  return tabStripLayout.value.get(id);
+}
+
+function isGroupCompact(id: TabGroupId): boolean {
+  return layoutForGroup(id)?.presentation === 'compact';
+}
+
+function isActiveGroup(id: TabGroupId): boolean {
+  return windowTabStrip.activeGroup.value === id;
+}
+
+function groupSizingStyle(id: TabGroupId): Record<string, string> | undefined {
+  const layout = layoutForGroup(id);
+
+  return layout ? { width: `${ layout.width }px`, flex: '0 0 auto' } : undefined;
+}
+
+function groupDisplayTabs(section: TabStripSection): HeaderTab[] {
+  const layout = layoutForGroup(section.id);
+
+  if (layout?.presentation !== 'compact') return section.tabs;
+  const visible = new Set(layout.visibleTabIds);
+
+  return section.tabs.filter(tab => visible.has(tab.id));
+}
+
+function groupOverflowCount(id: TabGroupId): number {
+  return layoutForGroup(id)?.overflowCount ?? 0;
+}
+
+function tabIsIconOnly(tab: HeaderTab, id: TabGroupId): boolean {
+  const layout = layoutForGroup(id);
+
+  return layout?.presentation === 'compact' || (layout?.tabWidths.get(tab.id) ?? Infinity) <= 36;
+}
+
+function tabSizingStyle(tab: HeaderTab, id: TabGroupId): Record<string, string> | undefined {
+  const width = layoutForGroup(id)?.tabWidths.get(tab.id);
+
+  return width === undefined ? undefined : { width: `${ width }px`, flex: `0 0 ${ width }px` };
+}
+
+watch(tabStripLayout, () => {
+  nextTick(() => {
+    hideTabHover();
+    updateScrollButtons();
+  });
+}, { flush: 'post' });
+
 watch(() => attentionMenuId.value ? JSON.stringify(needsYouRows.value) : null, (rows, previous) => {
   if (attentionMenuId.value && previous !== null && rows !== null) publishAttentionMenu(attentionMenuId.value, true);
 }, { flush: 'post' });
@@ -1236,18 +1455,19 @@ watch(() => route.path, cancelCurrentDrag, { flush: 'sync' });
 const DRAG_DEADZONE = 5;
 
 function offsetLeftWithin(element: HTMLElement, ancestor: HTMLElement): number {
-  let left = 0;
-  let current: HTMLElement | null = element;
-  while (current && current !== ancestor) {
-    left += current.offsetLeft;
-    current = current.offsetParent as HTMLElement | null;
-  }
-  return left;
+  const elementLeft = element.getBoundingClientRect().left;
+  const ancestorLeft = ancestor.getBoundingClientRect().left;
+  const nestedScroller = element.closest<HTMLElement>('.tab-group-tabs');
+  const dragOffset = Number.parseFloat(element.style.getPropertyValue('--tab-drag-x')) || 0;
+
+  return elementLeft - dragOffset - ancestorLeft + ancestor.scrollLeft + (nestedScroller && nestedScroller !== ancestor ? nestedScroller.scrollLeft : 0);
 }
 
 function positionDraggedTab(state: DragState, container: HTMLElement): void {
   const containerLeft = container.getBoundingClientRect().left;
   const scope = state.tabEl.closest<HTMLElement>('.tab-group, .tab-pinned-section') ?? container;
+  const nestedScroller = state.tabEl.closest<HTMLElement>('.tab-group-tabs');
+  const nestedScrollLeft = nestedScroller && nestedScroller !== container ? nestedScroller.scrollLeft : 0;
   const groupTabs = Array.from(scope.querySelectorAll<HTMLElement>('.tab-item'))
     .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0);
   if (!groupTabs.length) {
@@ -1259,10 +1479,10 @@ function positionDraggedTab(state: DragState, container: HTMLElement): void {
   const groupEnd = Math.max(...groupTabs.map((element, index) => positions[index] + element.offsetWidth));
   const width = state.tabEl.offsetWidth;
   const visualLeft = state.lastClientX - state.grabOffsetX;
-  const minLeft = containerLeft + groupStart - container.scrollLeft;
-  const maxLeft = Math.max(minLeft, containerLeft + groupEnd - container.scrollLeft - width);
+  const minLeft = containerLeft + groupStart - container.scrollLeft - nestedScrollLeft;
+  const maxLeft = Math.max(minLeft, containerLeft + groupEnd - container.scrollLeft - nestedScrollLeft - width);
   const clampedLeft = Math.max(minLeft, Math.min(visualLeft, maxLeft));
-  const layoutLeft = containerLeft + offsetLeftWithin(state.tabEl, container) - container.scrollLeft;
+  const layoutLeft = state.tabEl.getBoundingClientRect().left - (Number.parseFloat(state.tabEl.style.getPropertyValue('--tab-drag-x')) || 0);
   state.tabEl.style.setProperty('--tab-drag-x', `${ clampedLeft - layoutLeft }px`);
 }
 
