@@ -6,6 +6,7 @@ import { ToolCardCompositionRoot } from './toolCardCompositionRoot';
 import type { ToolArguments, ToolCardDisplay } from './toolCardFormatterRegistry';
 export type { ToolCardDisplay } from './toolCardFormatterRegistry';
 const compositionRoot = new ToolCardCompositionRoot();
+export const TOOL_PAYLOAD_POINTER_THRESHOLD = 150_000;
 export function redactToolArgs(toolName: string, args: unknown): unknown { return compositionRoot.redactor.redact(toolName, args); }
 export function formatToolCard(toolName: string, args: ToolArguments, result?: unknown): ToolCardDisplay { return compositionRoot.presenter.formatToolCard(toolName, args, result); }
 export function formatToolResult(toolName: string, args: ToolArguments, result: unknown, error?: string | null) { return compositionRoot.presenter.formatToolResult(toolName, args, result, error); }

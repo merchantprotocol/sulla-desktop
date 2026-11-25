@@ -49,21 +49,9 @@ const perf = Logging.perf;
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 
-// Cap inline screenshot base64 at this size before we embed it as an image
-// content block in state.messages. Oversize images are dropped (we fall back
-// to text-only tool_result) because they blow up Redis state, JSONL logs,
-// and the renderer's WebSocket payload. Tools should persist screenshots to
-// disk via screenshot_store.saveScreenshot and return a compact reference
-// instead of inlining base64 — this cap is a safety net for any tool that
-// slips through that pattern.
+// Model-bound tool results stay bounded to protect the next request's
+// context window. The separate WebSocket transcript event remains complete.
 const MAX_INLINE_SCREENSHOT_BYTES = 500_000;
-
-// Cap the serialized size of a tool result before we ship it over the WebSocket
-// to the renderer. Any tool that returns a huge payload (full DOM snapshot,
-// raw HTML, base64 blob, etc.) gets replaced with a compact truncation
-// placeholder. Protects the chat window's V8 heap, the WS pipe, and the
-// renderer-side reactive state regardless of which tool was invoked.
-const MAX_TOOL_RESULT_WIRE_BYTES = 50_000;
 
 // The loop detector only needs enough history to prove that the same call was
 // made seven times in a row. Keep fixed-size hashes instead of retaining raw
@@ -72,22 +60,6 @@ const MAX_TOOL_RESULT_WIRE_BYTES = 50_000;
 const TOOL_LOOP_THRESHOLD = 7;
 const TOOL_DEDUPE_HISTORY_LIMIT = TOOL_LOOP_THRESHOLD;
 const TOOL_DEDUPE_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
-
-function capWireResult(r: any): any {
-  if (r == null) return r;
-  try {
-    const serialized = typeof r === 'string' ? r : JSON.stringify(r);
-    if (serialized.length <= MAX_TOOL_RESULT_WIRE_BYTES) return r;
-    const preview = serialized.slice(0, MAX_TOOL_RESULT_WIRE_BYTES);
-    return {
-      _truncated:     true,
-      _originalBytes: serialized.length,
-      _preview:       `${ preview }\n\n[truncated ${ serialized.length - MAX_TOOL_RESULT_WIRE_BYTES } bytes — full payload was ${ serialized.length } bytes total]`,
-    };
-  } catch {
-    return r;
-  }
-}
 
 // ============================================================================
 // Context interface — everything the executor needs from the calling node
@@ -301,7 +273,8 @@ export class ToolExecutor {
             ? result.error
             : (!toolSuccess && typeof result?.result === 'string' ? result.result : undefined);
 
-          await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result);
+          const payloadThreadId = await this.persistToolCallForPayload(state, toolRunId, toolName, args, result);
+          await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result, payloadThreadId);
           await this.appendToolResultMessage(state, toolName, {
             toolName, success: toolSuccess, result, error: toolError, toolCallId: toolRunId,
           });
@@ -314,17 +287,10 @@ export class ToolExecutor {
 
           this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
-          // Conversation logging
-          const convIdSuccess = (state.metadata as any).conversationId;
-          if (convIdSuccess) {
-            try {
-              const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdSuccess, toolName, args, result);
-            } catch { /* best-effort */ }
-          }
         } catch (err: any) {
           const error = err.message || String(err);
-          await this.emitToolResultEvent(state, toolRunId, false, error);
+          const payloadThreadId = await this.persistToolCallForPayload(state, toolRunId, toolName, args, { error });
+          await this.emitToolResultEvent(state, toolRunId, false, error, undefined, payloadThreadId);
           await this.appendToolResultMessage(state, toolName, {
             toolName, success: false, error, toolCallId: toolRunId,
           });
@@ -335,14 +301,6 @@ export class ToolExecutor {
 
           this.trackFailureSignature(state, toolName, false, error, null);
 
-          // Conversation logging for failed tool calls
-          const convIdFail = (state.metadata as any).conversationId;
-          if (convIdFail) {
-            try {
-              const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdFail, toolName, args, { error });
-            } catch { /* best-effort */ }
-          }
           this.pushToTranscript(toolName, false, error);
         }
       } catch {
@@ -492,7 +450,8 @@ export class ToolExecutor {
           ? result.error
           : (!toolSuccess && typeof result?.result === 'string' ? result.result : undefined);
 
-        await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result);
+        const payloadThreadId = await this.persistToolCallForPayload(state, toolRunId, toolName, args, result);
+        await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result, payloadThreadId);
         await this.appendToolResultMessage(state, toolName, {
           toolName, success: toolSuccess, result, error: toolError, toolCallId: toolRunId,
         });
@@ -504,17 +463,11 @@ export class ToolExecutor {
         await extensionHooks.runAction('after_tool_call', { toolName, args, toolRunId, success: toolSuccess, result, error: toolError });
         this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
-        const convId = (state.metadata as any).conversationId;
-        if (convId) {
-          try {
-            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-            getLogger().logToolCall(convId, toolName, args, result);
-          } catch { /* best-effort */ }
-        }
       } else {
         const error = settled.error || 'Tool execution failed';
+        const payloadThreadId = settled.loopBlock ? undefined : await this.persistToolCallForPayload(state, toolRunId, toolName, args, { error });
 
-        await this.emitToolResultEvent(state, toolRunId, false, error);
+        await this.emitToolResultEvent(state, toolRunId, false, error, undefined, payloadThreadId);
         await this.appendToolResultMessage(state, toolName, {
           toolName, success: false, error, toolCallId: toolRunId,
         });
@@ -529,13 +482,6 @@ export class ToolExecutor {
         results.push({ toolName, success: false, error });
         this.pushToTranscript(toolName, false, error);
 
-        const convId = (state.metadata as any).conversationId;
-        if (convId && !settled.loopBlock) {
-          try {
-            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-            getLogger().logToolCall(convId, toolName, args, { error });
-          } catch { /* best-effort */ }
-        }
       }
     }
 
@@ -656,7 +602,7 @@ export class ToolExecutor {
     state: BaseThreadState,
     toolRunId: string,
     toolName: string,
-    args: Record<string, any>,
+    args: unknown,
     kind?: string,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
@@ -687,7 +633,7 @@ export class ToolExecutor {
           toolName,
           args,
           kind,
-          thread_id:   parentThreadId,
+          thread_id:   parentThreadId, payloadThreadId: state.metadata.threadId,
         },
         timestamp: Date.now(),
       });
@@ -718,17 +664,35 @@ export class ToolExecutor {
     return sent;
   }
 
+  private async persistToolCallForPayload(
+    state: BaseThreadState,
+    toolRunId: string,
+    toolName: string,
+    args: unknown,
+    result?: unknown,
+  ): Promise<string | undefined> {
+    const conversationId = (state.metadata as any).conversationId;
+    if (typeof conversationId !== 'string' || !conversationId.trim()) return undefined;
+    try {
+      const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
+      const confirmed = await getLogger().logToolCall(conversationId, toolName, args, result, toolRunId);
+      return confirmed ? conversationId : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async emitToolResultEvent(
     state: BaseThreadState,
     toolRunId: string,
     success: boolean,
     error?: string,
     result?: any,
+    payloadThreadId?: string,
   ): Promise<boolean> {
     (state.metadata as any).lastAgentActivityAt = Date.now();
     RunActivity.touch(state.metadata);
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-    const cappedResult = capWireResult(result);
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
@@ -736,8 +700,9 @@ export class ToolExecutor {
         toolRunId,
         success,
         error,
-        result:    cappedResult,
+        result,
         thread_id: state.metadata.threadId,
+        ...(payloadThreadId ? { payloadThreadId, payloadPersisted: true } : {}),
       },
       timestamp: Date.now(),
     });
@@ -752,9 +717,10 @@ export class ToolExecutor {
           phase:     'tool_result',
           toolRunId,
           success,
-          error,
-          result:    cappedResult,
           thread_id: parentThreadId,
+          ...(payloadThreadId
+            ? { payloadThreadId, payloadPersisted: true }
+            : { error, result }),
         },
         timestamp: Date.now(),
       });
@@ -817,7 +783,7 @@ export class ToolExecutor {
         }
       }
 
-      const serialized = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
+      const serialized = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2) ?? String(parsed);
       if (maxLen && serialized.length > maxLen) {
         return `${ serialized.substring(0, maxLen) }...`;
       }
@@ -860,12 +826,9 @@ export class ToolExecutor {
       } as ChatMessage);
     }
 
-    // 2. Persist to state.messages as native tool_result (user role).
-    // When a screenshot is present AND under the size cap, include it as an
-    // image content block so the LLM can see the page visually. Oversize
-    // screenshots fall back to text-only — the preferred path is for tools
-    // to saveScreenshot to disk and return a compact reference that the
-    // agent can Read on demand.
+    // 2. Persist the model-bounded result to state.messages as native
+    // tool_result. The full result was already sent to the independent chat
+    // transcript event in emitToolResultEvent above.
     let toolResultContent: string | any[];
     if (screenshotBase64 && screenshotBase64.length <= MAX_INLINE_SCREENSHOT_BYTES) {
       toolResultContent = [

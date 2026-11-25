@@ -124,7 +124,7 @@ it('keeps same-stream paragraph breaks after a completed segment and not across 
 
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
-it('projects safe individual events in source order before and after tool settlement and reload', () => {
+it('projects full tool activity without leaking untyped reasoning before and after reload', () => {
   const live = new ReportingFixture();
   live.emit('assistant_message', { kind: 'thinking', content: 'Preparing your turn…', reportingActivity: 'status' });
   live.emit('assistant_message', { kind: 'thinking', content: '💭 PRIVATE_REASONING' });
@@ -137,25 +137,25 @@ it('projects safe individual events in source order before and after tool settle
 
   const debug = live.entries('debug');
   expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
-    'Preparing your turn…', 'citation', 'Details withheld', 'Bash · running · Details withheld', 'Tools connected — calling model',
+    'Preparing your turn…', 'citation', '$ echo PRIVATE_TYPED_COMMAND', 'exec · running',
   ]);
   expect(live.entries('info')).toEqual([debug[1]]);
   expect(live.entries('fatal')).toEqual([]);
-  expect(JSON.stringify(debug)).not.toContain('PRIVATE_');
+  expect(JSON.stringify(debug)).not.toMatch(/withheld/i);
 
   live.emit('progress', { phase: 'tool_result', toolRunId: 'fixture-call', success: false, error: 'PRIVATE_ERROR', result: 'PRIVATE_OUTPUT' });
   const settled = live.entries('debug');
   expect(settled.map(row => row.id)).toEqual(debug.map(row => row.id));
   expect(live.entries('info')).toContainEqual({ ...debug[3], level: 'info', text: 'Shell · Failed' });
   expect(live.entries('fatal')).toEqual([]);
-  expect(JSON.stringify(settled)).not.toContain('PRIVATE_');
-
+  expect(JSON.stringify(settled)).not.toMatch(/withheld/i);
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
+  expect(reopened.entries('debug')).toEqual(settled);
   reopened.chat.prependOlder([...reopened.chat.messages.value, {
     id: asMessageId('legacy-tool'), createdAt: 1, kind: 'tool', tool: 'Bash',
     desc: 'PRIVATE_LEGACY', input: 'PRIVATE_LEGACY', status: 'ok',
   }]);
-  expect(reopened.entries('debug')).toEqual(settled);
+  expect(reopened.entries('debug').some(row => row.kind === 'activity' && row.text === 'Bash · ok')).toBe(true);
   expect(reopened.chat.messages.value.some(message => message.id === 'legacy-tool')).toBe(true);
 });
 
@@ -438,7 +438,7 @@ it('retains exact tool data and recorded timestamps through Detailed projection 
     const turns = new DetailedTraceProjection().project(fixture.chat.messages.value, standard);
     const rows = turns.flatMap(turn => turn.rows);
     const trace = rows.find(row => row.kind === 'tool')!;
-    expect(trace).toMatchObject({ target: 'exec', status: 'ok', at: tool.createdAt });
+    expect(trace).toMatchObject({ target: 'echo fixture', status: 'ok', at: tool.createdAt });
     expect(JSON.parse(trace.payload!.serialize())).toMatchObject({ input: tool.input, output: 'FIXTURE_OUTPUT' });
     expect(rows).toContainEqual(expect.objectContaining({ at: 0, target: 'Preparing your turn…' }));
     expect(JSON.stringify(fixture.chat.messages.value)).toBe(originalRecords);
@@ -449,8 +449,8 @@ it('retains exact tool data and recorded timestamps through Detailed projection 
   expect(standardText).toEqual(['Shell · Completed']);
   await wrapper.setProps({ reportingLevel: 'debug' });
   expect(wrapper.findAll('.report-activity-text').map(row => row.text())).toEqual(standardText);
-  await wrapper.get('article.dtr-row-tool button').trigger('click');
-  expect(wrapper.get('article.dtr-row-tool pre').text()).toContain('FIXTURE_OUTPUT');
+  await wrapper.get('li.dtr-row[data-kind="tool"] button').trigger('click');
+  expect(wrapper.get('li.dtr-row[data-kind="tool"] pre').text()).toContain('FIXTURE_OUTPUT');
   await wrapper.setProps({ reportingLevel: 'fatal' });
   expect(wrapper.text()).not.toContain('FIXTURE_OUTPUT');
 });
@@ -502,10 +502,10 @@ it('keeps safe thread-bound activities, patches and memory at their cumulative l
   expect(live.entries('info').map(row => row.id)).toEqual(['patch-fixture']);
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
   expect(reopened.entries('debug').map(row => row.kind === 'card' ? row.message.kind : row.text)).toEqual([
-    'patch', 'memory', 'Artifact opened', 'Hidden browser · read · Running', 'Hidden browser · read · Failed',
-    'Hidden browser · list · Completed',
+    'patch', 'memory', 'browser:PRIVATE_URL:Failed', 'Artifact opened', 'background_browse · error',
+    'Hidden browser · read · Running', 'Hidden browser · read · Failed', 'Hidden browser · list · Completed',
   ]);
-  expect(JSON.stringify(live.ctx.messages)).not.toContain('PRIVATE_');
+  expect(JSON.stringify(live.ctx.messages)).toContain('PRIVATE_RESULT');
 });
 
 // risk: replay duplicates lifecycle rows, or deduplication swallows distinct operations or changes their order.
@@ -626,12 +626,9 @@ it('serializes a tool only on disclosure, caches it across re-projections and re
     status: 'running', input: 'head\n' + 'x'.repeat(50_000) + 'input-tail' } as const;
   fixture.chat.appendMessage(tool);
   const wrapper = fixture.mount('debug');
-  const row = () => wrapper.get('article.dtr-row-tool');
+  const row = () => wrapper.get('li.dtr-row[data-kind="tool"]');
   const toggle = () => row().get('button').trigger('click');
-  const preview = row().get('.dtr-args').text();
   expect(serializedTools()).toHaveLength(0);
-  expect(preview).toMatch(/^head x/);
-  expect(preview.length).toBeLessThanOrEqual(300);
 
   await toggle();
   expect(JSON.parse(row().get('pre').text()).input).toBe(tool.input);
@@ -665,7 +662,7 @@ it('ticks only a mounted working sub-agent and stops ticking when it settles', a
     const wrapper = fixture.mount('info');
     const baseline = startTicker.mock.calls.length;
     await wrapper.setProps({ reportingLevel: 'debug' });
-    const elapsed = () => wrapper.get('.dtr-agent .dtr-duration').text();
+    const elapsed = () => wrapper.get('.dtr-agent .dtr-dur').text();
     expect(elapsed()).toBe('1s');
     expect(startTicker).toHaveBeenCalledTimes(baseline + 1);
     vi.advanceTimersByTime(1_000);
