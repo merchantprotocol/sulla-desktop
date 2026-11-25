@@ -58,7 +58,7 @@ global
     ├── sulla-desktop    (system) the app, windows, tabs, settings
     ├── sulla-vm         (system) the VM, exec vs exechost, paths, disk vs restart-lost dirs
     ├── sulla-files      (system) Files, the FUSE mount, versioning, folder metadata
-    ├── sulla-memory     (system) v7 subject memory, observations, what recall gives you
+    ├── sulla-memory     (system) v7 subject memory, what recall gives you
     ├── sulla-tools      (system) the `sulla <category>/<tool>` CLI, browse_tools, integrations proxy, MCP
     │   └── tool-<category>  (tool) one per tool category, e.g. tool-browser, tool-github
     ├── sulla-agents     (system) agents, spawn_agent, jobs, channels, heartbeat

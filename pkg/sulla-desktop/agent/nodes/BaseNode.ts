@@ -772,6 +772,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
             priority:       row.priority,
             cacheStability: (row.cache_stability as DbPromptSection['cacheStability']) || 'stable',
             isGenerated:    row.is_generated,
+            source:         row.source,
           });
         }
       }
@@ -800,15 +801,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const built = await measured('SystemPromptBuilder.build', SystemPromptBuilder.build(buildCtx));
     perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).map(([key, ms]) => `${ key }=${ ms }ms`).join(' ') }`);
     (state.metadata as any).__promptSectionTimings = built.sectionTimings || [];
-
-    // Subconscious/dream-consolidated identity is context, not policy. Keep it
-    // out of the system prompt and hand it to the shared assistant-message
-    // injector used by both AgentNode and HeartbeatNode.
-    const routedAssistantSections = new Map(
-      built.assistantContextSections.map(section => [section.id, section.content.trim()]),
-    );
-    (state.metadata as any).humanIdentityContext = routedAssistantSections.get('user') || '';
-    (state.metadata as any).observationalMemoryContext = routedAssistantSections.get('observational_memory') || '';
 
     // Store Anthropic cache blocks on state metadata for AnthropicService pickup
     if (built.anthropicSystem) {
@@ -894,8 +886,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
   /**
    * Remove previously injected subconscious context blocks
-   * (<human_identity_context>, <observational_memory>, <observation_context>, <user_observations>,
-   * <subagent_directory>, <routine_digest>, <lane_health>) from all
+   * (<subagent_directory>, <routine_digest>, <lane_health>) from all
    * assistant messages, so the per-turn merge below replaces rather than
    * accumulates. Two accumulation paths existed without this:
    * - the merge runs on every graph iteration of a tool-call loop, re-
@@ -905,8 +896,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * Also drops first-turn synthetic carrier messages once emptied.
    */
   protected stripInjectedContextBlocks(state: BaseThreadState): void {
-    const BLOCK_RE = /\n*<(human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
-    const MARKER_RE = /<(?:human_identity_context|observational_memory|observation_context|user_observations|self_observations|business_observations|world_observations|environment_observations|projects_observations|skills_observations|installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
+    const BLOCK_RE = /\n*<(installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>[\s\S]*?<\/\1>/g;
+    const MARKER_RE = /<(?:installed_skills|support_context|team_directory|subagent_directory|routine_digest|lane_health)>/;
 
     for (const msg of state.messages) {
       if (msg.role !== 'assistant') continue;
@@ -943,17 +934,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     this.stripInjectedContextBlocks(state);
 
     const metadata = state.metadata as any;
-    const observations = typeof metadata.observationalMemoryContext === 'string' ? metadata.observationalMemoryContext : '';
     let brain = typeof metadata.brainMemoryContext === 'string' ? metadata.brainMemoryContext : '';
     let latestUserIndex = -1;
     for (let i = state.messages.length - 1; i >= 0; i--) {
       if (state.messages[i]?.role === 'user') { latestUserIndex = i; break; }
     }
     const turnMarker = String(metadata.turnId || metadata.requestId || `${ latestUserIndex }:${ state.messages.length }`);
-    const measured = measureInjectedMemoryBlocks(observations, brain);
+    const measured = measureInjectedMemoryBlocks(brain);
     if (measured > MEMORY_CHAR_BUDGET) {
       if (metadata.memoryBudgetGuardTurnMarker !== turnMarker) {
-        console.warn(`[MemoryBudgetGuard] thread=${ metadata.threadId || 'unknown' } observations=${ observations.trim().length } brain=${ brain.trim().length } total=${ measured } cap=${ MEMORY_CHAR_BUDGET }; dropping whole brain block`);
+        console.warn(`[MemoryBudgetGuard] thread=${ metadata.threadId || 'unknown' } brain=${ brain.trim().length } total=${ measured } cap=${ MEMORY_CHAR_BUDGET }; dropping whole brain block`);
         metadata.memoryBudgetGuardTurnMarker = turnMarker;
       }
       brain = '';
@@ -963,14 +953,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         ...priorStats,
         sections: Object.fromEntries(Object.keys(priorStats.sections || {}).map((section) => [section, 0])),
         brainCharacters: 0,
-        measuredCharacters: measureInjectedMemoryBlocks(observations, ''),
+        measuredCharacters: measureInjectedMemoryBlocks(''),
       };
     }
 
     if (metadata.memoryBudgetLogTurnMarker !== turnMarker) {
       new MemoryBudgetLog((line) => console.log(line)).write({
         threadId: String(metadata.threadId || 'unknown'),
-        observations,
         brain,
         stats: metadata.brainMemoryStats,
         teamDirectory: String(metadata.teamDirectoryContext || ''),
@@ -981,16 +970,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     const fields: [string, string][] = [
-      ['human_identity_context', 'humanIdentityContext'],
-      ['observational_memory', 'observationalMemoryContext'],
-      ['observation_context', 'observationContext'],
-      ['user_observations', 'userObservationContext'],
-      ['self_observations', 'selfObservationContext'],
-      ['business_observations', 'businessObservationContext'],
-      ['world_observations', 'worldObservationContext'],
-      ['environment_observations', 'environmentObservationContext'],
-      ['projects_observations', 'projectsObservationContext'],
-      ['skills_observations', 'skillsObservationContext'],
       ['installed_skills', 'skillRecallContext'],
       // Remote support restrictions are control context, not historical recall.
       ['support_context', 'supportContext'],
@@ -1048,10 +1027,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     return reply.content;
   }
 
-  /**
-   * Check if the current agent opts into observation injection.
-   * Planning pipeline agents (observer, thinker, etc.) opt out via config.yaml.
-   */
+  /** Check whether the current agent uses subconscious memory and recall. */
   protected async shouldInjectObservationsForAgent(state: BaseThreadState): Promise<boolean> {
     const started = Date.now();
     const agentId = resolveAgentIdentity(state.metadata);
@@ -1103,8 +1079,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Otherwise route by graph-stamped model slot: work-executing sub-agents
     // (workflow nodes, spawned workers) stamp
     // modelSlot='primary' so autonomous work runs on the primary chain on
-    // every install; only subconscious observers (observation writer/recall,
-    // summarizer) keep the fast subconscious chat peer.
+    // every install; only subconscious memory recall and summarization keep
+    // the fast subconscious chat peer.
     TurnHopTiming.mark(state, 'resolveLoopProvider.start');
     this.llm = await this.resolveLoopProvider(state);
     TurnHopTiming.mark(state, 'resolveLoopProvider.end');
@@ -2093,7 +2069,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     extras?: Record<string, unknown>,
     // Wire type. Defaults to 'assistant_message' (the primary orchestration
     // path — flips graphRunning on the frontend). Subconscious agents
-    // (memory-recall, observation, etc.) pass 'subconscious_message' so
+    // (memory-recall, V7 memory, etc.) pass 'subconscious_message' so
     // their emissions render in the chat bubble but don't affect run-state.
     messageType: 'assistant_message' | 'subconscious_message' = 'assistant_message',
   ): Promise<boolean> {
@@ -2190,7 +2166,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // If this agent is running inside a workflow, also emit a node_thinking
     // event so the workflow canvas can display the conversation in a bubble.
     // Subconscious subagents set `workflowThinkingLabel` so the frontend
-    // can show e.g. "memory-recall" / "observation" as the badge instead
+    // can show e.g. "memory-recall" / "v7-memory" as the badge instead
     // of attributing silently to the orchestrator node.
     const workflowNodeId = (state.metadata as any).workflowNodeId;
     const workflowParentChannel = (state.metadata as any).workflowParentChannel;

@@ -31,7 +31,7 @@ tools/
 
 | Category | Description | Key Tools |
 |----------|-------------|-----------|
-| `meta` | Discovery, memory, execution | `browse_tools`, `exec`, `add_observational_memory`, `meta_search` |
+| `meta` | Tool discovery and execution | `browse_tools`, `exec` |
 | `slack` | Slack messaging | `slack_send_message`, `slack_search_users`, `slack_connection_health` |
 | `github` | GitHub operations | Repository, PR, issue management |
 | `n8n` | Workflow automation (complex ops) | `patch_workflow`, `validate_workflow`, `diagnose_webhook`, `restart_n8n_container` |

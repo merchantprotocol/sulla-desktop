@@ -12,18 +12,18 @@
 //   2. Rate-limit / abuse / spam    – heuristic gate on message velocity & quality
 //   3. Batch summarization          – when crossing SUMMARY_WAKE_MESSAGE_COUNT, wake compression
 //   4. Summary storage & retrieval  – store summaries on state, remove old summary to avoid re-summarizing
-//   5. Conversation summary append  – create comprehensive summary message from all observations
+//   5. Conversation summary append  – create a concise summary of prior context
 //   6. Token budget enforcement     – hard ceiling fallback if needed
 //
 // Design principles:
 //   - Batch-first approach: summarize in chunks rather than individual message relevance
-//   - LLM summarization in observational memory format (🔴/🟡/⚪ priority system)
+//   - Summaries preserve useful conversation context without storing memory records
 //   - All summaries tracked on state.metadata.conversationSummaries
 //   - Summary message appended to conversation with _conversationSummary flag
 //   - Never mutates the latest user message or system messages
 //   - Always returns { type: 'next' } — routing lives in graph edges
 
-import { BaseNode, JSON_ONLY_RESPONSE_INSTRUCTIONS } from './BaseNode';
+import { BaseNode } from './BaseNode';
 import { type BaseLanguageModel, type ChatMessage, getTextContent, isCliManagedLoop } from '../languagemodels/BaseLanguageModel';
 
 import type { BaseThreadState, NodeResult } from './Graph';
@@ -34,9 +34,6 @@ import type { BaseThreadState, NodeResult } from './Graph';
 
 /** Message count that wakes the background batch summarizer. */
 const SUMMARY_WAKE_MESSAGE_COUNT = 40;
-
-/** Percentage of window to batch-summarize when hitting max size */
-const BATCH_SUMMARY_PERCENT = 0.25;
 
 /** Absolute token ceiling for the full message array (≈ chars / 4) */
 const MAX_TOKEN_BUDGET = 96_000;
@@ -58,39 +55,6 @@ const MIN_MESSAGE_LENGTH = 1;
 
 /** Maximum single-message length before truncation (chars) */
 const MAX_MESSAGE_LENGTH = 100_000;
-
-// ============================================================================
-// PROMPT — used only when evicted messages need summarization
-// ============================================================================
-
-const BATCH_SUMMARY_PROMPT = `
-You are a precision fact-extractor processing a batch of conversation messages for compression.
-
-Your job: Extract key facts, decisions, commitments, entities, preferences, and actionable 
-outcomes in the exact format used by the observational memory system.
-
-Rules:
-- Extract 3–8 observational memory entries
-- Each entry: priority (🔴/🟡/⚪), one-sentence content
-- Third-person neutral voice ("User requested…", "System completed…")
-- Include specifics: names, dates, numbers, slugs, URLs, versions
-- 🔴 Critical = identity, strong prefs/goals, promises, deal-breakers
-- 🟡 Valuable = decisions, patterns, progress markers
-- ⚪ Low = minor items (use sparingly)
-
-${ JSON_ONLY_RESPONSE_INSTRUCTIONS }
-{
-  "observations": [
-    {
-      "priority": "🟡",
-      "content": "One concise fact sentence with specific details."
-    },
-    {
-      "priority": "🔴", 
-      "content": "Another critical fact sentence."
-    }
-  ]
-}`.trim();
 
 // ============================================================================
 // HELPERS
@@ -142,7 +106,7 @@ const CONTROL_CHAR_REGEX = /[\u200B-\u200F\u2028-\u202F\uFEFF\u0000-\u0008\u000B
  *   - Heuristic-first: no LLM calls except eviction summarization
  *   - Relevance scoring uses keyword overlap + recency decay (no embedding call)
  *   - Rate-limiting is per-thread via state.metadata timestamps
- *   - Evicted facts are persisted to observational memory (SullaSettingsModel)
+ *   - Evicted context is summarized in conversation state, not stored as a memory record
  *   - Token budget is a hard ceiling; relevance-aware eviction before naive slice
  *   - Latest user message is never mutated or evicted
  *
@@ -153,7 +117,7 @@ const CONTROL_CHAR_REGEX = /[\u200B-\u200F\u2028-\u202F\uFEFF\u0000-\u0008\u000B
  * Output mutations:
  *   - state.messages may be trimmed / reordered
  *   - state.metadata.inputHandler.* populated with diagnostics
- *   - Observational memory may gain eviction summaries
+ *   - A conversation summary may be added when context is compacted
  *
  * Failure modes:
  *   - Rate-limited → sets metadata flag, still returns 'next'

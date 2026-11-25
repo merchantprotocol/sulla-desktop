@@ -86,7 +86,7 @@ export class ToolRegistry {
     applescript:        'Execute AppleScript to control macOS applications when Administrative Access is enabled.',
     meta:               'Tools for browsing available tools, installing skills, and meta management.',
     memory:             'Tools for the memory recall subconscious agent — Redis citation index lookup/store, tool discovery, and catalog browsing.',
-    observation:        'Observational memory tools for the subconscious observation curator agent.',
+    observation:        'Conversation keyword and log search tools, plus the restricted write_file tool.',
     bridge:             'Bidirectional communication bridge between the heartbeat (autonomous background agent) and the frontend (human-facing chat). Send messages, read messages, update and read human presence state.',
     bookmarks:          'Manage the app Bookmarks pane — save useful links and agent-owned items, search and list bookmarks, organize folders, move items, and remove them.',
     browser:            'Open/close tabs, read page content, click + fill forms, screenshot, exec JS, inspect cookies/history, background browsing, and desktop notifications. Open returns the page snapshot inline so you do not need a second call.',

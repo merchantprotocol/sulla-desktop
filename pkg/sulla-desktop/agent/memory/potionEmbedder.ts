@@ -5,7 +5,7 @@
 
 /**
  * PotionEmbedder — static text embeddings from minishlab/potion-retrieval-32M
- * (model2vec, MIT license), used by ranked memory recall.
+ * (model2vec, MIT license), used by V7 subject recall and use-case suggestions.
  *
  * A model2vec model has no transformer layers: an embedding is the mean of the
  * token rows of a fixed table, L2-normalized. That makes it cheap enough to
@@ -28,6 +28,8 @@
 
 import fs from 'fs';
 import path from 'path';
+
+export const POTION_MODEL_NAME = 'potion-retrieval-32M';
 
 const MAGIC = 'PTN1';
 const MAX_TOKENS = 512;
