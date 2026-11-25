@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { Repository } from '@sulla/foundation';
 
 import { AgentJobMessage as AgentJobMessageModel } from '../Models/AgentJobMessage';
-import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
+import type { AgentJobTaskTarget, AgentJobMessage, AgentJobMessageKind, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 
 export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel> {
   protected readonly model = AgentJobMessageModel;
@@ -20,7 +20,7 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
   /** Every check-in/message write goes through this repository; each one invalidates the telemetry cache. */
   private telemetryChanged(): void { this.telemetryVersion++; this.telemetryReads.clear(); }
   private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined, label: row.label || undefined, agentId: row.agent_id || undefined, spawnMode: row.spawn_mode === 'sync' ? 'sync' : row.spawn_mode === 'async' ? 'async' : undefined, parentJobId: row.parent_job_id ?? null }; }
-  private rowToMessage(row: any): AgentJobMessage { return { id: row.id, jobId: row.job_id, taskIndex: Number(row.task_index), message: row.message, createdAt: new Date(row.created_at).getTime(), deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : undefined }; }
+  private rowToMessage(row: any): AgentJobMessage { return { id: row.id, jobId: row.job_id, taskIndex: Number(row.task_index), message: row.message, messageKind: row.message_kind ?? 'orchestrator', createdAt: new Date(row.created_at).getTime(), deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : undefined }; }
   private rowToCheckin(row: any): AgentJobCheckin { return { step: row.step, summary: row.summary, filesTouched: Array.isArray(row.files_touched) ? row.files_touched : [], blockers: Array.isArray(row.blockers) ? row.blockers : [], percent: row.percent == null ? undefined : Number(row.percent), createdAt: new Date(row.created_at).getTime() }; }
 
   async taskForThread(threadId: string): Promise<AgentJobTaskTarget | null> {
@@ -65,13 +65,13 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     );
   }
 
-  async queueMessage(target: AgentJobTaskTarget, message: string): Promise<AgentJobMessage> {
+  async queueMessage(target: AgentJobTaskTarget, message: string, messageKind: AgentJobMessageKind = 'orchestrator'): Promise<AgentJobMessage> {
     const id = crypto.randomUUID();
     const rows = await this.connection.select<any>(
-      `INSERT INTO agent_job_messages (id, job_id, task_index, message)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO agent_job_messages (id, job_id, task_index, message, message_kind)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [id, target.jobId, target.taskIndex, message],
+      [id, target.jobId, target.taskIndex, message, messageKind],
     );
     this.telemetryChanged();
 

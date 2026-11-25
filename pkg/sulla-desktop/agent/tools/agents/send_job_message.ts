@@ -5,6 +5,7 @@
 
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import { PendingReturnedTaskMessage } from '../../app/Services/PendingReturnedTaskMessage';
+import type { AgentJobMessageKind } from '../../database/models/AgentJobMessagingModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
@@ -16,7 +17,7 @@ import { getJob } from './jobRegistry';
  * child is a desktop chat: the message steers its live turn, or starts a turn
  * when it is idle, through the same inject path the old message_tab used.
  */
-export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string; waitForWake?: boolean; reviewItems?: string[]; closeReviewItems?: Array<{ id: string; status: 'wont_fix'; reason: string }> }): Promise<ToolResponse> {
+export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string; waitForWake?: boolean; messageKind?: 'decision'; reviewItems?: string[]; closeReviewItems?: Array<{ id: string; status: 'wont_fix'; reason: string }> }): Promise<ToolResponse> {
   const { jobId, taskIndex, message } = input;
   if (!jobId || !message) {
     return { successBoolean: false, responseString: 'jobId and a non-empty message are required.' };
@@ -75,9 +76,10 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   if (unknownClose) return { successBoolean: false, responseString: `Unknown review item "${unknownClose.id}". Valid open ids: ${(await Promise.all(targets.map(target => agentJobProvider.reviewItems.itemsForTask(jobId, target.taskIndex, true)))).flat().map(item => item.id).join(', ') || '(none)'}.` };
 
   const job = await getJob(jobId);
+  const messageKind: AgentJobMessageKind = input.messageKind ?? 'orchestrator';
   const queued = await Promise.all(targets.map(async(target) => ({
     target,
-    record: await AgentJobMessagingModel.queueMessage(target, reviewMessageByTask.get(target.taskIndex) ?? message),
+    record: await AgentJobMessagingModel.queueMessage(target, reviewMessageByTask.get(target.taskIndex) ?? message, messageKind),
   })));
   let deliveredLive = 0;
   const notWoken: Array<{ taskIndex: number; reason: string }> = [];
@@ -89,6 +91,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       taskIndex:          target.taskIndex,
       jobMessageId:       record.id,
       jobMessageThreadId: target.threadId,
+      jobMessageKind:     record.messageKind,
     };
 
     if (job?.visibility === 'tab') {
@@ -145,7 +148,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     if (!running) continue;
     const accepted = injectSteer(running.state as any, {
       role:    'user',
-      content: message.startsWith('[Decision from ') ? message : `[Message from orchestrator]\n${ message }`,
+      content: record.messageKind === 'decision' || record.messageKind === 'decision-fyi' ? message : `[Message from orchestrator]\n${ message }`,
       metadata: {
         source:       'orchestrator_job_message',
         inputSource:  'system',

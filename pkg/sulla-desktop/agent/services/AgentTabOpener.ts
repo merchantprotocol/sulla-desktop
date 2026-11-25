@@ -15,6 +15,7 @@
  */
 
 import { applyThreadAgentRoute, SULLA_DESKTOP_CHANNEL_ID, type RoutableAgent } from './ChatAgentRouting';
+import { AgentOrchestratorMessageFormatter } from './AgentOrchestratorMessageFormatter';
 import { GraphRegistry } from './GraphRegistry';
 import { getWebSocketClientService } from './WebSocketClientService';
 import { installWorkerRoute } from './WorkerModelRouting';
@@ -222,7 +223,7 @@ export async function messageAgentTab(threadId: string, agentId: string, message
     type: 'inject_message',
     data: {
       threadId,
-      content:  `[Message from orchestrator]\n${ message }`,
+      content:  new AgentOrchestratorMessageFormatter().format(message, String(meta.jobMessageKind ?? '')),
       metadata: {
         agentId,
         source:      'orchestrator_job_message',
