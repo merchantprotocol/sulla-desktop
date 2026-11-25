@@ -96,7 +96,7 @@ export class ReturnResultWorker extends BaseTool {
     // AgentNode reads this after tool execution (and in its error path) so it
     // does not start a post-return provider call or publish a late runtime error.
     const receipt = { jobId: job.jobId, taskIndex, returnedAt: recorded.tasks[taskIndex]?.returnedAt ?? Date.now() };
-    if (this.state?.metadata) (this.state.metadata as any).delegatedContractReturned = receipt;
+    if (this.state?.metadata) this.state.metadata.delegatedContractReturned = receipt;
 
     if (recorded.visibility !== 'tab') {
       agentJobLifecycle.contractReturned(threadId, receipt);

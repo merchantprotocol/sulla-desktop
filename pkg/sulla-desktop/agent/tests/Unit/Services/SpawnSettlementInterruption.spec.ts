@@ -43,11 +43,13 @@ function fixture() {
   const cancel = vi.spyOn(agentWaitProvider, 'cancel').mockResolvedValue(true);
   vi.spyOn(agentWaitProvider.repository, 'pending').mockResolvedValue({ state: 'scheduled' } as any);
   vi.spyOn(agentJobLifecycle, 'openChildren').mockResolvedValue(0);
-  const graph = { execute: () => {
-    DeferredStallInput.settledInputs(state, DeferredStallInput.actionableMessages(state));
-    state.messages.push({ role: 'assistant', content: 'preceding graph text' });
-    return Promise.resolve(state);
-  } };
+  const graph = {
+    execute: () => {
+      DeferredStallInput.settledInputs(state, DeferredStallInput.actionableMessages(state));
+      state.messages.push({ role: 'assistant', content: 'preceding graph text' });
+      return Promise.resolve(state);
+    },
+  };
   vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation((_channel, threadId) => {
     state.metadata.threadId = threadId;
     return Promise.resolve({ graph, state } as any);
