@@ -157,10 +157,11 @@ function cancelTitle(): void {
   /* Fit the title and its padding, then shrink to the available grid space. */
   flex: 0 1 auto; min-width: 0; height: auto; margin: 0; padding: 4px 10px; text-align: left;
   --chat-title-chip-bg: #f3f6f9;
+  --chat-title-chip-text: #1c2630;
   background: var(--chat-title-chip-bg);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   border: 0; border-radius: 8px; outline: none; cursor: text;
-  color: var(--text-primary);
+  color: var(--chat-title-chip-text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px; font-weight: 400; line-height: 1.5; letter-spacing: -.005em;
 }
@@ -169,7 +170,7 @@ function cancelTitle(): void {
   background: var(--chat-title-chip-bg);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
-html.dark .ch-title { --chat-title-chip-bg: #1d2126; }
+html.dark .ch-title { --chat-title-chip-bg: #1d2126; --chat-title-chip-text: #e8ecf0; }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);
