@@ -33,6 +33,7 @@ import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolD
 import { ApiChatRunFactory, OwnerIdentityUnavailableError } from './ApiChatRunFactory';
 import { getCurrentUserId } from './sullaCloudAuth';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
+import { RemovedObservationCommand } from './RemovedObservationCommand';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -147,7 +148,7 @@ export class ChatCompletionsServer {
   private taskerUnsubscribe: (() => void) | null = null;
   private apiToken:          string | null = null;
 
-  constructor() {
+  constructor(private readonly removedObservationCommand: RemovedObservationCommand = new RemovedObservationCommand()) {
     this.initializeTaskerWebSocketListener();
     this.setupMiddleware();
     this.setupRoutes();
@@ -878,8 +879,6 @@ export class ChatCompletionsServer {
       // Individual stateless tools from mixed categories (where the rest of the category uses state).
       // These are tools whose parent category is NOT fully internal — only specific tools are exposed.
       const INTERNAL_INDIVIDUAL_TOOLS = [
-        { toolName: 'add_observational_memory', slug: 'memory' },
-        { toolName: 'remove_observational_memory', slug: 'memory' },
         { toolName: 'check_agent_jobs', slug: 'agents' },
       ];
 
@@ -1255,7 +1254,7 @@ export class ChatCompletionsServer {
             : '';
           return res.status(404).json({
             success: false,
-            error:   `Internal tool "${ prefixed }" or "${ endpoint }" not found.${ hint }`,
+            error:   this.removedObservationCommand.errorFor(slug, endpoint) || `Internal tool "${ prefixed }" or "${ endpoint }" not found.${ hint }`,
             suggestions,
           });
         }

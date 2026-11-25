@@ -53,6 +53,7 @@ import {
   hashManagedContent,
   readGitIdentity,
   RETIRED_CODING_MANAGER_SLUGS,
+  RETIRED_OBSERVATION_AGENT_SLUGS,
   renderBuiltinAgent,
   isRetiredCodingManagerSlug,
   type BuiltinAgentSpec,
@@ -213,7 +214,7 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
   const summary: BuiltinSeedSummary = { inserted: 0, refreshed: 0, adopted: 0, filled: 0, kept: 0, unchanged: 0, skipped: 0, errors: [] };
   // Retire these before the rest of the seed work so a transient builtin-ledger error cannot
   // prevent long-tail rows from being switched off at startup.
-  const retiredManagers = await retireLongTailCodingManagers();
+  const retiredManagers = await retireLongTailCodingManagers([...RETIRED_CODING_MANAGER_SLUGS, ...RETIRED_OBSERVATION_AGENT_SLUGS]);
   summary.errors.push(...retiredManagers.errors);
   const seen = await seenSlugs();
   const home = os.homedir();

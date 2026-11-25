@@ -56,7 +56,6 @@ export interface ChosenMemorySubject {
 
 export interface MemoryBudgetLogInput {
   threadId: string;
-  observations: string;
   brain: string;
   stats?: Partial<MemoryBudgetStats>;
   teamDirectory?: string;
@@ -64,12 +63,10 @@ export interface MemoryBudgetLogInput {
   subagentDirectory?: string;
 }
 
-/** Measures precisely the wrappers BaseNode injects, including their join. */
-export function measureInjectedMemoryBlocks(observations: string, brain: string): number {
+/** Measures precisely the brain-memory wrapper BaseNode injects. */
+export function measureInjectedMemoryBlocks(brain: string): number {
   const blocks: string[] = [];
-  const observationText = observations.trim();
   const brainText = brain.trim();
-  if (observationText) blocks.push(`<observational_memory>\n${ observationText }\n</observational_memory>`);
   if (brainText) blocks.push(`<brain_memory>\n${ brainText }\n</brain_memory>`);
   return blocks.join('\n\n').length;
 }
@@ -81,7 +78,7 @@ export function measureInjectedMemoryBlocks(observations: string, brain: string)
 export class MemoryBudgetPacker {
   constructor(
     private readonly budget: number = MEMORY_CHAR_BUDGET,
-    private readonly measure: (text: string) => number = (text) => measureInjectedMemoryBlocks('', text),
+    private readonly measure: (text: string) => number = measureInjectedMemoryBlocks,
   ) {}
 
   /** Keep the newest record per check-in identity, then suppress sent winners. */
@@ -324,11 +321,10 @@ export class MemoryBudgetLog {
       .filter(([name]) => name.startsWith('project:'))
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, size]) => `${ name }=${ size }`);
-    const total = measureInjectedMemoryBlocks(input.observations, input.brain);
+    const total = measureInjectedMemoryBlocks(input.brain);
     const fields = [
       `[MemoryBudget]`,
       `thread=${ input.threadId || 'unknown' }`,
-      `observations=${ input.observations.trim().length }`,
       `skills=${ sectionSize('skills') }`,
       `sulla=${ sectionSize('sulla') }`,
       `human=${ sectionSize('human') }`,

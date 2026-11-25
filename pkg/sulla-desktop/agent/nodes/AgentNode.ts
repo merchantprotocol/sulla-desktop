@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseNode } from './BaseNode';
-import { runSubconsciousMiddleware, runSubconsciousObservationWriters } from '../middleware/SubconsciousMiddleware';
+import { runSubconsciousMiddleware, runV7MemoryWriter } from '../middleware/SubconsciousMiddleware';
 import { isTerminalAgentTurn } from './agentTurnEnd';
 import { throwIfAborted } from '../services/AbortService';
 import { AGENT_ERROR_MESSAGE_PREFIX } from '../workflow/agentNodeError';
@@ -120,15 +120,14 @@ export class AgentNode extends BaseNode {
     preModelPhases.enrichPrompt = Date.now() - enrichStart;
     const promptSectionTimings = (state.metadata as any).__promptSectionTimings as Array<{ id: string; durationMs: number }> | undefined;
 
-    // Run subconscious middleware: parallel agents for summarization,
-    // memory recall, and observation management.
+    // Run subconscious middleware for summarization, memory recall, and skill recall.
     // Recall context is merged into the last assistant message so the
     // primary agent treats it as its own knowledge, not external info.
     // Skip during tool-call loops (consecutiveSameNode > 0) — only run
     // on fresh user turns to avoid redundant LLM calls.
     // Also skipped inside workflow runs (see the gate at the top of
-    // runSubconsciousMiddleware) so routines aren't slowed by recall/
-    // observation sub-agents on every orchestrator turn.
+    // runSubconsciousMiddleware) so routines aren't slowed by recall work on
+    // every orchestrator turn.
     const isToolCallLoop = ((state.metadata as any).consecutiveSameNode ?? 0) > 0;
 
 
@@ -136,10 +135,10 @@ export class AgentNode extends BaseNode {
     if (!isToolCallLoop) {
       const subStart = phaseStart();
       const observationSettingStart = phaseStart();
-      const shouldInjectObservations = await this.shouldInjectObservationsForAgent(state);
+      const includeObservations = await this.shouldInjectObservationsForAgent(state);
       preModelPhases.observationSettings = Date.now() - observationSettingStart;
       await runSubconsciousMiddleware(state, {
-        includeObservations: shouldInjectObservations,
+        includeObservations,
         // Surface each subconscious launch/completion as a thinking line.
         // The mobile relay translates these into activity frames, so the
         // phone's status line moves during the (unbounded) recall wait
@@ -296,10 +295,10 @@ export class AgentNode extends BaseNode {
     }
 
     // ----------------------------------------------------------------
-    // POST-TURN — observation writers see the COMPLETED exchange
+    // POST-TURN — the v7 memory writer sees the COMPLETED exchange
     // ----------------------------------------------------------------
     // state.messages now holds the whole turn (user message + this agent's
-    // response + any tool results), so fire the domain writers here to observe
+    // response + any tool results), so fire the v7 writer here to process
     // what actually happened — not the pre-turn state the middleware used to see.
     // Only when the loop has truly ended, never on intermediate tool-call
     // iterations; fire-and-forget, since the response is already out. "Ended"
@@ -311,9 +310,9 @@ export class AgentNode extends BaseNode {
     if (!state.metadata.supportSessionId && isTerminalAgentTurn(agentOutcome.status, !!state.metadata.hadToolCalls)) {
       try {
         const includeObservations = await this.shouldInjectObservationsForAgent(state);
-        runSubconsciousObservationWriters(state, { includeObservations });
+        runV7MemoryWriter(state, { includeObservations });
       } catch (err) {
-        console.warn('[AgentNode] post-turn observation writers failed to launch:', err);
+        console.warn('[AgentNode] post-turn v7 memory writer failed to launch:', err);
       }
     }
 
