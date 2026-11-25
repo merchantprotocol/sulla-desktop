@@ -100,7 +100,7 @@ export class AgentJobFailureLogger implements AgentJobFailureObserver {
 
   static wakeSource(value: unknown): string {
     return typeof value === 'string' && ['missing_input', 'agent_wait_timer', 'sub_agent_completion', 'orchestrator_job_message',
-      'contract_reminder', 'auto_park_resume', 'inject'].includes(value)
+      'contract_reminder', 'auto_park_resume', 'inject', 'agent_inbox'].includes(value)
 ? value
 : 'unknown_wake';
   }
