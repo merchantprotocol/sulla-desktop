@@ -75,16 +75,6 @@
     inset 1px 0 0 color-mix(in srgb, var(--group-accent) 16%, transparent),
     inset -1px 0 0 color-mix(in srgb, var(--group-accent) 16%, transparent);
 }
-/* Give spare room to the selected tab's group, not just the selected tab. */
-.app-titlebar .tab-group:not(.tab-group-folded):has([data-active="true"]),
-.app-titlebar .tab-group:not(.tab-group-folded):has([data-active="true"]) .tab-group-tabs {
-  flex-grow: 1;
-}
-.app-titlebar .tab-group:not(.tab-group-folded):has([data-active="true"]) .tab-inactive {
-  flex-grow: 1;
-  max-width: none;
-}
-.app-titlebar .tab-group-tabs > [data-active="true"]:only-child { flex-grow: 1; max-width: none; }
 .app-titlebar .tab-group-chats { --group-accent: var(--accent); }
 .app-titlebar .tab-group-browser { --group-accent: var(--text-accent); }
 .app-titlebar .tab-group-tools { --group-accent: var(--status-success); }
@@ -154,13 +144,13 @@
 .app-titlebar .tab-item {
   position: relative;
   display: flex;
-  flex: 0 1 175px;
-  min-width: 110px;
-  max-width: 240px;
+  flex: 0 1 auto;
+  min-width: 36px;
+  max-width: none;
   height: 34px;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
+  padding: 0 8px 0 12px;
   border: 0;
   border-radius: 9px 9px 0 0;
   color: var(--text-muted);
@@ -173,12 +163,14 @@
 .app-titlebar .tab-group .tab-item:hover {
   background: color-mix(in srgb, var(--group-accent) 12%, transparent);
 }
+.app-titlebar .tab-busy {
+  min-width: fit-content(110px);
+}
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
   z-index: 2;
-  flex: 0 0 auto;
-  min-width: 120px;
-  max-width: 440px;
+  flex: 0 1 auto;
+  min-width: max-content;
   margin-bottom: -1px;
   border: 1px solid var(--border-default);
   border-bottom: 0;
@@ -190,7 +182,7 @@
 .app-titlebar .tab-active .tab-label,
 .app-titlebar .tab-active-native .tab-label {
   flex: 0 1 auto;
-  max-width: calc(440px - 76px);
+  max-width: 440px;
   -webkit-mask-image: none;
   mask-image: none;
   text-overflow: clip;
@@ -237,13 +229,33 @@
 .app-titlebar .tab-active-native:hover { background: var(--bg-chrome-active); }
 .app-titlebar .tab-label {
   display: block;
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
   -webkit-mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
   mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
+}
+.app-titlebar .tab-item .tab-close {
+  position: absolute;
+  right: 8px;
+  margin-left: 0;
+  visibility: hidden;
+  transition: opacity 150ms, visibility 0s linear 150ms, color 150ms, background-color 150ms;
+}
+.app-titlebar .tab-close-spacer {
+  display: block;
+  flex: 0 1 16px;
+  min-width: 0;
+  height: 16px;
+}
+.app-titlebar .tab-item:hover .tab-close,
+.app-titlebar .tab-active .tab-close,
+.app-titlebar .tab-active-native .tab-close {
+  visibility: visible;
+  transition-delay: 0s;
 }
 .app-titlebar .tab-pinned-boundary { margin-left: 12px; }
 .app-titlebar .tab-pinned-boundary::before {
