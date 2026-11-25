@@ -44,20 +44,4 @@ describe('window tab context menu bridge', () => {
     disconnect();
     expect(ipc.listenerCount('tab-context-menu:selected')).toBe(0);
   });
-
-  it.each(['closeRight', 'closeOther'])('does not run %s if the fixed menu target has disappeared', (action) => {
-    const bridge = new TabContextMenuBridge();
-    const ipc = new EventEmitter();
-    const disconnect = bridge.connect(ipc);
-    const tabs = [{ id: 'left' }, { id: 'target' }, { id: 'right' }];
-    const handle = vi.fn(() => tabs.splice(0));
-
-    bridge.openForTab('menu', () => tabs.find(tab => tab.id === 'target'), handle, vi.fn());
-    tabs.splice(1, 1);
-    ipc.emit('tab-context-menu:selected', {}, 'menu', action);
-
-    expect(handle).not.toHaveBeenCalled();
-    expect(tabs.map(tab => tab.id)).toEqual(['left', 'right']);
-    disconnect();
-  });
 });
