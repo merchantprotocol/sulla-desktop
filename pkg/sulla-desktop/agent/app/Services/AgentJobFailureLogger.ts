@@ -20,6 +20,7 @@ export interface WakeObservation {
   wakeId: unknown;
   source: unknown;
   attempt: number;
+  cacheHit?:          boolean;
   graphCache: 'live_runner' | 'registry' | 'miss';
   providerDispatched: boolean;
   liveChildCount: number;
@@ -78,9 +79,22 @@ export class AgentJobFailureLogger implements AgentJobFailureObserver {
     const source = AgentJobFailureLogger.wakeSource(facts.source);
     const wakeId = createHash('sha256').update(typeof facts.wakeId === 'string' ? facts.wakeId : 'unknown').digest('hex').slice(0, 16);
     const { jobId, taskIndex, attempt, graphCache, providerDispatched, liveChildCount, inputTokens, outputTokens } = facts;
-    this.sink.error(`[agent-job] wake ${ JSON.stringify({ jobId, taskIndex, wakeId, source, attempt, graphCache,
-      providerDispatched, liveChildCount, inputTokens: Number.isFinite(inputTokens) ? inputTokens : undefined,
-      outputTokens: Number.isFinite(outputTokens) ? outputTokens : undefined }) }`);
+    // A live runner can bypass the registry whether cached or evicted.
+    const observedHit = { live_runner: null, registry: true, miss: false }[graphCache];
+    const cacheHit = typeof facts.cacheHit === 'boolean' ? facts.cacheHit : observedHit;
+    this.sink.error(`[agent-job] wake ${ JSON.stringify({
+      jobId,
+      taskIndex,
+      wakeId,
+      source,
+      attempt,
+      graphCache,
+      cacheHit,
+      providerDispatched,
+      liveChildCount,
+      inputTokens:  Number.isFinite(inputTokens) ? inputTokens : undefined,
+      outputTokens: Number.isFinite(outputTokens) ? outputTokens : undefined,
+    }) }`);
   }
 
   static wakeSource(value: unknown): string {
