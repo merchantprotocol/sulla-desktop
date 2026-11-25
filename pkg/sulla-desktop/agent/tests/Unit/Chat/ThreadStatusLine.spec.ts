@@ -84,14 +84,15 @@ describe('the activity line above the message box', () => {
     const w = mountLine([]);
     expect(w.find('.ta-line').text()).toContain('Idle');
     expect(w.find('.ta-line').attributes('disabled')).toBeDefined();
-    expect(chatActivityByTab.get('tab-1')).toBe('idle');
+    expect(chatActivityByTab.get('tab-1')?.state).toBe('idle');
     w.unmount();
   });
 
   it('flags a silent agent and tells the tab strip', () => {
     const w = mountLine([row('quiet')]);
     expect(w.find('.ta-line').text()).toContain('No progress');
-    expect(chatActivityByTab.get('tab-1')).toBe('stalled');
+    expect(chatActivityByTab.get('tab-1')?.state).toBe('stalled');
+    expect(chatActivityByTab.get('tab-1')?.detail).toContain('stopped responding');
     w.unmount();
     expect(chatActivityByTab.has('tab-1')).toBe(false);
   });
