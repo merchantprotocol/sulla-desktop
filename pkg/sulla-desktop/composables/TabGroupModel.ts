@@ -51,6 +51,8 @@ export interface TabGroupLayoutResult {
 
 export interface TabStripLayoutInput {
   groups:         readonly TabStripLayoutGroup[];
+  /** Previous result, used only to keep automatic compaction stable while resizing. */
+  previousLayout?: readonly TabGroupLayoutResult[];
   activeGroup?:   TabGroupId;
   availableWidth: number;
   reservedWidth?: number;
@@ -61,6 +63,8 @@ export interface TabStripLayoutInput {
   maxCompactIcons?: number;
   busyMinWidth?:  number;
   idleMinWidth?:  number;
+  minimumTitleWidth?: number;
+  compactHysteresis?: number;
 }
 
 function expandedGroupWidth(group: TabStripLayoutGroup, widths = group.tabs.map(tab => tab.width), tabGap = 2): number {
@@ -90,9 +94,16 @@ function levelTabWidths(
   availableTabSpace: number,
   busyMinWidth: number,
   idleMinWidth: number,
+  minimumTitleWidth: number,
 ): number[] {
   const naturalWidths = tabs.map(tab => naturalTabWidth(tab, busyMinWidth, idleMinWidth));
-  const minimums = tabs.map(tab => minimumTabWidth(tab, busyMinWidth, idleMinWidth));
+  const minimums = tabs.map((tab, index) => {
+    if (tab.active) return naturalWidths[index];
+    if (tab.busy) return Math.max(idleMinWidth, busyMinWidth);
+
+    // A readable title width is a cap floor, not a reason to stretch a short title.
+    return Math.max(idleMinWidth, Math.min(naturalWidths[index], minimumTitleWidth));
+  });
   const activeWidth = tabs.reduce((total, tab, index) => total + (tab.active ? naturalWidths[index] : 0), 0);
   const adjustable = tabs.flatMap((tab, index) => tab.active ? [] : [index]);
   const adjustableSpace = availableTabSpace - activeWidth;
@@ -121,14 +132,62 @@ function levelTabWidths(
     : Math.max(minimums[index], Math.min(naturalWidths[index], lowerCap)));
 }
 
-/**
- * Allocate the strip without depending on the DOM. Compact groups are budgeted
- * before the active group; if their icons overflow, each capsule keeps a +N
- * entry and receives at most the configured number of icons.
- */
+function minimumExpandedGroupWidth(
+  group: TabStripLayoutGroup,
+  busyMinWidth: number,
+  idleMinWidth: number,
+  minimumTitleWidth: number,
+  tabGap: number,
+): number {
+  const widths = group.tabs.map(tab => {
+    const naturalWidth = naturalTabWidth(tab, busyMinWidth, idleMinWidth);
+
+    if (tab.active) return naturalWidth;
+    if (tab.busy) return Math.max(idleMinWidth, busyMinWidth);
+
+    return Math.max(idleMinWidth, Math.min(naturalWidth, minimumTitleWidth));
+  });
+
+  return expandedGroupWidth(group, widths, tabGap);
+}
+
+/** Water-level all expanded groups together rather than independently by capsule. */
+function levelExpandedGroups(
+  groups: readonly TabStripLayoutGroup[],
+  availableWidth: number,
+  busyMinWidth: number,
+  idleMinWidth: number,
+  minimumTitleWidth: number,
+  tabGap: number,
+): { widthsByGroup: Map<TabGroupId, number[]>; width: number; fits: boolean } {
+  const fixedWidth = groups.reduce((total, group) => total + group.baseWidth
+    + Math.max(0, group.tabs.length - 1) * tabGap, 0);
+  const tabs = groups.flatMap(group => group.tabs);
+  const widths = levelTabWidths(
+    tabs,
+    Math.max(0, availableWidth - fixedWidth),
+    busyMinWidth,
+    idleMinWidth,
+    minimumTitleWidth,
+  );
+  const widthsByGroup = new Map<TabGroupId, number[]>();
+  let tabIndex = 0;
+
+  for (const group of groups) {
+    widthsByGroup.set(group.id, widths.slice(tabIndex, tabIndex + group.tabs.length));
+    tabIndex += group.tabs.length;
+  }
+
+  const width = fixedWidth + widths.reduce((total, value) => total + value, 0);
+
+  return { widthsByGroup, width, fits: width <= availableWidth + 0.01 };
+}
+
+/** Allocate the strip without depending on the DOM; title leveling precedes compaction. */
 export function calculateTabStripLayout(input: TabStripLayoutInput): TabGroupLayoutResult[] {
   const {
     groups,
+    previousLayout,
     activeGroup,
     availableWidth,
     reservedWidth = 0,
@@ -139,95 +198,139 @@ export function calculateTabStripLayout(input: TabStripLayoutInput): TabGroupLay
     maxCompactIcons = 3,
     busyMinWidth = 110,
     idleMinWidth = 36,
+    minimumTitleWidth = 140,
+    compactHysteresis = 24,
   } = input;
   const sectionGapWidth = Math.max(0, groups.length - 1) * groupGap;
   const groupBudget = Math.max(0, availableWidth - reservedWidth - sectionGapWidth);
   const widthsForGroup = (group: TabStripLayoutGroup) => group.tabs.map(tab => naturalTabWidth(tab, busyMinWidth, idleMinWidth));
-  const fullWidth = groups.reduce((total, group) => total + (group.folded
+  const expanded = groups.filter(group => !group.folded);
+  const compactable = expanded.filter(group => group.id !== activeGroup && group.tabs.length > 0);
+  const foldedWidth = groups.reduce((total, group) => total + (group.folded ? group.foldedWidth : 0), 0);
+  const fullNaturalWidth = groups.reduce((total, group) => total + (group.folded
     ? group.foldedWidth
     : expandedGroupWidth(group, widthsForGroup(group), tabGap)), 0);
+  const readableIdleFloor = Math.max(idleMinWidth, minimumTitleWidth);
+  const minimumExpandedWidth = foldedWidth + expanded.reduce((total, group) => total
+    + minimumExpandedGroupWidth(group, busyMinWidth, idleMinWidth, readableIdleFloor, tabGap), 0);
+  const previousCompactIds = new Set((previousLayout ?? [])
+    .filter(layout => layout.presentation === 'compact' && layout.id !== activeGroup)
+    .map(layout => layout.id)
+    .filter(id => compactable.some(group => group.id === id)));
+  const orderedCompactable = [...compactable].sort((left, right) => {
+    const widthDifference = expandedGroupWidth(right, widthsForGroup(right), tabGap)
+      - expandedGroupWidth(left, widthsForGroup(left), tabGap);
 
-  if (fullWidth <= groupBudget) {
-    return groups.map(group => {
-      const widths = widthsForGroup(group);
+    return widthDifference || groups.indexOf(left) - groups.indexOf(right);
+  });
+
+  const buildLayout = (compactIds: ReadonlySet<TabGroupId>, visibleCounts?: ReadonlyMap<TabGroupId, number>) => {
+    const compactWidths = new Map<TabGroupId, number>();
+    let compactWidth = 0;
+
+    for (const group of groups) {
+      if (group.folded || !compactIds.has(group.id)) continue;
+      const visibleCount = visibleCounts?.get(group.id) ?? group.tabs.length;
+      const width = compactGroupWidth(group, visibleCount, compactIconWidth, overflowWidth, tabGap);
+
+      compactWidths.set(group.id, width);
+      compactWidth += width;
+    }
+
+    const expandedRemaining = expanded.filter(group => !compactIds.has(group.id));
+    const availableExpandedWidth = groupBudget - foldedWidth - compactWidth;
+    const leveled = levelExpandedGroups(
+      expandedRemaining,
+      availableExpandedWidth,
+      busyMinWidth,
+      idleMinWidth,
+      readableIdleFloor,
+      tabGap,
+    );
+    const results: TabGroupLayoutResult[] = groups.map(group => {
+      if (group.folded) {
+        return { id: group.id, presentation: 'folded', width: group.foldedWidth, visibleTabIds: [], overflowCount: 0, tabWidths: new Map() };
+      }
+      if (compactIds.has(group.id)) {
+        const visibleCount = visibleCounts?.get(group.id) ?? group.tabs.length;
+
+        return {
+          id: group.id,
+          presentation: 'compact',
+          width: compactWidths.get(group.id) ?? compactGroupWidth(group, visibleCount, compactIconWidth, overflowWidth, tabGap),
+          visibleTabIds: group.tabs.slice(0, visibleCount).map(tab => tab.id),
+          overflowCount: group.tabs.length - visibleCount,
+          tabWidths: new Map(group.tabs.slice(0, visibleCount).map(tab => [tab.id, compactIconWidth])),
+        };
+      }
+
+      const widths = leveled.widthsByGroup.get(group.id) ?? [];
 
       return {
         id: group.id,
-        presentation: group.folded ? 'folded' : 'expanded',
-        width: group.folded ? group.foldedWidth : expandedGroupWidth(group, widths, tabGap),
-        visibleTabIds: group.folded ? [] : group.tabs.map(tab => tab.id),
+        presentation: 'expanded',
+        width: expandedGroupWidth(group, widths, tabGap),
+        visibleTabIds: group.tabs.map(tab => tab.id),
         overflowCount: 0,
         tabWidths: new Map(group.tabs.map((tab, index) => [tab.id, widths[index]])),
       };
     });
+
+    return {
+      results,
+      fits: foldedWidth + compactWidth + leveled.width <= groupBudget + 0.01,
+    };
+  };
+
+  // Preserve the natural layout whenever it genuinely fits. Level titles before
+  // considering any automatic group compaction.
+  if (fullNaturalWidth <= groupBudget) return buildLayout(new Set<TabGroupId>()).results;
+
+  const allExpanded = buildLayout(new Set<TabGroupId>());
+  const keepPreviousCompaction = previousCompactIds.size > 0
+    && groupBudget < minimumExpandedWidth + Math.max(0, compactHysteresis);
+
+  if (allExpanded.fits && !keepPreviousCompaction) return allExpanded.results;
+
+  const compactIds = new Set<TabGroupId>();
+  if (keepPreviousCompaction) {
+    for (const group of orderedCompactable) {
+      if (previousCompactIds.has(group.id)) compactIds.add(group.id);
+    }
+    const preserved = buildLayout(compactIds);
+
+    if (preserved.fits) return preserved.results;
   }
 
-  const expanded = groups.find(group => group.id === activeGroup && !group.folded);
-  const compact = groups.filter(group => !group.folded && group !== expanded);
-  const foldedWidth = groups.reduce((total, group) => total + (group.folded ? group.foldedWidth : 0), 0);
-  const minimumExpandedWidth = expanded
-    ? expandedGroupWidth(expanded, expanded.tabs.map(tab => minimumTabWidth(tab, busyMinWidth, idleMinWidth)), tabGap)
-    : 0;
-  const compactBudget = Math.max(0, groupBudget - foldedWidth - minimumExpandedWidth);
-  const fullCompactWidth = compact.reduce((total, group) => total + compactGroupWidth(group, group.tabs.length, compactIconWidth, overflowWidth, tabGap), 0);
-  const needsOverflowCaps = fullCompactWidth > compactBudget;
-  const visibleCounts = new Map(compact.map(group => [group.id, needsOverflowCaps ? Math.min(group.tabs.length, maxCompactIcons) : group.tabs.length]));
-  const widthForCompact = () => compact.reduce((total, group) => total + compactGroupWidth(group, visibleCounts.get(group.id) ?? 0, compactIconWidth, overflowWidth, tabGap), 0);
+  const compactOrder = keepPreviousCompaction
+    ? [...orderedCompactable.filter(group => compactIds.has(group.id)), ...orderedCompactable.filter(group => !compactIds.has(group.id))]
+    : orderedCompactable;
 
-  // Reduce icons evenly by capsule until the active group has at least its tab floors.
-  while (widthForCompact() > compactBudget) {
-    const reducible = [...compact]
+  for (const group of compactOrder) {
+    if (compactIds.has(group.id)) continue;
+    compactIds.add(group.id);
+    const candidate = buildLayout(compactIds);
+
+    if (candidate.fits) return candidate.results;
+  }
+
+  // All non-active groups are now compact; only at this point hide icons behind +N.
+  const visibleCounts = new Map(orderedCompactable.map(group => [group.id, Math.min(group.tabs.length, maxCompactIcons)]));
+
+  while (true) {
+    const overflowed = buildLayout(compactIds, visibleCounts);
+
+    if (overflowed.fits) return overflowed.results;
+
+    const reducible = [...orderedCompactable]
       .filter(group => (visibleCounts.get(group.id) ?? 0) > 0)
-      .sort((left, right) => (visibleCounts.get(right.id) ?? 0) - (visibleCounts.get(left.id) ?? 0));
+      .sort((left, right) => (visibleCounts.get(right.id) ?? 0) - (visibleCounts.get(left.id) ?? 0)
+        || groups.indexOf(left) - groups.indexOf(right));
     const group = reducible[0];
 
-    if (!group) break;
+    if (!group) return overflowed.results;
     visibleCounts.set(group.id, (visibleCounts.get(group.id) ?? 0) - 1);
   }
-
-  const compactWidths = new Map(compact.map(group => [
-    group.id,
-    compactGroupWidth(group, visibleCounts.get(group.id) ?? 0, compactIconWidth, overflowWidth, tabGap),
-  ]));
-  const compactWidth = [...compactWidths.values()].reduce((total, width) => total + width, 0);
-  const availableExpandedWidth = Math.max(0, groupBudget - foldedWidth - compactWidth);
-  const results: TabGroupLayoutResult[] = [];
-
-  for (const group of groups) {
-    if (group.folded) {
-      results.push({ id: group.id, presentation: 'folded', width: group.foldedWidth, visibleTabIds: [], overflowCount: 0, tabWidths: new Map() });
-      continue;
-    }
-    if (group !== expanded) {
-      const visibleCount = visibleCounts.get(group.id) ?? 0;
-
-      results.push({
-        id: group.id,
-        presentation: 'compact',
-        width: compactWidths.get(group.id) ?? compactGroupWidth(group, visibleCount, compactIconWidth, overflowWidth, tabGap),
-        visibleTabIds: group.tabs.slice(0, visibleCount).map(tab => tab.id),
-        overflowCount: group.tabs.length - visibleCount,
-        tabWidths: new Map(group.tabs.slice(0, visibleCount).map(tab => [tab.id, compactIconWidth])),
-      });
-      continue;
-    }
-
-    const naturalWidths = widthsForGroup(group);
-    const width = Math.min(expandedGroupWidth(group, naturalWidths, tabGap), Math.max(group.baseWidth, availableExpandedWidth));
-    const tabSpace = Math.max(0, width - group.baseWidth - Math.max(0, group.tabs.length - 1) * tabGap);
-    const widths = levelTabWidths(group.tabs, tabSpace, busyMinWidth, idleMinWidth);
-
-    results.push({
-      id: group.id,
-      presentation: 'expanded',
-      width,
-      visibleTabIds: group.tabs.map(tab => tab.id),
-      overflowCount: 0,
-      tabWidths: new Map(group.tabs.map((tab, index) => [tab.id, widths[index]])),
-    });
-  }
-
-  return results;
 }
 
 /** Owns visual grouping and the order invariant shared by the header and tab store. */
