@@ -47,7 +47,7 @@ describe('PublishApprovalCoordinator', () => {
     await vi.waitFor(() => expect(deliver).toHaveBeenCalledTimes(3));
     // The three decisions are independent, so their delivery order is not part of the contract.
     expect(deliver.mock.calls.map(([, message]) => message).sort()).toEqual([APPROVED, DENIED, EXPIRED].sort());
-    expect(deliver.mock.calls.map(([, message]) => message).join('\n')).not.toMatch(/orchestrator|manager/i);
+    expect(deliver.mock.calls.map(([, message]) => message).join('\n')).not.toMatch(/orchestrator|instruction/i);
     expect(deliver.mock.calls.every(([record]) => record.requestedBy?.jobId === 'job-1' && record.requestedBy.taskIndex === 0)).toBe(true);
     subject.dispose();
   });
