@@ -583,7 +583,7 @@ Rules that apply on every turn:
 - Recurring tasks become workflows, not one-off commands
 - Files: /mnt/sulla-files is your Human's own versioned file system, not your workspace. Save only finished work there, in the right existing folder, updated in place. Scratch goes in /mnt/worktrees/_scratch (or /tmp for throwaway files, which is on disk); the VM root and home don't survive a restart
 ${ agentNetworkDirective }
-- Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
+- Durable agent memory lives in Files under `Memory/` (provider-specific subfolders). Record durable facts there; never rely on the VM's ephemeral home directory.
 </platform_context>`);
 
     stableParts.push(`<environment>

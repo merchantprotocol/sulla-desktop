@@ -96,7 +96,7 @@ function extractOutcome(text: string, hadToolCalls: boolean): SubconsciousOutcom
  *
  * Extends BaseNode to reuse normalizedChat() and processPendingToolCalls(),
  * but strips away all agent infrastructure: no enrichment, no soul files,
- * no observations, no WebSocket communication, no DOM streaming, no
+ * no WebSocket communication, no DOM streaming, no
  * ChatController modes, no training data logging.
  *
  * The caller provides the system prompt and allowed tools via state.metadata.
@@ -176,12 +176,6 @@ export class SubconsciousAgentNode extends BaseNode {
     // with those grants; a name missing here silently leaks a tool card.
     const THINKING_TOOLS = new Set([
       'file_search', 'read_file',
-      // Observation Writer / Observation Recall
-      'add_observational_memory', 'remove_observational_memory',
-      'search_observations', 'list_observations',
-      // Identity Observer (writer) / Identity Observation Recall — all 6 domains
-      'add_identity_observation', 'remove_identity_observation',
-      'search_identity_observations', 'list_identity_observations',
       // Conversation Writer
       'upsert_conversation_keywords',
       'vault_list', 'vault_is_enabled', 'search_conversations',
@@ -295,23 +289,10 @@ export class SubconsciousAgentNode extends BaseNode {
     } as BaseThreadState;
   }
 
-  /**
-   * Fully silent sub-agents suppress ALL parent-channel thinking emissions.
-   * Post-turn observation WRITERS (the general observation writer + the
-   * per-domain identity observers) are fire-and-forget: they run AFTER the
-   * primary loop already emitted graph_execution_complete, so any thinking
-   * bubble they push lands on a closed run and spins forever until the user
-   * hits Stop. They set `subconsciousSilent` (see GraphRegistry
-   * buildSubconsciousState) so they narrate nothing — they just run and write
-   * to the DB. Recall agents run BEFORE the reply and stay non-silent so their
-   * progress is still visible.
-   *
-   * The legacy `agentLabel === 'observation'` check is kept as a
-   * belt-and-suspenders fallback for any caller that hasn't set the flag.
-   */
+  /** Silent V7 memory passes must not emit into a parent turn that has ended. */
   private isSilentAgent(state: BaseThreadState): boolean {
     const meta = state.metadata as any;
-    return meta.subconsciousSilent === true || meta.agentLabel === 'observation';
+    return meta.subconsciousSilent === true;
   }
 
   private async emitThinking(state: BaseThreadState, content: string): Promise<void> {

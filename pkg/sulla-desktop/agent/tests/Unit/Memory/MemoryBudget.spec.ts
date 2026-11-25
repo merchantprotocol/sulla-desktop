@@ -28,15 +28,9 @@ const candidate = (overrides: Partial<MemoryCandidate> = {}): MemoryCandidate =>
   ...overrides,
 });
 
-const observationAwareMeasure = (observations: string) => {
-  const reserve = measureInjectedMemoryBlocks(observations, '');
-  return (brain: string) => measureInjectedMemoryBlocks(observations, brain) - reserve;
-};
-
 describe('MemoryBudgetPacker', () => {
-  it('keeps the two injected blocks within 40,000 characters under synthetic overload', () => {
+  it('keeps the injected brain-memory block within 40,000 characters under synthetic overload', () => {
     // risk: the prompt exceeds provider limits and rate-limits every follow-up turn
-    const observations = 'O'.repeat(5_500);
     const rules = Array.from({ length: 200 }, (_, index) => candidate({
       text: `- **DO** Human rule ${index}.`.padEnd(115, 'r'),
       keys: [`i:human-${index}`],
@@ -60,22 +54,17 @@ describe('MemoryBudgetPacker', () => {
       })),
     ).flat();
     const all = [...rules, ...projectEpisodes];
-    const packer = new MemoryBudgetPacker(
-      MEMORY_CHAR_BUDGET - measureInjectedMemoryBlocks(observations, ''),
-      observationAwareMeasure(observations),
-    );
+    const packer = new MemoryBudgetPacker(MEMORY_CHAR_BUDGET, measureInjectedMemoryBlocks);
 
     const packed = packer.pack(all);
-    expect(measureInjectedMemoryBlocks(observations, packed.text)).toBeLessThanOrEqual(MEMORY_CHAR_BUDGET);
-    expect(observations).toHaveLength(5_500);
+    expect(measureInjectedMemoryBlocks(packed.text)).toBeLessThanOrEqual(MEMORY_CHAR_BUDGET);
     expect(packed.stats.sections.human).toBeGreaterThan(22_000);
     expect(packed.stats.dropped).toBeGreaterThan(0);
   });
 
   it('fills rules for every mentioned project before timeline and keeps newest episodes first', () => {
     // risk: important operating rules disappear while stale history consumes the prompt budget
-    const observations = 'O'.repeat(200);
-    const measure = observationAwareMeasure(observations);
+    const measure = measureInjectedMemoryBlocks;
     const humanAlways = candidate({ text: '- Always rule.', order: 20, priorityOrder: 0, keys: ['i:always'] });
     const humanStanding = candidate({
       section: 'Standing rules', sectionHeader: '### Standing rules', text: '- Standing rule.',
@@ -191,7 +180,7 @@ describe('MemoryBudgetPacker', () => {
       page: 'skills', pageHeader: '## skills.md', section: 'small', sectionHeader: '### Small skill',
       text: 'Small skill stays whole.', keys: ['s:small@1'], entryKey: 's:small@1', priorityOrder: 2,
     });
-    const measure = (text: string) => measureInjectedMemoryBlocks('', text);
+    const measure = (text: string) => measureInjectedMemoryBlocks(text);
     const cap = measure(new MemoryBudgetPacker(100_000, measure).pack([rule, smallSkill]).text);
     const packed = new MemoryBudgetPacker(cap, measure).pack([rule, largeSkill, smallSkill]);
 
@@ -210,7 +199,7 @@ describe('MemoryBudgetPacker', () => {
       candidate({ page: 'project:alpha', pageHeader: '## project-alpha.md', section: '', sectionHeader: '', tier: 2, text: 'Project overview.', keys: ['o:alpha@4'], entryKey: 'o:alpha@4', order: 3 }),
     ];
     const dropped = candidate({ tier: 3, ts: 1, text: '- [2020-01-01] Too old to fit.', keys: ['e:dropped'], entryKey: 'e:dropped', order: 4 });
-    const measure = (text: string) => measureInjectedMemoryBlocks('', text);
+    const measure = (text: string) => measureInjectedMemoryBlocks(text);
     const desiredText = new MemoryBudgetPacker(100_000, measure).pack(emitted).text;
     const packed = new MemoryBudgetPacker(measure(desiredText), measure).pack([...emitted, dropped]);
 
@@ -310,7 +299,7 @@ describe('MemoryBudgetPacker', () => {
     const log = new MemoryBudgetLog((line) => lines.push(line));
     const privateText = 'PRIVATE MEMORY TEXT MUST NEVER BE LOGGED';
     log.write({
-      threadId: 'thread-1', observations: privateText, brain: privateText,
+      threadId: 'thread-1', brain: privateText,
       stats: { sections: { skills: 1, sulla: 2, human: 3, 'project:alpha': 4, lessons: 5 }, dropped: 6, deduped: 7, shortened: 8, checkinGroupsCollapsed: 9 },
       teamDirectory: 'team', installedSkills: 'skills', subagentDirectory: 'subagents',
     });

@@ -13,16 +13,16 @@ The head MAC key is HKDF-SHA-256 (`ikm=M`, empty salt, UTF-8 info `SVmem001`, 32
 Records use AES-256-GCM with a fresh 12-byte nonce. The 16-byte authentication tag is appended to ciphertext. `nonce` and `ciphertext` are standard padded base64. AAD is UTF-8 JSON with no whitespace:
 
 ```json
-["SVmem001","cloud-user-id","observations:01J...",3]
+["SVmem001","cloud-user-id","subject_memory.items:01J...",3]
 ```
 
 Plaintext is UTF-8 JSON (maximum encrypted payload 16 KiB):
 
 ```json
-{"format":1,"table":"observations","id":"01J...","value":{"id":"01J...","content":"..."},"sourceDeviceId":"desktop-id"}
+{"format":1,"table":"subject_memory.items","id":"subject_memory.items:01J...","value":{"id":"01J...","text":"..."},"sourceDeviceId":"desktop-id"}
 ```
 
-Allowed tables are `observations`, `identity_observations`, `subject_memory.items`, `subject_memory.subjects`, and `subject_memory.overviews`. Record ids are stable `<table>:<primary-key>` strings. Overviews use `<subject>:<ts>` for their composite key. A deletion has no envelope and sets `deleted:true`; its generation is still incremented.
+Allowed tables are `subject_memory.items`, `subject_memory.subjects`, and `subject_memory.overviews`. Existing `observations` and `identity_observations` rows are retained locally but are no longer pulled, pushed, or tombstoned by Memory Sync v1. Record ids are stable `<table>:<primary-key>` strings. Overviews use `<subject>:<ts>` for their composite key. A deletion has no envelope and sets `deleted:true`; its generation is still incremented.
 
 ## State and head
 

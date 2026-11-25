@@ -119,11 +119,9 @@ export class DecisionService {
     } finally { if (entry) entry.busy = false; }
   }
 
-  private async reconcileExpired(): Promise<void> {
-    await postgresClient.query(`UPDATE human_decisions SET status = 'expired',
-      record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
-      WHERE status IN ('pending', 'deferred') AND NOT (record->>'kind'='question' AND COALESCE(record#>>'{payload,answerRoute}','')='inbox')
-        AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)`, [this.session, Date.now()]);
+  /** Expire overdue requests and announce each one, so Files and the asker hear about it. */
+  async reconcileExpired(): Promise<void> {
+    for (const record of await this.pendingDecisions.expireOpenDecisions(this.session, Date.now())) this.changed(record);
   }
 
   async pendingAnswerTargets(locallyOwnedThreads: string[] = []) {
@@ -157,6 +155,23 @@ export class DecisionService {
         const updated = await this.pendingDecisions.findById(record.id);
         if (updated) this.changed(updated);
         return receipt;
+      }
+      // A Files publish approval has no blocked tool waiting on it, so it stays decidable after an app restart.
+      if (record?.kind === 'approval' && record.payload?.filesPublishRequestId && record.conversationId === response.conversationId && ['pending', 'deferred'].includes(record.status)) {
+        if (!['approved', 'denied', 'deferred'].includes(response.action)) throw new Error('Choose approve or deny');
+        const now = Date.now();
+        if (now >= record.expiresAt) {
+          await this.reconcileExpired();
+          return { settled: false, reason: 'This request expired. Ask for a fresh request in the original conversation.' };
+        }
+        const next: DecisionRecord = {
+          ...record,
+          status: response.action,
+          ...(response.action !== 'deferred' ? { attention: 'answered' } : {}),
+        };
+        if (!await this.decisions.settleDurablePublish(response.id, response.action, next, now)) return { settled: false, reason: 'Request is no longer pending.' };
+        this.changed(next);
+        return { settled: true, conversationId: next.conversationId };
       }
       return { settled: false, reason: 'Request is no longer waiting.' };
     }
@@ -217,9 +232,9 @@ export class DecisionService {
     clearTimeout(entry.timer);
     entry.cleanup();
     entry.settle({ status: 'expired', answers: [] });
-    this.changed({ ...entry.record, status: 'expired', ...(entry.record.kind === 'question' && !entry.record.attention ? { attention: 'active' as const } : {}) });
     try {
-      await this.decisions.expirePending(id);
+      const expired = await this.decisions.expirePending(id);
+      if (expired) this.changed(expired);
     } catch { /* Fail closed even if persistence is temporarily unavailable. list() reconciles below. */ }
   }
 

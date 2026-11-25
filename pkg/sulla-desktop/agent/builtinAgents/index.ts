@@ -118,6 +118,9 @@ export const RETIRED_CODING_MANAGER_SLUGS = [
   'coding-manager-gpt',
 ] as const;
 
+/** The observation-memory writer. Observation memory is removed, so it is archived on every boot. */
+export const RETIRED_OBSERVATION_AGENT_SLUGS = ['observation-curator'] as const;
+
 export function isRetiredCodingManagerSlug(slug: string): boolean {
   return (RETIRED_CODING_MANAGER_SLUGS as readonly string[]).includes(slug);
 }
