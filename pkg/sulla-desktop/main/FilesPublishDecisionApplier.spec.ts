@@ -217,6 +217,7 @@ describe('Files publish decision flow', () => {
     const approved: DecisionRecord = {
       id: 'decision-twice', conversationId: 'chat-thread', channel: 'chat-channel', kind: 'approval', status: 'approved',
       title: 'Publish?', toolName: 'files_request_publish', createdAt: 100, expiresAt: 200, payload: { filesPublishRequestId: 'request/9' },
+      answeredBy: { kind: 'human' },
     };
     publisher.start();
     try {
@@ -228,18 +229,19 @@ describe('Files publish decision flow', () => {
     } finally { publisher.dispose() }
   });
 
-  it('refuses a non-human actor but keeps legacy pre-actor approvals compatible', async() => {
-    // risk: irreversible side effects — a future agent answer must never publish a Files draft, while legacy human decisions still complete.
+  it('refuses non-human and actorless approvals while applying human approvals and denials', async() => {
+    // risk: irreversible side effects — missing attribution is not proof of human approval and must never trigger Files publication.
     let listener: ((record: DecisionRecord) => void) | undefined;
     const request = vi.fn(async() => ({ ok: true, status: 200 }));
     const publisher = new FilesPublishDecisionApplier(
       { subscribe: (next) => { listener = next; return () => { listener = undefined } } },
       async() => ({ request }), () => undefined,
     );
-    const decision = (id: string): DecisionRecord => ({
+    const decision = (id: string, answeredBy?: DecisionRecord['answeredBy']): DecisionRecord => ({
       id, conversationId: 'chat-thread', channel: 'chat-channel', kind: 'approval', status: 'approved',
       title: 'Publish?', toolName: 'files_request_publish', createdAt: 100, expiresAt: 200,
       payload: { filesPublishRequestId: id },
+      ...(answeredBy ? { answeredBy } : {}),
     });
     publisher.start();
     try {
@@ -249,9 +251,12 @@ describe('Files publish decision flow', () => {
       listener?.({ ...decision('agent-denial'), status: 'denied', answeredBy: { kind: 'agent', agentId: 'codex-worker' } });
       await vi.waitFor(() => expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/agent-denial/reject', expect.any(Object)));
       expect(request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
-      listener?.(decision('legacy-human-approval'));
+      listener?.(decision('actorless-approval'));
+      await Promise.resolve();
+      expect(request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
+      listener?.(decision('human-approval', { kind: 'human' }));
       await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-      expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/legacy-human-approval/approve', expect.any(Object));
+      expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/human-approval/approve', expect.any(Object));
     } finally { publisher.dispose() }
   });
 });
