@@ -353,12 +353,12 @@ describe('InternalTabViewManager', () => {
     expect(owner.webContents.send).not.toHaveBeenCalled();
     instance.notifyChatRunning(chat, 'chat', true);
     instance.notifyChatRunning(chat, 'chat', true);
-    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:chat-running', 'chat', true);
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('internal-tab-view:chat-running', 'chat', true, expect.objectContaining({ state: 'working' }));
     instance.moveToWindow('chat', other);
-    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', false);
-    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', true);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', false, expect.objectContaining({ state: 'idle' }));
+    expect(other.webContents.send).toHaveBeenLastCalledWith('internal-tab-view:chat-running', 'chat', true, expect.objectContaining({ state: 'working' }));
     chat.listeners['render-process-gone']();
-    expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-running', 'chat', false);
+    expect(other.webContents.send).toHaveBeenCalledWith('internal-tab-view:chat-running', 'chat', false, expect.objectContaining({ state: 'idle' }));
   });
 
   it('hands a tab its descriptor only through its own renderer', () => {
