@@ -46,11 +46,17 @@ class ThreadAgentActivityMapper {
 
   checkins(projection: ThreadAgentActivityProjection, threadId: string): StatusRollupItem[] {
     return projection.agents.flatMap(agent => agent.checkins.flatMap(checkin => {
-      const observedAt = Date.parse(checkin.at);
-      if (!Number.isFinite(observedAt)) return [];
-      return [this.statusItem(agent, threadId, this.checkinText('', checkin.summary), observedAt,
-        `agent-checkin:${threadId}:${agent.row.key}:${checkin.at}:${checkin.summary}`, 'agent')];
+      const item = this.snapshotCheckin(agent, threadId, checkin.at, checkin.summary);
+      return item ? [item] : [];
     }));
+  }
+
+  snapshotCheckin(agent: PresentedThreadAgent, threadId: string, at = agent.row.lastCheckinAt, summary = agent.row.lastCheckinSummary): StatusRollupItem | null {
+    const observedAt = at ? Date.parse(at) : NaN;
+    const text = summary?.trim();
+    if (!Number.isFinite(observedAt) || !text) return null;
+    return this.statusItem(agent, threadId, this.checkinText('', text), observedAt,
+      `agent-checkin:${threadId}:${agent.row.key}:${at}:${text}`, 'agent');
   }
 
   primaryTrace(messages: readonly Message[], threadId: string, agentName: string, now: number): StatusRollupItem[] {
@@ -313,6 +319,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const previousRows = new Map<string, PresentedThreadAgent>();
   const historySeen = new Map<string, Set<string>>();
   const historyPrimed = new Set<string>();
+  const historyAvailable = new Set<string>();
   const historyPending = new Set<string>();
   const historyRefreshQueued = new Set<string>();
   let activeThreadId: string | undefined;
@@ -330,6 +337,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     previousRows.clear();
     historySeen.clear();
     historyPrimed.clear();
+    historyAvailable.clear();
     historyPending.clear();
     historyRefreshQueued.clear();
     snapshotPrimed = false;
@@ -375,17 +383,16 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
           if (tool?.name?.trim()) append(mapper.tool(agent, threadId, tool.name.trim(), mapper.timestamp(tool.since, snapshotAt) ?? snapshotAt,
             `agent-tool-start:${threadId}:${row.key}:${tool.since}:${tool.name}:${snapshot.version}`, 'started', `agent:${threadId}:${row.key}:${tool.since}:${tool.name}`));
         }
-        if (!sources.traceHistory && checkinChanged && row.lastCheckinAt && row.lastCheckinSummary?.trim()) {
-          append(mapper.checkins({ ...view, agents: [{ ...agent, checkins: [{ at: row.lastCheckinAt, summary: row.lastCheckinSummary.trim() }] }] }, threadId)[0]);
-        }
         if (!stateChanged && !toolChanged && !checkinChanged && row.lastActivityAt !== previous.row.lastActivityAt) {
           append(mapper.liveActivity(agent, threadId, mapper.timestamp(row.lastActivityAt, snapshotAt) ?? snapshotAt,
             `agent-activity:${threadId}:${row.key}:${row.lastActivityAt}`));
         }
       }
 
-      if (!sources.traceHistory && row.lastCheckinAt && row.lastCheckinSummary?.trim()) {
-        for (const item of mapper.checkins({ ...view, agents: [{ ...agent, checkins: [{ at: row.lastCheckinAt, summary: row.lastCheckinSummary.trim() }] }] }, threadId)) append(item);
+      const historyKey = `${row.jobId}:${row.taskIndex}`;
+      if ((!sources.traceHistory || !historyAvailable.has(historyKey)) && row.lastCheckinAt && row.lastCheckinSummary?.trim()) {
+        const item = mapper.snapshotCheckin(agent, threadId);
+        if (item) append(item);
       }
       currentRows.set(row.key, agent);
     }
@@ -426,7 +433,15 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     if (historyPending.has(key)) { historyRefreshQueued.add(key); return; }
     historyPending.add(key);
     void load(threadId, agent.row.jobId, agent.row.taskIndex).then(data => {
-      if (!data || activeThreadId !== threadId) return;
+      if (activeThreadId !== threadId) return;
+      if (data === null) {
+        const latest = eventPresenter.project(sources.snapshot.value, threadId, now(), sources.decisions?.value ?? [])
+          .agents.find(candidate => `${candidate.row.jobId}:${candidate.row.taskIndex}` === key);
+        const item = latest && mapper.snapshotCheckin(latest, threadId);
+        if (item) append(item);
+        return;
+      }
+      historyAvailable.add(key);
       historyEvents(agent, data, threadId);
     }).catch(() => {
       // The live snapshot and transcript remain usable if the optional history IPC is unavailable.

@@ -95,6 +95,32 @@ describe('useThreadAgentActivity', () => {
     expect(activity.rootFallback.value).toBeNull();
   });
 
+  it('keeps a grandchild snapshot check-in when authorized history returns null', async() => {
+    // risk: availability — grandchildren with another agent as their parent still surface their latest check-in.
+    const rows = new RowFactory();
+    const root = rows.create('root-job:0', 'thread-a', 'thread-a');
+    const child = rows.create('child-job:0', 'thread-a', null, root.key);
+    const grandchild = rows.create('grandchild-job:0', 'thread-a', null, child.key);
+    const snapshot = ref<AgentStateSnapshot>({
+      version: 1,
+      generatedAt: '2026-11-23T17:02:00.000Z',
+      rows: [root, child, grandchild],
+    });
+    const threadId = ref<string | undefined>('thread-a');
+    const activity = useThreadAgentActivity({
+      snapshot,
+      threadId,
+      traceHistory: async(_parentThreadId, jobId) => jobId === 'grandchild-job' ? null : { checkins: [], messages: [] },
+      now: () => Date.parse('2026-11-23T17:02:00.000Z'),
+    });
+
+    await Promise.resolve();
+    await nextTick();
+    expect(activity.checkIns.value).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agentId: 'grandchild-job:0', text: 'check-in grandchild-job:0', threadId: 'thread-a' }),
+    ]));
+  });
+
   it('clears the previous thread queue and history before observing the next thread', () => {
     // risk: stale cross-thread status remains visible after switching chats
     const rows = new RowFactory();
