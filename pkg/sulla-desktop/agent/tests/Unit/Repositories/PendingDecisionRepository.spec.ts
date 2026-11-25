@@ -42,4 +42,30 @@ describe('PendingDecisionRepository', () => {
     expect(sql).toContain('RETURNING record');
     expect(params).toEqual(['new-session', 500]);
   });
+
+  it('includes system decision envelopes in every durable answer-mailbox claim and recovery filter', async() => {
+    // risk: user communication — a parent answer must survive retries and process recovery without being treated as a human keyboard answer.
+    const queries: string[] = [];
+    const repository = new PendingDecisionRepository({ query: async(sql) => { queries.push(sql); return [] } });
+    await repository.pendingAnswerTargets();
+    await repository.startAnswers([{ id: 'decision-answer:q', attempt: 'attempt' }], 'asker');
+    await repository.finishAnswers([{ id: 'decision-answer:q', attempt: 'attempt' }], 'asker', true);
+    await repository.recoverInterruptedAnswers();
+    expect(queries).toHaveLength(4);
+    expect(queries.every(sql => sql.includes("kind IN ('human','decision')"))).toBe(true);
+  });
+
+  it('stores a non-human answer as a named system decision envelope, never as you/human', async() => {
+    // risk: identity integrity — an agent's answer must not be laundered into human keyboard input.
+    const record = { id: 'question-agent-answer', conversationId: 'chat', channel: 'sulla-desktop', kind: 'question', status: 'pending', answeredBy: { kind: 'agent', agentId: 'coding-manager', label: 'Coding Manager' } } as any;
+    const query = vi.fn(async() => [{ record }]);
+    const repository = new PendingDecisionRepository({ query });
+    await repository.queueLateAnswer(record, [{ question: 'Color?', selected: ['Blue'] }], '[Decision answered by Coding Manager] Color?: Blue');
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("SELECT $4,record->>'channel',record->>'conversationId',$9,$10");
+    expect(params?.[8]).toBe('system:decision');
+    expect(params?.[9]).toBe('decision');
+    expect(JSON.parse(String(params?.[7]))).toEqual(record.answeredBy);
+    expect(sql).not.toContain("'you','human'");
+  });
 });

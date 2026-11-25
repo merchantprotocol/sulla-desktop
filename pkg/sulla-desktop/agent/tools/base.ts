@@ -8,6 +8,7 @@ import { ToolResult } from '../types';
 import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
 import { toolDecisionPort } from './toolDecisionPort';
+import type { DecisionActor } from '@pkg/shared/decisions';
 
 import type { ChatToolActivity } from './ChatToolReporting';
 import type { ToolExecutionContext } from './executionContext';
@@ -267,6 +268,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
     const validated = clone(parsed);
     const metadata = (this.state as any)?.metadata;
     const emit = this.sendChatMessage;
+    let decisionAttribution: string | undefined;
     const signals = [this.approvalSignal, metadata?.options?.abort?.signal].filter(Boolean) as AbortSignal[];
     const signal = signals.length ? AbortSignal.any(signals) : undefined;
     try {
@@ -303,7 +305,9 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
           (answer.status === 'approved' || answer.status === 'denied')) {
           metadata.reportingDecisionFollowUp = { id: record.id, threadId: metadata.threadId };
         }
-        if (answer.status !== 'approved') return { toolName: this.name, success: false, error: `Action ${ answer.status }; nothing was executed.` };
+        const answerer = this.decisionAnswerLabel(answer.answeredBy);
+        if (answer.status !== 'approved') return { toolName: this.name, success: false, error: `Action ${ answer.status }${ answerer ? ` by ${ answerer }` : '' }; nothing was executed.` };
+        if (answerer) decisionAttribution = `Approved by ${ answerer }.`;
       }
       if (signal?.aborted) throw new Error('Action cancelled; nothing was executed.');
       const response = await this._validatedCall(validated);
@@ -311,7 +315,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
       return {
         toolName: this.name,
         success:  successBoolean,
-        result:   responseString,
+        result:   decisionAttribution ? `${ responseString }\n${ decisionAttribution }` : responseString,
         ...extra,
       };
     } catch (error) {
@@ -321,6 +325,11 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
         error:    error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private decisionAnswerLabel(actor?: DecisionActor): string | undefined {
+    if (!actor) return undefined;
+    return actor.kind === 'human' ? 'Jonathon' : actor.label?.trim() || actor.agentId?.trim() || 'agent';
   }
 
   async invoke(input: unknown, state?: TState): Promise<ToolResult> {

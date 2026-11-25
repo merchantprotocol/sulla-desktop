@@ -23,6 +23,7 @@ describe('DecisionRouteTransitionSqlBuilder', () => {
     const timeout = builder.advanceHolder('question', 'question-1', 0, { kind: 'system', threadId: 'parent-thread' }, { holderIndex: 1 }, {
       threadId: 'parent-thread', agentId: 'parent', action: 'timeout', at: 101,
     }, 101);
+    expect(timeout.sql).toContain("$3 IN ('human','system')");
     expect(timeout.sql).toContain("(record#>>'{route,holderDeadline}')::bigint <= $8");
   });
 });
@@ -66,7 +67,7 @@ postgresSuite('DecisionRouteTransition CAS with real Postgres', () => {
         { attention: 'answered', answeredBy: { kind: 'agent', threadId: 'parent-thread' } }, [
           { threadId: 'parent-thread', agentId: 'parent', action: 'answered', at: 3 },
         ]),
-      repository.settleAs(id, 0, { kind: 'system', threadId: 'parent-thread' }, 'expired', { attention: 'dismissed' }, [
+      repository.settleAs(id, 0, { kind: 'system', threadId: 'expiry-sweeper' }, 'expired', { attention: 'dismissed' }, [
         { threadId: 'parent-thread', agentId: 'parent', action: 'timeout', at: 4 },
       ]),
     ]);

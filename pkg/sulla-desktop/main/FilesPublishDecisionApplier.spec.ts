@@ -57,7 +57,7 @@ class InlineApprovalFlowHarness {
       conversationId: 'chat-thread', channel: 'chat-channel', payload: { filesPublishRequestId: 'request/7' },
     }, 30 * 60_000);
     if (action === 'expired') await this.decisions.expire(record.id);
-    else await this.decisions.resolve({ id: record.id, conversationId: record.conversationId, action });
+    else await this.decisions.resolve({ id: record.id, conversationId: record.conversationId, action }, { kind: 'human' });
     await expect(result).resolves.toMatchObject({ status: action });
     await vi.waitFor(() => expect(this.request).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(this.notifications).toHaveLength(1));
@@ -170,7 +170,7 @@ describe('Files publish decision flow', () => {
     publisher.start();
     coordinator.start();
     try {
-      await expect(restarted.resolve({ id: record.id, conversationId: 'child-thread', action: 'approved' })).resolves.toMatchObject({ settled: true });
+      await expect(restarted.resolve({ id: record.id, conversationId: 'child-thread', action: 'approved' }, { kind: 'human' })).resolves.toMatchObject({ settled: true });
       await vi.waitFor(() => expect(flow.request).toHaveBeenCalledTimes(1));
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/approve', expect.any(Object));
       expect(notifications).toEqual([`[Human decision] Jonathon approved publishing "Publish" (decision ${ record.id }).`]);
@@ -186,8 +186,8 @@ describe('Files publish decision flow', () => {
         payload: { filesPublishRequestId: 'request/7' },
       }, 7 * 24 * 60 * 60_000);
       const receipts = await Promise.all([
-        flow.decisions.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' }),
-        flow.decisions.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' }),
+        flow.decisions.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' }, { kind: 'human' }),
+        flow.decisions.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' }, { kind: 'human' }),
       ]);
       await expect(result).resolves.toMatchObject({ status: 'approved' });
       await vi.waitFor(() => expect(flow.request).toHaveBeenCalledTimes(1));
@@ -235,8 +235,11 @@ describe('Files publish decision flow', () => {
       listener?.({ ...decision('agent-approval'), answeredBy: { kind: 'agent', agentId: 'codex-worker' } });
       await Promise.resolve();
       expect(request).not.toHaveBeenCalled();
+      listener?.({ ...decision('agent-denial'), status: 'denied', answeredBy: { kind: 'agent', agentId: 'codex-worker' } });
+      await vi.waitFor(() => expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/agent-denial/reject', expect.any(Object)));
+      expect(request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
       listener?.(decision('legacy-human-approval'));
-      await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
       expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/legacy-human-approval/approve', expect.any(Object));
     } finally { publisher.dispose() }
   });

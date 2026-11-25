@@ -37,4 +37,36 @@ describe('durable late answers', () => {
     const f = fixture(); f.decisions.queueLateAnswer.mockRejectedValue(new Error('store unavailable'));
     await expect(f.handler.handle(record, response)).rejects.toThrow('store unavailable'); expect(f.send).not.toHaveBeenCalled();
   });
+  it('records and sends a delegated answer through the job mailbox with the answerer named', async() => {
+    const delegated = { ...record, payload: { askerJobId: 'job-1', askerTaskIndex: '2' }, answeredBy: { kind: 'agent' as const, agentId: 'coding-manager', label: 'Coding Manager' } };
+    const decisions = {
+      recordJobAnswer: vi.fn(async() => ({ ...delegated, status: 'answered' as const, answerDelivery: 'queued' as const })),
+      findById: vi.fn(),
+      taskForThread: vi.fn(async() => ({ jobId: 'job-1', taskIndex: 2, jobStatus: 'running', taskStatus: 'parked' })),
+    };
+    const jobMessages = { send: vi.fn(async() => true) };
+    const sender = { send: vi.fn(async() => true) };
+    const handler = new LateDecisionAnswerHandler(decisions as any, { find: vi.fn() }, sender, jobMessages);
+
+    await expect(handler.handle(delegated, response)).resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });
+    expect(decisions.recordJobAnswer).toHaveBeenCalledWith(delegated, response.answers);
+    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, expect.stringContaining('[Decision answered by Coding Manager]'));
+    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, expect.stringContaining('Color?: Blue'));
+    expect(sender.send).not.toHaveBeenCalled();
+  });
+  it('keeps a finished or stopped asker answer recorded and reports that it could not be woken', async() => {
+    const delegated = { ...record, payload: { askerJobId: 'job-1', askerTaskIndex: '2' }, answeredBy: { kind: 'human' as const } };
+    const decisions = {
+      recordJobAnswer: vi.fn(async() => ({ ...delegated, status: 'answered' as const, answerDelivery: 'queued' as const })),
+      findById: vi.fn(), taskForThread: vi.fn(async() => ({ jobId: 'job-1', taskIndex: 2, jobStatus: 'stopped', taskStatus: 'stopped' })),
+      markJobAnswerUnavailable: vi.fn(async() => undefined),
+    };
+    const jobMessages = { send: vi.fn(async() => true) };
+    const handler = new LateDecisionAnswerHandler(decisions as any, { find: vi.fn() }, { send: vi.fn() }, jobMessages);
+
+    await expect(handler.handle(delegated, response)).resolves.toMatchObject({ settled: true, reason: expect.stringContaining('finished or stopped') });
+    expect(decisions.recordJobAnswer).toHaveBeenCalledOnce();
+    expect(decisions.markJobAnswerUnavailable).toHaveBeenCalledWith(record.id);
+    expect(jobMessages.send).not.toHaveBeenCalled();
+  });
 });

@@ -107,14 +107,14 @@ export class PendingDecisionRepository {
 
   async pendingAnswerTargets(): Promise<{ channel: string; threadId: string }[]> {
     return this.client.query(`SELECT DISTINCT receiver_channel AS channel,receiver_thread_id AS "threadId" FROM agent_inbox_messages
-      WHERE kind='human' AND message_id LIKE 'decision-answer:%' AND delivered_at IS NULL AND receiver_thread_id IS NOT NULL`);
+      WHERE kind IN ('human','decision') AND message_id LIKE 'decision-answer:%' AND delivered_at IS NULL AND receiver_thread_id IS NOT NULL`);
   }
 
   async startAnswers(inputs: { id: string; attempt: string }[], conversationId: string): Promise<string[]> {
     const rows = await this.client.query<{ id: string }>(`WITH inputs AS (SELECT * FROM unnest($1::text[],$2::text[]) AS value(id,attempt)), started AS (
       UPDATE agent_inbox_messages inbox SET ids=jsonb_set(ids,'{decisionDelivery}','"processing"') FROM inputs
       WHERE inbox.message_id=inputs.id AND ids->>'answerAttempt'=inputs.attempt AND receiver_thread_id=$3
-        AND kind='human' AND delivered_at IS NULL AND COALESCE(ids->>'decisionDelivery','queued')='queued' RETURNING message_id
+        AND kind IN ('human','decision') AND delivered_at IS NULL AND COALESCE(ids->>'decisionDelivery','queued')='queued' RETURNING message_id
     ) UPDATE human_decisions SET record=jsonb_set(record,'{answerDelivery}','"processing"'),updated_at=NOW()
       WHERE ('decision-answer:' || id) IN (SELECT message_id FROM started) RETURNING ('decision-answer:' || id) AS id`, [inputs.map(input => input.id), inputs.map(input => input.attempt), conversationId]);
     return rows.map(row => row.id);
@@ -124,7 +124,7 @@ export class PendingDecisionRepository {
   async finishAnswers(inputs: { id: string; attempt: string }[], conversationId: string, completed: boolean): Promise<DecisionRecord[]> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`WITH inputs AS (SELECT * FROM unnest($1::text[],$2::text[]) AS value(id,attempt)), finished AS (
       UPDATE agent_inbox_messages inbox SET delivered_at=NOW(),lease_owner=NULL,lease_expires_at=NULL FROM inputs
-      WHERE message_id=inputs.id AND ids->>'answerAttempt'=inputs.attempt AND receiver_thread_id=$3 AND kind='human'
+      WHERE message_id=inputs.id AND ids->>'answerAttempt'=inputs.attempt AND receiver_thread_id=$3 AND kind IN ('human','decision')
         AND delivered_at IS NULL AND ids->>'decisionDelivery'='processing' RETURNING message_id
     ) UPDATE human_decisions SET record=record || jsonb_build_object('answerDelivery',$4::text,'attention',$5::text),updated_at=NOW()
       WHERE ('decision-answer:' || id) IN (SELECT message_id FROM finished) AND record->>'conversationId'=$3 RETURNING record`,
@@ -135,7 +135,7 @@ export class PendingDecisionRepository {
   async recoverInterruptedAnswers(locallyOwnedThreads: string[] = []): Promise<DecisionRecord[]> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`WITH interrupted AS (
       UPDATE agent_inbox_messages SET delivered_at=NOW(),lease_owner=NULL,lease_expires_at=NULL
-      WHERE kind='human' AND message_id LIKE 'decision-answer:%' AND delivered_at IS NULL
+      WHERE kind IN ('human','decision') AND message_id LIKE 'decision-answer:%' AND delivered_at IS NULL
         AND NOT (receiver_thread_id=ANY($1::text[])) AND ids->>'decisionDelivery'='processing' AND (lease_expires_at IS NULL OR lease_expires_at < NOW()) RETURNING message_id
     ) UPDATE human_decisions SET record=record || '{"answerDelivery":"interrupted","attention":"active"}'::jsonb,updated_at=NOW()
       WHERE ('decision-answer:' || id) IN (SELECT message_id FROM interrupted) RETURNING record`, [locallyOwnedThreads]);
@@ -182,6 +182,8 @@ export class PendingDecisionRepository {
   async queueLateAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[], body: string): Promise<DecisionRecord | undefined> {
     const messageId = `decision-answer:${ record.id }`;
     const attempt = randomUUID();
+    const actor = record.answeredBy ?? { kind: 'human' as const };
+    const humanAnswer = actor.kind === 'human';
     const rows = await this.client.query<{ record: DecisionRecord }>(`WITH chosen AS (
       UPDATE human_decisions SET record=record || jsonb_build_object('attention','answered','answerDelivery','queued','answers',$3::jsonb,'answerAttempt',$7::text,'answeredBy',$8::jsonb), updated_at=NOW()
       WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$2
@@ -191,12 +193,28 @@ export class PendingDecisionRepository {
       RETURNING record
     ), queued AS (
       INSERT INTO agent_inbox_messages(message_id,receiver_channel,receiver_thread_id,sender,kind,body,ids,receiver_agent_id)
-      SELECT $4,record->>'channel',record->>'conversationId','you','human',$5,$6::jsonb,
+      SELECT $4,record->>'channel',record->>'conversationId',$9,$10,$5,$6::jsonb,
         (SELECT agent_id FROM conversation_history WHERE (thread_id=$2 OR id=$2) AND deleted_at IS NULL AND NULLIF(agent_id,'') IS NOT NULL
           ORDER BY CASE WHEN thread_id=$2 THEN 0 ELSE 1 END,last_active_at DESC NULLS LAST,id DESC LIMIT 1) FROM chosen
-      ON CONFLICT(message_id) DO UPDATE SET body=EXCLUDED.body,ids=EXCLUDED.ids,receiver_agent_id=EXCLUDED.receiver_agent_id,delivered_at=NULL,lease_owner=NULL,lease_expires_at=NULL RETURNING message_id
-    ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt, JSON.stringify(record.answeredBy ?? { kind: 'human' })]);
+      ON CONFLICT(message_id) DO UPDATE SET sender=EXCLUDED.sender,kind=EXCLUDED.kind,body=EXCLUDED.body,ids=EXCLUDED.ids,receiver_agent_id=EXCLUDED.receiver_agent_id,delivered_at=NULL,lease_owner=NULL,lease_expires_at=NULL RETURNING message_id
+    ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt, JSON.stringify(actor), humanAnswer ? 'you' : 'system:decision', humanAnswer ? 'human' : 'decision']);
     return rows[0]?.record;
+  }
+
+  /** A job answer is saved before the mailbox is touched, so a stopped asker never loses the decision. */
+  async recordJobAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions SET status='answered',
+      record=record || jsonb_build_object('status','answered','attention','answered','answerDelivery','queued','answers',$2::jsonb,'answeredBy',$3::jsonb),updated_at=NOW()
+      WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$4
+        AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox'))
+        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed') RETURNING record`,
+    [record.id, JSON.stringify(answers), JSON.stringify(record.answeredBy ?? { kind: 'human' }), record.conversationId]);
+    return rows[0]?.record;
+  }
+
+  async markJobAnswerUnavailable(id: string): Promise<void> {
+    await this.client.query(`UPDATE human_decisions SET record=jsonb_set(record,'{answerDelivery}','"unavailable"'),updated_at=NOW()
+      WHERE id=$1 AND status='answered' AND record->>'answerDelivery'='queued'`, [id]);
   }
 
   /** Files publish approvals outlive the app session that created them; every other approval is session-bound. */

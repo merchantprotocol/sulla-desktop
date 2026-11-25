@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 export type DecisionAuthority = 'human' | 'any';
-export type DecisionActor = { kind: 'human' } | { kind: 'agent'; agentId?: string; threadId?: string };
+export type DecisionActor = { kind: 'human' } | { kind: 'agent'; agentId?: string; label?: string; threadId?: string };
 export type DecisionRouteEntry = {
   threadId: string;
   channel: string;
@@ -42,7 +42,7 @@ export interface DecisionRecord {
   toolName?:               string;
   /** Inbox lifetime is independent of the execution wait/approval lease. */
   attention?:              'active' | 'dismissed' | 'answered';
-  answerDelivery?:         'queued' | 'processing' | 'delivered' | 'interrupted';
+  answerDelivery?:         'queued' | 'processing' | 'delivered' | 'interrupted' | 'unavailable';
   answerAttempt?:          string;
   /** Presentation-only link to a newer answered copy; never settles another request. */
   supersededBy?:           string;
