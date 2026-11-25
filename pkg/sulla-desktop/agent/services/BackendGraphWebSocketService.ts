@@ -309,7 +309,8 @@ timestamp: Date.now(),
       channel => GraphRegistry.findThreadsByChannel(channel).map(candidate => ({ ...candidate, executing: this.hasActiveRun(channel, candidate.threadId) || this.inboxRunGuard.isActive({ channel, threadId: candidate.threadId }) })),
     );
     this.agentInbox = new AgentInbox(repository, {
-      isRunning: target => this.inboxRunGuard.isActive(target) || this.inboxThread(target) !== undefined,
+      isRunning: target => this.inboxRunGuard.isActive(target)
+        || (this.inboxThread(target) !== undefined && !(target.threadId && agentJobLifecycle.liveState(target.threadId))),
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
     }, this.inboxRunGuard);
     const orgSession = new DesktopOrgCloudSession();
@@ -426,7 +427,29 @@ timestamp: Date.now(),
 
   private async wakeInbox(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<AgentInboxDeliveryReceipt> {
     const human = entries.every(entry => entry.envelope.kind === 'human');
-    if (this.inboxThread(target) || (target.threadId && agentJobLifecycle.liveState(target.threadId)) || (human && target.threadId && this.decisionThreadOwned(target.channel, target.threadId))) return 'deferred';
+    const metadata = {
+      source:                    'agent_inbox',
+      workerMappingNewHumanTurn: human,
+      inboxMessageIds:           entries.map(entry => entry.envelope.ids.messageId),
+      relayed:                   entries.some(entry => entry.envelope.ids.relayed === true),
+    };
+    if (!human && target.threadId && !entries.some(entry => entry.envelope.kind === 'decision')) {
+      const owner = agentJobLifecycle.liveState(target.threadId);
+      if (owner) {
+        // Tighten the owner's tool scope before a synchronous CLI listener sees the input.
+        if (metadata.relayed) (owner.metadata as any).relayed = true;
+        // Like main's cache-hit steer, ACK on injection can lose input if the runner
+        // aborts before reading it. Durable consumption receipts belong to option D.
+        if (agentJobLifecycle.deliver(target.threadId, {
+          id:        `agent-inbox:${ JSON.stringify(metadata.inboxMessageIds) }`,
+          role:      'user',
+          content:   batch,
+          timestamp: Date.now(),
+          metadata:  { ...metadata, inputSource: 'system' },
+        })) return 'accepted';
+      }
+    }
+    if (this.inboxThread(target) || (human && target.threadId && this.decisionThreadOwned(target.channel, target.threadId))) return 'deferred';
     const threadId = target.threadId || this.inboxThread(target);
     if (human && threadId) this.deliveringDecisionThreads.add(threadId);
     try {
@@ -454,7 +477,7 @@ timestamp: Date.now(),
         undefined,
         receiverAgentId,
         human ? 'keyboard' : 'system',
-        { source: 'agent_inbox', workerMappingNewHumanTurn: human, inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
+        metadata,
         entries.filter(entry => entry.envelope.ids.messageId.startsWith('decision-answer:')).map(entry => ({ id: entry.envelope.ids.messageId, attempt: String((entry.envelope.ids as any).answerAttempt ?? ''), body: entry.envelope.body })),
       );
     } finally { if (human && threadId) this.deliveringDecisionThreads.delete(threadId); }

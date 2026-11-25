@@ -44,6 +44,41 @@ describe('delegated input admission', () => {
     });
   });
 
+  const target = { channel: 'desktop', threadId: thread, agentId: 'worker-agent' };
+  const peer = { target, envelope: { from: 'peer-agent', kind: 'peer', body: 'update', ids: { messageId: 'peer-1', relayed: true } } };
+
+  it('injects an exact-thread peer claim once, wakes the parked owner, and never dispatches a second runner', async() => {
+    const backend = fixture();
+    const live = state();
+    const abort = new AbortController();
+    await agentJobLifecycle.withRunner(thread, live, async() => {
+      const wake = agentJobLifecycle.waitForWake(thread, abort.signal);
+      try {
+        expect(agentJobLifecycle.hasLiveWaiter(thread)).toBe(true);
+        await expect(backend.wakeInbox(target, peer.envelope.body, [peer])).resolves.toBe('accepted');
+        expect(agentJobLifecycle.hasLiveWaiter(thread)).toBe(false);
+        await wake;
+        await expect(backend.wakeInbox(target, peer.envelope.body, [peer])).resolves.toBe('accepted');
+        expect(live.messages).toEqual([expect.objectContaining({
+          content:  peer.envelope.body,
+          metadata: expect.objectContaining({ inboxMessageIds: ['peer-1'], relayed: true, steerPending: true }),
+        })]);
+        expect(live.metadata.relayed).toBe(true);
+        expect(backend.dispatchToAgent).not.toHaveBeenCalled();
+      } finally { abort.abort() }
+    });
+  });
+
+  it('keeps the original peer dispatch and receipt when the exact thread has no owner', async() => {
+    const backend = fixture();
+    backend.dispatchToAgent.mockResolvedValue('failed');
+    await expect(backend.wakeInbox(target, peer.envelope.body, [peer])).resolves.toBe('failed');
+    expect(backend.dispatchToAgent).toHaveBeenCalledExactlyOnceWith(
+      target.channel, 'sulla-desktop', peer.envelope.body, thread, undefined, target.agentId, 'system',
+      { source: 'agent_inbox', workerMappingNewHumanTurn: false, inboxMessageIds: ['peer-1'], relayed: true }, [],
+    );
+  });
+
   it('does not depend on remote support schemas for ordinary chats', async() => {
     const backend = fixture();
     const convert = vi.spyOn(toolRegistry, 'convertToolToLLM').mockRejectedValue(new Error('support offline'));
