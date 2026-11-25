@@ -2257,9 +2257,6 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
 
 .app-titlebar .tab-scroll-container { scrollbar-width: none; }
 .app-titlebar .tab-scroll-container::-webkit-scrollbar { display: none; }
-.app-titlebar .tab-scroll-wrapper.tabs-normal { --tab-basis: 190px; --tab-padding: 12px; --tab-gap: 8px; }
-.app-titlebar .tab-scroll-wrapper.tabs-tight { --tab-basis: 150px; --tab-padding: 9px; --tab-gap: 6px; }
-.app-titlebar .tab-scroll-wrapper.tabs-compact { --tab-basis: 96px; --tab-padding: 6px; --tab-gap: 5px; }
 /* Preserve titlebar-only affordances while keeping geometry in the approved tab treatment. */
 .app-titlebar .tab-pinned-boundary { margin-left: 18px; }
 .app-titlebar .tab-pinned-boundary::before {
