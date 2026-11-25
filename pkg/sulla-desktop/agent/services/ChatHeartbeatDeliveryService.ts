@@ -25,7 +25,7 @@ export interface ChatHeartbeatDeliveryPorts {
   /** Durable agent_job_messages queue: the task reads it at its next turn or model-call boundary. */
   queueJobMessage?(target: ChatHeartbeatJobTarget, threadId: string, message: string): Promise<{ id: string }>;
   send(channel: string, message: {
-    type: 'user_message';
+    type: 'user_message' | 'inject_message';
     data: { role: 'user'; content: string; threadId: string; metadata: Record<string, unknown> };
     timestamp: number;
   }): Promise<boolean | void>;
@@ -41,7 +41,7 @@ export class ChatHeartbeatDeliveryService {
 
   async deliver(channel: string, threadId: string, message: string, intervalMinutes: number,
     target?: ChatHeartbeatJobTarget, options: ChatHeartbeatDeliveryOptions = {}): Promise<ChatHeartbeatDeliveryResult> {
-    if (!target) return this.send(channel, threadId, message, intervalMinutes);
+    if (!target) return this.send(channel, threadId, message, intervalMinutes, options);
 
     const job = await this.ports.getJob(target.jobId);
     const task = job?.tasks[target.taskIndex];
@@ -53,9 +53,15 @@ export class ChatHeartbeatDeliveryService {
     // The auto-off beat is the agent's only notice that its heartbeat is gone, so it is written to
     // the job's durable message queue first, the way send_job_message does. A regular beat is
     // disposable: the next interval brings another.
-    const queued = options.final && this.ports.queueJobMessage
-      ? await this.ports.queueJobMessage(target, threadId, message)
-      : undefined;
+    let queued: { id: string } | undefined;
+    if (options.final && this.ports.queueJobMessage) {
+      try {
+        queued = await this.ports.queueJobMessage(target, threadId, message);
+      } catch (error) {
+        // A failed durable queue must not prevent trying the parked-agent wake path.
+        console.warn(`[ChatHeartbeat] could not queue final beat for job ${ target.jobId }:`, error);
+      }
+    }
     const busy: ChatHeartbeatDeliveryResult = queued ? { delivered: true, queued: true } : { delivered: false, skipped: true };
 
     // A live turn will consume no injected user turn, and child completions
@@ -79,9 +85,12 @@ export class ChatHeartbeatDeliveryService {
     }
   }
 
-  private async send(channel: string, threadId: string, message: string, intervalMinutes: number): Promise<ChatHeartbeatDeliveryResult> {
+  private async send(channel: string, threadId: string, message: string, intervalMinutes: number,
+    options: ChatHeartbeatDeliveryOptions = {}): Promise<ChatHeartbeatDeliveryResult> {
     const sent = await this.ports.send(channel, {
-      type: 'user_message',
+      // Injecting is safe if a graph starts between the expiry's idle check and this send:
+      // a live run consumes the notice without dispatchToAgent aborting that run.
+      type: options.final ? 'inject_message' : 'user_message',
       data: {
         role: 'user', content: this.formatter.format(message), threadId,
         metadata: {

@@ -18,6 +18,7 @@ export interface ChatHeartbeatBusyWatchdogDeps {
   isCurrent:   (runtime: ChatHeartbeatRuntime) => boolean;
   /** The renderer's busy claim outlived its graph; the scheduler resumes the countdown. */
   onStale:     (runtime: ChatHeartbeatRuntime) => void;
+  onIdle?:     (runtime: ChatHeartbeatRuntime) => void;
 }
 
 /**
@@ -34,22 +35,30 @@ export class ChatHeartbeatBusyWatchdog {
     runtime.idleSince = null;
     const check = () => {
       runtime.watchdog = null;
-      if (!this.deps.isCurrent(runtime) || !runtime.busy || runtime.config.intervalMinutes === null) {
+      if (!this.deps.isCurrent(runtime) || (!runtime.busy && !runtime.pendingFinalBeat)
+          || (runtime.config.intervalMinutes === null && !runtime.pendingFinalBeat)) {
         runtime.idleSince = null;
         return;
       }
-      if (this.deps.isGraphBusy(runtime.threadId)) {
+      const graphBusy = this.deps.isGraphBusy(runtime.threadId);
+      if (runtime.pendingFinalBeat && !runtime.busy && !graphBusy) {
         runtime.idleSince = null;
-      } else {
+        this.deps.onIdle?.(runtime);
+        return;
+      }
+      if (graphBusy) {
+        runtime.idleSince = null;
+      } else if (runtime.busy) {
         runtime.idleSince ??= this.deps.now();
         if (this.deps.now() - runtime.idleSince >= STALE_BUSY_LIMIT_MS) {
           console.warn(`[ChatHeartbeat] thread ${ runtime.threadId } reported busy but its graph is idle; resuming heartbeat`);
           runtime.busy = false;
           runtime.idleSince = null;
           this.deps.onStale(runtime);
-          return;
+          if (!runtime.pendingFinalBeat) return;
         }
       }
+      if (!runtime.pendingFinalBeat && runtime.config.intervalMinutes === null) return;
       runtime.watchdog = this.deps.setTimer(check, STALE_BUSY_CHECK_MS);
       runtime.watchdog.unref?.();
     };
