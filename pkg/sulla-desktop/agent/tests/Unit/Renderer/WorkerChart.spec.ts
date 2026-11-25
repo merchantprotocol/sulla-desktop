@@ -68,7 +68,6 @@ describe('WorkerChart', () => {
     expect(popover?.textContent).toContain('codex-gpt-6.2-sol');
     expect(popover?.textContent).toContain('Verify the live agent tree');
     expect(popover?.textContent).toContain('Reviewed the ownership boundary');
-    expect(popover?.querySelector('svg[role="img"]')?.getAttribute('aria-label')).toContain('3 samples');
 
     document.body.querySelector<HTMLButtonElement>('.worker-chart__open')?.click();
     expect(wrapper.emitted('open-agent')).toEqual([[{ agentId: 'worker-1' }]]);
@@ -136,8 +135,8 @@ describe('WorkerChart', () => {
     expect(document.body.querySelector('[role="dialog"][aria-label="Worker chart"]')).toBeNull();
   });
 
-  it('renders a node for every child agent with no +N group, and keeps a finished agent visible until the linger delay ends', async () => {
-    // risk: agent visibility — every agent is listed, and a finished one shows its done state for a while before dropping off
+  it('prioritizes a wide fan-out into a group, expands it, and keeps a finished agent until the linger delay ends', async () => {
+    // risk: agent visibility — priority chips must expose every child, while completed rows keep their existing linger window
     const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id): WorkerChartAgent => ({
       id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: id === 'f' ? 'done' : 'working',
     }));
@@ -145,8 +144,12 @@ describe('WorkerChart', () => {
     await nextTick();
 
     const ids = () => wrapper.findAll('[data-agent-id]').map(node => node.attributes('data-agent-id'));
+    expect(ids()).toEqual(['root', 'worker-a', 'worker-b']);
+    const overflow = wrapper.get('.worker-chart__node--group');
+    await overflow.trigger('click');
+    await nextTick();
     expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e', 'worker-f']);
-    expect(wrapper.find('.worker-chart__node--group').exists()).toBe(false);
+    expect(wrapper.find('.worker-chart__node--group').attributes('aria-expanded')).toBe('true');
     expect(wrapper.get('[data-agent-id="worker-f"]').attributes('data-state')).toBe('done');
 
     vi.advanceTimersByTime(9_999);

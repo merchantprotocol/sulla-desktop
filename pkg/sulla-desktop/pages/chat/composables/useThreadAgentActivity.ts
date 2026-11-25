@@ -11,7 +11,7 @@ import {
 } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { StatusRollupItem } from '../components/composer/StatusRollupQueue';
 import type { Message } from '../models/Message';
-import type { WorkerChartAgent, WorkerChartState } from '../components/workerChart/workerChartModel';
+import type { WorkerChartAgent, WorkerChartRole, WorkerChartState } from '../components/workerChart/workerChartModel';
 
 export interface ThreadAgentActivitySources {
   readonly snapshot: Readonly<Ref<AgentStateSnapshot>>;
@@ -129,7 +129,7 @@ class ThreadAgentActivityMapper {
     if (!threadId || projection.scope === 'empty' || !projection.roots.length) return null;
 
     const roots = projection.roots.map(node => this.chartNode(node));
-    if (projection.scope === 'child' && roots.length === 1) return roots[0];
+    if (projection.scope === 'child' && roots.length === 1) return { ...roots[0], role: 'main' };
 
     // A root chat can launch several independent top-level jobs. Keep every
     // scoped tree visible under the chat's virtual root instead of dropping siblings.
@@ -137,6 +137,7 @@ class ThreadAgentActivityMapper {
       id: `chat:${threadId}`,
       name: 'Sulla',
       initials: 'S',
+      role: 'main',
       state: this.aggregateState(roots),
       children: roots,
     };
@@ -171,6 +172,7 @@ class ThreadAgentActivityMapper {
       id: row.key,
       name: row.label?.trim() || row.agentId || 'Agent',
       initials: agent.initials,
+      role: this.chartRole(agent),
       lane: agent.lane,
       state: this.chartState(agent),
       model: row.modelStatus?.model ?? null,
@@ -184,6 +186,13 @@ class ThreadAgentActivityMapper {
       }),
       children: node.children.map(child => this.chartNode(child)),
     };
+  }
+
+  private chartRole(agent: PresentedThreadAgent): WorkerChartRole {
+    const identity = `${agent.row.agentId ?? ''} ${agent.row.label} ${agent.row.modelStatus?.model ?? ''}`.toLowerCase();
+    if (identity.includes('opus') || identity.includes('review')) return 'rev';
+    if (identity.includes('manager')) return 'mgr';
+    return 'wrk';
   }
 
   private chartState(agent: PresentedThreadAgent): WorkerChartState {
