@@ -93,9 +93,9 @@ describe('TabGroupModel', () => {
     }
   });
 
-  it('counts only needs-you and stalled tabs', () => {
+  it('counts only needs-you tabs, not stalled tabs', () => {
     expect(model.needsYouCount([
       { activity: 'working' }, { activity: 'waiting' }, { activity: 'you' }, { activity: 'stalled' }, { activity: 'idle' },
-    ])).toBe(2);
+    ])).toBe(1);
   });
 });
