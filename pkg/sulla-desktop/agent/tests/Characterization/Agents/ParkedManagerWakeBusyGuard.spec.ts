@@ -174,4 +174,74 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
     expect((await registry.getJob(manager.jobId))?.status).toBe('parked'); // re-parked, not left 'running'
     expect(await messaging.AgentJobMessagingModel.pendingMessagesForThread(threadId)).toEqual([]); // both delivered, neither stranded or double-delivered
   });
+
+  it('c) a heartbeat beat that races a turn already running is deferred, never aborting that live run', async() => {
+    // risk: irreversible side effect — a job heartbeat reaching dispatchToAgent with its own `source` is
+    // treated as a new human turn and replaces the active run, destroying the agent's work in progress.
+    // The beat goes through the real ChatHeartbeatDeliveryService and the real wakeParkedAgent.
+    const { ChatHeartbeatDeliveryService } = await import('../../../services/ChatHeartbeatDeliveryService');
+    const channelId = 'sulla-desktop';
+    const threadId = 'busy-guard-heartbeat-thread';
+    const manager = await registry.createJob(
+      [{ agentId: 'coding-manager', label: 'manager', prompt: 'own epic', status: 'running', threadId, depth: 1 }],
+      channelId, 'busy-guard-heartbeat-root',
+    );
+    await registry.parkJobTask(manager.jobId, 0, 1);
+
+    vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) =>
+      (slug === 'coding-manager' ? { slug, enabled: true, status: 'production', run_location: 'vm' } as any : null));
+
+    const executeCalls: string[] = [];
+    let releaseFirstExecute: (() => void) | undefined;
+    const firstExecuteGate = new Promise<void>(resolve => { releaseFirstExecute = resolve });
+    vi.spyOn(GraphRegistry, 'getOrCreateAgentGraph').mockImplementation(async() => ({
+      graph: {
+        execute: vi.fn(async() => {
+          executeCalls.push(`call-${ executeCalls.length + 1 }`);
+          if (executeCalls.length === 1) await firstExecuteGate;
+        }),
+      },
+      state: { metadata: { threadId, wsChannel: channelId, options: {}, agent: {} }, messages: [] },
+    } as any));
+
+    const instance = bareInstance();
+    (instance as any).recoveryAbort = new AbortController();
+    const dispatchSpy = vi.spyOn(instance as any, 'dispatchToAgent');
+    const abortKey = `${ channelId }|${ threadId }`;
+
+    const target = (await messaging.AgentJobMessagingModel.targetsForJob(manager.jobId))[0];
+    const firstRecord = await messaging.AgentJobMessagingModel.queueMessage(target, 'first message');
+    const firstWakePromise = instance.wakeParkedAgent(channelId, threadId, 'first message', 'coding-manager', { jobMessageId: firstRecord.id, jobMessageThreadId: threadId });
+    await vi.waitFor(() => expect(executeCalls).toEqual(['call-1']), { timeout: 2_000, interval: 10 });
+    const liveAbort = (instance as any).activeAborts.get(abortKey);
+    expect(liveAbort).toBeDefined();
+
+    // The race: the beat read the task as parked and passed wakeParkedAgent's own busy check just
+    // before the turn above took the thread, so only dispatchToAgent's guard stands in its way.
+    vi.spyOn(instance, 'hasActiveRun').mockReturnValueOnce(false);
+    const delivery = new ChatHeartbeatDeliveryService({
+      getJob: async() => ({ status: 'parked', parentChannel: channelId, tasks: [{ threadId, agentId: 'coding-manager', status: 'parked' }] }),
+      hasRunningChildren: async() => false,
+      wakeParkedAgent: (channel, thread, message, agentId, metadata) => instance.wakeParkedAgent(channel, thread, message, agentId, metadata),
+      send: async() => true,
+      now: () => Date.now(),
+    });
+
+    const result = await delivery.deliver(channelId, threadId, 'Heartbeat: report progress.', 5, { jobId: manager.jobId, taskIndex: 0 });
+
+    expect(result).toEqual({ delivered: false, skipped: true });
+    expect(dispatchSpy).toHaveBeenCalledTimes(2); // the first wake + the heartbeat's own dispatch
+    const heartbeatDispatch = dispatchSpy.mock.calls[1] as unknown[];
+    expect(heartbeatDispatch[2]).toBe('[Message from orchestrator]\nHeartbeat: report progress.');
+    expect(heartbeatDispatch[7]).toMatchObject({ source: 'orchestrator_job_message', origin: 'agent_heartbeat' });
+    await expect(dispatchSpy.mock.results[1].value).resolves.toBe('deferred');
+    expect(executeCalls).toEqual(['call-1']); // the beat never reached graph.execute
+    expect(liveAbort.aborted).toBe(false); // and the live run was not aborted
+    expect((instance as any).activeAborts.get(abortKey)).toBe(liveAbort);
+
+    releaseFirstExecute!();
+    await firstWakePromise;
+    await vi.waitFor(() => expect(instance.hasActiveRun(channelId, threadId)).toBe(false), { timeout: 2_000, interval: 10 });
+    expect(executeCalls).toEqual(['call-1']); // a dropped regular beat is not replayed as a follow-up turn
+  });
 });

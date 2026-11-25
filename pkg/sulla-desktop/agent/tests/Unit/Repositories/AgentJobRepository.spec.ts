@@ -55,6 +55,33 @@ dbDescribe('AgentJobRepository', () => {
       .toEqual([expect.objectContaining({ generation: 1, result: { answer: 1 }, completion: expect.objectContaining({ output: 'first' }) })]);
   });
 
+  it('reports open child work, including a child blocked on an unanswered question, and ignores settled children', async() => {
+    // risk: a parent heartbeat wakes a manager while its child is still blocked waiting on it, or never
+    // wakes it again because a returned blocker is still counted as open work.
+    const parent = job('heartbeat-children-parent');
+    parent.tasks = [{ ...parent.tasks[0], threadId: 'heartbeat-parent-task-0' }, { ...parent.tasks[0], threadId: 'heartbeat-parent-task-1' }];
+    parent.taskCount = 2;
+    await repository.insertJob(parent);
+    // The database resolves parent_job_id / parent_task_index from the child's parent thread (migration 0155).
+    const child = (id: string, task: Partial<AgentJob['tasks'][number]>, parentTaskIndex = 0): AgentJob => {
+      const input = { ...job(id), parentThreadId: `heartbeat-parent-task-${ parentTaskIndex }` };
+      input.tasks[0] = { ...input.tasks[0], ...task };
+      return input;
+    };
+    expect(await repository.hasRunningChildren(parent.jobId, 0)).toBe(false);
+
+    // A blocker that already returned its result is settled work.
+    await repository.insertJob(child('heartbeat-child-returned-blocker', { status: 'blocked', returnedAt: Date.now() }));
+    await repository.insertJob(child('heartbeat-child-finished-blocker', { status: 'blocked', finishedAt: Date.now() }));
+    // Open work under a different parent task must not count for task 0.
+    await repository.insertJob(child('heartbeat-child-other-task', { status: 'running' }, 1));
+    expect(await repository.hasRunningChildren(parent.jobId, 0)).toBe(false);
+    expect(await repository.hasRunningChildren(parent.jobId, 1)).toBe(true);
+
+    await repository.insertJob(child('heartbeat-child-open-blocker', { status: 'blocked' }));
+    expect(await repository.hasRunningChildren(parent.jobId, 0)).toBe(true);
+  });
+
   it('loads only the requested thread lineage for the subagent directory', async() => {
     // risk: subagent recall latency and cross-thread data leakage — do not scan unrelated agent jobs
     const rootThread = 'preloop-lineage-root';
