@@ -32,6 +32,20 @@ describe('TabGroupModel', () => {
     ]);
   });
 
+  it('selects all ordinals in grouped display order and reserves 9 for the last tab', () => {
+    const tabs = model.orderTabs([
+      { id: 'folded-tool', mode: 'vault' },
+      { id: 'folded-browser', mode: 'browser' },
+      { id: 'chat', mode: 'chat' },
+      { id: 'pinned', mode: 'vault', pinned: true },
+    ], []);
+    expect(['1', '2', '3', '4', '5', '9'].map(key => model.shortcutTab(tabs, key)?.id)).toEqual([
+      'pinned', 'chat', 'folded-browser', 'folded-tool', undefined, 'folded-tool',
+    ]);
+    const many = tabs.concat(Array.from({ length: 8 }, (_, index) => ({ id: `tool-${ index }`, mode: 'vault' })));
+    expect(model.shortcutTab(many, '9')?.id).toBe('tool-7');
+  });
+
   it('clamps reorder and start/end moves to the moving tab group', () => {
     const ids = ['p1', 'p2', 'c1', 'c2', 'b1', 't1', 't2'];
     const modes = new Map([
