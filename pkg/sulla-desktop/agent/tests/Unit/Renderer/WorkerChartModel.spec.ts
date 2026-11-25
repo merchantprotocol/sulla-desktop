@@ -80,10 +80,10 @@ describe('WorkerChartGeometry', () => {
     expect(geometry.links(rows, true)).toEqual([]);
   });
 
-  it('pings only working agents, not parked, blocked, failed or done agents', () => {
+  it('pings only working agents, not waiting, idle, blocked, failed or done agents', () => {
     // risk: status misrepresentation — non-working jobs must not look live
     const geometry = new WorkerChartGeometry();
-    const states: WorkerChartState[] = ['working', 'parked', 'needs-you', 'failed', 'done'];
+    const states: WorkerChartState[] = ['working', 'parked', 'idle', 'needs-you', 'failed', 'done'];
     expect(states.filter(state => geometry.shouldPing(state))).toEqual(['working']);
   });
 });

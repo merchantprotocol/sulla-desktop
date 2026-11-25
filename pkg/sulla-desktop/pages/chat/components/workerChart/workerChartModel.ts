@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-export type WorkerChartState = 'working' | 'parked' | 'needs-you' | 'failed' | 'done';
+export type WorkerChartState = 'working' | 'parked' | 'idle' | 'needs-you' | 'failed' | 'done';
 export type WorkerChartRole = 'main' | 'mgr' | 'wrk' | 'rev';
-export type WorkerChartVisualState = 'working' | 'waiting' | 'blocked' | 'failed' | 'done';
+export type WorkerChartVisualState = 'working' | 'waiting' | 'idle' | 'blocked' | 'failed' | 'done';
 
 export interface WorkerChartActivitySample {
   /** Epoch milliseconds from the real activity timeline. */

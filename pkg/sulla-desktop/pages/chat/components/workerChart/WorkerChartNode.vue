@@ -97,7 +97,7 @@ const groupText = computed(() => groupRow.value?.hiddenAgents.length ? `+${group
 const stateLabel = computed(() => {
   const state = agentRow.value?.agent.state;
   if (!state) return 'Parked';
-  return { working: 'Working', parked: 'Parked', 'needs-you': 'Needs you', failed: 'Failed', done: 'Done' }[state];
+  return { working: 'Working', parked: 'Parked', idle: 'Idle', 'needs-you': 'Needs you', failed: 'Failed', done: 'Done' }[state];
 });
 const ariaLabel = computed(() => {
   if (agentRow.value) {

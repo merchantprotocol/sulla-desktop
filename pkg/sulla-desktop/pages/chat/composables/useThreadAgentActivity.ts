@@ -198,7 +198,8 @@ class ThreadAgentActivityMapper {
   private chartState(agent: PresentedThreadAgent): WorkerChartState {
     if (agent.urgency === 'failed' || agent.state === 'lost') return 'failed';
     if (agent.urgency === 'needs-you') return 'needs-you';
-    if (agent.state === 'parked') return 'parked';
+    if (agent.state === 'quiet') return 'idle';
+    if (agent.state === 'queued' || agent.state === 'parked') return 'parked';
     if (agent.state === 'done' || agent.state === 'stopped') return 'done';
     return 'working';
   }
@@ -209,6 +210,7 @@ class ThreadAgentActivityMapper {
     if (states.includes('needs-you')) return 'needs-you';
     if (states.includes('working')) return 'working';
     if (states.includes('parked')) return 'parked';
+    if (states.includes('idle')) return 'idle';
     return 'done';
   }
 

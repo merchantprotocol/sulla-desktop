@@ -92,7 +92,7 @@ const root = ref<HTMLElement | null>(null);
 const stateLabel = computed(() => {
   const state: WorkerChartState | undefined = props.agent?.state;
   if (!state) return '';
-  return { working: 'Working', parked: 'Parked', 'needs-you': 'Needs you', failed: 'Failed', done: 'Done' }[state];
+  return { working: 'Working', parked: 'Parked', idle: 'Idle', 'needs-you': 'Needs you', failed: 'Failed', done: 'Done' }[state];
 });
 const visualState = computed(() => {
   if (props.agent?.state === 'parked') return 'waiting';
