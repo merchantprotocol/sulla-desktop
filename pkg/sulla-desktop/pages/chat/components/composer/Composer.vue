@@ -44,6 +44,7 @@
               :thread-id="statusThreadId"
               :check-ins="statusCheckIns"
               :root-fallback="statusRootFallback"
+              @consumed="threadActivity.consumeCheckIns()"
             />
             <span class="dock-divider" aria-hidden="true" />
             <button
@@ -349,26 +350,14 @@ function onStatusItemObserved(item: StatusRollupItem): void {
   glow.action();
 }
 
-const observedStatusKeys = new Set<string>();
-let observedStatusThreadId: string | undefined;
-function rememberObservedStatusKey(key: string): void {
-  if (observedStatusKeys.has(key)) return;
-  observedStatusKeys.add(key);
-  if (observedStatusKeys.size > 500) observedStatusKeys.delete(observedStatusKeys.values().next().value!);
-}
-watch(() => [statusThreadId.value, statusCheckIns.value] as const, ([threadId, items]) => {
-  if (threadId !== observedStatusThreadId) {
-    observedStatusThreadId = threadId;
-    observedStatusKeys.clear();
-    items.forEach(item => rememberObservedStatusKey(item.key));
-    return;
-  }
+watch(() => [statusThreadId.value, statusCheckIns.value] as const, ([threadId, items], previous) => {
+  if (!previous) return;
+  const [previousThreadId, previousItems] = previous;
+  if (threadId !== previousThreadId) return;
   for (const item of items) {
-    if (observedStatusKeys.has(item.key)) continue;
-    rememberObservedStatusKey(item.key);
-    onStatusItemObserved(item);
+    if (!item.updateOnly && !previousItems.some(previousItem => previousItem.key === item.key)) onStatusItemObserved(item);
   }
-}, { immediate: true });
+}, { immediate: true, flush: 'sync' });
 const streamedTextLengths = new Map<string, number>();
 const glowSubscriptions = [
   controller.on('runStateChanged', ({ from, to }) => {

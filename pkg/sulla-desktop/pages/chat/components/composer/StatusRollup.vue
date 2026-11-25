@@ -100,7 +100,7 @@ const props = defineProps<{
   rootFallback?: StatusRollupItem | null;
 }>();
 
-const emit = defineEmits<{ shown: [payload: StatusRollupShownEvent] }>();
+const emit = defineEmits<{ shown: [payload: StatusRollupShownEvent]; consumed: [] }>();
 
 const queue = new StatusRollupQueue();
 const rootElement = ref<HTMLElement | null>(null);
@@ -157,10 +157,10 @@ const typeText = (item: StatusRollupItem, animate: boolean): void => {
   typeNext();
 };
 
-const showItem = (item: StatusRollupItem | null, fromQueue = false): void => {
+const showItem = (item: StatusRollupItem | null, fromQueue = false, animateText = fromQueue): void => {
   const previous = currentItem.value;
   if (previous?.key === item?.key) {
-    if (item && previous.text !== item.text) { currentItem.value = item; typeText(item, fromQueue); }
+    if (item && previous.text !== item.text) { currentItem.value = item; typeText(item, animateText); }
     return;
   }
   if (previous && item) {
@@ -169,7 +169,7 @@ const showItem = (item: StatusRollupItem | null, fromQueue = false): void => {
   }
   currentItem.value = item;
   if (item) {
-    typeText(item, fromQueue);
+    typeText(item, animateText);
     if (dotTimer !== undefined && typeof window !== 'undefined') window.clearTimeout(dotTimer);
     dotPopping.value = fromQueue && !reducedMotion.value;
     if (fromQueue && typeof window !== 'undefined') {
@@ -187,7 +187,8 @@ const showItem = (item: StatusRollupItem | null, fromQueue = false): void => {
 const refresh = (): void => {
   const now = Date.now();
   const shownItems = queue.pumpDue(now, isPaused.value);
-  if (shownItems.length) shownItems.forEach(item => showItem(item, true));
+  const animateText = queue.shouldAnimateTypewriter(shownItems.length);
+  if (shownItems.length) shownItems.forEach(item => showItem(item, true, animateText));
   else showItem(queue.current ?? fallbackItem.value);
   historyItems.value = queue.history;
 };
@@ -207,6 +208,7 @@ const syncInput = (): void => {
 
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
   queue.observe(props.checkIns, props.threadId, now, visible);
+  if (props.checkIns.length) emit('consumed');
   if (threadChanged && !mounted.value) {
     const seeded = queue.seed(props.checkIns, props.threadId, now);
     if (seeded) showItem(seeded);

@@ -81,6 +81,44 @@ describe('StatusRollupQueue', () => {
     expect(fixture.queue.pump(2_610)?.key).toBe('normal-2');
   });
 
+  // risk: safety — simultaneous urgent updates must keep FIFO order while interrupting normal work.
+  it('keeps multiple urgent items in FIFO order', () => {
+    const fixture = new StatusRollupQueueFixture();
+    fixture.queue.observe([
+      fixture.item('u-1', 'agent-a', 'First urgent update', 0, 'needs-you'),
+      fixture.item('u-2', 'agent-b', 'Second urgent update', 1, 'failed'),
+    ], fixture.threadId, 0);
+
+    expect(fixture.queue.pump(0)?.key).toBe('u-1');
+    expect(fixture.queue.pump(StatusRollupQueue.urgentHoldMs)?.key).toBe('u-2');
+  });
+
+  // risk: availability — only an idle single-item display may typewrite; a burst batch must render in full immediately.
+  it('selects typewriter animation only when one item is shown and no backlog remains', () => {
+    const idleFixture = new StatusRollupQueueFixture();
+    idleFixture.queue.observe([idleFixture.item('single', 'agent-a', 'Single action', 0)], idleFixture.threadId, 0);
+    const single = idleFixture.queue.pumpDue(0);
+    expect(idleFixture.queue.shouldAnimateTypewriter(single.length)).toBe(true);
+
+    const burstFixture = new StatusRollupQueueFixture();
+    burstFixture.queue.observe([burstFixture.item('initial', 'agent-a', 'Initial action', 0)], burstFixture.threadId, 0);
+    burstFixture.queue.pump(0);
+    burstFixture.queue.observe([
+      burstFixture.item('burst-1', 'agent-a', 'First burst action', 10),
+      burstFixture.item('burst-2', 'agent-b', 'Second burst action', 11),
+      burstFixture.item('burst-3', 'agent-c', 'Third burst action', 12),
+    ], burstFixture.threadId, 10);
+    const backlogBatch = burstFixture.queue.pumpDue(260);
+    expect(backlogBatch).toHaveLength(1);
+    expect(burstFixture.queue.pending).toHaveLength(2);
+    expect(burstFixture.queue.shouldAnimateTypewriter(backlogBatch.length)).toBe(false);
+
+    const batch = burstFixture.queue.pumpDue(2_000);
+    expect(batch).toHaveLength(2);
+    expect(burstFixture.queue.pending).toEqual([]);
+    expect(burstFixture.queue.shouldAnimateTypewriter(batch.length)).toBe(false);
+  });
+
   // risk: privacy — events from another chat must never enter the active thread's queue or history.
   it('rejects another thread’s events while retaining only current-thread history', () => {
     const fixture = new StatusRollupQueueFixture();
@@ -117,6 +155,24 @@ describe('StatusRollupQueue', () => {
     ], fixture.threadId, 1);
 
     expect(fixture.queue.pending.map(item => item.key)).toEqual(['same', 'again']);
+  });
+
+  // risk: data accuracy — a thought's stable key must update pending/visible text in place without another queue entry.
+  it('updates the visible thought text without replaying the same key', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const first = { ...fixture.item('thought', 'agent-a', 'Considering the first option', 0), kind: 'thought' as const };
+    fixture.queue.observe([first], fixture.threadId, 0);
+    expect(fixture.queue.pump(0)?.key).toBe('thought');
+
+    fixture.queue.observe([{
+      ...first,
+      text: 'Considering the updated option',
+      observedAt: 1,
+    }], fixture.threadId, 1, fixture.queue.current);
+
+    expect(fixture.queue.current?.text).toBe('Considering the updated option');
+    expect(fixture.queue.history[0]?.text).toBe('Considering the updated option');
+    expect(fixture.queue.pending).toEqual([]);
   });
 
   // risk: event delivery — each displayed tool step must retain its label and start/result correlation for the glow.

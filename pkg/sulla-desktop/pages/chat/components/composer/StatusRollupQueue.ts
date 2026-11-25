@@ -25,6 +25,8 @@ export interface StatusRollupItem {
   readonly text: string;
   /** Unix epoch milliseconds. */
   readonly observedAt: number;
+  /** A stable thought-key revision; update an active thought without replaying an expired one. */
+  readonly updateOnly?: boolean;
   readonly urgency?: StatusRollupUrgency;
   readonly role?: StatusRollupAgentRole;
 }
@@ -69,8 +71,6 @@ export class StatusRollupQueue {
   private burstGapMs: number | null = null;
   private sequence = 0;
   private historyItems: StatusRollupItem[] = [];
-  private processedKeys: string[] = [];
-  private processedKeySet = new Set<string>();
 
   get current(): StatusRollupItem | null {
     return this.visible?.item ?? null;
@@ -84,6 +84,11 @@ export class StatusRollupQueue {
     return this.queued.map(entry => entry.item);
   }
 
+  /** Typewrite only a single item after its batch has left no backlog behind. */
+  shouldAnimateTypewriter(shownCount: number): boolean {
+    return shownCount === 1 && this.queued.length === 0;
+  }
+
   reset(threadId: string): void {
     this.threadId = threadId;
     this.queued = [];
@@ -92,8 +97,6 @@ export class StatusRollupQueue {
     this.burstGapMs = null;
     this.sequence = 0;
     this.historyItems = [];
-    this.processedKeys = [];
-    this.processedKeySet.clear();
   }
 
   /** Sanitizes input for text-only rendering, rejecting items from other chats. */
@@ -114,6 +117,7 @@ export class StatusRollupQueue {
       ...(item.correlationId ? { correlationId: item.correlationId } : {}),
       text,
       observedAt: Number.isFinite(item.observedAt) ? item.observedAt : now,
+      ...(item.updateOnly ? { updateOnly: true } : {}),
       urgency: this.normalizeUrgency(item.urgency),
       role: this.normalizeRole(item.role),
     };
@@ -136,11 +140,12 @@ export class StatusRollupQueue {
       .sort((left, right) => left.observedAt - right.observedAt);
 
     for (const source of ordered) {
-      if (this.processedKeySet.has(source.key)) continue;
       const item = this.present(source, threadId, now);
       if (!item) continue;
 
-      this.rememberProcessedKey(item.key);
+      const alreadyQueuedOrVisible = this.updateExistingItem(item);
+      if (item.updateOnly || alreadyQueuedOrVisible) continue;
+
       this.historyItems.unshift(item);
       this.historyItems = this.historyItems.slice(0, StatusRollupQueue.historyLimit);
 
@@ -218,10 +223,29 @@ export class StatusRollupQueue {
     return item.urgency === 'needs-you' || item.urgency === 'failed';
   }
 
-  private rememberProcessedKey(key: string): void {
-    if (this.processedKeySet.has(key)) return;
-    this.processedKeys.push(key);
-    this.processedKeySet.add(key);
+  private updateExistingItem(item: StatusRollupItem): boolean {
+    let found = false;
+    if (this.visible?.item.key === item.key) {
+      found = true;
+      if (item.kind === 'thought') this.visible = { ...this.visible, item };
+    }
+    const queuedIndex = this.queued.findIndex(entry => entry.item.key === item.key);
+    if (queuedIndex >= 0) {
+      found = true;
+      if (item.kind === 'thought') {
+        this.queued[queuedIndex] = { ...this.queued[queuedIndex]!, item };
+      }
+    }
+    const historyIndex = this.historyItems.findIndex(entry => entry.key === item.key);
+    if (historyIndex >= 0) {
+      found = true;
+      if (item.kind === 'thought') {
+        const updated = [...this.historyItems];
+        updated[historyIndex] = item;
+        this.historyItems = updated;
+      }
+    }
+    return found;
   }
 
   private cleanText(value: string): string {

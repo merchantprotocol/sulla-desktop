@@ -32,10 +32,101 @@ export interface ThreadAgentActivitySources {
 /** Reactive view-model shared by ChatPage, the composer status line, and WorkerChart. */
 export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
-  /** Lossless event stream for this chat's own transcript and proven sub-agent tree, oldest first. */
+  /** Undelivered events for this chat's own transcript and proven sub-agent tree, oldest first. */
   readonly checkIns: ComputedRef<StatusRollupItem[]>;
+  /** Removes events after the status queue has taken ownership of them. */
+  consumeCheckIns(): void;
   readonly rootFallback: ComputedRef<StatusRollupItem | null>;
   readonly chartRoot: ComputedRef<WorkerChartAgent | null>;
+}
+
+/** Holds only source high-water time and same-time tie keys, never the full event history. */
+export class ThreadAgentEventCursor {
+  private highestObservedAt = Number.NEGATIVE_INFINITY;
+  private keysAtHighestTimestamp = new Set<string>();
+
+  get retainedKeyCount(): number {
+    return this.keysAtHighestTimestamp.size;
+  }
+
+  /** Returns newly observed events; repeated stable thought keys are update-only revisions. */
+  select(items: readonly StatusRollupItem[]): StatusRollupItem[] {
+    const selected: StatusRollupItem[] = [];
+    const ordered = [...items].sort((left, right) => left.observedAt - right.observedAt);
+    for (const item of ordered) {
+      if (!Number.isFinite(item.observedAt)) continue;
+      if (item.observedAt < this.highestObservedAt) {
+        if (item.kind === 'thought') selected.push({ ...item, updateOnly: true });
+        continue;
+      }
+      if (item.observedAt > this.highestObservedAt) {
+        this.highestObservedAt = item.observedAt;
+        this.keysAtHighestTimestamp.clear();
+      }
+      if (this.keysAtHighestTimestamp.has(item.key)) {
+        if (item.kind === 'thought') selected.push({ ...item, updateOnly: true });
+        continue;
+      }
+      this.keysAtHighestTimestamp.add(item.key);
+      selected.push(item);
+    }
+    return selected;
+  }
+
+  /** Seeds the cursor when old projected history should not be replayed. */
+  prime(items: readonly StatusRollupItem[]): void {
+    const ordered = [...items].sort((left, right) => left.observedAt - right.observedAt);
+    for (const item of ordered) {
+      if (!Number.isFinite(item.observedAt) || item.observedAt < this.highestObservedAt) continue;
+      if (item.observedAt > this.highestObservedAt) {
+        this.highestObservedAt = item.observedAt;
+        this.keysAtHighestTimestamp.clear();
+      }
+      this.keysAtHighestTimestamp.add(item.key);
+    }
+  }
+
+  clear(): void {
+    this.highestObservedAt = Number.NEGATIVE_INFINITY;
+    this.keysAtHighestTimestamp.clear();
+  }
+}
+
+/** Holds only events awaiting transfer to the status queue. */
+export class ThreadAgentEventBuffer {
+  readonly items = ref<StatusRollupItem[]>([]);
+
+  append(item: StatusRollupItem): void {
+    const index = this.items.value.findIndex(existing => existing.key === item.key);
+    if (index >= 0) {
+      const existing = this.items.value[index];
+      if (item.kind === 'thought' && existing?.kind === 'thought' && existing.text !== item.text) {
+        const updated = [...this.items.value];
+        updated[index] = item;
+        this.items.value = updated;
+      }
+      return;
+    }
+
+    const ordered = [...this.items.value];
+    let low = 0;
+    let high = ordered.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (ordered[middle]!.observedAt <= item.observedAt) low = middle + 1;
+      else high = middle;
+    }
+    ordered.splice(low, 0, item);
+    this.items.value = ordered;
+  }
+
+  consume(): void {
+    this.items.value = [];
+  }
+
+  clear(): void {
+    this.consume();
+  }
 }
 
 export const THREAD_AGENT_ACTIVITY_KEY: InjectionKey<ThreadAgentActivity> = Symbol('ThreadAgentActivity');
@@ -167,7 +258,9 @@ class ThreadAgentActivityMapper {
     const state = row.status;
     const urgency = state === 'failed' ? 'failed' : state === 'blocked' || state === 'waiting' ? 'needs-you' : 'normal';
     return {
-      key: `trace:${threadId}:${row.id}:${state}:${row.verb}:${row.target}`,
+      key: row.kind === 'thought'
+        ? `trace:${threadId}:${row.id}:${state}:${row.verb}`
+        : `trace:${threadId}:${row.id}:${state}:${row.verb}:${row.target}`,
       threadId,
       agentId: agentRow?.jobId ? `${agentRow.jobId}:${agentRow.taskIndex ?? 0}` : `chat:${threadId}`,
       agentName: name,
@@ -315,14 +408,16 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     now(),
     sources.decisions?.value ?? [],
   ));
-  const eventItems = ref<StatusRollupItem[]>([]);
-  const seenEventKeys = new Set<string>();
+  const eventBuffer = new ThreadAgentEventBuffer();
+  const eventItems = eventBuffer.items;
   const previousRows = new Map<string, PresentedThreadAgent>();
-  const historySeen = new Map<string, Set<string>>();
+  const snapshotCheckinCursors = new Map<string, ThreadAgentEventCursor>();
+  const historyCursors = new Map<string, ThreadAgentEventCursor>();
   const historyPrimed = new Set<string>();
   const historyAvailable = new Set<string>();
   const historyPending = new Set<string>();
   const historyRefreshQueued = new Set<string>();
+  const transcriptCursor = new ThreadAgentEventCursor();
   let activeThreadId: string | undefined;
   let snapshotPrimed = false;
   let transcriptPrimed = false;
@@ -338,22 +433,22 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     transcriptTimer = undefined;
     pendingTranscript = undefined;
     activeThreadId = threadId;
-    eventItems.value = [];
-    seenEventKeys.clear();
+    eventBuffer.clear();
     previousRows.clear();
-    historySeen.clear();
+    snapshotCheckinCursors.clear();
+    historyCursors.clear();
     historyPrimed.clear();
     historyAvailable.clear();
     historyPending.clear();
     historyRefreshQueued.clear();
+    transcriptCursor.clear();
     snapshotPrimed = false;
     transcriptPrimed = false;
   };
 
   const append = (item: StatusRollupItem): void => {
-    if (!activeThreadId || item.threadId !== activeThreadId || seenEventKeys.has(item.key)) return;
-    seenEventKeys.add(item.key);
-    eventItems.value = [...eventItems.value, item].sort((left, right) => left.observedAt - right.observedAt);
+    if (!activeThreadId || item.threadId !== activeThreadId) return;
+    eventBuffer.append(item);
   };
 
   const stateEvent = (agent: PresentedThreadAgent, threadId: string, version: number, at: number): StatusRollupItem =>
@@ -398,11 +493,18 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
       const historyKey = `${row.jobId}:${row.taskIndex}`;
       if ((!sources.traceHistory || !historyAvailable.has(historyKey)) && row.lastCheckinAt && row.lastCheckinSummary?.trim()) {
         const item = mapper.snapshotCheckin(agent, threadId);
-        if (item) append(item);
+        if (item) {
+          let cursor = snapshotCheckinCursors.get(row.key);
+          if (!cursor) { cursor = new ThreadAgentEventCursor(); snapshotCheckinCursors.set(row.key, cursor); }
+          cursor.select([item]).forEach(append);
+        }
       }
       currentRows.set(row.key, agent);
     }
 
+    for (const key of snapshotCheckinCursors.keys()) {
+      if (!currentRows.has(key)) snapshotCheckinCursors.delete(key);
+    }
     previousRows.clear();
     for (const [key, agent] of currentRows) previousRows.set(key, agent);
     snapshotPrimed = true;
@@ -412,24 +514,17 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const historyEvents = (agent: PresentedThreadAgent, data: AgentTraceHistoryData, threadId: string): void => {
     const key = `${agent.row.jobId}:${agent.row.taskIndex}`;
     const items = mapper.history(agent, data, threadId);
-    let known = historySeen.get(key);
+    let cursor = historyCursors.get(key);
+    if (!cursor) { cursor = new ThreadAgentEventCursor(); historyCursors.set(key, cursor); }
     const firstRead = !historyPrimed.has(key);
-    if (!known) { known = new Set<string>(); historySeen.set(key, known); }
     if (firstRead) {
       const latest = items[items.length - 1];
-      for (const item of items) {
-        known.add(item.key);
-        if (item === latest) append(item);
-        else seenEventKeys.add(item.key);
-      }
+      cursor.prime(items);
+      if (latest) append(latest);
       historyPrimed.add(key);
       return;
     }
-    for (const item of items) {
-      if (known.has(item.key)) continue;
-      known.add(item.key);
-      append(item);
-    }
+    cursor.select(items).forEach(append);
   };
 
   const loadHistory = (agent: PresentedThreadAgent, threadId: string): void => {
@@ -492,14 +587,12 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     const items = mapper.primaryTrace(pending.messages, pending.threadId, pending.agentName, now());
     if (!transcriptPrimed) {
       const latest = items[items.length - 1];
-      for (const item of items) {
-        if (item === latest) append(item);
-        else seenEventKeys.add(item.key);
-      }
+      transcriptCursor.prime(items);
+      if (latest) append(latest);
       transcriptPrimed = true;
       return;
     }
-    items.forEach(append);
+    transcriptCursor.select(items).forEach(append);
   };
 
   const flushTranscript = (): void => {
@@ -514,9 +607,12 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     const last = messages[messages.length - 1];
     const lastStatus = last && 'status' in last ? String(last.status) : last?.kind ?? '';
     const lastText = last && 'text' in last && typeof last.text === 'string' ? last.text : '';
+    const thoughtText = last?.kind === 'thinking' ? last.thoughts.join('\u0000') : '';
+    const thoughtCompleted = last?.kind === 'thinking' ? last.completed : false;
     return [sources.threadId.value, messages.length, last?.id ? String(last.id) : '', lastStatus, lastText.length,
+      thoughtText, thoughtCompleted,
       sources.primaryAgentName?.value ?? 'Sulla'] as const;
-  }, ([threadId, _length, _lastId, _lastStatus, _lastTextLength, agentName]) => {
+  }, ([threadId, _length, _lastId, _lastStatus, _lastTextLength, _thoughtText, _thoughtCompleted, agentName]) => {
     resetThread(threadId);
     if (!threadId) return;
     const pending = { threadId, messages: (sources.transcript?.value ?? []).slice(-40), agentName };
@@ -539,6 +635,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   return {
     projection,
     checkIns: computed(() => eventItems.value),
+    consumeCheckIns: () => eventBuffer.consume(),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
     chartRoot: computed(() => mapper.chartRoot(projection.value, sources.threadId.value)),
   };

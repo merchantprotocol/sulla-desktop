@@ -69,6 +69,7 @@ describe('StatusRollup lifecycle', () => {
 
     expect(wrapper.text()).toContain(checkIn.text);
     expect(wrapper.emitted('shown')).toBeUndefined();
+    expect(wrapper.emitted('consumed')).toHaveLength(1);
 
     vi.advanceTimersByTime(1_000);
     const nextCheckIn = { ...checkIn, key: 'check-in-2', agentId: 'agent-2', agentName: 'Worker Two', text: 'The second worker is ready', observedAt: Date.now() };
