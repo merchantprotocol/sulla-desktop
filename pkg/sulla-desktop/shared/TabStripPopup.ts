@@ -3,15 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 export type TabStripPopupPalette = Partial<Record<
-  'bg-elevated' | 'bg-surface-hover' | 'border-default' | 'text-primary' | 'text-muted' | 'status-warning' | 'status-error',
+  'bg-elevated' | 'bg-surface-hover' | 'border-default' | 'elev-raised' | 'text-primary' | 'text-muted' | 'status-warning' | 'status-error',
   string
 >>;
 
 export interface TabAttentionRow {
-  id:     string;
-  title:  string;
-  reason: string;
-  state:  'you' | 'stalled';
+  id:        string;
+  title:     string;
+  reason:    string;
+  state:     'you' | 'stalled';
   iconPath?: string;
 }
 
@@ -21,14 +21,19 @@ export interface TabAttentionMenu {
   palette: TabStripPopupPalette;
 }
 
-export interface TabContextMenuRequest {
+export type TabContextMenuRequest = {
   screenX:    number;
   screenY:    number;
-  items:      (string | TabAttentionRow)[];
+  items:      string[];
   tabData:    Record<string, unknown>;
-  attention?: TabAttentionMenu;
-  update?:    boolean;
-}
+  attention?: never;
+  update?:    never;
+} | {
+  items:     TabAttentionRow[];
+  tabData:   Record<string, unknown>;
+  attention: TabAttentionMenu;
+  update:    boolean;
+};
 
 export interface TabHoverRequest {
   id:      string;
