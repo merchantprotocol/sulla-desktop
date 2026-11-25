@@ -7,13 +7,14 @@ import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMes
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
+import { ToolPayloadRepository } from '../../services/ToolPayloadRepository';
 import type { TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
   static readonly trailingAnchor = '__trace-trailing__';
 
-  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection()) {}
+  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection(), private readonly toolPayloads = new ToolPayloadRepository()) {}
 
   project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
     const activities = this.debugActivities(messages, standardEntries);
@@ -98,8 +99,9 @@ export class DetailedTraceProjection {
     const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
     const target = message.recordedToolName ?? message.tool;
     const { input, output, error, desc, meta } = message;
-    const payload = new TracePayload([target, message.status, input, output, error, desc, meta], () =>
-      this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }));
+    const payload = new TracePayload([target, message.status, input, output, error, desc, meta, message.toolPayloadRef], () =>
+      this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }),
+      message.toolPayloadRef ? () => this.toolPayloads.load(message.toolPayloadRef!) : undefined);
     return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
       anchor, message.createdAt, this.duration(meta), this.serializer.preview(input), payload)];
   }

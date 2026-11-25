@@ -43,6 +43,11 @@
       <div class="dtr-meta"><span v-if="row.durationLabel" class="dtr-duration">{{ row.durationLabel }}</span><span class="dtr-status" :class="`dtr-status-${row.status}`">{{ row.status }}</span></div>
       <div v-if="row.note" class="dtr-note">{{ row.note }}</div>
     </div>
+    <p v-if="open && toolPayloadLoading" class="dtr-note" role="status">Loading the complete tool result…</p>
+    <p v-if="open && toolPayloadError" class="dtr-note" role="status">The complete tool result could not be loaded from the conversation log.</p>
+    <div v-if="open && payloadImages.length" class="dtr-images">
+      <figure v-for="image in payloadImages" :key="image.alt"><img :src="image.src" :alt="image.alt" /></figure>
+    </div>
     <pre v-if="open && row.payload" class="dtr-payload">{{ payloadText }}</pre>
   </article>
 </template>
@@ -55,6 +60,7 @@ import type { OpenSubAgentConversation } from '../subagent/subAgentConversation'
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
 import type { TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
+import { TracePayloadSerializer } from './TracePayloadSerializer';
 
 const props = defineProps<{ row: TraceRowModel }>();
 const disclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
@@ -94,8 +100,31 @@ const payloadSource = computed<{ id: string; payload?: TraceRowModel['payload'] 
   if (previous?.id === id && (previous.payload === payload || (payload && previous.payload?.matches(payload)))) return previous;
   return { id, payload };
 });
-// Only the open disclosure reads this computed.
-const payloadText = computed(() => payloadSource.value.payload?.serialize(history.value?.checkins));
+const payloadSerializer = new TracePayloadSerializer();
+const loadedPresentation = shallowRef<ReturnType<TracePayloadSerializer['present']> | null>(null);
+const toolPayloadLoading = ref(false);
+const toolPayloadError = ref(false);
+watch([open, () => props.row.payload], async([expanded, payload], _, onCleanup) => {
+  loadedPresentation.value = null;
+  toolPayloadLoading.value = false;
+  toolPayloadError.value = false;
+  if (!expanded || !payload?.load) return;
+  let current = true;
+  onCleanup(() => { current = false; });
+  toolPayloadLoading.value = true;
+  try {
+    const value = await payload.load();
+    if (current) loadedPresentation.value = payloadSerializer.present(value);
+  } catch {
+    if (current) toolPayloadError.value = true;
+  } finally {
+    if (current) toolPayloadLoading.value = false;
+  }
+}, { immediate: true });
+const payloadPresentation = computed(() => loadedPresentation.value ?? payloadSerializer.present(payloadSource.value.payload?.serialize(history.value?.checkins) ?? ''));
+const payloadImages = computed(() => payloadPresentation.value.images);
+const payloadText = computed(() => toolPayloadLoading.value ? 'Loading the complete tool result…'
+  : toolPayloadError.value ? 'The complete tool result could not be loaded from the conversation log.' : payloadPresentation.value.text);
 const initial = computed(() => (props.row.subagent?.agentId || props.row.target || '?')[0].toUpperCase());
 const statusLabel = computed(() => props.row.status === 'quiet' ? 'no check-in' : props.row.status);
 const agentMeta = computed(() => {
@@ -148,6 +177,9 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 .dtr-chevron { color: var(--text-muted); font-size: 16px; line-height: 12px; }
 .dtr-note { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
 .dtr-payload { grid-column: 2 / -1; max-height: 240px; overflow: auto; margin: 4px 0 0; padding: 8px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-surface) 80%, var(--text-primary)); font: 11px/1.45 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; }
+.dtr-images { grid-column: 2 / -1; display: grid; gap: 8px; margin-top: 4px; }
+.dtr-images figure { margin: 0; }
+.dtr-images img { max-width: 100%; height: auto; }
 .dtr-agent { margin-top: 4px; padding: 5px 0; color: var(--text-secondary); }
 .dtr-agent-head { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto minmax(68px, auto) 20px; gap: 8px; align-items: baseline; font-size: 13px; }
 .dtr-agent-marker { justify-self: center; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--border-default); color: var(--text-secondary); font: 600 10px/1 var(--font-body); }

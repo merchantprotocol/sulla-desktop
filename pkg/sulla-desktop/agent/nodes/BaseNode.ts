@@ -31,7 +31,7 @@ import { AgentModelStatusRegistry } from '../services/AgentModelStatusRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { RunActivity } from '../services/RunActivity';
 import { TurnToolActivity } from '../services/TurnToolActivity';
-import { ProviderToolTranscript } from './ProviderToolTranscript';
+import { ProviderToolTranscript, ProviderToolTranscriptSink } from './ProviderToolTranscript';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
@@ -1852,9 +1852,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     };
 
     // Provider-CLI tool calls (Claude Code, Codex) bypass ToolExecutor: forward their full call and result events.
-    const providerTools = new ProviderToolTranscript({ emitCall: (id, name, input) => this.emitToolCallEvent(state, id, name, input),
-      emitResult: (id, success, error, result) => this.emitToolResultEvent(state, id, success, error, result),
-      log: (name, input, result) => this.logConversationToolCall(state, name, input, result), warn: (message, error) => console.warn(`[${ this.name }] ${ message }`, error) });
+    const providerTools = new ProviderToolTranscript(new ProviderToolTranscriptSink(String((state.metadata as any).runId ?? state.metadata.threadId ?? this.name),
+      this.emitToolCallEvent.bind(this, state), this.emitToolResultEvent.bind(this, state),
+      (name, input, result, toolCallId) => this.logConversationToolCall(state, name, input, result, toolCallId), (message, error) => console.warn(`[${ this.name }] ${ message }`, error)));
     const onContextCompaction = (event: { provider: string; at: number; source: string }): void => {
       const meta = state.metadata as any;
       meta.cliCompactedAt = event.at;
@@ -1924,7 +1924,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (providerToolStarted && error && typeof error === 'object') (error as any).unsafeToFallback = true;
       throw error;
     } finally {
-      toolActivity.close();
+      await providerTools.interrupted(); toolActivity.close();
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while
       // the model is still producing activity; a stream that ends naturally
@@ -2257,12 +2257,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * tool execution happens inside their own subprocess and never touches
    * Sulla's ToolExecutor — see StreamCallbacks.onToolEvent.
    */
-  protected logConversationToolCall(state: BaseThreadState, toolName: string, args: unknown, result?: unknown): void {
+  protected logConversationToolCall(state: BaseThreadState, toolName: string, args: unknown, result?: unknown, toolCallId?: string): void {
     const convId = (state.metadata as any).conversationId;
     if (!convId) return;
     try {
       const { getConversationLogger } = require('../services/ConversationLogger');
-      getConversationLogger().logToolCall(convId, toolName, args, result);
+      getConversationLogger().logToolCall(convId, toolName, args, result, toolCallId);
     } catch { /* best-effort */ }
   }
 

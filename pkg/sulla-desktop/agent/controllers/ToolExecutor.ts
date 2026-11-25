@@ -287,7 +287,7 @@ export class ToolExecutor {
           if (convIdSuccess) {
             try {
               const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdSuccess, toolName, args, result);
+              getLogger().logToolCall(convIdSuccess, toolName, args, result, toolRunId);
             } catch { /* best-effort */ }
           }
         } catch (err: any) {
@@ -308,7 +308,7 @@ export class ToolExecutor {
           if (convIdFail) {
             try {
               const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdFail, toolName, args, { error });
+              getLogger().logToolCall(convIdFail, toolName, args, { error }, toolRunId);
             } catch { /* best-effort */ }
           }
           this.pushToTranscript(toolName, false, error);
@@ -476,7 +476,7 @@ export class ToolExecutor {
         if (convId) {
           try {
             const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-            getLogger().logToolCall(convId, toolName, args, result);
+            getLogger().logToolCall(convId, toolName, args, result, toolRunId);
           } catch { /* best-effort */ }
         }
       } else {
@@ -501,7 +501,7 @@ export class ToolExecutor {
         if (convId && !settled.loopBlock) {
           try {
             const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-            getLogger().logToolCall(convId, toolName, args, { error });
+            getLogger().logToolCall(convId, toolName, args, { error }, toolRunId);
           } catch { /* best-effort */ }
         }
       }
@@ -654,7 +654,7 @@ export class ToolExecutor {
           toolName,
           args,
           kind,
-          thread_id:   parentThreadId,
+          thread_id:   parentThreadId, payloadThreadId: state.metadata.threadId,
         },
         timestamp: Date.now(),
       });
@@ -718,9 +718,7 @@ export class ToolExecutor {
           phase:     'tool_result',
           toolRunId,
           success,
-          error,
-          result,
-          thread_id: parentThreadId,
+          thread_id: parentThreadId, payloadThreadId: state.metadata.threadId,
         },
         timestamp: Date.now(),
       });

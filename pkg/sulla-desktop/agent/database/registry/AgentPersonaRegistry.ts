@@ -38,6 +38,8 @@ export interface ChatMessage {
   toolCard?: {
     toolRunId:     string;
     toolName:      string;
+    providerTool?: boolean;
+    toolPayloadRef?: { threadId: string; toolRunId: string };
     description?:  string;
     status:        'running' | 'success' | 'failed';
     args?:         Record<string, unknown>;

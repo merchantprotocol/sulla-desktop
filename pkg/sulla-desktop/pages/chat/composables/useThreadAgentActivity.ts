@@ -97,6 +97,7 @@ class ThreadAgentActivityMapper {
   private transcriptStep(message: Message): { text: string; at: number } | null {
     switch (message.kind) {
       case 'tool': {
+        if (message.providerTool) return null;
         // desc is the readable tool-card description ("Reading X"); never the raw input JSON.
         const text = message.desc?.trim() || message.tool?.trim();
         return text ? { text, at: message.createdAt } : null;

@@ -17,6 +17,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { ThreadPersister } from '../controller/ChatController';
 import type { ThreadState }     from '../models/Thread';
 import type { ThreadId }        from '../types/chat';
+import { TOOL_PAYLOAD_POINTER_THRESHOLD } from '@pkg/agent/tools/toolCardFormatters';
 
 const INDEX_KEY = 'chat:index';
 const KEY = (id: ThreadId) => `chat:thread:${ id }`;
@@ -74,7 +75,7 @@ export class LocalStoragePersister implements ThreadPersister {
     let json: string;
 
     try {
-      json = JSON.stringify(state);
+      json = JSON.stringify(this.compactLargeToolPayloads(state));
     } catch (e) {
       console.error('[LocalStoragePersister] serialize failed:', e);
 
@@ -113,6 +114,20 @@ export class LocalStoragePersister implements ThreadPersister {
         localStorage.setItem(INDEX_KEY, JSON.stringify(index));
       }
     } catch (e) { console.warn('[LocalStoragePersister] index update failed:', e); }
+  }
+
+  private compactLargeToolPayloads(state: ThreadState): ThreadState {
+    if (!Array.isArray(state.thread?.messages)) return state;
+    let changed = false;
+    const messages = state.thread.messages.map((message: any) => {
+      if (message?.kind !== 'tool' || (message.output?.length ?? 0) + (message.error?.length ?? 0) <= TOOL_PAYLOAD_POINTER_THRESHOLD) return message;
+      const match = typeof message.id === 'string' ? message.id.match(/^\d+_tool_(.+)$/) : null;
+      const toolPayloadRef = message.toolPayloadRef ?? (match ? { threadId: state.thread.id, toolRunId: match[1] } : undefined);
+      if (!toolPayloadRef) return message;
+      changed = true;
+      return { ...message, output: undefined, error: undefined, toolPayloadRef };
+    });
+    return changed ? { ...state, thread: { ...state.thread, messages } } : state;
   }
 
   load(id: ThreadId): ThreadState | null {

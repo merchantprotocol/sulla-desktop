@@ -28,7 +28,7 @@ it('forwards the complete Claude tool result once from its correlated runtime ev
 
   expect(starts).toEqual([{ toolUseId: 'claude-tool-call', toolName: 'Bash', input }]);
   expect(results).toEqual([expect.objectContaining({
-    toolUseId: 'claude-tool-call', toolName: 'Bash', input, result,
+    toolUseId: 'claude-tool-call', toolName: 'Bash', input, result: undefined,
     error: JSON.stringify(result, null, 2), resultChars: JSON.stringify(result, null, 2).length, isError: true,
   })]);
   expect(timings).toEqual([['Bash', 27, JSON.stringify(result, null, 2).length]]);

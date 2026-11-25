@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { randomUUID } from 'node:crypto';
+
 export interface ProviderToolCall {
   toolUseId: string;
   toolName:  string;
@@ -15,42 +17,42 @@ export interface ProviderToolResult extends ProviderToolCall {
   isError?: boolean;
 }
 
-export interface ProviderToolTranscriptSink {
+export interface ProviderToolTranscriptSinkPort {
   emitCall(toolUseId: string, toolName: string, input: unknown, kind?: 'provider'): Promise<boolean>;
   emitResult(toolUseId: string, success: boolean, error: string | undefined, result: unknown): Promise<boolean>;
-  log(toolUseId: string, toolName: string, input: unknown, result: unknown): void;
+  log(toolName: string, input: unknown, result: unknown, toolUseId: string): void;
   warn(message: string, error: unknown): void;
 }
 
-export interface ProviderToolTranscriptSinkDependencies {
-  readonly runId: string;
-  readonly emitCall: (toolUseId: string, toolName: string, input: unknown, kind: 'provider') => Promise<boolean>;
-  readonly emitResult: (toolUseId: string, success: boolean, error: string | undefined, result: unknown) => Promise<boolean>;
-  readonly log: (toolName: string, input: unknown, result: unknown, toolUseId: string) => void;
-  readonly warn: (message: string, error: unknown) => void;
-}
-
 /** Namespaces provider-local ids and marks their transcript rows as Detailed-only. */
-export class ProviderToolTranscriptSink implements ProviderToolTranscriptSink {
-  constructor(private readonly dependencies: ProviderToolTranscriptSinkDependencies) {}
+export class ProviderToolTranscriptSink implements ProviderToolTranscriptSinkPort {
+  private readonly turnId = randomUUID();
+
+  constructor(
+    private readonly runId: string,
+    private readonly emit: ProviderToolTranscriptSinkPort['emitCall'],
+    private readonly emitResultEvent: ProviderToolTranscriptSinkPort['emitResult'],
+    private readonly logEvent: (toolName: string, input: unknown, result: unknown, toolUseId: string) => void,
+    private readonly warnEvent: ProviderToolTranscriptSinkPort['warn'],
+  ) {}
 
   emitCall(toolUseId: string, toolName: string, input: unknown): Promise<boolean> {
-    return this.dependencies.emitCall(this.scopedId(toolUseId), toolName, input, 'provider');
+    return this.emit(this.scopedId(toolUseId), toolName, input, 'provider');
   }
 
   emitResult(toolUseId: string, success: boolean, error: string | undefined, result: unknown): Promise<boolean> {
-    return this.dependencies.emitResult(this.scopedId(toolUseId), success, error, result);
+    return this.emitResultEvent(this.scopedId(toolUseId), success, error, result);
   }
 
   log(toolUseId: string, toolName: string, input: unknown, result: unknown): void {
-    this.dependencies.log(toolName, input, result, this.scopedId(toolUseId));
+    this.logEvent(toolName, input, result, this.scopedId(toolUseId));
   }
 
-  warn(message: string, error: unknown): void { this.dependencies.warn(message, error) }
+  warn(message: string, error: unknown): void { this.warnEvent(message, error) }
 
   private scopedId(toolUseId: string): string {
     const safe = (value: string) => value.replace(/[^\w.-]/g, '-');
-    return `${ safe(this.dependencies.runId) }-${ safe(toolUseId) }`;
+    return `${ safe(this.runId) }-${ safe(this.turnId) }-${ safe(toolUseId) }`;
   }
 }
 
@@ -62,7 +64,7 @@ export class ProviderToolTranscriptSink implements ProviderToolTranscriptSink {
 export class ProviderToolTranscript {
   private readonly pendingCalls = new Map<string, { call: ProviderToolCall; emitted: Promise<boolean> }>();
 
-  constructor(private readonly sink: ProviderToolTranscriptSink) {}
+  constructor(private readonly sink: ProviderToolTranscriptSinkPort) {}
 
   started(call: ProviderToolCall): void {
     this.pendingCalls.set(call.toolUseId, { call, emitted: this.emitCall(call) });
@@ -76,7 +78,7 @@ export class ProviderToolTranscript {
     void emitted
       .then(() => this.sink.emitResult(event.toolUseId, success, event.error, event.result))
       .catch(error => this.sink.warn('Failed to report provider tool result:', error));
-    try { this.sink.log(event.toolUseId, event.toolName, event.input, this.loggedResult(event)) }
+    try { this.sink.log(event.toolName, event.input, this.loggedResult(event), event.toolUseId) }
     catch (error) { this.sink.warn('Failed to log provider tool result:', error) }
   }
 
@@ -88,7 +90,7 @@ export class ProviderToolTranscript {
       await emitted;
       try { await this.sink.emitResult(call.toolUseId, false, 'interrupted', undefined) }
       catch (error) { this.sink.warn('Failed to report interrupted provider tool call:', error) }
-      try { this.sink.log(call.toolUseId, call.toolName, call.input, { error: 'interrupted' }) }
+      try { this.sink.log(call.toolName, call.input, { error: 'interrupted' }, call.toolUseId) }
       catch (error) { this.sink.warn('Failed to log interrupted provider tool call:', error) }
     }));
   }

@@ -123,6 +123,8 @@ export interface ThinkingMessage extends MessageBase {
 // ─── Tool call ────────────────────────────────────────────────────
 export interface ToolMessage extends MessageBase {
   kind:          'tool';
+  providerTool?: boolean;
+  toolPayloadRef?: { threadId: string; toolRunId: string };
   recordedToolName?: string;
   tool:          string;        // Standard-view label; Detailed uses recordedToolName
   desc:          string;        // formatter description when available

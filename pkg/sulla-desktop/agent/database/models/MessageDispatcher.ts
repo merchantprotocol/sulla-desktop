@@ -19,7 +19,8 @@
  */
 
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
+import { formatToolCard, formatToolResult, TOOL_PAYLOAD_POINTER_THRESHOLD } from '@pkg/agent/tools/toolCardFormatters';
+import { ToolResultCardProjector } from './ToolResultCardProjector';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
@@ -876,6 +877,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
         toolCard:  {
           toolRunId,
           toolName,
+            providerTool: data?.kind === 'provider',
           description,
           status:       'running',
           args:         argsRecord,
@@ -894,32 +896,12 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
   if (phase === 'tool_result') {
     ctx.currentActivity.value = 'Thinking';
     const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
-    const success = data?.success === true;
-    const error = typeof data?.error === 'string' ? data.error : null;
-    const result = data?.result;
-
     if (toolRunId) {
       const messageId = ctx.toolRunIdToMessageId.get(toolRunId);
       if (messageId) {
         const message = ctx.messages.find(m => m.id === messageId);
-        if (message?.toolCard) {
-          message.toolCard.status = success ? 'success' : 'failed';
-          message.toolCard.error = error;
-          message.toolCard.result = result;
-          const resultDisplay = formatToolResult(
-            message.toolCard.toolName,
-            message.toolCard.args ?? {},
-            result,
-            error,
-          );
-          const fullOutput = result === undefined
-            ? resultDisplay.output
-            : typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result);
-          if (fullOutput !== undefined) {
-            message.toolCard.output = fullOutput;
-          }
-          if (resultDisplay.outputFormat) message.toolCard.outputFormat = resultDisplay.outputFormat;
-        }
+        if (message?.toolCard) new ToolResultCardProjector(formatToolResult, TOOL_PAYLOAD_POINTER_THRESHOLD)
+          .project(message.toolCard, data, msgThreadId);
         ctx.toolRunIdToMessageId.delete(toolRunId);
       }
     }

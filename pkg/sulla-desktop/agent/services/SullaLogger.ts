@@ -626,13 +626,13 @@ class SullaLogger extends EventEmitter {
     }
   }
 
-  logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown): void {
+  logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown, toolCallId?: string): void {
     this.log(conversationId, {
       ts:       new Date().toISOString(),
       type:     'tool_call',
       toolName,
-      args: redactToolArgs(toolName, args),
-      ...(result !== undefined ? { result } : {}),
+      args: redactToolArgs(toolName.replace(/^mcp__.*?__|^[^/]+\//, ''), args),
+      ...(result !== undefined ? { result } : {}), ...(toolCallId ? { toolCallId } : {}),
     });
   }
 

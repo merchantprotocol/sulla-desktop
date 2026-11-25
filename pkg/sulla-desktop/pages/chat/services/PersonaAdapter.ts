@@ -1009,7 +1009,7 @@ export class PersonaAdapter {
         id,
         kind: 'tool',
         createdAt,
-        recordedToolName: b.toolCard.toolName,
+        recordedToolName: b.toolCard.toolName, providerTool: b.toolCard.providerTool, toolPayloadRef: b.toolCard.toolPayloadRef,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,

@@ -41,7 +41,8 @@ export class CodexToolEventEmitter {
 
     switch (kind) {
     case 'command_execution': {
-      const result = item.aggregated_output ?? item.output ?? item.stderr ?? item.stdout;
+      const result = item.aggregated_output ?? (item.stdout !== undefined && item.stderr !== undefined
+        ? { stdout: item.stdout, stderr: item.stderr } : item.output ?? item.stderr ?? item.stdout);
       return {
         toolUseId,
         toolName:    'command_execution',

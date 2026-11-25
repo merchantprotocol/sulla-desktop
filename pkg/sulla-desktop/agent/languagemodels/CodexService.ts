@@ -836,7 +836,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
         if (!msg) return;
-        try { callbacks.onActivity?.(msg, reportingActivity) } catch { /* ignore */ }
+        try { callbacks.onActivity?.(reportingActivity === 'tool' ? msg.replace(/\s+/g, ' ').trim().slice(0, 80) : msg, reportingActivity) } catch { /* ignore */ }
       };
 
       proc.once('spawn', () => {

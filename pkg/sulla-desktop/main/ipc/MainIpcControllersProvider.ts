@@ -12,6 +12,7 @@ import { TabsIpcController } from '../browserTabs/tabsIpc';
 import { ChatArtifactsIpcController } from '../chatArtifactsIpc';
 import { ChatHeartbeatIpcController } from '../chatHeartbeatIpc';
 import { ChatMessagesIpcController } from '../chatMessagesIpc';
+import { ConversationToolPayloadStore } from '../conversationToolPayloadStore';
 import { cloudRequest } from '../cloud/cloudFetch';
 import { ConversationMessagesIpcController } from '../conversationMessagesIpc';
 import { ExtensionUiIpcController } from '../extensionUiIpc';
@@ -50,6 +51,7 @@ import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import Logging from '@pkg/utils/logging';
 import { safeSend } from '@pkg/utils/safeSend';
+import { resolveSullaLogsDir } from '@pkg/agent/utils/sullaPaths';
 
 import type { IpcMainRegistrar, IpcRegistrar } from './IpcController';
 
@@ -142,7 +144,7 @@ export class MainIpcControllersProvider {
       listDockerLinks,
       isAppWindow:           sender => !!agentWindowFromSender(sender) || !!BrowserWindow.fromWebContents(sender),
     });
-    this.chatMessages = new ChatMessagesIpcController(raw, ConversationThreadStore as any, log);
+    this.chatMessages = new ChatMessagesIpcController(raw, ConversationThreadStore as any, log, new ConversationToolPayloadStore(ConversationHistoryModel, resolveSullaLogsDir));
     this.conversationMessages = new ConversationMessagesIpcController(raw, ConversationMessagesModel, log);
     this.chatArtifacts = new ChatArtifactsIpcController(raw, {
       service: () => {
