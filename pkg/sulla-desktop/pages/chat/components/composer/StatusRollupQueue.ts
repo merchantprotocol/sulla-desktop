@@ -179,21 +179,39 @@ export class StatusRollupQueue {
    * Urgent items jump ahead of normal work and keep their full reading hold.
    */
   pump(now: number, paused = false): StatusRollupItem | null {
-    if (paused) return null;
-    if (this.queued.length === 0) return null;
-    const urgentIndex = this.queued.findIndex(entry => this.isUrgent(entry.item));
-    const currentUrgent = this.visible && this.isUrgent(this.visible.item);
-    if (currentUrgent && now < this.visible!.holdUntil) return null;
-    if (urgentIndex < 0 && this.lastShownAt !== null && now - this.lastShownAt < (this.burstGapMs ?? StatusRollupQueue.quietGapMs)) return null;
+    return this.pumpItems(now, paused, 1)[0] ?? null;
+  }
 
-    const next = this.queued.splice(urgentIndex >= 0 ? urgentIndex : 0, 1)[0];
-    if (!next) return null;
+  /** Returns every event whose burst slot elapsed since the previous UI tick. */
+  pumpDue(now: number, paused = false): StatusRollupItem[] {
+    return this.pumpItems(now, paused, Number.POSITIVE_INFINITY);
+  }
 
-    const holdMs = this.isUrgent(next.item) ? StatusRollupQueue.urgentHoldMs : 0;
-    this.visible = { item: next.item, holdUntil: now + holdMs };
-    this.lastShownAt = now;
-    if (this.queued.length === 0) this.burstGapMs = null;
-    return next.item;
+  private pumpItems(now: number, paused: boolean, limit: number): StatusRollupItem[] {
+    if (paused || this.queued.length === 0) return [];
+    const items: StatusRollupItem[] = [];
+    while (items.length < limit && this.queued.length > 0) {
+      const urgentIndex = this.queued.findIndex(entry => this.isUrgent(entry.item));
+      const currentUrgent = Boolean(this.visible && this.isUrgent(this.visible.item));
+      if (currentUrgent && now < this.visible!.holdUntil) break;
+
+      let dueAt = this.lastShownAt === null
+        ? now
+        : this.lastShownAt + (this.burstGapMs ?? StatusRollupQueue.quietGapMs);
+      if (currentUrgent) dueAt = Math.max(dueAt, this.visible!.holdUntil);
+      else if (urgentIndex >= 0) dueAt = now;
+      if (dueAt > now) break;
+
+      const next = this.queued.splice(urgentIndex >= 0 ? urgentIndex : 0, 1)[0];
+      if (!next) break;
+      const shownAt = this.isUrgent(next.item) ? now : dueAt;
+      const holdMs = this.isUrgent(next.item) ? StatusRollupQueue.urgentHoldMs : 0;
+      this.visible = { item: next.item, holdUntil: shownAt + holdMs };
+      this.lastShownAt = shownAt;
+      items.push(next.item);
+      if (this.queued.length === 0) this.burstGapMs = null;
+    }
+    return items;
   }
 
   private isUrgent(item: StatusRollupItem): boolean {

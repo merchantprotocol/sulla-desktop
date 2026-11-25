@@ -186,8 +186,8 @@ const showItem = (item: StatusRollupItem | null, fromQueue = false): void => {
 
 const refresh = (): void => {
   const now = Date.now();
-  const shown = queue.pump(now, isPaused.value);
-  if (shown) showItem(shown, true);
+  const shownItems = queue.pumpDue(now, isPaused.value);
+  if (shownItems.length) shownItems.forEach(item => showItem(item, true));
   else showItem(queue.current ?? fallbackItem.value);
   historyItems.value = queue.history;
 };

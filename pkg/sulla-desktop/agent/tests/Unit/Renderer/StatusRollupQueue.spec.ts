@@ -47,6 +47,24 @@ describe('StatusRollupQueue', () => {
     expect(lastShownAt - 1_000).toBeLessThanOrEqual(3_000);
   });
 
+  // risk: data accuracy — hidden-tab backlog playback must catch up without skipping or reordering actions.
+  it('drains a 200-item backlog on real 100ms ticks in about three seconds', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const items = Array.from({ length: 200 }, (_, index) =>
+      fixture.item(`event-${index}`, `agent-${index % 4}`, `Action ${index}`, index),
+    );
+    fixture.queue.observe(items, fixture.threadId, 0);
+
+    const shown: string[] = [];
+    for (let now = 0; now <= 3_000 && shown.length < items.length; now += 100) {
+      shown.push(...fixture.queue.pumpDue(now).map(item => item.key));
+    }
+
+    expect(shown).toEqual(items.map(item => item.key));
+    expect(fixture.queue.pending).toEqual([]);
+    expect(fixture.queue.current?.key).toBe('event-199');
+  });
+
   // risk: safety — a blocked or failed agent must interrupt ordinary updates and remain readable.
   it('jumps urgent activity ahead of normal items and holds it for 2.6 seconds', () => {
     const fixture = new StatusRollupQueueFixture();
