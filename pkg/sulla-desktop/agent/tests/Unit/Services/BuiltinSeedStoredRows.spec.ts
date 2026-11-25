@@ -12,6 +12,7 @@ import type { BuiltinAgentSpec, BuiltinManagedContent } from '@pkg/agent/builtin
 import { FRONT_DOOR_CHOSEN_KEY, getBuiltinAgentSpecs, hashManagedContent, renderBuiltinAgent } from '@pkg/agent/builtinAgents/index';
 import { seedBuiltinAgents } from '@pkg/agent/builtinAgents/seedBuiltinAgents';
 import { AgentDefinitionModel } from '@pkg/agent/database/models/AgentDefinitionModel';
+import { AgentAwarenessDefaults } from '@pkg/agent/services/AgentAwarenessDefaults';
 
 const db = vi.hoisted(() => ({ table: null as unknown as AgentDefinitionTableFake }));
 vi.mock('@pkg/agent/database/PostgresClient', () => ({
@@ -103,15 +104,19 @@ async function legacySeeded(bundled: BuiltinAgentSpec, options: { frontDoor?: bo
 beforeEach(() => { db.table = new AgentDefinitionTableFake() });
 
 describe('seeding built-ins against stored rows', () => {
-  it('ships awareness off for workers and on for every bundled lead/front-door agent', async() => {
-    // risk: a default or later seed update reintroduces other-agent context into workers.
+  it('ships the shared awareness defaults for workers and built-in leads', async() => {
+    // risk: a seed update reintroduces sibling context into workers or hides it from managers.
     const shipped = getBuiltinAgentSpecs();
     const result = await seedBuiltinAgents(shipped);
     expect(result.errors).toEqual([]);
-    const hidden = ['codex-luna-worker', 'codex-sol-worker', 'haiku-worker', 'sonnet-worker', 'opus-worker', 'analytics-worker'];
-    const visible = ['coding-manager', 'ui-test-manager', 'premortem-planner', 'mockup-designer', 'account-manager', 'project-manager', 'director', 'integrator', 'conversationalist'];
-    for (const slug of hidden) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(false);
-    for (const slug of visible) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(true);
+    expect(AgentAwarenessDefaults.DEFAULT_OFF_AGENT_SLUGS).toEqual([
+      ...AgentAwarenessDefaults.WORKER_AGENT_SLUGS, 'integrator', 'premortem-planner', 'mockup-designer',
+    ]);
+    expect(AgentAwarenessDefaults.DEFAULT_ON_AGENT_SLUGS).toEqual([
+      'project-manager', 'coding-manager', 'director', 'ui-test-manager', 'account-manager', 'conversationalist',
+    ]);
+    for (const slug of AgentAwarenessDefaults.DEFAULT_OFF_AGENT_SLUGS) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(false);
+    for (const slug of AgentAwarenessDefaults.DEFAULT_ON_AGENT_SLUGS) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(true);
   });
 
   it('sees every shipped built-in as unchanged on the boot after it was installed', async() => {

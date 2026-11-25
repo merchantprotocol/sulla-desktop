@@ -118,7 +118,7 @@
     },
     {
       "slug": "integrator",
-      "agentAwareness": true,
+      "agentAwareness": false,
       "name": "Integrator",
       "description": "Keeps a long project honest by reading its Sulla Files folder (Charter and Plan in PROJECT.md, tasks and outcome lines in TASKS.md, the progress report): evidence-checked KPI scorecard, budget breakers, decision queue (reversible calls decided and logged with undo; irreversible ones queued with recommendation and cost of waiting), assumption log, drift check, and a one-screen weekly read-ahead for the human. Runs when called.",
       "card": {
@@ -192,7 +192,7 @@
     },
     {
       "slug": "premortem-planner",
-      "agentAwareness": true,
+      "agentAwareness": false,
       "name": "Pre-mortem Planner",
       "description": "Pre-mortem planner: before a plan runs (or when it's stuck mid-run), probes the real environment, predicts where work will get blocked, and writes prevention steps, workarounds and safeguards so Sulla gets past blocks on its own. Batches only true human dependencies (their login, card, name, signature, mockup pick) into one ask. Never treats merges/deploys as approval gates. Runs on its Preferences model slot via claude-code.",
       "card": {
@@ -419,7 +419,7 @@
     },
     {
       "slug": "mockup-designer",
-      "agentAwareness": true,
+      "agentAwareness": false,
       "name": "Mockup Designer",
       "description": "Fable-5.1 design agent that produces self-contained static HTML UI mockup variations for review — reads real schema/design tokens and outputs review-ready pages, never wires product code.",
       "card": {

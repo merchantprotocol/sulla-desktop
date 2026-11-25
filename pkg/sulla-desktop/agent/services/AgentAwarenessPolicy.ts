@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { AgentAwarenessDefaults } from './AgentAwarenessDefaults';
+
 export interface AgentAwarenessSetting {
   agent_awareness?: boolean | null;
   agentAwareness?:  boolean | null;
@@ -10,12 +12,8 @@ export interface AgentAwarenessSetting {
 
 /** One policy for prompt context and direct agent-launch tool exposure. */
 export class AgentAwarenessPolicy {
-  static readonly WORKER_AGENT_SLUGS = Object.freeze([
-    'codex-luna-worker', 'codex-sol-worker', 'haiku-worker', 'sonnet-worker', 'opus-worker', 'analytics-worker',
-  ] as const);
-  static readonly DEFAULT_OFF_AGENT_SLUGS = Object.freeze([
-    ...AgentAwarenessPolicy.WORKER_AGENT_SLUGS, 'integrator', 'premortem-planner', 'mockup-designer',
-  ] as const);
+  static readonly WORKER_AGENT_SLUGS = AgentAwarenessDefaults.WORKER_AGENT_SLUGS;
+  static readonly DEFAULT_OFF_AGENT_SLUGS = AgentAwarenessDefaults.DEFAULT_OFF_AGENT_SLUGS;
 
   private readonly launchingToolNames = new Set([
     'spawn_agent',
