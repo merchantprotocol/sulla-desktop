@@ -17,7 +17,7 @@ describe('TabStripLayoutRepository', () => {
     const layout = new TabStripLayoutRepository(storage, 'window');
     const chat = { id: 'chat', mode: 'chat' };
     const browser = { id: 'first-browser', mode: 'browser' };
-    const reveal = new TabGroupReveal(new TabGroupModel(), layout, chat.id);
+    const reveal = new TabGroupReveal(new TabGroupModel(), layout, chat);
 
     layout.setFoldedGroups(['chats', 'browser', 'tools']);
     reveal.select(chat);
@@ -32,6 +32,24 @@ describe('TabStripLayoutRepository', () => {
     expect(layout.foldedGroups.value).toContain('tools');
     reveal.select(browser);
     expect(layout.foldedGroups.value).not.toContain('browser');
+  });
+
+  it('reveals the same active id after unpin or group change, but keeps an explicit fold in the same placement', () => {
+    const layout = new TabStripLayoutRepository(new MemoryStorage(), 'window');
+    const reveal = new TabGroupReveal(new TabGroupModel(), layout);
+    const tool = { id: 'active', mode: 'calendar' };
+
+    layout.setFoldedGroups(['chats', 'browser', 'tools']);
+    reveal.select({ ...tool, pinned: true });
+    expect(layout.foldedGroups.value).toContain('tools');
+    reveal.select({ ...tool, pinned: false });
+    expect(layout.foldedGroups.value).not.toContain('tools');
+
+    layout.setFoldedGroups(['chats', 'browser', 'tools']);
+    reveal.select({ ...tool, mode: 'vault' });
+    expect(layout.foldedGroups.value).toContain('tools');
+    reveal.select({ ...tool, mode: 'browser' });
+    expect(layout.foldedGroups.value).toEqual(['chats', 'tools']);
   });
 
   it('defaults only Tools to folded on a fresh profile', () => {
