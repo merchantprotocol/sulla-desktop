@@ -65,8 +65,8 @@ export class DelegatedFreshTurnRunner {
       let attempt = 0;
       let alerted = false;
       let alertDeadline: number | undefined;
-      const stillMissing = () => !ports.signal?.aborted && !state.metadata?.delegatedContractReturned
-        && !DelegatedCompletionHandoff.hasWakeEntries(state) && !DeferredStallInput.actionableMessages(state).length;
+      const stillMissing = () => !ports.signal?.aborted && !state.metadata?.delegatedContractReturned &&
+        !DelegatedCompletionHandoff.hasWakeEntries(state) && !DeferredStallInput.actionableMessages(state).length;
       await ports.endWakeTurn(jobId, taskIndex);
       while (!ports.signal?.aborted) {
         const returned = await ports.returnedTask();

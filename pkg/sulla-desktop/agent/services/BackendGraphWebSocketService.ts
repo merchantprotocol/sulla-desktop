@@ -222,9 +222,9 @@ timestamp: Date.now(),
       // A child may already have resumed the task while its timer was claimed.
       // A terminal/missing job is not that race and cannot accept another wake.
       const job = await agentJobProvider.jobs.findByTaskThread(threadId);
-      if (job && !['stopped', 'completed', 'failed'].includes(job.status)
-        && job.tasks.some(task => task.threadId === threadId && task.status === 'running')
-        && agentJobLifecycle.deliver(threadId, steer)) return true;
+      if (job && !['stopped', 'completed', 'failed'].includes(job.status) &&
+        job.tasks.some(task => task.threadId === threadId && task.status === 'running') &&
+        agentJobLifecycle.deliver(threadId, steer)) return true;
     }
     if (parked && agentJobLifecycle.deliver(threadId, steer)) return true;
     if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
@@ -309,8 +309,8 @@ timestamp: Date.now(),
       channel => GraphRegistry.findThreadsByChannel(channel).map(candidate => ({ ...candidate, executing: this.hasActiveRun(channel, candidate.threadId) || this.inboxRunGuard.isActive({ channel, threadId: candidate.threadId }) })),
     );
     this.agentInbox = new AgentInbox(repository, {
-      isRunning: target => this.inboxRunGuard.isActive(target)
-        || (this.inboxThread(target) !== undefined && !(target.threadId && agentJobLifecycle.liveState(target.threadId))),
+      isRunning: target => this.inboxRunGuard.isActive(target) ||
+        (this.inboxThread(target) !== undefined && !(target.threadId && agentJobLifecycle.liveState(target.threadId))),
       wake: async(target, batch, entries) => this.wakeInbox(target, batch, entries),
     }, this.inboxRunGuard);
     const orgSession = new DesktopOrgCloudSession();
