@@ -60,16 +60,18 @@ const router = createRouter({
 const tabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
 const hostedTabId = new URLSearchParams(window.location.search).get('tabId') || '';
 if (tabHost && hostedTabId) {
+  let graphRunning = false;
   const onChatRunning = (event: Event) => {
     const detail = (event as CustomEvent<{ tabId?: string; running?: boolean }>).detail;
     if (detail?.tabId === hostedTabId && typeof detail.running === 'boolean') {
-      ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.running);
+      graphRunning = detail.running;
+      ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, graphRunning);
     }
   };
   const onChatActivity = (event: Event) => {
     const detail = (event as CustomEvent<ChatTabActivitySnapshot & { tabId?: string }>).detail;
     if (detail?.tabId !== hostedTabId || !isChatTabActivitySnapshot(detail)) return;
-    ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.state === 'working', {
+    ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, graphRunning, {
       state: detail.state,
       ...(detail.detail ? { detail: detail.detail } : {}),
     });

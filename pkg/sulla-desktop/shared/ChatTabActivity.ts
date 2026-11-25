@@ -9,6 +9,8 @@ export interface ChatTabActivitySnapshot {
   detail?: string;
 }
 
+export type ChatTabActivityArgs = [tabId: string, running: boolean, activity?: ChatTabActivitySnapshot];
+
 /** Validates the small, renderer-safe summary sent over the internal-tab IPC bridge. */
 export function isChatTabActivitySnapshot(value: unknown): value is ChatTabActivitySnapshot {
   if (!value || typeof value !== 'object') return false;
