@@ -5,7 +5,7 @@
 /** Drives edge scrolling even when Chromium stops sending pointermove. */
 export class TabDragAutoScroll {
   private frame?: number;
-  private step?: () => boolean;
+  private step?:  () => boolean;
 
   constructor(private readonly clock: Pick<Window, 'requestAnimationFrame' | 'cancelAnimationFrame'>) {}
 
