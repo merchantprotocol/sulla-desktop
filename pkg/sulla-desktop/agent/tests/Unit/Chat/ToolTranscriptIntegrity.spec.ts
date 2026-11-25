@@ -1,4 +1,7 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 // @vitest-environment jsdom
 
 import '../../Support/TestHomeEnv';
@@ -58,11 +61,12 @@ class ToolTranscriptFixture {
     });
   }
 
-  async record(toolRunId: string, toolName: string, args: unknown, result: unknown): Promise<void> {
+  async record(toolRunId: string, toolName: string, args: unknown, result: unknown, error?: string): Promise<void> {
     await this.executor.emitToolCallEvent(this.state, toolRunId, toolName, args);
-    await this.executor.emitToolResultEvent(this.state, toolRunId, true, undefined, result);
+    const success = error === undefined;
+    await this.executor.emitToolResultEvent(this.state, toolRunId, success, error, result);
     await this.executor.appendToolResultMessage(this.state, toolName, {
-      toolName, toolCallId: toolRunId, success: true, result,
+      toolName, toolCallId: toolRunId, success, error, result,
     });
   }
 }
@@ -85,6 +89,8 @@ class ToolTranscriptMessages {
       { id: asMessageId('123_tool_exec'), kind: 'tool', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'ok', input: 'FULL_KNOWN_INPUT', output: 'FULL_KNOWN_OUTPUT', error: 'FULL_KNOWN_ERROR' },
       { id: asMessageId('124_tool_vendor'), kind: 'tool', createdAt: 2, recordedToolName: 'vendor/custom_action', tool: 'Vendor', desc: 'Custom action', status: 'error', input: 'FULL_UNKNOWN_INPUT', output: 'FULL_UNKNOWN_OUTPUT', error: 'FULL_UNKNOWN_ERROR' },
       { id: asMessageId('legacy-tool-id'), kind: 'tool', createdAt: 3, recordedToolName: 'legacy/untyped_action', tool: 'Legacy', desc: 'Legacy action', status: 'error', input: 'FULL_UNTYPED_INPUT', output: 'FULL_UNTYPED_OUTPUT', error: 'FULL_UNTYPED_ERROR' },
+      { id: asMessageId('legacy-memory-call'), kind: 'tool', createdAt: 4, recordedToolName: 'episodic_search', tool: 'Memory', desc: 'Searching memory', status: 'error', input: 'FULL_MEMORY_INPUT', output: 'FULL_MEMORY_OUTPUT', error: 'FULL_MEMORY_ERROR' },
+      { id: asMessageId('125_tool_background_browse'), kind: 'tool', createdAt: 5, recordedToolName: 'background_browse', tool: 'Browser', desc: 'Background browse', status: 'error', input: 'FULL_BACKGROUND_BROWSE_INPUT', output: 'FULL_BACKGROUND_BROWSE_OUTPUT', error: 'FULL_BACKGROUND_BROWSE_ERROR' },
     ];
   }
 }
@@ -108,14 +114,44 @@ it('adds every full tool payload to Detailed without a withheld placeholder in e
   expect(standard.filter(entry => entry.kind === 'activity').map(entry => entry.text)).toEqual(['Shell · Completed']);
   expect(detailedEntries.map(entry => entry.kind === 'activity' ? entry.text : '')).toEqual([
     'exec · ok', 'vendor/custom_action · error', 'legacy/untyped_action · error',
+    'episodic_search · error', 'background_browse · error',
   ]);
-  expect(rows.map(row => row.target)).toEqual(['exec', 'vendor/custom_action', 'legacy/untyped_action']);
+  expect(rows.map(row => row.target)).toEqual([
+    'exec', 'vendor/custom_action', 'legacy/untyped_action', 'episodic_search', 'background_browse',
+  ]);
   expect(rows.map(row => JSON.parse(row.payload!.serialize()))).toEqual([
     expect.objectContaining({ tool: 'exec', input: 'FULL_KNOWN_INPUT', output: 'FULL_KNOWN_OUTPUT', error: 'FULL_KNOWN_ERROR' }),
     expect.objectContaining({ tool: 'vendor/custom_action', input: 'FULL_UNKNOWN_INPUT', output: 'FULL_UNKNOWN_OUTPUT', error: 'FULL_UNKNOWN_ERROR' }),
     expect.objectContaining({ tool: 'legacy/untyped_action', input: 'FULL_UNTYPED_INPUT', output: 'FULL_UNTYPED_OUTPUT', error: 'FULL_UNTYPED_ERROR' }),
+    expect.objectContaining({ tool: 'episodic_search', input: 'FULL_MEMORY_INPUT', output: 'FULL_MEMORY_OUTPUT', error: 'FULL_MEMORY_ERROR' }),
+    expect.objectContaining({ tool: 'background_browse', input: 'FULL_BACKGROUND_BROWSE_INPUT', output: 'FULL_BACKGROUND_BROWSE_OUTPUT', error: 'FULL_BACKGROUND_BROWSE_ERROR' }),
   ]);
   expect(JSON.stringify([standard, detailedEntries, rows.map(row => row.payload?.serialize())])).not.toMatch(/withheld/i);
+});
+
+// risk: memory/browser calls and failures disappearing before they reach the persisted Detailed trace.
+it('keeps memory and background-browse inputs, results, and errors in live and saved Detailed rows', async() => {
+  const fixture = new ToolTranscriptFixture();
+  const memoryInput = { query: 'FULL_MEMORY_QUERY' };
+  const memoryResult = { matches: ['FULL_MEMORY_MATCH'] };
+  const browserInput = { url: 'https://fixture.invalid/FULL_BROWSER_URL' };
+  const browserResult = { text: 'FULL_BROWSER_RESULT' };
+  await fixture.record('memory-call', 'episodic_search', memoryInput, memoryResult, 'FULL_MEMORY_ERROR');
+  await fixture.record('background-browse-call', 'background_browse', browserInput, browserResult, 'FULL_BROWSER_ERROR');
+
+  const saved = JSON.parse(JSON.stringify(fixture.chat.serialize()));
+  const reopened = new ChatController({ hydrateFrom: saved });
+  onTestFinished(() => reopened.dispose());
+  const messages = reopened.messages.value;
+  const reporting = new TranscriptReporting();
+  const standard = reporting.standardEntries(messages, 'info');
+  const rows = new DetailedTraceProjection().project(messages, standard).flatMap(turn => turn.rows).filter(row => row.kind === 'tool');
+  expect(rows.map(row => row.target)).toEqual(['episodic_search', 'background_browse']);
+  expect(rows.map(row => JSON.parse(row.payload!.serialize()))).toEqual([
+    expect.objectContaining({ tool: 'episodic_search', status: 'error', input: JSON.stringify(memoryInput, null, 2), output: JSON.stringify(memoryResult, null, 2), error: 'FULL_MEMORY_ERROR' }),
+    expect.objectContaining({ tool: 'background_browse', status: 'error', input: JSON.stringify(browserInput, null, 2), output: JSON.stringify(browserResult, null, 2), error: 'FULL_BROWSER_ERROR' }),
+  ]);
+  expect(rows.every(row => row.status === 'failed')).toBe(true);
 });
 
 // risk: data loss — large results must reach the saved transcript in full while the model copy remains capped.
