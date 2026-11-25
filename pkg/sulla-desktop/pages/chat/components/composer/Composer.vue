@@ -47,6 +47,7 @@
               @consumer-attached="threadActivity?.attachConsumer()"
               @consumer-detached="threadActivity?.detachConsumer()"
               @consumed="threadActivity.consumeCheckIns()"
+              @shown="threadActivity?.statusItemShown($event)"
             />
             <span class="dock-divider" aria-hidden="true" />
             <button

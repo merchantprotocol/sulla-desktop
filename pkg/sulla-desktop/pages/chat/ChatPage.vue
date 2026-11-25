@@ -62,6 +62,7 @@
               <WorkerChart
                 :root="chartRoot"
                 :chat-column-width="appWidth"
+                :snippet-tick="snippetTick"
                 @open-agent="openChartAgent"
               />
             </template>
@@ -491,6 +492,7 @@ const threadAgentActivity = useThreadAgentActivity({
   traceHistory: (parentThreadId, jobId, taskIndex) => ipcRenderer.invoke('agents:trace-history', parentThreadId, jobId, taskIndex) as Promise<AgentTraceHistoryData | null>,
 });
 const chartRoot = threadAgentActivity.chartRoot;
+const snippetTick = threadAgentActivity.snippetTick;
 provide(THREAD_AGENT_ACTIVITY_KEY, threadAgentActivity);
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
