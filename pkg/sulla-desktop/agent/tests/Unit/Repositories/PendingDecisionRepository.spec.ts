@@ -60,12 +60,25 @@ describe('PendingDecisionRepository', () => {
     const record = { id: 'question-agent-answer', conversationId: 'chat', channel: 'sulla-desktop', kind: 'question', status: 'pending', answeredBy: { kind: 'agent', agentId: 'coding-manager', label: 'Coding Manager' } } as any;
     const query = vi.fn(async() => [{ record }]);
     const repository = new PendingDecisionRepository({ query });
-    await repository.queueLateAnswer(record, [{ question: 'Color?', selected: ['Blue'] }], '[Decision answered by Coding Manager] Color?: Blue');
+    await repository.queueLateAnswer(record, [{ question: 'Color?', selected: ['Blue'] }], '[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
     const [sql, params] = query.mock.calls[0];
     expect(sql).toContain("SELECT $4,record->>'channel',record->>'conversationId',$9,$10");
     expect(params?.[8]).toBe('system:decision');
     expect(params?.[9]).toBe('decision');
+    expect(params?.[4]).toBe('[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
     expect(JSON.parse(String(params?.[7]))).toEqual(record.answeredBy);
     expect(sql).not.toContain("'you','human'");
+  });
+
+  it('marks a successfully sent delegated answer delivered only while queued', async() => {
+    // risk: user communication — a successful job-mailbox send must not leave a permanently queued decision receipt.
+    const query = vi.fn(async() => [{ id: 'decision-1' }]);
+    const repository = new PendingDecisionRepository({ query });
+    await expect(repository.markJobAnswerDelivered('decision-1')).resolves.toBe(true);
+    expect(query).toHaveBeenCalledOnce();
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("jsonb_set(record,'{answerDelivery}','\"delivered\"')");
+    expect(sql).toContain("record->>'answerDelivery'='queued'");
+    expect(params).toEqual(['decision-1']);
   });
 });

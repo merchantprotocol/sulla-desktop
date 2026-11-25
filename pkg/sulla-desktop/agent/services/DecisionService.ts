@@ -16,6 +16,7 @@ import { LazyLateAnswerMessageSender } from './LazyLateAnswerMessageSender';
 import { DecisionAuthorityPolicy } from './DecisionAuthorityPolicy';
 import { DecisionRouteResolver } from './DecisionRouteResolver';
 import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './DecisionAskerWaiter';
+import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
 
 import type { DecisionActor, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
@@ -69,6 +70,12 @@ export class DecisionService {
 
   private questionWrites = Promise.resolve();
 
+  private async parkQuestionAsker(asker: AgentJobTaskTarget | null | undefined, decisionId: string): Promise<boolean> {
+    if (!asker || !['running', 'parked'].includes(asker.jobStatus) || !['running', 'parked'].includes(asker.taskStatus)) return false;
+    try { await this.askerWaiter.park(asker.jobId, asker.taskIndex, decisionId); return true }
+    catch (error) { console.warn('[DecisionService] Could not park asker for question:', error); return false }
+  }
+
   /** Human questions outlive tool transports; answers always use the durable mailbox. */
   requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean; parked?: boolean }> {
     const operation = this.questionWrites.then(async() => {
@@ -77,11 +84,8 @@ export class DecisionService {
       const asker = await this.pendingDecisions.taskForThread?.(input.conversationId);
       const existing = await this.pendingDecisions.findOpenQuestion(input);
       if (existing) {
-        let parked = false;
-        if (asker && ['running', 'parked'].includes(asker.jobStatus) && ['running', 'parked'].includes(asker.taskStatus) && existing.attention !== 'answered') {
-          await this.askerWaiter.park(asker.jobId, asker.taskIndex, existing.id);
-          parked = true;
-        }
+        const parked = existing.attention !== 'answered' && await this.parkQuestionAsker(asker, existing.id);
+        this.changed(existing);
         return { record: existing, reused: true, ...(parked ? { parked: true } : {}) };
       }
       const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
@@ -102,11 +106,7 @@ export class DecisionService {
         },
       };
       await this.decisions.insert(record, this.session);
-      let parked = false;
-      if (asker && ['running', 'parked'].includes(asker.jobStatus) && ['running', 'parked'].includes(asker.taskStatus)) {
-        await this.askerWaiter.park(asker.jobId, asker.taskIndex, record.id);
-        parked = true;
-      }
+      const parked = await this.parkQuestionAsker(asker, record.id);
       this.changed(record);
       return { record, reused: false, ...(parked ? { parked: true } : {}) };
     });

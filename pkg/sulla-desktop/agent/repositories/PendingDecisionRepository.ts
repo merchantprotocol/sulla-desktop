@@ -217,6 +217,12 @@ export class PendingDecisionRepository {
       WHERE id=$1 AND status='answered' AND record->>'answerDelivery'='queued'`, [id]);
   }
 
+  async markJobAnswerDelivered(id: string): Promise<boolean> {
+    const rows = await this.client.query<{ id: string }>(`UPDATE human_decisions SET record=jsonb_set(record,'{answerDelivery}','"delivered"'),updated_at=NOW()
+      WHERE id=$1 AND status='answered' AND record->>'answerDelivery'='queued' RETURNING id`, [id]);
+    return rows.length > 0;
+  }
+
   /** Files publish approvals outlive the app session that created them; every other approval is session-bound. */
   async findApproval(sessionId: string, key: string, value: string, now: number): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions

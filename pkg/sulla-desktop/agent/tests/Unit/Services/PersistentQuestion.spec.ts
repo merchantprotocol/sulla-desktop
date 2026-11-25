@@ -93,6 +93,7 @@ describe('persistent questions', () => {
         Object.assign(stored, { status: 'answered', attention: 'answered', answerDelivery: 'queued', answers, answeredBy: record.answeredBy });
         return stored;
       }),
+      markJobAnswerDelivered: vi.fn(async() => true),
       markJobAnswerUnavailable: vi.fn(async() => undefined),
     };
     const handler = new LateDecisionAnswerHandler(repository as any, { find: vi.fn() }, { send: vi.fn() }, jobMessages);
@@ -104,7 +105,31 @@ describe('persistent questions', () => {
     await expect(service.resolveAs({ kind: 'human' }, { id: request.record.id, conversationId: 'thread-a', action: 'answered', answers: [{ question: 'Which scope?', selected: ['A'] }] }))
       .resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });
     expect(repository.recordJobAnswer).toHaveBeenCalledOnce();
-    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, expect.stringContaining('[Decision answered by Jonathon]'));
+    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, '[Decision answered by your human]\nChoose a scope\nWhich scope?: A');
+    expect(repository.markJobAnswerDelivered).toHaveBeenCalledWith(request.record.id);
+  });
+  it('keeps a saved question and emits changes when parking fails for new and reused asks', async() => {
+    // risk: user communication — a task ending between question persistence and parking must not lose the saved question or its UI update.
+    const f = fixture();
+    f.pending.taskForThread.mockResolvedValue({
+      jobId: 'job-1', taskIndex: 2, jobStatus: 'running', taskStatus: 'running', threadId: 'thread-a', parentThreadId: 'root', parentChannel: 'sulla-desktop',
+    } as any);
+    const park = vi.fn(async() => { throw new Error('task already ended') });
+    const service = f.make(new DecisionAskerWaiter({ park } as any));
+    const changed: any[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    service.subscribe(record => changed.push(record));
+    try {
+      const first = await service.requestQuestion(input);
+      const reused = await service.requestQuestion(input);
+      expect(first).toMatchObject({ reused: false });
+      expect(first.parked).toBeUndefined();
+      expect(reused).toMatchObject({ reused: true, record: { id: first.record.id } });
+      expect(reused.parked).toBeUndefined();
+      expect(changed.map(record => record.id)).toEqual([first.record.id, first.record.id]);
+      expect(park).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally { warn.mockRestore() }
   });
   it('does not create a question for an already-cancelled request', async() => {
     const f = fixture(); const stop = new AbortController(); stop.abort();

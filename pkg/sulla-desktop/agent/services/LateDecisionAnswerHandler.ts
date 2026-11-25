@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DecisionActor, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
+import type { DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
+import { DecisionAnswererLabel } from './DecisionAnswererLabel';
 
 export interface LateAnswerConversationRepository {
   find(conversationId: string): Promise<{ id: string } | null>;
@@ -24,6 +25,7 @@ interface LateAnswerDecisionRepository {
   taskForThread?(threadId: string): Promise<AgentJobTaskTarget | null>;
   recordJobAnswer?(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined>;
   markJobAnswerUnavailable?(id: string): Promise<void>;
+  markJobAnswerDelivered(id: string): Promise<boolean>;
 }
 
 export interface LateAnswerReceipt {
@@ -39,6 +41,8 @@ export interface LateAnswerReceipt {
  * A committed queue receipt survives a process interruption before the wake signal.
  */
 export class LateDecisionAnswerHandler {
+  private readonly answererLabels = new DecisionAnswererLabel();
+
   constructor(
     private readonly decisions: LateAnswerDecisionRepository,
     private readonly conversations: LateAnswerConversationRepository,
@@ -52,11 +56,12 @@ export class LateDecisionAnswerHandler {
     if (!answers) throw new Error('Answer could not be recorded.');
     const actor = record.answeredBy ?? { kind: 'human' as const };
     const answerText = answers.map(answer => `${ answer.question }: ${ answer.selected.join(', ') }`).join('; ');
-    const body = `[Decision answered by ${ this.answererLabel(actor) }]\n${ record.title }\n${ answerText }`;
+    const envelope = `[Decision answered by ${ this.answererLabels.label(actor) ?? 'agent' }]\n${ record.title }\n${ answerText }`;
+    const body = actor.kind === 'human' ? `My answers to your earlier question "${ record.title }": ${ answerText }` : envelope;
     const asker = await this.decisions.taskForThread?.(record.conversationId);
     const jobId = record.payload?.askerJobId ?? asker?.jobId;
     const taskIndex = Number(record.payload?.askerTaskIndex ?? asker?.taskIndex);
-    if (jobId && Number.isInteger(taskIndex) && taskIndex >= 0) return this.handleJobAnswer(record, answers, body, jobId, taskIndex, asker);
+    if (jobId && Number.isInteger(taskIndex) && taskIndex >= 0) return this.handleJobAnswer(record, answers, envelope, jobId, taskIndex, asker);
     const conversation = await this.conversations.find(record.conversationId);
     if (!conversation) {
       return { settled: true, conversationId: record.conversationId, late: true, closed: true, reason: 'The original chat is no longer available. Your request is still here; dismiss it when you no longer need it.' };
@@ -91,12 +96,8 @@ export class LateDecisionAnswerHandler {
       await this.decisions.markJobAnswerUnavailable?.(record.id);
       return { settled: true, conversationId: record.conversationId, late: true, reason: 'The answer is recorded, but the delegated task is no longer available to receive it.' };
     }
+    await this.decisions.markJobAnswerDelivered(record.id);
     return { settled: true, conversationId: record.conversationId, late: true, reason: 'Answer queued in the delegated task mailbox.' };
-  }
-
-  private answererLabel(actor: DecisionActor): string {
-    if (actor.kind === 'human') return 'Jonathon';
-    return actor.label?.trim() || actor.agentId?.trim() || 'agent';
   }
 
   private validateAnswers(record: DecisionRecord, answers: DecisionResponse['answers']): { question: string; selected: string[] }[] | null {

@@ -12,9 +12,15 @@ function fixture() {
 describe('durable late answers', () => {
   it('queues the original decision and answers before signalling the original channel', async() => {
     const f = fixture(); await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: true, late: true, reason: expect.stringContaining('queued') });
-    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(record, response.answers, expect.stringContaining('Color?: Blue'));
+    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(record, response.answers, 'My answers to your earlier question "Pick a color": Color?: Blue');
     expect(f.send).toHaveBeenCalledExactlyOnceWith('sulla-desktop', { type: 'decision_answer_queued', data: { decisionId: 'question-1' } });
     expect(f.decisions.queueLateAnswer.mock.invocationCallOrder[0]).toBeLessThan(f.send.mock.invocationCallOrder[0]);
+  });
+  it('uses a named decision envelope for an agent answering a chat asker', async() => {
+    const f = fixture();
+    const answered = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'worker', label: 'Worker' } };
+    await f.handler.handle(answered, response);
+    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(answered, response.answers, '[Decision answered by Worker]\nPick a color\nColor?: Blue');
   });
   it('keeps a committed answer queued if the wake connection fails', async() => {
     const f = fixture(); f.send.mockRejectedValue(new Error('bus unavailable'));
@@ -43,6 +49,7 @@ describe('durable late answers', () => {
       recordJobAnswer: vi.fn(async() => ({ ...delegated, status: 'answered' as const, answerDelivery: 'queued' as const })),
       findById: vi.fn(),
       taskForThread: vi.fn(async() => ({ jobId: 'job-1', taskIndex: 2, jobStatus: 'running', taskStatus: 'parked' })),
+      markJobAnswerDelivered: vi.fn(async() => true),
     };
     const jobMessages = { send: vi.fn(async() => true) };
     const sender = { send: vi.fn(async() => true) };
@@ -50,8 +57,9 @@ describe('durable late answers', () => {
 
     await expect(handler.handle(delegated, response)).resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });
     expect(decisions.recordJobAnswer).toHaveBeenCalledWith(delegated, response.answers);
-    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, expect.stringContaining('[Decision answered by Coding Manager]'));
-    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, expect.stringContaining('Color?: Blue'));
+    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, '[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
+    expect(decisions.markJobAnswerDelivered).toHaveBeenCalledExactlyOnceWith(record.id);
+    expect(jobMessages.send.mock.invocationCallOrder[0]).toBeLessThan(decisions.markJobAnswerDelivered.mock.invocationCallOrder[0]);
     expect(sender.send).not.toHaveBeenCalled();
   });
   it('keeps a finished or stopped asker answer recorded and reports that it could not be woken', async() => {

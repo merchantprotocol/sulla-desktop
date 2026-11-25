@@ -8,7 +8,7 @@ import { ToolResult } from '../types';
 import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
 import { toolDecisionPort } from './toolDecisionPort';
-import type { DecisionActor } from '@pkg/shared/decisions';
+import { DecisionAnswererLabel } from '../services/DecisionAnswererLabel';
 
 import type { ChatToolActivity } from './ChatToolReporting';
 import type { ToolExecutionContext } from './executionContext';
@@ -65,6 +65,7 @@ interface ChatToolReportingState {
 }
 
 export abstract class BaseTool<TState extends ChatToolReportingState = any> {
+  private readonly answererLabels = new DecisionAnswererLabel();
   abstract name: string;
   abstract description: string;
   schemaDef: InputSchemaDef = {};
@@ -305,7 +306,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
           (answer.status === 'approved' || answer.status === 'denied')) {
           metadata.reportingDecisionFollowUp = { id: record.id, threadId: metadata.threadId };
         }
-        const answerer = this.decisionAnswerLabel(answer.answeredBy);
+        const answerer = this.answererLabels.label(answer.answeredBy);
         if (answer.status !== 'approved') return { toolName: this.name, success: false, error: `Action ${ answer.status }${ answerer ? ` by ${ answerer }` : '' }; nothing was executed.` };
         if (answerer) decisionAttribution = `Approved by ${ answerer }.`;
       }
@@ -325,11 +326,6 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
         error:    error instanceof Error ? error.message : String(error),
       };
     }
-  }
-
-  private decisionAnswerLabel(actor?: DecisionActor): string | undefined {
-    if (!actor) return undefined;
-    return actor.kind === 'human' ? 'Jonathon' : actor.label?.trim() || actor.agentId?.trim() || 'agent';
   }
 
   async invoke(input: unknown, state?: TState): Promise<ToolResult> {

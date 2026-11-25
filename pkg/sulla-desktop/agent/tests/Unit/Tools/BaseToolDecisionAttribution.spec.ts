@@ -43,4 +43,17 @@ describe('decision attribution in tool results', () => {
     expect(result).toMatchObject({ success: false, error: 'Action denied by Coding Manager; nothing was executed.' });
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it('attributes human approval without embedding a personal name in product text', async() => {
+    toolDecisionPort.register({
+      requiresApproval: vi.fn(async() => true),
+      request: vi.fn(async() => ({
+        record: { id: 'decision-3', title: 'Approve?', kind: 'approval' } as any,
+        result: Promise.resolve({ status: 'approved', answers: [], answeredBy: { kind: 'human' as const } }),
+      })),
+    });
+    await expect(new DecisionAttributionTool().call({})).resolves.toMatchObject({
+      success: true, result: 'Write completed.\nApproved by your human.',
+    });
+  });
 });
