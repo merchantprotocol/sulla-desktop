@@ -117,6 +117,12 @@ export interface StreamCallbacks {
   }) => void;
   /** Fired as soon as a provider-owned tool begins, before its result exists. */
   onToolStarted?: (event: { toolUseId: string; toolName: string; input?: unknown }) => void;
+  /**
+   * Fired for any sign of life from the provider run that has no other
+   * callback: a stream event, a reasoning item, relayed model output. Lets the
+   * job-level clock see the same whole-loop activity the run's own watchdog sees.
+   */
+  onLiveness?: () => void;
 }
 
 /**

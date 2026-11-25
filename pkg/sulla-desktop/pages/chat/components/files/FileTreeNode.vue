@@ -175,7 +175,7 @@ export default defineComponent({
 .chevron.expanded { transform: rotate(90deg); }
 .chevron-spacer { display: inline-block; width: 16px; flex-shrink: 0; }
 .node-icon { display: flex; align-items: center; flex-shrink: 0; width: 16px; height: 16px; color: var(--text-muted); }
-.icon-folder { color: var(--accent); }
+.icon-folder { color: var(--primary-color-text-override, var(--accent)); }
 .icon-file { color: var(--text-dim); }
 .node-label {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

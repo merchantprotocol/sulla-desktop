@@ -24,7 +24,7 @@
   --text-primary: #eceff4;
   --text-secondary: #d8dee9;
   --text-muted: #a5b1c2;
-  --text-link: #88c0d0;
+  --text-link: var(--accent-primary);
   --text-on-accent: #2e3440;
   --text-success: #a3be8c;
   --text-error: #bf616a;
@@ -56,8 +56,8 @@
   --border-error: rgba(191, 97, 106, 0.4);
   --border-warning: rgba(235, 203, 139, 0.4);
   --border-info: rgba(136, 192, 208, 0.4);
-  --border-accent: rgba(136, 192, 208, 0.5);
-  --border-focus: rgba(136, 192, 208, 0.5);
+  --border-accent: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  --border-focus: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Status */
   --status-success: #a3be8c;
@@ -67,7 +67,7 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
-  --ring-color: rgba(136, 192, 208, 0.5);
+  --ring-color: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Editor */
   --editor-bg: #2e3440;
@@ -79,8 +79,8 @@
   /* Terminal */
   --terminal-bg: #3b4252;
   --terminal-fg: #d8dee9;
-  --terminal-cursor: #88c0d0;
-  --terminal-selection-bg: rgba(136, 192, 208, 0.3);
+  --terminal-cursor: var(--accent-primary);
+  --terminal-selection-bg: color-mix(in srgb, var(--accent-primary) 30%, transparent);
   --terminal-selection-fg: #eceff4;
 
   /* Default Colors */
@@ -118,10 +118,10 @@
   /* Nav */
   --nav-width: 230px;
   --nav-bg: #2e3440;
-  --nav-active: rgba(136, 192, 208, 0.15);
+  --nav-active: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --nav-border: rgba(216, 222, 233, 0.12);
   --nav-hover: #4c566a;
-  --nav-expander-hover: rgba(136, 192, 208, 0.08);
+  --nav-expander-hover: color-mix(in srgb, var(--accent-primary) 8%, transparent);
   --nav-border-size: 1px;
 
   /* Disabled */
@@ -141,8 +141,8 @@
   --topmost-light-hover: rgba(216, 222, 233, 0.12);
 
   /* Accent Button */
-  --accent-btn: rgba(136, 192, 208, 0.15);
-  --accent-btn-hover: #88c0d0;
+  --accent-btn: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  --accent-btn-hover: var(--accent-primary);
   --accent-btn-hover-text: #2e3440;
 
   /* Modal */
@@ -158,7 +158,7 @@
   --checkbox-disabled-bg: #434c5e;
   --checkbox-tick-locked: #2e3440;
   --checkbox-locked-bg: #d8dee9;
-  --checkbox-ticked-bg: #88c0d0;
+  --checkbox-ticked-bg: var(--accent-primary);
   --checkbox-locked-border: #d8dee9;
   --checkbox-locked-shadow: #d8dee9;
 
@@ -166,11 +166,11 @@
   --dropdown-bg: #4c566a;
   --dropdown-border: #a5b1c2;
   --dropdown-divider: #a5b1c2;
-  --dropdown-text: #88c0d0;
+  --dropdown-text: var(--accent-primary);
   --dropdown-active-text: #eceff4;
   --dropdown-active-bg: #5e81ac;
   --dropdown-hover-text: #eceff4;
-  --dropdown-hover-bg: #88c0d0;
+  --dropdown-hover-bg: var(--accent-primary);
   --dropdown-disabled-bg: #434c5e;
   --dropdown-disabled-text: #a5b1c2;
   --dropdown-locked-text: #eceff4;
@@ -208,7 +208,7 @@
   --sortable-table-accent-alt: #4c566a;
   --sortable-table-top-divider: var(--border);
   --sortable-table-hover-bg: #2e3440;
-  --sortable-table-selected-bg: rgba(136, 192, 208, 0.15);
+  --sortable-table-selected-bg: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --sortable-table-group-label: #d8dee9;
 
   /* Tag */
@@ -278,7 +278,7 @@
   --simple-box-shadow: rgba(0, 0, 0, 0.15);
 
   /* Terminal (additional) */
-  --terminal-selection: #88c0d0;
+  --terminal-selection: var(--accent-primary);
 
   /* Logs */
   --logs-bg: var(--wm-body-bg);

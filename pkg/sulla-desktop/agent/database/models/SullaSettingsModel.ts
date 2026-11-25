@@ -13,6 +13,7 @@ import { assertWorkerBindingsUnchanged } from '../../languagemodels/workerBindin
 import { assertConfirmedCliUpdate } from '../../../shared/providerCliUpdateAuthority';
 import { BaseModel } from '../BaseModel';
 import { redisClient } from '../RedisClient';
+import { PRIMARY_COLOR_SETTING_KEY, sanitizePrimaryColor } from '@pkg/config/primaryColor';
 
 import { SettingsBootstrapFile } from './SettingsBootstrapFile';
 
@@ -162,6 +163,13 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   private static invalidateLocal(property: string): void {
     this.localCache.delete(property);
+  }
+
+  /** Primary color is renderer-controlled CSS input and is normalized at every model boundary. */
+  private static sanitizeSettingValue(property: string, value: unknown, fallback: unknown): unknown {
+    if (property !== PRIMARY_COLOR_SETTING_KEY) return value;
+
+    return sanitizePrimaryColor(value) ?? sanitizePrimaryColor(fallback);
   }
 
   // Redis is only a cache in front of PostgreSQL. When it's restarting or in its
@@ -338,7 +346,7 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
   public static async getSetting(property: string, _default: any = null): Promise<any> {
     if (this.isReady) {
       const local = this.localCache.get(property);
-      if (local && local.expiresAt > Date.now()) return local.value;
+      if (local && local.expiresAt > Date.now()) return this.sanitizeSettingValue(property, local.value, _default);
       this.localCache.delete(property);
 
       // Redis → PG path (values are strings)
@@ -348,11 +356,11 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         const setting = await this.find(property);
         if (setting) {
           const cast = setting.attributes.cast;
-          const value = this.castValue(cached, cast);
+          const value = this.sanitizeSettingValue(property, this.castValue(cached, cast), _default);
           this.localCache.set(property, { value, expiresAt: Date.now() + this.localCacheTtlMs });
           return value;
         }
-        const value = this.castValue(cached); // fallback without cast
+        const value = this.sanitizeSettingValue(property, this.castValue(cached), _default); // fallback without cast
         this.localCache.set(property, { value, expiresAt: Date.now() + this.localCacheTtlMs });
         return value;
       }
@@ -361,12 +369,13 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
         const value = setting.attributes.value;
         const cast = setting.attributes.cast;
         await this.cachePut(property, value);
-        const castValue = this.castValue(value, cast);
+        const castValue = this.sanitizeSettingValue(property, this.castValue(value, cast), _default);
         this.localCache.set(property, { value: castValue, expiresAt: Date.now() + this.localCacheTtlMs });
         return castValue;
       }
-      this.localCache.set(property, { value: _default, expiresAt: Date.now() + this.localCacheTtlMs });
-      return _default;
+      const fallback = this.sanitizeSettingValue(property, _default, _default);
+      this.localCache.set(property, { value: fallback, expiresAt: Date.now() + this.localCacheTtlMs });
+      return fallback;
     }
 
     // Fallback: always read fresh from disk
@@ -374,10 +383,10 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
     try {
       const content = await fs.readFile(filePath, 'utf8');
       const data = JSON.parse(content) as Record<string, any>;
-      return property in data ? data[property] : _default;
+      return this.sanitizeSettingValue(property, property in data ? data[property] : _default, _default);
     } catch (err) {
       // File missing or invalid — return default silently
-      return _default;
+      return this.sanitizeSettingValue(property, _default, _default);
     }
   }
 
@@ -388,6 +397,12 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
    * @returns
    */
   public static async setSetting(property: string, value: any, cast?: string): Promise<void> {
+    if (property === PRIMARY_COLOR_SETTING_KEY) {
+      const sanitized = sanitizePrimaryColor(value);
+      if (!sanitized) return;
+      value = sanitized;
+      cast = 'string';
+    }
     if (property === 'approvedProviderCliVersions') assertConfirmedCliUpdate();
     if (property === 'modelRouting') {
       const previous = await this.get(property, null);
@@ -432,6 +447,12 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
   /** Write one property to the bootstrap file, whether or not the database is ready. */
   public static writeBootstrapSetting(property: string, value: unknown): Promise<void> {
+    if (property === PRIMARY_COLOR_SETTING_KEY) {
+      const sanitized = sanitizePrimaryColor(value);
+      if (!sanitized) return Promise.resolve();
+      value = sanitized;
+    }
+
     return this.bootstrapFile.write(property, value);
   }
 
@@ -531,7 +552,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
             // Get cast info from database
             const setting = await this.find(key);
             const cast = setting?.attributes.cast;
-            result[key] = this.castValue(value, cast);
+            const clean = this.sanitizeSettingValue(key, this.castValue(value, cast), null);
+            if (key !== PRIMARY_COLOR_SETTING_KEY || clean !== null) result[key] = clean;
           }
         }
         return result;
@@ -547,7 +569,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
         const result: Record<string, any> = {};
         for (const setting of settings) {
-          result[setting.property] = this.castValue(setting.value, setting.cast);
+          const clean = this.sanitizeSettingValue(setting.property, this.castValue(setting.value, setting.cast), null);
+          if (setting.property !== PRIMARY_COLOR_SETTING_KEY || clean !== null) result[setting.property] = clean;
         }
         return result;
       } catch (error) {
@@ -567,7 +590,8 @@ export class SullaSettingsModel extends BaseModel<SettingsAttributes> {
 
       for (const [key, value] of Object.entries(data)) {
         if (regex.test(key)) {
-          result[key] = value;
+          const clean = this.sanitizeSettingValue(key, value, null);
+          if (key !== PRIMARY_COLOR_SETTING_KEY || clean !== null) result[key] = clean;
         }
       }
 

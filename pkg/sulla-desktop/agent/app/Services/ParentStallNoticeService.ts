@@ -24,6 +24,7 @@ interface StallCandidate {
   parentThread: string;
   label: string;
   baseline: string;
+  hungTool?: string;
 }
 interface StallEpisode { baseline: string; dedupeKey: string; channel: string; parentThread: string }
 
@@ -78,7 +79,8 @@ export class ParentStallNoticeService {
         results: [],
         noticeKind: 'stall',
         dedupeKey,
-        stall: { childThread: candidate.childThread, baseline: candidate.baseline, label: candidate.label },
+        stall: { childThread: candidate.childThread, baseline: candidate.baseline, label: candidate.label,
+          ...(candidate.hungTool ? { hungTool: candidate.hungTool } : {}) },
       });
     }
     if (lifecycle !== this.lifecycle) return;
@@ -103,7 +105,7 @@ export class ParentStallNoticeService {
     return false;
   }
 
-  private async isCurrent(input: Omit<StallCandidate, 'label'>): Promise<boolean> {
+  private async isCurrent(input: Omit<StallCandidate, 'label' | 'hungTool'>): Promise<boolean> {
     const [telemetry, decision] = await Promise.all([
       this.sources.telemetry([input.jobId]), this.sources.waitingForDecision(input.childThread),
     ]);
@@ -120,12 +122,13 @@ export class ParentStallNoticeService {
     const { parentChannel, parentThreadId } = job;
     if (!parentChannel?.trim() || !parentThreadId?.trim() || !task.threadId || task.threadId === parentThreadId
       || task.status !== 'running' || task.completion) return undefined;
-    const { state, runtimeAlive, lastActivityAt } = this.projector.taskActivity(
+    const { state, runtimeAlive, lastActivityAt, hungTool } = this.projector.taskActivity(
       job, task, taskIndex, telemetry?.latestCheckin ?? null, telemetry?.lastMessageDeliveredAt ?? null);
     if (!AgentStallClassification.isStalled(state, runtimeAlive)) return undefined;
     return {
       jobId: job.jobId, taskIndex, childThread: task.threadId, channel: parentChannel, parentThread: parentThreadId,
       label: task.label || task.agentId,
+      ...(hungTool ? { hungTool } : {}),
       baseline: JSON.stringify([parentChannel, parentThreadId, task.threadId, task.taskId, task.generation ?? 1,
         task.startedAt, task.restartResumeCount, job.restartResumeCount, task.reopenLeaseId, lastActivityAt]),
     };

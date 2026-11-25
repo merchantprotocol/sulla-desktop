@@ -145,6 +145,8 @@ export interface ProviderCliOpaqueConfig {
 export interface ProviderCliBridgeLease {
   readonly config: ProviderCliOpaqueConfig;
   readonly signal: AbortSignal;
+  /** Pod id the bridge records provider activity under (liveness, retry status). */
+  readonly podId?: string;
   revoke(): void;
   close(): Promise<void>;
 }

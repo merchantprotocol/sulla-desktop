@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { blockingTool } from './RunLivenessClock';
+
 export interface ToolInFlight { name: string; startedAt: number }
 
 /**
@@ -14,7 +16,7 @@ export interface ToolInFlight { name: string; startedAt: number }
 export class RunToolTracker {
   private readonly calls = new Map<string, Map<string, ToolInFlight>>();
 
-  constructor(private readonly clock: () => number = Date.now) {}
+  constructor(private readonly clock: () => number = () => Date.now()) {}
 
   started(metadata: any, callId: string, name: string): void {
     if (!callId) return;
@@ -39,13 +41,14 @@ export class RunToolTracker {
     for (const key of this.keys(metadata)) this.calls.delete(key);
   }
 
-  /** The oldest call still running for this key, if any. */
+  /** The call this key is blocked on (a human wait first, then the oldest), if any. */
   inFlight(key: string, _now: number = this.clock()): ToolInFlight | undefined {
-    let oldest: ToolInFlight | undefined;
-    for (const call of this.calls.get(key)?.values() ?? []) {
-      if (!oldest || call.startedAt < oldest.startedAt) oldest = call;
-    }
-    return oldest;
+    return blockingTool(this.calls.get(key)?.values() ?? []);
+  }
+
+  /** Forget every call recorded under one key (its run ended). */
+  clearKey(key: string): void {
+    this.calls.delete(key);
   }
 
   private keys(metadata: any): string[] {

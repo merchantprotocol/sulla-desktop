@@ -195,7 +195,7 @@ function copyPatch(): void {
 .pb-n { color: var(--wb-ink-3); }
 .pb-add { background: color-mix(in srgb, var(--status-success) 9%, transparent); color: color-mix(in srgb, var(--status-success) 70%, var(--text-primary)); }
 .pb-remove { background: color-mix(in srgb, var(--status-error) 9%, transparent); color: color-mix(in srgb, var(--status-error) 70%, var(--text-primary)); }
-.pb-more { display: block; width: 100%; padding: 6px; border: 0; border-top: 1px solid var(--border-default); background: var(--wb-raised); color: var(--accent); font-family: var(--font-body); font-size: 12.5px; cursor: pointer; }
+.pb-more { display: block; width: 100%; padding: 6px; border: 0; border-top: 1px solid var(--border-default); background: var(--wb-raised); color: var(--primary-color-text-override, var(--accent)); font-family: var(--font-body); font-size: 12.5px; cursor: pointer; }
 .pb-acts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
 .pb-decide { margin: 0; padding: 0 12px 10px 44px; }
 .pb-sp { flex: 1; }
@@ -205,6 +205,6 @@ function copyPatch(): void {
 .pb-btn:disabled { opacity: .5; cursor: wait; }
 .pb-quiet { border-color: transparent; color: var(--wb-ink-2); }
 .pb-danger { color: var(--status-error); }
-.pb-pri { background: var(--accent); border-color: var(--accent); color: var(--bg-page); font-weight: 650; }
+.pb-pri { background: var(--accent); border-color: var(--accent); color: var(--primary-color-on-override, var(--bg-page)); font-weight: 650; }
 @media (max-width: 640px) { .pb-decide { padding-left: 12px; } }
 </style>

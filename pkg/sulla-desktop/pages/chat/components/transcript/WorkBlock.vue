@@ -111,7 +111,7 @@ defineExpose({ open });
 .wb-head:hover { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
 .wb-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .wb-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; font: 600 11px var(--font-mono, ui-monospace, monospace); }
-.wb-think .wb-icon { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.wb-think .wb-icon { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--primary-color-text-override, var(--accent)); }
 .wb-patch .wb-icon { background: color-mix(in srgb, var(--status-success) 14%, transparent); color: var(--status-success); }
 .wb-tool .wb-icon { background: color-mix(in srgb, var(--text-primary) 8%, transparent); color: var(--wb-ink-2); }
 .wb-err .wb-icon { background: color-mix(in srgb, var(--status-error) 14%, transparent); color: var(--status-error); }
@@ -127,7 +127,7 @@ defineExpose({ open });
   display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 999px;
   border: 1px solid var(--border-default); color: var(--wb-ink-2); font-size: 11.5px; white-space: nowrap;
 }
-.wb-by i { display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); color: var(--bg-page); font: 700 8px var(--font-body); font-style: normal; }
+.wb-by i { display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); color: var(--primary-color-on-override, var(--bg-page)); font: 700 8px var(--font-body); font-style: normal; }
 .wb-by small { color: var(--wb-ink-3); font: 11px var(--font-mono, ui-monospace, monospace); }
 .wb-meta { color: var(--wb-ink-3); font: 12px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
 .wb-chev { color: var(--wb-ink-3); transition: transform .18s cubic-bezier(.22,1,.36,1); }

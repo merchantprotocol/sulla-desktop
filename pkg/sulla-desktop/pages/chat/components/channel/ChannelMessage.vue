@@ -43,12 +43,12 @@ const timeLabel = computed(() => {
   margin-bottom: 6px;
   display: flex; align-items: center; gap: 10px;
 }
-.chead .agent { color: var(--accent-hover); font-weight: 700; }
+.chead .agent { color: var(--primary-color-text-override, var(--accent-hover)); font-weight: 700; }
 .chead .ch {
   padding: 1px 7px; border-radius: 3px;
   background: var(--accent-dim);
   border: 1px solid var(--accent-dim);
-  color: var(--accent-hover); font-size: 9px;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-size: 9px;
 }
 .chead .ts { margin-left: auto; color: var(--text-dim); font-size: 9.5px; }
 .chead .provenance { font-size: 9px; letter-spacing: 0; text-transform: none; color: var(--text-dim); }
