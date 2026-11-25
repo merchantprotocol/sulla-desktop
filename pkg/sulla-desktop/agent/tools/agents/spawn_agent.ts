@@ -55,7 +55,6 @@ import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingM
 import { saveThreadState } from '../../nodes/ThreadStateStore';
 import { combineAborts } from '../../services/AbortService';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
-import { DelegatedWakeRepairNotice } from '../../services/DelegatedWakeRepairNotice';
 import { completionInboxStore, notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
 import { agentDefinitionService } from '../../services/AgentDefinitionService';
 import { ParkedContainerLifecycle } from '../../services/ParkedContainerLifecycle';
@@ -67,6 +66,7 @@ import { trackHiddenAgentRun } from '../../services/HiddenAgentRuns';
 import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 import { budgetPolicyService } from '../../services/BudgetPolicyService';
 import { budgetWorkerAdmission, countBudgetWorkers } from '../../services/BudgetWorkerAdmission';
+import { DelegatedWakeRepairNotice } from '../../services/DelegatedWakeRepairNotice';
 import { workerModelRouting, installWorkerRoute } from '../../services/WorkerModelRouting';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { JobLineageRootChatThreadFinder, TabVisibilityResolver, type TabVisibilityDecision } from '../../services/TabVisibilityResolver';
@@ -796,14 +796,21 @@ export class SpawnAgentWorker extends BaseTool {
           repairInput:            async() => {
             notifyAgentCompletionsReady(selector || parentChannel, threadId);
             for (const row of await AgentJobMessagingModel.pendingMessagesForThread(threadId)) {
-              agentJobLifecycle.deliver(threadId, { role: 'user', content: `[Message from orchestrator]\n${ row.message }`,
-                metadata: { source: 'orchestrator_job_message', inputSource: 'system', jobMessageId: row.id, jobMessageThreadId: threadId } });
+              agentJobLifecycle.deliver(threadId, {
+ role: 'user',
+content: `[Message from orchestrator]\n${ row.message }`,
+                metadata: { source: 'orchestrator_job_message', inputSource: 'system', jobMessageId: row.id, jobMessageThreadId: threadId },
+});
             }
           },
           alertRoot: deadline => new DelegatedWakeRepairNotice(id => agentJobProvider.jobs.findByTaskThread(id), completionInboxStore)
             .send(activityJobId!, index, threadId, deadline),
-          logWake: facts => agentJobProvider.failureLogger.wake({ ...facts, graphCache: agentJobLifecycle.liveState(threadId) === subState ? 'live_runner'
-            : GraphRegistry.get(threadId)?.state === subState ? 'registry' : 'miss' }),
+          logWake: facts => agentJobProvider.failureLogger.wake({
+ ...facts,
+graphCache: agentJobLifecycle.liveState(threadId) === subState
+? 'live_runner'
+            : GraphRegistry.get(threadId)?.state === subState ? 'registry' : 'miss',
+}),
           resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
           rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
           acknowledgeCompletions: entries => Promise.all(entries.map(entry =>

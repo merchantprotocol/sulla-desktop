@@ -18,9 +18,13 @@ export class DelegatedWakeRepairNotice {
       visited.add(target);
       const parent = await this.parentOf(target);
       if (!parent) {
-        this.inbox.enqueue(link.parentChannel || 'sulla-desktop', target, { jobId, taskIndex, results: [],
+        this.inbox.enqueue(link.parentChannel || 'sulla-desktop', target, {
+ jobId,
+taskIndex,
+results: [],
           dedupeKey: `blocker:wake-repair:${ threadId }:${ deadline }`,
-          notice: `Wake input is missing for ${ jobId } task ${ taskIndex }. Still parked; send a job message by ${ new Date(deadline).toISOString() }.` });
+          notice: `Wake input is missing for ${ jobId } task ${ taskIndex }. Still parked; send a job message by ${ new Date(deadline).toISOString() }.`,
+});
         return;
       }
       link = parent;

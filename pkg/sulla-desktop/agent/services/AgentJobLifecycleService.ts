@@ -2,13 +2,14 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { AgentGraphState } from '../nodes/Graph';
-import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
-import { injectSteer } from '../utils/steerChannel';
 import { ReturnedTaskSettlement } from './ReturnedTaskSettlement';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { deliverJobCompletion, returnedJobResult } from '../tools/agents/jobDelivery';
 import { completeJob, getJob, parkJobTask, recordTaskCompletion, resumeParkedJob } from '../tools/agents/jobRegistry';
+import { injectSteer } from '../utils/steerChannel';
+
+import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { AgentGraphState } from '../nodes/Graph';
 
 interface ParkedWaiter { resolve: () => void; }
 export interface ChildDependencyCounter { openChildrenForThread(threadId: string): Promise<number>; }

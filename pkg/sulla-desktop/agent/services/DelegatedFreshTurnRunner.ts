@@ -98,8 +98,10 @@ export class DelegatedFreshTurnRunner {
     }
     const progress = new DelegatedTurnProgressProbe(state);
     const wake = currentInputs.at(-1);
-    const identity = { source: entries.length ? 'sub_agent_completion' : wake?.metadata?.source,
-      wakeId: wake?.metadata?.wakeId ?? wake?.metadata?.jobMessageId ?? wake?.id ?? (entries[0] && CompletionKey.of(entries[0])) };
+    const identity = {
+ source: entries.length ? 'sub_agent_completion' : wake?.metadata?.source,
+      wakeId: wake?.metadata?.wakeId ?? wake?.metadata?.jobMessageId ?? wake?.id ?? (entries[0] && CompletionKey.of(entries[0])),
+};
     let attempt = 0;
     const before = Number(state.metadata?.delegatedProviderDispatchCount ?? 0);
     let returned;
@@ -144,8 +146,16 @@ export class DelegatedFreshTurnRunner {
     if (!ports.logWake || !ports.jobId) return;
     try {
       const usage = providerDispatched ? ports.state.metadata?.delegatedProviderUsage : undefined;
-      ports.logWake({ ...identity, jobId: ports.jobId, taskIndex: ports.taskIndex, attempt, providerDispatched,
-        liveChildCount: await ports.openChildren(ports.threadId), inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens });
+      ports.logWake({
+ ...identity,
+jobId: ports.jobId,
+taskIndex: ports.taskIndex,
+attempt,
+providerDispatched,
+        liveChildCount: await ports.openChildren(ports.threadId),
+inputTokens: usage?.inputTokens,
+outputTokens: usage?.outputTokens,
+});
     } catch { /* diagnostics must not change settlement */ }
   }
 
