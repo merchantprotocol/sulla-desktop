@@ -13,12 +13,10 @@ import { createApp, h } from 'vue';
 import { createRouter, createWebHashHistory } from 'vue-router';
 
 import './agent-tailwind.css';
-
+import store from './store';
 import AgentRouter from '../pages/AgentRouter.vue';
 import BrowserTab from '../pages/BrowserTab.vue';
 import { lazyScreen } from '../pages/agent/lazyScreen';
-
-import store from './store';
 
 import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
