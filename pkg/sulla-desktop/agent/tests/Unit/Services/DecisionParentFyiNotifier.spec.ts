@@ -118,7 +118,7 @@ describe('DecisionParentFyiNotifier', () => {
 
   it('delivers a worker-parent FYI unchanged at the next tool boundary', async() => {
     // risk: decision delivery — the parent must read the queued FYI as an informational note, not a new command envelope.
-    const note = '[FYI from worker] asked the human to approve: Run an action? No action needed; you cannot approve it.';
+    const note = '[FYI from test-sender] opaque-payload-42';
     messaging.messages = [{ id: 'parent-message', jobId: 'parent-job', taskIndex: 1, message: note, createdAt: 1 }];
     messaging.markDelivered.mockClear();
     const prompt = await prepareWorkerTurnPrompt({ metadata: { isSubAgent: true, threadId: 'parent-thread', delegatedJobId: 'parent-job', delegatedTaskIndex: 1 } }, 'next parent turn');
