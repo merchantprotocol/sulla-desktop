@@ -26,7 +26,7 @@ import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivit
 import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
-import { emitCodexToolEvent } from './codexToolEvents';
+import { CodexToolEventEmitter } from './codexToolEvents';
 import { CodexTurnOutcome } from './codexTurnOutcome';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
@@ -92,6 +92,8 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * of a turn and no idle process is kept between turns, to keep VM memory low.
  */
 export class CodexService extends BaseLanguageModel {
+  private readonly toolEventEmitter = new CodexToolEventEmitter();
+
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -1143,7 +1145,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               const activity = activityForItem(item);
               if (activity) emitActivity(activity, 'tool');
             }
-            emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
+            this.toolEventEmitter.emit(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
               if (outcome.recordErrorEvent(item.message) === 'notice') {
                 log.info('[CodexService] Codex emitted a non-fatal notice.');

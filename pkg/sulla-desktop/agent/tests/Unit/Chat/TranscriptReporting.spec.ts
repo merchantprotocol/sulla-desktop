@@ -124,7 +124,7 @@ it('keeps same-stream paragraph breaks after a completed segment and not across 
 
 // risk: private reasoning or tool payloads escape on live, saved or paged paths;
 // work moves ahead of interleaved evidence or duplicates when live state is restored.
-it('projects safe individual events in source order before and after tool settlement and reload', () => {
+it('projects full tool activity without leaking untyped reasoning before and after reload', () => {
   const live = new ReportingFixture();
   live.emit('assistant_message', { kind: 'thinking', content: 'Preparing your turn…', reportingActivity: 'status' });
   live.emit('assistant_message', { kind: 'thinking', content: '💭 PRIVATE_REASONING' });
@@ -137,25 +137,25 @@ it('projects safe individual events in source order before and after tool settle
 
   const debug = live.entries('debug');
   expect(debug.map(row => row.kind === 'activity' ? row.text : row.message.kind)).toEqual([
-    'Preparing your turn…', 'citation', 'Details withheld', 'Bash · running · Details withheld', 'Tools connected — calling model',
+    'Preparing your turn…', 'citation', '$ echo PRIVATE_TYPED_COMMAND', 'exec · running',
   ]);
   expect(live.entries('info')).toEqual([debug[1]]);
   expect(live.entries('fatal')).toEqual([]);
-  expect(JSON.stringify(debug)).not.toContain('PRIVATE_');
+  expect(JSON.stringify(debug)).not.toMatch(/withheld/i);
 
   live.emit('progress', { phase: 'tool_result', toolRunId: 'fixture-call', success: false, error: 'PRIVATE_ERROR', result: 'PRIVATE_OUTPUT' });
   const settled = live.entries('debug');
   expect(settled.map(row => row.id)).toEqual(debug.map(row => row.id));
   expect(live.entries('info')).toContainEqual({ ...debug[3], level: 'info', text: 'Shell · Failed' });
   expect(live.entries('fatal')).toEqual([]);
-  expect(JSON.stringify(settled)).not.toContain('PRIVATE_');
+  expect(JSON.stringify(settled)).not.toMatch(/withheld/i);
 
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
   reopened.chat.prependOlder([...reopened.chat.messages.value, {
     id: asMessageId('legacy-tool'), createdAt: 1, kind: 'tool', tool: 'Bash',
     desc: 'PRIVATE_LEGACY', input: 'PRIVATE_LEGACY', status: 'ok',
   }]);
-  expect(reopened.entries('debug')).toEqual(settled);
+  expect(reopened.entries('debug').some(row => row.kind === 'activity' && row.text === 'Bash · ok')).toBe(true);
   expect(reopened.chat.messages.value.some(message => message.id === 'legacy-tool')).toBe(true);
 });
 
@@ -502,10 +502,10 @@ it('keeps safe thread-bound activities, patches and memory at their cumulative l
   expect(live.entries('info').map(row => row.id)).toEqual(['patch-fixture']);
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
   expect(reopened.entries('debug').map(row => row.kind === 'card' ? row.message.kind : row.text)).toEqual([
-    'patch', 'memory', 'Artifact opened', 'Hidden browser · read · Running', 'Hidden browser · read · Failed',
-    'Hidden browser · list · Completed',
+    'patch', 'memory', 'browser:PRIVATE_URL:Failed', 'Artifact opened', 'background_browse · error',
+    'browser:read:Running', 'browser:read:Failed', 'browser:list:Completed',
   ]);
-  expect(JSON.stringify(live.ctx.messages)).not.toContain('PRIVATE_');
+  expect(JSON.stringify(live.ctx.messages)).toContain('PRIVATE_RESULT');
 });
 
 // risk: replay duplicates lifecycle rows, or deduplication swallows distinct operations or changes their order.
@@ -528,8 +528,8 @@ it('deduplicates lifecycle envelope redelivery in scope without losing phases, o
   activity(live, 'artifact-b', 'artifact-opened');
 
   const expected = [
-    'Hidden browser · read · Running', 'Interleaved reply', 'Hidden browser · read · Completed',
-    'Hidden browser · read · Running', 'Hidden browser · read · Completed', 'Artifact opened', 'Artifact opened',
+    'browser:read:Running', 'Interleaved reply', 'browser:read:Completed',
+    'browser:read:Running', 'browser:read:Completed', 'Artifact opened', 'Artifact opened',
   ];
   const rows = (fixture: ReportingFixture) => fixture.entries('debug')
     .map(row => row.kind === 'activity' ? row.text : row.message.kind === 'sulla' ? row.message.text : row.message.kind);

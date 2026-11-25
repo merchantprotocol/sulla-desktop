@@ -7,7 +7,7 @@ import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
-import type { Message, ToolMessage } from '../../models/Message';
+import type { Message } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
 export type CardMessage = Exclude<Message, { kind: 'thinking' | 'tool' }>;
@@ -15,7 +15,7 @@ type Classification = { label: string; level: ReportingLevel; essential?: true }
 type EntryBase = Classification & { id: string; sourceId: string; createdAt: number };
 export type TranscriptEntry =
   | (EntryBase & { kind: 'card'; message: CardMessage })
-  | (EntryBase & { kind: 'activity'; text: string; toolMessage?: ToolMessage });
+  | (EntryBase & { kind: 'activity'; text: string });
 
 const rank: Record<ReportingLevel, number> = { fatal: 0, info: 1, debug: 2 };
 
@@ -113,8 +113,7 @@ export class TranscriptReporting {
       if (level !== 'debug' && ChatToolReporting.isBackgroundBrowse(message.recordedToolName ?? message.tool)) return;
       const text = this.toolText(message, level);
       if (text) yield { ...base, kind: 'activity', label: 'Tool',
-        level: message.status === 'running' || message.tool === 'Memory' || ChatToolReporting.isMemoryTool(message.recordedToolName) ? 'debug' : 'info', text,
-        ...(level === 'debug' ? { toolMessage: message } : {}) };
+        level: message.status === 'running' || message.tool === 'Memory' || ChatToolReporting.isMemoryTool(message.recordedToolName) ? 'debug' : 'info', text };
       return;
     }
 

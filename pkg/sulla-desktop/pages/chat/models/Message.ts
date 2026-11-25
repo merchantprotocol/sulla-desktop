@@ -124,7 +124,7 @@ export interface ThinkingMessage extends MessageBase {
 export interface ToolMessage extends MessageBase {
   kind:          'tool';
   recordedToolName?: string;
-  tool:          string;        // recorded tool name
+  tool:          string;        // Standard-view label; Detailed uses recordedToolName
   desc:          string;        // formatter description when available
   status:        'running' | 'ok' | 'error';
   meta?:         string;

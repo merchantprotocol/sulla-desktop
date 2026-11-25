@@ -1010,7 +1010,9 @@ export class PersonaAdapter {
         kind: 'tool',
         createdAt,
         recordedToolName: b.toolCard.toolName,
-        tool: b.toolCard.toolName || b.toolCard.label || 'Tool',
+        // Keep Standard's existing label; DetailedTraceProjection reads the
+        // unmodified recordedToolName for the actual tool identity.
+        tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,
         input:        b.toolCard.inputIsFull === true
