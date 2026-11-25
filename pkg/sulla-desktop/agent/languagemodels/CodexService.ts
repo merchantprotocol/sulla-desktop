@@ -93,7 +93,6 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  */
 export class CodexService extends BaseLanguageModel {
   private readonly toolEventEmitter = new CodexToolEventEmitter();
-
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -1128,11 +1127,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const isTool = ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(kind);
             if (isTool && itemId) {
               if (parsed.type === 'item.started') {
-                const input = item.arguments ?? item.input ?? (kind === 'command_execution'
-                  ? { command: item.command, cwd: item.cwd }
-                  : kind === 'web_search' ? { query: item.query }
-                    : kind === 'file_change' ? { changes: item.changes } : undefined);
-                callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input });
+                const call = this.toolEventEmitter.started(item);
+                callbacks.onToolStarted?.(call ?? { toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind) });
                 liveness.toolStarted(itemId, String(item.tool ?? item.name ?? kind));
               } else if (parsed.type === 'item.completed') liveness.toolFinished(itemId);
             }

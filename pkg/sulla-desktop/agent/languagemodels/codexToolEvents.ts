@@ -22,6 +22,12 @@ export class CodexToolEventEmitter {
     try { callback(event) } catch { /* provider callbacks are best-effort */ }
   }
 
+  /** The call event for a started Codex item: the same name and input its completion reports. */
+  started(item: any): Pick<CodexToolEvent, 'toolUseId' | 'toolName' | 'input'> | null {
+    const event = this.eventForItem(item);
+    return event && { toolUseId: event.toolUseId, toolName: event.toolName, input: event.input };
+  }
+
   private eventForItem(item: any): CodexToolEvent | null {
     const kind = item?.item_type ?? item?.type;
     const toolUseId = item?.id ?? item?.call_id;

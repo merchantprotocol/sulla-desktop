@@ -503,7 +503,7 @@ it('keeps safe thread-bound activities, patches and memory at their cumulative l
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
   expect(reopened.entries('debug').map(row => row.kind === 'card' ? row.message.kind : row.text)).toEqual([
     'patch', 'memory', 'browser:PRIVATE_URL:Failed', 'Artifact opened', 'background_browse · error',
-    'browser:read:Running', 'browser:read:Failed', 'browser:list:Completed',
+    'Hidden browser · read · Running', 'Hidden browser · read · Failed', 'Hidden browser · list · Completed',
   ]);
   expect(JSON.stringify(live.ctx.messages)).toContain('PRIVATE_RESULT');
 });
@@ -528,8 +528,8 @@ it('deduplicates lifecycle envelope redelivery in scope without losing phases, o
   activity(live, 'artifact-b', 'artifact-opened');
 
   const expected = [
-    'browser:read:Running', 'Interleaved reply', 'browser:read:Completed',
-    'browser:read:Running', 'browser:read:Completed', 'Artifact opened', 'Artifact opened',
+    'Hidden browser · read · Running', 'Interleaved reply', 'Hidden browser · read · Completed',
+    'Hidden browser · read · Running', 'Hidden browser · read · Completed', 'Artifact opened', 'Artifact opened',
   ];
   const rows = (fixture: ReportingFixture) => fixture.entries('debug')
     .map(row => row.kind === 'activity' ? row.text : row.message.kind === 'sulla' ? row.message.text : row.message.kind);

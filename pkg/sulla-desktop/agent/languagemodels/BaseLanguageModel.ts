@@ -98,11 +98,8 @@ export interface StreamCallbacks {
   /** Emitted when an external CLI reports that it compacted its own session context. */
   onContextCompaction?: (event: { provider: string; at: number; source: string }) => void;
   /**
-   * Emitted once a tool_use block's matching tool_result has arrived —
-   * i.e. after the tool actually ran, not at call time. Carries enough to
-   * write one conversation-log entry (tool name, key input, result size/
-   * error) without the caller needing to correlate call/result itself.
-   *
+   * Emitted once a tool_use block's matching tool_result has arrived, with
+   * the complete input, result and error, already correlated by toolUseId.
    * CLI-backed providers fire this because their tool execution happens
    * inside the spawned provider process, invisible to Sulla's own
    * ToolExecutor. Claude Code correlates tool_use/tool_result blocks; Codex

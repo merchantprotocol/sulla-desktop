@@ -31,6 +31,7 @@ import { AgentModelStatusRegistry } from '../services/AgentModelStatusRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { RunActivity } from '../services/RunActivity';
 import { TurnToolActivity } from '../services/TurnToolActivity';
+import { ProviderToolTranscript } from './ProviderToolTranscript';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
@@ -1850,10 +1851,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
-    // Tool_use/tool_result pairs run inside the provider's own CLI (Claude
-    // Code, Codex) and never touch Sulla's ToolExecutor — this is the only
-    // place that sees them, so forward their complete call and result events.
-    const pendingToolCallReports = new Map<string, Promise<boolean>>();
+    // Provider-CLI tool calls (Claude Code, Codex) bypass ToolExecutor: forward their full call and result events.
+    const providerTools = new ProviderToolTranscript({ emitCall: (id, name, input) => this.emitToolCallEvent(state, id, name, input),
+      emitResult: (id, success, error, result) => this.emitToolResultEvent(state, id, success, error, result),
+      log: (name, input, result) => this.logConversationToolCall(state, name, input, result), warn: (message, error) => console.warn(`[${ this.name }] ${ message }`, error) });
     const onContextCompaction = (event: { provider: string; at: number; source: string }): void => {
       const meta = state.metadata as any;
       meta.cliCompactedAt = event.at;
@@ -1874,27 +1875,13 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       providerToolStarted = true;
       toolActivity.finished(event.toolUseId);
       new TurnOutputCounter(state.metadata as any).record();
-      const success = event.isError !== true && event.error === undefined;
-      const pendingCall = pendingToolCallReports.get(event.toolUseId) ?? this.emitToolCallEvent(
-        state, event.toolUseId, event.toolName, event.input ?? {},
-      );
-      void pendingCall.catch(() => false).then(() => this.emitToolResultEvent(
-        state, event.toolUseId, success, event.error, event.result,
-      )).catch(error => console.warn(`[${ this.name }] Failed to report provider tool result:`, error));
-      pendingToolCallReports.delete(event.toolUseId);
-      const loggedResult = event.result === undefined
-        ? event.error === undefined ? undefined : { error: event.error }
-        : event.error === undefined ? event.result : { result: event.result, error: event.error };
-      this.logConversationToolCall(state, event.toolName, event.input, loggedResult);
+      providerTools.finished(event);
     };
     const onToolStarted = (event?: { toolUseId: string; toolName: string; input?: unknown }): void => {
       providerToolStarted = true;
       toolActivity.started(event?.toolUseId, event?.toolName);
       new TurnOutputCounter(state.metadata as any).record();
-      if (!event?.toolUseId) return;
-      pendingToolCallReports.set(event.toolUseId, this.emitToolCallEvent(
-        state, event.toolUseId, event.toolName, event.input ?? {},
-      ));
+      if (event?.toolUseId) providerTools.started(event);
     };
 
     let reply: NormalizedResponse | null = null;

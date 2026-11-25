@@ -13,6 +13,7 @@ const memoryTools = new Set([
   'pack_list', 'pack_install', 'pack_sync', 'pack_uninstall', 'pack_validate',
 ]);
 const browserOperations = ['open', 'navigate', 'read', 'screenshot', 'list', 'close'] as const;
+const browserStatuses: readonly string[] = ['Running', 'Completed', 'Failed'];
 export type HiddenBrowserOperation = typeof browserOperations[number];
 export type ChatToolActivity = string;
 
@@ -31,7 +32,11 @@ export class ChatToolReporting {
 
   static describe(value: unknown): { label: string; text: string } | undefined {
     if (value === 'artifact-opened') return { label: 'Artifact', text: 'Artifact opened' };
-    if (typeof value !== 'string') return undefined;
-    return { label: 'Tool', text: value };
+    if (typeof value !== 'string' || !value) return undefined;
+    // Known hidden-browser lifecycle strings keep their friendly wording; any
+    // other activity is shown exactly as recorded, never dropped or masked.
+    const [kind, action, status, extra] = value.split(':');
+    const known = kind === 'browser' && extra === undefined && this.hiddenOperation(action) && browserStatuses.includes(status);
+    return { label: 'Tool', text: known ? `Hidden browser · ${ action } · ${ status }` : value };
   }
 }
