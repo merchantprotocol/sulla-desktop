@@ -211,7 +211,10 @@ export class BackendGraphWebSocketService {
   async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<boolean> {
     await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
     const steer = {
-      id: nextMessageId(), role: 'user' as const, content: this.orchestratorMessageFormatter.format(message), timestamp: Date.now(),
+      id: nextMessageId(),
+role: 'user' as const,
+content: this.orchestratorMessageFormatter.format(message),
+timestamp: Date.now(),
       metadata: { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
     };
     if (agentJobLifecycle.deliver(threadId, steer)) return true;
@@ -1110,7 +1113,9 @@ export class BackendGraphWebSocketService {
         const fileContext = files.length ? `\n\n<attached_files>\n${ files.map((file:any) => `- ${ file.name ?? file.path } · file ${ file.fileId } · version ${ file.versionId } · path ${ file.path }`).join('\n') }\nWhen returning one of these files, include a sulla-file:// link with fileId, version, path, and name query parameters so Desktop renders a durable file card.\n</attached_files>` : '';
         const contextualContent = `${ content }${ fileContext }`;
         const steer = {
-          id: nextMessageId(), role: 'user' as const, timestamp: Date.now(),
+          id: nextMessageId(),
+role: 'user' as const,
+timestamp: Date.now(),
           content: hasAttachments ? [{ type: 'text', text: contextualContent }, ...attachments.filter((item: any) => item?.type === 'image' && item?.source?.type === 'base64')] : contextualContent,
           metadata: { ...data.metadata, source: data.metadata?.source || 'inject', inputSource: data.metadata?.inputSource || 'keyboard' },
         };

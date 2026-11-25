@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'crypto';
+
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 
 /** Receives every committed job write so task failures can be reported at one choke point. */
@@ -99,7 +100,9 @@ export class AgentJobFailureLogger implements AgentJobFailureObserver {
 
   static wakeSource(value: unknown): string {
     return typeof value === 'string' && ['missing_input', 'agent_wait_timer', 'sub_agent_completion', 'orchestrator_job_message',
-      'contract_reminder', 'auto_park_resume', 'inject'].includes(value) ? value : 'unknown_wake';
+      'contract_reminder', 'auto_park_resume', 'inject'].includes(value)
+? value
+: 'unknown_wake';
   }
 
   observe(previous: AgentJob, next: AgentJob): void {
