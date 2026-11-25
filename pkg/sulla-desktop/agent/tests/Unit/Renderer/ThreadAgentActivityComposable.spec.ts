@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 
-import { StatusRollupQueue } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
-import { ThreadAgentEventBuffer, ThreadAgentEventCursor, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
+import { StatusRollupQueue, type StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
+import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { WorkerChartAgent } from '@pkg/pages/chat/components/workerChart/workerChartModel';
 import type { Message } from '@pkg/pages/chat/models/Message';
@@ -182,9 +182,10 @@ describe('useThreadAgentActivity', () => {
     expect(queue.history.map(item => item.key)).not.toContain('event-0');
   });
 
-  // risk: memory lifecycle — event volume may grow without bound, but retained event state is only pending, visible trail, and cursor ties.
-  it('keeps thousands of events lossless while the source cursor retains only the latest timestamp ties', () => {
-    const cursor = new ThreadAgentEventCursor();
+  // risk: memory lifecycle — a cursor retains only the keys in its current projection, never keys from old projections.
+  it('keeps thousands of events lossless while retaining only current projection keys', () => {
+    const projection = new ThreadAgentEventProjectionDiff();
+    const historyCursor = new ThreadAgentHistoryCursor();
     const buffer = new ThreadAgentEventBuffer();
     const queue = new StatusRollupQueue();
     const source = Array.from({ length: 3_000 }, (_, index) => ({
@@ -192,9 +193,15 @@ describe('useThreadAgentActivity', () => {
       text: `Event ${index}`, observedAt: index,
     }));
 
-    const selected = cursor.select(source);
+    const selected = source.flatMap((_, index) => {
+      const start = Math.max(0, index - 39);
+      return projection.diff(source.slice(start, index + 1));
+    });
     expect(selected).toHaveLength(3_000);
-    expect(cursor.retainedKeyCount).toBe(1);
+    expect(projection.retainedKeyCount).toBe(40);
+    expect(historyCursor.select(source)).toHaveLength(3_000);
+    expect(historyCursor.select(source)).toEqual([]);
+    expect(historyCursor.retainedKeyCount).toBe(1);
     selected.forEach(item => buffer.append(item));
     queue.observe(buffer.items.value, 'thread-a', 0);
     buffer.consume();
@@ -210,7 +217,8 @@ describe('useThreadAgentActivity', () => {
     expect(queue.current?.key).toBe('event-2999');
     expect(queue.history).toHaveLength(StatusRollupQueue.historyLimit);
     expect(queue.history.some(item => item.key === 'event-0')).toBe(false);
-    expect(cursor.retainedKeyCount).toBe(1);
+    expect(projection.retainedKeyCount).toBe(40);
+    expect(historyCursor.retainedKeyCount).toBe(1);
   });
 
   // risk: availability — transcript and snapshot projections repeat old rows, but a source cursor must not enqueue them again.
@@ -238,10 +246,11 @@ describe('useThreadAgentActivity', () => {
     queue.observe(activity.checkIns.value, 'thread-a', 0);
     activity.consumeCheckIns();
 
+    const secondRow = { ...originalRow, lastCheckinAt: '2026-11-23T17:01:30.000Z', lastCheckinSummary: 'Second check-in' };
     snapshot.value = {
       version: 2,
       generatedAt: '2026-11-23T17:02:01.000Z',
-      rows: [{ ...originalRow, lastCheckinAt: '2026-11-23T17:01:30.000Z', lastCheckinSummary: 'Second check-in' }],
+      rows: [secondRow],
     };
     await nextTick();
     expect(activity.checkIns.value).toEqual(expect.arrayContaining([
@@ -251,9 +260,9 @@ describe('useThreadAgentActivity', () => {
     activity.consumeCheckIns();
     const pendingCount = queue.pending.length;
 
-    // Re-project the same transcript under a different display name, and regress the snapshot to its old check-in.
+    // Re-project the same transcript and snapshot under new wrapper metadata; event keys stay unchanged.
     agentName.value = 'Assistant';
-    snapshot.value = { version: 3, generatedAt: '2026-11-23T17:02:02.000Z', rows: [originalRow] };
+    snapshot.value = { version: 3, generatedAt: '2026-11-23T17:02:02.000Z', rows: [secondRow] };
     await nextTick();
     await vi.advanceTimersByTimeAsync(100);
     await nextTick();
@@ -301,31 +310,82 @@ describe('useThreadAgentActivity', () => {
   });
 
   // risk: streaming updates — an older thought's stable key still revises its queued/visible text without replaying it.
-  it('updates an active thought even after a later source timestamp advances the cursor', () => {
-    const cursor = new ThreadAgentEventCursor();
+  it('updates an active thought while diffing a source projection that also contains a later event', () => {
+    const projection = new ThreadAgentEventProjectionDiff();
     const buffer = new ThreadAgentEventBuffer();
     const queue = new StatusRollupQueue();
     const thought = {
       key: 'thought', threadId: 'thread-a', agentId: 'agent-a', agentName: 'Agent A',
       kind: 'thought' as const, text: 'First thought text', observedAt: 0,
     };
-    const accept = (item: { key: string; threadId: string; agentId: string; agentName: string; text: string; observedAt: number; kind?: 'thought' }): void => {
-      cursor.select([item]).forEach(value => buffer.append(value));
-      queue.observe(buffer.items.value, 'thread-a', item.observedAt);
+    const later = { key: 'later', threadId: 'thread-a', agentId: 'agent-a', agentName: 'Agent A', text: 'Later event', observedAt: 10 };
+    const accept = (items: readonly StatusRollupItem[]): void => {
+      projection.diff(items).forEach(value => buffer.append(value));
+      queue.observe(buffer.items.value, 'thread-a', items.at(-1)?.observedAt ?? 0);
       buffer.consume();
     };
 
-    accept(thought);
+    accept([thought]);
     queue.pump(0);
-    accept({ key: 'later', threadId: 'thread-a', agentId: 'agent-a', agentName: 'Agent A', text: 'Later event', observedAt: 10 });
-    const update = cursor.select([{ ...thought, text: 'Updated thought text' }]);
-    expect(update).toEqual([expect.objectContaining({ updateOnly: true })]);
-    update.forEach(item => buffer.append(item));
-    queue.observe(buffer.items.value, 'thread-a', 11);
-    buffer.consume();
+    accept([thought, later]);
+    accept([{ ...thought, text: 'Updated thought text' }, later]);
 
     expect(queue.current?.text).toBe('Updated thought text');
     expect(queue.pending.map(item => item.key)).toEqual(['later']);
     expect(buffer.items.value).toEqual([]);
+  });
+
+  // risk: status-line accuracy — a late tool result must balance its start instead of disappearing behind a newer tool timestamp.
+  it('emits an older tool result exactly once after a newer tool starts without changing the newer tool', async() => {
+    vi.useFakeTimers();
+    const firstAt = Date.parse('2026-11-23T17:01:00.000Z');
+    const secondAt = Date.parse('2026-11-23T17:02:00.000Z');
+    const toolA: Message = { id: 'tool-a' as Message['id'], kind: 'tool', createdAt: firstAt, tool: 'Read', desc: 'Reading A', status: 'running' } as Message;
+    const toolB: Message = { id: 'tool-b' as Message['id'], kind: 'tool', createdAt: secondAt, tool: 'Edit', desc: 'Editing B', status: 'running' } as Message;
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: new Date(secondAt).toISOString(), rows: [] });
+    const threadId = ref<string | undefined>('thread-a');
+    const agentName = ref('Sulla');
+    const transcript = ref<readonly Message[]>([toolA]);
+    const activity = useThreadAgentActivity({ snapshot, threadId, transcript, primaryAgentName: agentName, now: () => secondAt });
+    const queue = new StatusRollupQueue();
+    const transfer = () => {
+      const items = [...activity.checkIns.value];
+      queue.observe(items, 'thread-a', secondAt);
+      activity.consumeCheckIns();
+      return items;
+    };
+
+    const startA = transfer();
+    expect(startA).toHaveLength(1);
+    expect(startA[0]).toMatchObject({ phase: 'start', correlationId: 'primary:thread-a:tool-a', observedAt: firstAt });
+
+    transcript.value = [toolA, toolB];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
+    const startB = transfer();
+    expect(startB).toHaveLength(1);
+    expect(startB[0]).toMatchObject({ phase: 'start', correlationId: 'primary:thread-a:tool-b', observedAt: secondAt });
+
+    transcript.value = [{ ...toolA, status: 'ok' } as Message, toolB];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
+    const finishA = transfer();
+    expect(finishA).toHaveLength(1);
+    expect(finishA[0]).toMatchObject({ phase: 'result', correlationId: 'primary:thread-a:tool-a', observedAt: firstAt });
+
+    // Force another projection after the result; A must not replay and B must remain pending exactly once.
+    agentName.value = 'Assistant';
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+    await nextTick();
+
+    expect(activity.checkIns.value).toEqual([]);
+    expect(queue.pending.map(item => [item.correlationId, item.phase])).toEqual([
+      ['primary:thread-a:tool-a', 'start'],
+      ['primary:thread-a:tool-b', 'start'],
+      ['primary:thread-a:tool-a', 'result'],
+    ]);
   });
 });
