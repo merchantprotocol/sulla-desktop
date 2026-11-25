@@ -395,9 +395,8 @@ import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutReposit
 import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
 import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composables/TabTransferPayload';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
-import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
+import { chatActivityStore } from '@pkg/pages/chat/messages/chatActivityStore';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
-import { isChatTabActivitySnapshot, type ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -428,34 +427,6 @@ let _ipcMountCount = 0;
 let _onTabCtxAction:  ((...args: any[]) => void) | null = null;
 let _onMoreAction:    ((...args: any[]) => void) | null = null;
 let _onMoreFetchHist: ((...args: any[]) => void) | null = null;
-const workingTabIds = ref(new Set<string>());
-let _workingMountCount = 0;
-
-function _onChatRunning(event: Event) {
-  const { tabId, running, activity } = (event as CustomEvent<{ tabId?: string; running?: boolean; activity?: ChatTabActivitySnapshot }>).detail ?? {};
-
-  if (tabId && typeof running === 'boolean') _setChatRunning(tabId, running, activity);
-}
-
-function _onHostedChatRunning(_event: unknown, tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) {
-  _setChatRunning(tabId, running, activity);
-}
-
-function _setChatRunning(tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) {
-  if (workingTabIds.value.has(tabId) !== running) {
-    const next = new Set(workingTabIds.value);
-
-    if (running) next.add(tabId);
-    else next.delete(tabId);
-    workingTabIds.value = next;
-  }
-  if (isChatTabActivitySnapshot(activity)) {
-    const previous = chatActivityByTab.get(tabId);
-
-    if (previous?.state !== activity.state || previous?.detail !== activity.detail) chatActivityByTab.set(tabId, activity);
-  }
-}
-
 function _tabCtxBridge(event: Electron.IpcRendererEvent, action: string, data: Record<string, unknown>) {
   if (action.startsWith('attention:')) attentionOwner.select(data.attentionMenuId, action.slice('attention:'.length));
   else _onTabCtxAction?.(event, action, data);
@@ -472,10 +443,6 @@ function _mountIpcListeners() {
     ipcRenderer.on('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
   }
-  if (_workingMountCount++ === 0) {
-    window.addEventListener('sulla:chat-running', _onChatRunning);
-    ipcRenderer.on('internal-tab-view:chat-running', _onHostedChatRunning);
-  }
 }
 
 function _unmountIpcListeners() {
@@ -488,11 +455,6 @@ function _unmountIpcListeners() {
     _onTabCtxAction = null;
     _onMoreAction = null;
     _onMoreFetchHist = null;
-  }
-  if (--_workingMountCount <= 0) {
-    _workingMountCount = 0;
-    window.removeEventListener('sulla:chat-running', _onChatRunning);
-    ipcRenderer.removeListener('internal-tab-view:chat-running', _onHostedChatRunning);
   }
 }
 
@@ -1091,8 +1053,7 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
-    const snapshot = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
+    const { working, snapshot } = bt.mode === 'chat' ? chatActivityStore.read(bt.id) : { working: false, snapshot: undefined };
     const activity = snapshot?.state ?? (working ? 'working' : undefined);
     const statusLine = bt.mode === 'chat' ? snapshot?.detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
 
