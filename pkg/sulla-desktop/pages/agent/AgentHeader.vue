@@ -1217,7 +1217,7 @@ function groupBaseWidth(section: TabStripSection): { baseWidth: number; foldedWi
   return { baseWidth: labelButtonWidth + 10, foldedWidth: labelButtonWidth + (dots ? 6 : 0) + dotsWidth };
 }
 
-const tabStripLayout = computed(() => {
+const tabStripLayout = computed((previousLayout) => {
   const availableWidth = availableTabWidth.value ? availableTabWidth.value - 8 : Number.POSITIVE_INFINITY;
   const sections = tabSections.value.filter((section): section is TabStripSection & { id: TabGroupId } => section.id !== 'pinned');
   const pinned = tabSections.value.find(section => section.id === 'pinned');
@@ -1248,6 +1248,7 @@ const tabStripLayout = computed(() => {
 
   return new Map(calculateTabStripLayout({
     groups,
+    previousLayout: previousLayout ? [...previousLayout.values()] : undefined,
     activeGroup: windowTabStrip.activeGroup.value,
     availableWidth,
     reservedWidth: pinnedWidth,
