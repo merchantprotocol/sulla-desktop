@@ -1,11 +1,13 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 
 import { PostgresConnection } from '@sulla/foundation/postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AgentJobRepository } from '../../../app/Repositories/AgentJobRepository';
+import { AgentJobChildrenQuery } from '../../../app/Repositories/AgentJobChildrenQuery';
 import { AgentJobRetentionRepository } from '../../../app/Repositories/AgentJobRetentionRepository';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 import { TestDatabase } from '../../Support/TestDatabase';
@@ -17,6 +19,7 @@ dbDescribe('AgentJobRepository', () => {
   const database = new TestDatabase();
   let queryCount = 0;
   let repository: AgentJobRepository;
+  let children: AgentJobChildrenQuery;
   let retention: AgentJobRetentionRepository;
 
   beforeAll(async() => {
@@ -27,6 +30,7 @@ dbDescribe('AgentJobRepository', () => {
       return { rows, rowCount: rows.length };
     } });
     repository = new AgentJobRepository(connection);
+    children = new AgentJobChildrenQuery(connection);
     retention = new AgentJobRetentionRepository(connection);
   }, 60_000);
   afterAll(async() => database.dispose());
@@ -53,6 +57,33 @@ dbDescribe('AgentJobRepository', () => {
     expect(claims.find(Boolean)).toMatchObject({ generation: 2 });
     expect(await database.query(`SELECT generation, result, completion FROM agent_job_result_history WHERE job_id = $1`, [input.jobId]))
       .toEqual([expect.objectContaining({ generation: 1, result: { answer: 1 }, completion: expect.objectContaining({ output: 'first' }) })]);
+  });
+
+  it('reports open child work, including a child blocked on an unanswered question, and ignores settled children', async() => {
+    // risk: a parent heartbeat wakes a manager while its child is still blocked waiting on it, or never
+    // wakes it again because a returned blocker is still counted as open work.
+    const parent = job('heartbeat-children-parent');
+    parent.tasks = [{ ...parent.tasks[0], threadId: 'heartbeat-parent-task-0' }, { ...parent.tasks[0], threadId: 'heartbeat-parent-task-1' }];
+    parent.taskCount = 2;
+    await repository.insertJob(parent);
+    // The database resolves parent_job_id / parent_task_index from the child's parent thread (migration 0155).
+    const child = (id: string, task: Partial<AgentJob['tasks'][number]>, parentTaskIndex = 0): AgentJob => {
+      const input = { ...job(id), parentThreadId: `heartbeat-parent-task-${ parentTaskIndex }` };
+      input.tasks[0] = { ...input.tasks[0], ...task };
+      return input;
+    };
+    expect(await children.hasRunningChildren(parent.jobId, 0)).toBe(false);
+
+    // A blocker that already returned its result is settled work.
+    await repository.insertJob(child('heartbeat-child-returned-blocker', { status: 'blocked', returnedAt: Date.now() }));
+    await repository.insertJob(child('heartbeat-child-finished-blocker', { status: 'blocked', finishedAt: Date.now() }));
+    // Open work under a different parent task must not count for task 0.
+    await repository.insertJob(child('heartbeat-child-other-task', { status: 'running' }, 1));
+    expect(await children.hasRunningChildren(parent.jobId, 0)).toBe(false);
+    expect(await children.hasRunningChildren(parent.jobId, 1)).toBe(true);
+
+    await repository.insertJob(child('heartbeat-child-open-blocker', { status: 'blocked' }));
+    expect(await children.hasRunningChildren(parent.jobId, 0)).toBe(true);
   });
 
   it('loads only the requested thread lineage for the subagent directory', async() => {

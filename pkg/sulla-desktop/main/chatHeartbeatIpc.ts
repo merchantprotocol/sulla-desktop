@@ -6,9 +6,10 @@
 import { normalizeChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 
 import type { IpcController, IpcRegistrar } from './ipc/IpcController';
-import type { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatService';
+import type { ChatHeartbeatRegistrationService } from '@pkg/agent/services/ChatHeartbeatRegistrationService';
 
-type ChatHeartbeatService = ReturnType<typeof getChatHeartbeatService>;
+/** The registration service, not the bare scheduler: it knows when a thread is a delegated job task. */
+type ChatHeartbeatService = Pick<ChatHeartbeatRegistrationService, 'register' | 'configure' | 'updateBusy' | 'unregisterFromUi'>;
 
 interface RegisterInput {
   threadId: string;
@@ -29,13 +30,13 @@ export class ChatHeartbeatIpcController implements IpcController {
   register(): void {
     const service = this.serviceFactory();
 
-    this.ipc.handle('chat-heartbeat:register', (event, input: RegisterInput) => {
+    this.ipc.handle('chat-heartbeat:register', async(event, input: RegisterInput) => {
       const threadId = this.cleanThreadId(input?.threadId);
       if (!threadId) return { success: false, error: 'threadId is required' };
       const send = (name: string, payload: unknown) => {
         if (!event.sender.isDestroyed()) event.sender.send(name, payload);
       };
-      const status = service.register({
+      const status = await service.register({
         threadId,
         channel:  input.channel?.trim() || 'sulla-desktop',
         config:   normalizeChatHeartbeatConfig(input.config),
@@ -48,9 +49,9 @@ export class ChatHeartbeatIpcController implements IpcController {
       return { success: true, status };
     });
 
-    this.ipc.handle('chat-heartbeat:set', (_event, input: { threadId: string; config: ChatHeartbeatConfig }) => {
+    this.ipc.handle('chat-heartbeat:set', async(_event, input: { threadId: string; config: ChatHeartbeatConfig }) => {
       const threadId = this.cleanThreadId(input?.threadId);
-      const status = service.configure(threadId, normalizeChatHeartbeatConfig(input?.config));
+      const status = await service.configure(threadId, normalizeChatHeartbeatConfig({ ...input?.config, setBy: 'human' }));
 
       return status ? { success: true, status } : { success: false, error: 'chat heartbeat is not registered' };
     });
@@ -62,7 +63,7 @@ export class ChatHeartbeatIpcController implements IpcController {
     });
 
     this.ipc.handle('chat-heartbeat:unregister', (_event, threadId: string) => {
-      service.unregister(this.cleanThreadId(threadId));
+      service.unregisterFromUi(this.cleanThreadId(threadId));
 
       return { success: true };
     });
