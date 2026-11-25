@@ -113,7 +113,9 @@
     >
     <span
       v-else
+      ref="labelElement"
       class="tab-label"
+      :class="{ 'tab-label-overflowing': labelOverflows }"
     >{{ tab.label }}</span>
     <span
       v-if="tab.closeable"
@@ -141,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
@@ -192,6 +194,9 @@ const emit = defineEmits<{
 }>();
 
 const renameInput = ref<HTMLInputElement | null>(null);
+const labelElement = ref<HTMLSpanElement | null>(null);
+const labelOverflows = ref(false);
+let labelResizeObserver: ResizeObserver | null = null;
 const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
 function onPointerDown(event: PointerEvent, index: number): void {
   if (!props.compact) emit('pointerdown', event, index);
@@ -202,6 +207,40 @@ const accessibleLabel = computed(() => [
   props.tab.activity && props.tab.activity !== 'idle' ? props.activityLabels[props.tab.activity] : '',
   props.tab.pinned ? 'Pinned' : '',
 ].filter(Boolean).join(' · '));
+
+function measureLabelOverflow(): void {
+  const label = labelElement.value;
+  const overflows = Boolean(label && label.scrollWidth > label.clientWidth + 1);
+  if (labelOverflows.value !== overflows) labelOverflows.value = overflows;
+}
+
+function observeLabel(): void {
+  labelResizeObserver?.disconnect();
+  const label = labelElement.value;
+  if (!label) {
+    labelOverflows.value = false;
+    return;
+  }
+  labelResizeObserver?.observe(label);
+  measureLabelOverflow();
+}
+
+onMounted(() => {
+  if (typeof ResizeObserver !== 'undefined') {
+    labelResizeObserver = new ResizeObserver(measureLabelOverflow);
+  } else {
+    window.addEventListener('resize', measureLabelOverflow);
+  }
+  observeLabel();
+});
+
+watch(() => [props.tab.label, props.renaming] as const, observeLabel, { flush: 'post' });
+
+onBeforeUnmount(() => {
+  labelResizeObserver?.disconnect();
+  labelResizeObserver = null;
+  if (typeof window !== 'undefined') window.removeEventListener('resize', measureLabelOverflow);
+});
 
 watch(() => props.renaming, async(isRenaming) => {
   if (!isRenaming) return;
