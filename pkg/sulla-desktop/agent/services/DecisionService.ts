@@ -352,7 +352,7 @@ export class DecisionService {
     try {
       const route = entry.record.route;
       let result: DecisionRecord; let expiredNow = false;
-      if (route) {
+      if (route && entry.record.kind === 'question') {
         const repo = entry.record.kind === 'approval' ? this.decisions : this.pendingDecisions;
         expiredNow = await repo.settleAs(id, route.holderIndex, { kind: 'system', threadId: route.chain[route.holderIndex]?.threadId ?? entry.record.conversationId }, 'expired', { status: 'expired' }, []);
         const current = await this.pendingDecisions.findById(id);
@@ -362,14 +362,8 @@ export class DecisionService {
         const expired = await this.decisions.expirePending(id);
         if (expired) { result = expired; expiredNow = true; } else {
           const current = await this.pendingDecisions.findById?.(id);
-          if (!current) {
-            this.waiting.delete(id);
-            clearTimeout(entry.timer);
-            entry.cleanup();
-            return;
-          }
-          if (!['approved', 'denied', 'answered', 'expired'].includes(current.status)) return;
-          result = current;
+          if (current && !['approved', 'denied', 'answered', 'expired'].includes(current.status)) return;
+          result = current ?? { ...entry.record, status: 'expired' };
         }
       }
       this.waiting.delete(id);
