@@ -58,8 +58,8 @@ dbDescribe('published agent activation on real Postgres', () => {
     if (endpoint === '/v1/local/system-areas/audit') return Response.json({ ok: true });
     throw new Error(`Unexpected Files request ${ endpoint }`);
   };
-  const agent = async(name: string) => postgresClient.queryOne<{ id: string; enabled: boolean; status: string; source_kind: string; system_prompt: string; use_case_version_id: string; provider: string }>(
-    'SELECT id,enabled,status,source_kind,system_prompt,use_case_version_id,provider FROM agent_definitions WHERE slug=$1', [name]);
+  const agent = async(name: string) => postgresClient.queryOne<{ id: string; enabled: boolean; status: string; source_kind: string; system_prompt: string; use_case_version_id: string; provider: string; agent_awareness: boolean }>(
+    'SELECT id,enabled,status,source_kind,system_prompt,use_case_version_id,provider,agent_awareness FROM agent_definitions WHERE slug=$1', [name]);
 
   beforeAll(async() => {
     await database.initialize();
@@ -104,7 +104,7 @@ dbDescribe('published agent activation on real Postgres', () => {
 
     await service.scan();
     const first = await agent(slug);
-    expect(first).toMatchObject({ id: routedId, enabled: true, status: 'production', source_kind: 'local', use_case_version_id: v1, provider: 'grok' });
+    expect(first).toMatchObject({ id: routedId, enabled: true, status: 'production', source_kind: 'local', use_case_version_id: v1, provider: 'grok', agent_awareness: true });
     expect(f.routes.map(route => route[1])).toEqual([routedId, routedId]);
     expect(f.owned.get(slug)).toBe(routedId);
 
@@ -112,10 +112,15 @@ dbDescribe('published agent activation on real Postgres', () => {
     await service.scan();
     expect(f.routes).toHaveLength(2);
 
-    // A newly published version (with a different package pin) updates the same identity and keeps the owner mapping.
+    // A missing manifest value defaults new registrations to enabled but must not overwrite a user toggle on rescan.
+    await database.query('UPDATE agent_definitions SET agent_awareness=FALSE WHERE slug=$1', [slug]);
+    await new SullaUseCaseFiles(files).scan();
+    expect(await agent(slug)).toMatchObject({ agent_awareness: false });
+
+    // A newly published version (with a different package pin) updates the same identity and keeps both the user toggle and owner mapping.
     publish(fileId, slug, v2, manifest(slug, 'grok-4.5', 'Review the updated pull request head.'));
     await service.scan();
-    expect(await agent(slug)).toMatchObject({ id: routedId, enabled: true, use_case_version_id: v2, system_prompt: 'Review the updated pull request head.' });
+    expect(await agent(slug)).toMatchObject({ id: routedId, enabled: true, use_case_version_id: v2, system_prompt: 'Review the updated pull request head.', agent_awareness: false });
     expect(f.routes.at(-1)?.slice(0, 2)).toEqual([slug, routedId]);
     expect(f.removed).toHaveLength(1);
   });

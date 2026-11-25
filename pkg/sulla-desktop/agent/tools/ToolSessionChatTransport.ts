@@ -42,7 +42,9 @@ export class ToolSessionChatTransport {
   private async send(tool: ChatCapableTool, state: BaseThreadState, content: string, kind: string, extras?: Record<string, unknown>): Promise<boolean> {
     const toolPath = `${ String(tool.metadata?.category ?? '') }/${ String(tool.name ?? '') }`;
     const kindAllowed = ToolSessionChatTransport.SUPPORTED.has(toolPath) ||
-      kind === 'tool_approval' || kind === 'tool_question' || kind === 'chat_tool_activity';
+      kind === 'tool_approval' || kind === 'tool_question' ||
+      // Preserve BaseNode's direct chat_tool_activity forwarding when no transport is attached.
+      kind === 'chat_tool_activity';
     if (!kindAllowed) return false;
     const metadata = state.metadata as Record<string, any>;
     const threadId = typeof metadata.threadId === 'string' ? metadata.threadId : '';

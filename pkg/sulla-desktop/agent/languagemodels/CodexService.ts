@@ -18,6 +18,7 @@ import { buildRemotePidRecordCommand, newRemotePidFile } from './claudeLaunchCom
 import { CliFaultError, isCliFault, isPermanentCliFailure, recoveryMessages, runWithCliFaultRecovery, terminateCliChild } from './cliFaultRecovery';
 import { legacyProviderFailure } from './failures';
 import { systemPromptFromMessages } from './cliSystemPromptFile';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { stageImagePaths, type ImageStager } from './providerImageStaging';
 import { providerSessionStore } from './providerSessionStore';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
@@ -26,7 +27,8 @@ import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivit
 import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
-import { emitCodexToolEvent } from './codexToolEvents';
+import { CodexToolEventEmitter } from './codexToolEvents';
+import { ProviderToolActivityReporter } from './ProviderToolActivityReporter';
 import { CodexTurnOutcome } from './codexTurnOutcome';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
@@ -92,6 +94,8 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
  * of a turn and no idle process is kept between turns, to keep VM memory low.
  */
 export class CodexService extends BaseLanguageModel {
+  private readonly toolEventEmitter = new CodexToolEventEmitter();
+  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -301,8 +305,9 @@ export class CodexService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor() {
+  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) {
     super({ id: 'codex', model: 'codex', baseUrl: 'local-vm' });
+    this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
 
   /** Non-streaming chat — buffers the whole response and returns it. */
@@ -555,6 +560,7 @@ export class CodexService extends BaseLanguageModel {
     opts: { convId: string; isNewSession: boolean },
   ): Promise<{ prefix: string; stableHash: string }> {
     const stableParts: string[] = [];
+    const agentNetworkDirective = this.agentAwarenessPolicy.agentNetworkDirective(state?.metadata);
 
     stableParts.push(`<platform_context>
 You are operating inside Sulla Desktop — an autonomous agentic platform built by Jonathon Byrdziak. You are not a chatbot or a brain being asked questions. You are an agent with real tools and real execution capability.
@@ -578,8 +584,8 @@ Rules that apply on every turn:
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
 - Files: /mnt/sulla-files is your Human's own versioned file system, not your workspace. Save only finished work there, in the right existing folder, updated in place. Scratch goes in /mnt/worktrees/_scratch (or /tmp for throwaway files, which is on disk); the VM root and home don't survive a restart
-- You are part of a live multi-agent network — Heartbeat and other agents are active
-- Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
+${ agentNetworkDirective }
+- Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there; never rely on the VM's ephemeral home directory.
 </platform_context>`);
 
     stableParts.push(`<environment>
@@ -833,10 +839,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.stdin.end();
       } catch { /* stdin already closed */ }
 
-      const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
-        if (!msg) return;
-        try { callbacks.onActivity?.(msg, reportingActivity) } catch { /* ignore */ }
-      };
+      const activityReporter = new ProviderToolActivityReporter(callbacks.onActivity);
+      const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => activityReporter.report(msg, reportingActivity);
 
       proc.once('spawn', () => {
         spawnedAt = Date.now();
@@ -1054,8 +1058,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         else options.signal.addEventListener('abort', onAbort);
       }
 
-      const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
-
       /** Append a complete agent message, skipping it when deltas already
        *  streamed its content into textCollected. */
       const appendAgentMessage = (text: string) => {
@@ -1076,15 +1078,15 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const kind = item?.item_type ?? item?.type;
         switch (kind) {
         case 'command_execution':
-          if (typeof item.command === 'string') return `$ ${ pretty(item.command) }`;
+          if (typeof item.command === 'string') return `$ ${ item.command }`;
           return 'Running a shell command';
         case 'file_change': {
           const first = Array.isArray(item.changes) ? item.changes[0] : null;
-          if (first?.path) return `Editing ${ pretty(String(first.path)) }`;
+          if (first?.path) return `Editing ${ String(first.path) }`;
           return 'Editing files';
         }
         case 'web_search':
-          if (typeof item.query === 'string') return `Searching web: ${ pretty(item.query) }`;
+          if (typeof item.query === 'string') return `Searching web: ${ item.query }`;
           return 'Searching the web';
         case 'mcp_tool_call':
           if (typeof item.tool === 'string') return `Using ${ item.tool }`;
@@ -1128,7 +1130,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const isTool = ['command_execution', 'mcp_tool_call', 'web_search', 'file_change'].includes(kind);
             if (isTool && itemId) {
               if (parsed.type === 'item.started') {
-                callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input: item.arguments ?? item.input });
+                const call = this.toolEventEmitter.started(item);
+                callbacks.onToolStarted?.(call ?? { toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind) });
                 liveness.toolStarted(itemId, String(item.tool ?? item.name ?? kind));
               } else if (parsed.type === 'item.completed') liveness.toolFinished(itemId);
             }
@@ -1141,7 +1144,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               const activity = activityForItem(item);
               if (activity) emitActivity(activity, 'tool');
             }
-            emitCodexToolEvent(parsed.type, item, callbacks.onToolEvent);
+            this.toolEventEmitter.emit(parsed.type, item, callbacks.onToolEvent);
             if (kind === 'error' && parsed.type === 'item.completed') {
               if (outcome.recordErrorEvent(item.message) === 'notice') {
                 log.info('[CodexService] Codex emitted a non-fatal notice.');

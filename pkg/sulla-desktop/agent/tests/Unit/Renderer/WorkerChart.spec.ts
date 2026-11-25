@@ -6,13 +6,19 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 
 import WorkerChart from '../../../../pages/chat/components/workerChart/WorkerChart.vue';
-import type { WorkerChartAgent } from '../../../../pages/chat/components/workerChart/workerChartModel';
+import { WorkerChartController } from '../../../../pages/chat/components/workerChart/WorkerChartController';
+import { WorkerChartOverlayController } from '../../../../pages/chat/components/workerChart/WorkerChartOverlayController';
+import { WorkerChartTimeFormatter } from '../../../../pages/chat/components/workerChart/WorkerChartTimeFormatter';
+import { WorkerChartActivityBuckets, WorkerChartGeometry, WorkerChartLayout } from '../../../../pages/chat/components/workerChart/workerChartModel';
+import type { WorkerChartAgent, WorkerChartRow } from '../../../../pages/chat/components/workerChart/workerChartModel';
 
 const fixedNow = 1_700_000_000_000;
 const wrappers: VueWrapper[] = [];
+const originalDocumentHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+const originalGetAnimations = Object.getOwnPropertyDescriptor(document, 'getAnimations');
 
 function sampleTree(): WorkerChartAgent {
   return {
@@ -39,16 +45,40 @@ function sampleTree(): WorkerChartAgent {
   };
 }
 
-function mountChart(root: WorkerChartAgent = sampleTree(), chatColumnWidth = 1_000): VueWrapper {
-  const wrapper = mount(WorkerChart, { props: { root, chatColumnWidth }, attachTo: document.body });
+function mountChart(root: WorkerChartAgent = sampleTree(), chatColumnWidth = 1_000, snippetTick?: { agentId: string; sequence: number }): VueWrapper {
+  const wrapper = mount(WorkerChart, { props: { root, chatColumnWidth, snippetTick }, attachTo: document.body });
   wrappers.push(wrapper);
   return wrapper;
+}
+
+function createController(root: WorkerChartAgent): { controller: WorkerChartController; setRoot: (value: WorkerChartAgent) => void } {
+  const rootValue = ref<WorkerChartAgent | null>(root);
+  const sources = {
+    root: computed(() => rootValue.value),
+    chatColumnWidth: computed(() => 1_000),
+    snippetTick: computed(() => null),
+    instanceId: 'controller-test',
+    openAgent: vi.fn(),
+  };
+  const interaction = new WorkerChartOverlayController(sources);
+  const controller = new WorkerChartController(sources, new WorkerChartLayout(), new WorkerChartGeometry(),
+    new WorkerChartActivityBuckets(), new WorkerChartTimeFormatter(), interaction);
+  return { controller, setRoot: value => { rootValue.value = value } };
+}
+
+function childRows(rows: readonly WorkerChartRow[]): string[] {
+  return rows.filter((row): row is Extract<WorkerChartRow, { kind: 'agent' }> => row.kind === 'agent').map(row => row.agent.id);
 }
 
 afterEach(() => {
   wrappers.splice(0).forEach(wrapper => wrapper.unmount());
   document.body.innerHTML = '';
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  if (originalDocumentHidden) Object.defineProperty(document, 'hidden', originalDocumentHidden);
+  else Reflect.deleteProperty(document, 'hidden');
+  if (originalGetAnimations) Object.defineProperty(document, 'getAnimations', originalGetAnimations);
+  else Reflect.deleteProperty(document, 'getAnimations');
 });
 
 beforeEach(() => {
@@ -68,7 +98,6 @@ describe('WorkerChart', () => {
     expect(popover?.textContent).toContain('codex-gpt-6.2-sol');
     expect(popover?.textContent).toContain('Verify the live agent tree');
     expect(popover?.textContent).toContain('Reviewed the ownership boundary');
-    expect(popover?.querySelector('svg[role="img"]')?.getAttribute('aria-label')).toContain('3 samples');
 
     document.body.querySelector<HTMLButtonElement>('.worker-chart__open')?.click();
     expect(wrapper.emitted('open-agent')).toEqual([[{ agentId: 'worker-1' }]]);
@@ -136,8 +165,8 @@ describe('WorkerChart', () => {
     expect(document.body.querySelector('[role="dialog"][aria-label="Worker chart"]')).toBeNull();
   });
 
-  it('renders a node for every child agent with no +N group, and keeps a finished agent visible until the linger delay ends', async () => {
-    // risk: agent visibility — every agent is listed, and a finished one shows its done state for a while before dropping off
+  it('prioritizes a wide fan-out into a group, expands it, and keeps a finished agent until the linger delay ends', async () => {
+    // risk: agent visibility — priority chips must expose every child, while completed rows keep their existing linger window
     const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id): WorkerChartAgent => ({
       id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: id === 'f' ? 'done' : 'working',
     }));
@@ -145,8 +174,12 @@ describe('WorkerChart', () => {
     await nextTick();
 
     const ids = () => wrapper.findAll('[data-agent-id]').map(node => node.attributes('data-agent-id'));
+    expect(ids()).toEqual(['root', 'worker-a', 'worker-b']);
+    const overflow = wrapper.get('.worker-chart__node--group');
+    await overflow.trigger('click');
+    await nextTick();
     expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e', 'worker-f']);
-    expect(wrapper.find('.worker-chart__node--group').exists()).toBe(false);
+    expect(wrapper.find('.worker-chart__node--group').attributes('aria-expanded')).toBe('true');
     expect(wrapper.get('[data-agent-id="worker-f"]').attributes('data-state')).toBe('done');
 
     vi.advanceTimersByTime(9_999);
@@ -156,5 +189,79 @@ describe('WorkerChart', () => {
     vi.advanceTimersByTime(1);
     await nextTick();
     expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e']);
+  });
+
+  it('animates the nearest visible group marker when a hidden descendant is shown', async () => {
+    // risk: missed live feedback — an overflow-hidden agent must still animate the visible collapsed group.
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({
+      id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: 'working',
+    }));
+    const wrapper = mountChart({ id: 'root', name: 'Sulla', initials: 'S', state: 'working', children });
+    const groupMarker = wrapper.get('.worker-chart__node--group .worker-chart__marker').element;
+    const animation = { onfinish: null, cancel: vi.fn(), pause: vi.fn(), play: vi.fn(), playState: 'running' } as unknown as Animation;
+    const animate = vi.fn(() => animation);
+    Object.defineProperty(groupMarker, 'animate', { configurable: true, value: animate });
+
+    await wrapper.setProps({ snippetTick: { agentId: 'worker-e', sequence: 1 } });
+    await nextTick();
+    await nextTick();
+
+    expect(animate).toHaveBeenCalledWith(
+      [{ transform: 'scale(1)' }, { transform: 'scale(1.28)' }, { transform: 'scale(1)' }],
+      expect.objectContaining({ duration: 320 }),
+    );
+  });
+
+  it('pauses and resumes active Web Animations while the document is hidden', () => {
+    // risk: visibility and battery use — chart motion must pause while its chat tab is hidden and resume afterward.
+    let playState: AnimationPlayState = 'running';
+    const pause = vi.fn(() => { playState = 'paused'; });
+    const play = vi.fn(() => { playState = 'running'; });
+    const animation = { get playState() { return playState; }, pause, play } as unknown as Animation;
+    Object.defineProperty(document, 'getAnimations', { configurable: true, value: () => [animation] });
+    const wrapper = mountChart();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(pause).toHaveBeenCalledOnce();
+
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(play).toHaveBeenCalledOnce();
+    wrapper.unmount();
+  });
+
+  it('collapses disappearing children into their parent when an overflow group is collapsed', async () => {
+    // risk: animation geometry — removed children must travel to the parent marker, not a generic upward offset.
+    const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({
+      id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: 'working',
+    }));
+    const root: WorkerChartAgent = { id: 'root', name: 'Sulla', initials: 'S', state: 'working', children };
+    const fixture = createController(root);
+    try {
+      const collapsed = fixture.controller.chart.rows.find(row => row.kind === 'group');
+      expect(collapsed?.kind).toBe('group');
+      if (!collapsed || collapsed.kind !== 'group') throw new Error('Overflow group was not created.');
+      fixture.controller.activate(collapsed);
+      await nextTick();
+      const expanded = fixture.controller.chart.rows.find(row => row.kind === 'group');
+      if (!expanded || expanded.kind !== 'group') throw new Error('Expanded group marker was not retained.');
+      const departing = fixture.controller.chart.rows.find(row => row.kind === 'agent' && row.agent.id === 'worker-e');
+      if (!departing || departing.kind !== 'agent') throw new Error('Expanded child is missing.');
+
+      fixture.controller.activate(expanded);
+      await nextTick();
+      expect(childRows(fixture.controller.chart.rows)).not.toContain('worker-e');
+      const element = document.createElement('li');
+      element.dataset.rowKey = departing.key;
+      element.dataset.parentId = departing.parentId ?? '';
+      fixture.controller.beforeRowLeave(element);
+
+      const parent = fixture.controller.chart.rows.find(row => row.kind === 'agent' && row.agent.id === 'root');
+      expect(element.style.getPropertyValue('--worker-chart-leave-x')).toBe(`${(parent?.x ?? 0) + 14 - departing.x}px`);
+      expect(element.style.getPropertyValue('--worker-chart-leave-y')).toBe(`${(parent?.y ?? 0) - departing.y}px`);
+    } finally {
+      fixture.controller.unmount();
+    }
   });
 });

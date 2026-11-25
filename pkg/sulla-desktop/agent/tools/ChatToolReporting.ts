@@ -3,24 +3,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-const operations = ['open', 'navigate', 'read', 'screenshot', 'list', 'close'] as const;
-const statuses = ['Running', 'Completed', 'Failed'] as const;
 const memoryTools = new Set([
   'episodic_resolve', 'episodic_search', 'episodic_recall', 'dream_recent_memories',
   'recall_conversations', 'recall_index_lookup', 'recall_index_store',
   'upsert_conversation_keywords', 'search_conversation_keywords', 'search_conversation_logs',
-  'add_observational_memory', 'remove_observational_memory', 'search_observations', 'list_observations',
-  'add_identity_observation', 'remove_identity_observation', 'search_identity_observations',
-  'list_identity_observations', 'update_identity_section',
   'pack_list', 'pack_install', 'pack_sync', 'pack_uninstall', 'pack_validate',
 ]);
-export type HiddenBrowserOperation = typeof operations[number];
-type BrowserStatus = typeof statuses[number];
-export type ChatToolActivity = 'artifact-opened' | `browser:${ HiddenBrowserOperation }:${ BrowserStatus }`;
+const browserOperations = ['open', 'navigate', 'read', 'screenshot', 'list', 'close'] as const;
+const browserStatuses: readonly string[] = ['Running', 'Completed', 'Failed'];
+export type HiddenBrowserOperation = typeof browserOperations[number];
+export type ChatToolActivity = string;
 
 export class ChatToolReporting {
   static hiddenOperation(value: unknown): HiddenBrowserOperation | undefined {
-    return operations.find(operation => operation === value);
+    return browserOperations.find(operation => operation === value);
   }
 
   static isBackgroundBrowse(name: unknown): boolean {
@@ -33,9 +29,11 @@ export class ChatToolReporting {
 
   static describe(value: unknown): { label: string; text: string } | undefined {
     if (value === 'artifact-opened') return { label: 'Artifact', text: 'Artifact opened' };
-    if (typeof value !== 'string') return undefined;
+    if (typeof value !== 'string' || !value) return undefined;
+    // Known hidden-browser lifecycle strings keep their friendly wording; any
+    // other activity is shown exactly as recorded, never dropped or masked.
     const [kind, action, status, extra] = value.split(':');
-    if (kind !== 'browser' || extra !== undefined || !this.hiddenOperation(action) || !statuses.some(item => item === status)) return undefined;
-    return { label: 'Tool', text: `Hidden browser · ${ action } · ${ status }` };
+    const known = kind === 'browser' && extra === undefined && this.hiddenOperation(action) && browserStatuses.includes(status);
+    return { label: 'Tool', text: known ? `Hidden browser · ${ action } · ${ status }` : value };
   }
 }

@@ -12,16 +12,18 @@ const secretTools = [
   ['vault_update_password', 'password'],
   ['vault_set_credential', 'value'],
 ] as const;
+
 const knownTools = [
   'exec', 'exechost', 'file_search', 'read_file', 'browser_tab', 'click_element', 'set_field',
   'git_status', 'git_commit', 'github_create_pr', 'docker_build', 'slack_send_message',
   'pg_query', 'redis_get', 'calendar_create', 'execute_workflow', 'install_extension',
-  'spawn_agent', 'send_notification_to_human', 'add_observational_memory', 'create_workspace',
+  'spawn_agent', 'send_notification_to_human', 'create_workspace',
   'create_skill', 'integration_list', 'vault_is_enabled',
 ];
 
 describe('tool card formatting characterization', () => {
-  it('redacts every vault secret while preserving non-secret fields', () => {
+  // These args are redacted only in local conversation log files, not in chat or saved transcript messages.
+  it('redacts vault arguments on the log-file path', () => {
     fc.assert(fc.property(fc.uuid().map(value => `secret-${value}`), fc.string(), (secret, safe) => {
       for (const [toolName, field] of secretTools) {
         const args = { [field]: secret, safe };
@@ -29,12 +31,11 @@ describe('tool card formatting characterization', () => {
         expect(redacted[field]).toBe('[REDACTED]');
         expect(redacted.safe).toBe(safe);
         expect(JSON.stringify(redacted)).not.toContain(secret);
-        expect(JSON.stringify(formatToolCard(toolName, redacted))).not.toContain(secret);
       }
     }));
   });
 
-  it('leaves non-object arguments unchanged', () => {
+  it('leaves non-object log arguments unchanged', () => {
     for (const value of [null, undefined, 'secret', 3, true, [], ['secret']]) {
       expect(redactToolArgs('vault_set_credential', value)).toBe(value);
     }

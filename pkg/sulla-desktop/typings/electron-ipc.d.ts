@@ -1286,7 +1286,7 @@ export interface IpcMainInvokeEvents {
 
   // #region Chat Messages (persistent storage with DB fallback)
   'chat-messages:save':          (id: string, state: any) => { success: boolean; error?: string };
-  'chat-messages:load':          (id: string) => { success: boolean; data?: any; error?: string };
+  'chat-messages:load':          (id: string) => { success: boolean; data?: any; error?: string }; 'chat-messages:tool-payload': (input: { threadId: string; toolRunId: string }) => { success: boolean; data?: unknown; error?: string };
   'chat-messages:load-before':   (input: { threadId: string; beforeMessageId: string; limit?: number }) => { success: boolean; data?: any[]; error?: string };
   'chat-messages:delete':        (id: string) => { success: boolean; error?: string };
   'chat-messages:delete-messages': (input: { threadId: string; messageIds: string[] }) => { success: boolean; error?: string };

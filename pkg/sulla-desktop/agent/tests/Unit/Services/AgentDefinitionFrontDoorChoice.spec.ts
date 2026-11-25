@@ -22,6 +22,7 @@ function dbRow(config: Record<string, unknown> = {}) {
     provider: null, model: null, model_slot: null, model_choice: { mode: 'class', class: 'standard' }, source_kind: 'local',
     marketplace_template_id: null, marketplace_slug: null, marketplace_version: null, marketplace_author: null,
     when_to_call: '', when_not_to_call: '', send: '', returns: '', cost_tier: null, can_call: [], front_door: null,
+    agent_awareness: true,
     is_builtin: true, builtin_hash: null, run_location: 'container', created_at: '2026-11-18T00:00:00.000Z', updated_at: '2026-11-18T00:00:00.000Z',
   };
 }
@@ -54,7 +55,7 @@ describe('agent definition records an explicit null front door', () => {
     expect(marked[FRONT_DOOR_CHOSEN_KEY]).toBe(null);
     expect(marked.role).toBe('review');
     expect(marked.modelChoice).toEqual({ mode: 'class', class: 'standard' });
-    expect((f.queryOne.mock.calls[0][1] as unknown[]).at(-2)).toBe(null);
+    expect((f.queryOne.mock.calls[0][1] as unknown[]).at(-3)).toBe(null);
 
     f.queryOne.mockClear();
     await AgentDefinitionModel.create({ slug: 'reviewer', name: 'Reviewer', config: { role: 'review' } }, publisher);
@@ -63,7 +64,7 @@ describe('agent definition records an explicit null front door', () => {
     f.queryOne.mockClear();
     await AgentDefinitionModel.create({ slug: 'reviewer', name: 'Reviewer', frontDoor: false, config: { role: 'review' } }, publisher);
     expect(writtenConfigs().some(config => FRONT_DOOR_CHOSEN_KEY in config)).toBe(false);
-    expect((f.queryOne.mock.calls[0][1] as unknown[]).at(-2)).toBe(false);
+    expect((f.queryOne.mock.calls[0][1] as unknown[]).at(-3)).toBe(false);
   });
 
   it('stamps an editor save of null and keeps unrelated config', async() => {
@@ -103,5 +104,21 @@ describe('agent definition records an explicit null front door', () => {
     expect(config).not.toHaveProperty(FRONT_DOOR_CHOSEN_KEY);
     expect(config.role).toBe('review');
     expect(config.modelChoice).toEqual({ mode: 'class', class: 'standard' });
+  });
+});
+
+describe('agent awareness persistence', () => {
+  it('round-trips an explicit hidden setting through model create, read and update', async() => {
+    // risk: worker privacy/context settings silently reset on editor save or reload.
+    f.queryOne.mockImplementation(async(_sql: string, params: unknown[]) => ({ ...dbRow(), agent_awareness: params.at(-2) }));
+    const created = await AgentDefinitionModel.create({ slug: 'reviewer', name: 'Reviewer', agentAwareness: false }, publisher);
+    expect((f.queryOne.mock.calls[0][1] as unknown[]).at(-2)).toBe(false);
+    expect(created.agent_awareness).toBe(false);
+
+    f.queryOne.mockImplementation(async() => ({ ...dbRow(), agent_awareness: false }));
+    await AgentDefinitionModel.update('agent-1', { agentAwareness: true }, undefined, publisher);
+    const update = f.queryOne.mock.calls.map(call => String(call[0])).find(sql => sql.includes('UPDATE'));
+    expect(update).toContain('agent_awareness =');
+    expect((f.queryOne.mock.calls.find(call => String(call[0]).includes('UPDATE'))![1] as unknown[])[0]).toBe(true);
   });
 });

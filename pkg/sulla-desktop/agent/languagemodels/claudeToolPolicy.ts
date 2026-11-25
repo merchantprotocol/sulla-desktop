@@ -36,19 +36,16 @@ export const ACTING_NATIVE_TOOL_DENYLIST = 'SendMessage TaskStop Workflow CronCr
 export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop ScheduleWakeup CronCreate CronDelete CronList RemoteTrigger SendMessage Workflow mcp__sulla-native__ask_user_question';
 
 /**
- * Additional native tools disabled for SUBCONSCIOUS (observer) spawns only.
+ * Additional native tools disabled for SUBCONSCIOUS memory-processing spawns.
  *
- * Subconscious agents (observation/identity writers + recalls, summarizer,
- * digester) are OBSERVERS — their entire job is to read the conversation and
- * record memory through their Sulla DB tools. They must never take real action
- * on the host. Their Sulla-registry toolset is already locked down to DB tools
- * via `allowedToolNames`, but that gate does NOT govern Claude Code's OWN
- * built-in tools. Spawned with --dangerously-skip-permissions, the CLI would
- * otherwise hand an observer full Read/Write/Edit/Bash/Grep/WebFetch access —
- * so a subconscious pass could (and did) start editing files instead of just
- * observing. Denylisting the native actor tools here makes acting structurally
- * impossible, matching the observer invariant (observers get DB tools only,
- * never filesystem/shell/source-control/browser/code-editing tools).
+ * Subconscious agents (memory recall, V7 writer and summarizer) process memory
+ * context and must never take real action on the host. Their Sulla-registry
+ * toolset is already locked down via `allowedToolNames`, but that gate does NOT
+ * govern Claude Code's OWN built-in tools. Spawned with
+ * --dangerously-skip-permissions, the CLI would otherwise hand them full
+ * Read/Write/Edit/Bash/Grep/WebFetch access. Denylisting the native actor tools
+ * keeps memory processing separate from filesystem/shell/source-control/
+ * browser/code-editing actions.
  *
  * Names include current + legacy aliases (e.g. KillShell/KillBash) so a rename
  * on either side is harmless — an unknown disallowed name is simply ignored.

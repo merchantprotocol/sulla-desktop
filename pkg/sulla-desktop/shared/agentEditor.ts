@@ -40,6 +40,7 @@ export interface AgentEditorDefinitionFields
   name:         string;
   description:  string;
   prompt:       string;
+  agentAwareness: boolean;
   modelSlot:    AgentModelSlot;
   modelChoice?: AgentModelChoice;
   enabled:      boolean;

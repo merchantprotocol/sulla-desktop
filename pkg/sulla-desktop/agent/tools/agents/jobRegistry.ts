@@ -75,6 +75,8 @@ export interface AgentJobTask extends ResultTracking {
   /** Projects task this child was launched to work, when explicitly supplied. */
   taskId?:    string;
   status:     AgentJobTaskStatus;
+  /** How its parent launched this task; sync children leave that parent blocked until settlement. */
+  spawnMode?: 'sync' | 'async';
   threadId?:  string;
   startedAt?: number;
   finishedAt?: number;

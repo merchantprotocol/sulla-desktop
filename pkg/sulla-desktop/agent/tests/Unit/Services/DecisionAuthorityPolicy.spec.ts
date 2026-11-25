@@ -21,7 +21,7 @@ describe('DecisionAuthorityPolicy', () => {
       [approval, 'approve', 'human', true], [approval, 'deny', 'human', true], [approval, 'pass', 'human', false], [approval, 'answer', 'human', false],
       [approval, 'approve', 'agent', false], [approval, 'deny', 'agent', true], [approval, 'pass', 'agent', true], [approval, 'answer', 'agent', false],
       [question, 'answer', 'human', true], [question, 'approve', 'human', false], [question, 'deny', 'human', false], [question, 'pass', 'human', false],
-      [question, 'answer', 'agent', true], [question, 'approve', 'agent', false], [question, 'deny', 'agent', false], [question, 'pass', 'agent', false],
+      [question, 'answer', 'agent', true], [question, 'approve', 'agent', false], [question, 'deny', 'agent', false], [question, 'pass', 'agent', true],
       [task, 'answer', 'human', true], [task, 'answer', 'agent', false],
       [consent, 'answer', 'human', true], [consent, 'answer', 'agent', false],
     ];
@@ -30,6 +30,7 @@ describe('DecisionAuthorityPolicy', () => {
     expect(policy.classify(task)).toBe('human');
     expect(policy.classify({ ...question, questions: [...question.questions, { question: 'Do this?', task: true, options: [{ label: 'Done' }] }] })).toBe('human');
     expect(policy.classify(consent)).toBe('human');
+    expect(policy.classify({ ...question, route: { authority: 'human' } as any })).toBe('human');
     expect(policy.classify({ ...question, title: 'Run this task?' })).toBe('any');
     for (const [record, action, actor, allowed] of cases) expect(policy.allows(record, action, actor)).toBe(allowed);
   });

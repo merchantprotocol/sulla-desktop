@@ -73,6 +73,8 @@ describe('persistent questions', () => {
     const service = f.make(new DecisionAskerWaiter({ park } as any));
     const receipt = await service.requestQuestion(input);
     expect(receipt.parked).toBe(true);
+    expect(receipt.record.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
+    expect(f.pending.findById).not.toHaveBeenCalled();
     expect(receipt.record.payload).toMatchObject({ askerJobId: 'job-1', askerTaskIndex: '2' });
     expect(park).toHaveBeenCalledOnce();
     expect(park.mock.calls[0][0]).toBe('job-1');
@@ -101,6 +103,7 @@ describe('persistent questions', () => {
       askerWaiter: new DecisionAskerWaiter({ park: parking } as any) });
     const request = await service.requestQuestion(input);
 
+    expect(request.record.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
     expect(waitReason).toContain(request.record.id);
     await expect(service.resolveAs({ kind: 'human' }, { id: request.record.id, conversationId: 'thread-a', action: 'answered', answers: [{ question: 'Which scope?', selected: ['A'] }] }))
       .resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });

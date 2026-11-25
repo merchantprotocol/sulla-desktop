@@ -54,4 +54,34 @@ describe('ToolApproval publish card', () => {
     expect(wrapper.find('button.deny').exists()).toBe(false);
     wrapper.unmount();
   });
+
+  it('uses the shared clock to expire the card without a per-card timer', async() => {
+    // risk: irreversible side effects — an approval must become unavailable as soon as the shared decision clock reaches its deadline.
+    const expiresAt = 10_000;
+    const wrapper = mount(ToolApproval, { props: {
+      msg: { id: 'msg-clock', kind: 'tool_approval', createdAt: 1, title, reason: 'Publish this Files draft.', command: 'Files draft publication', decision: 'pending', approvalId: 'decision-clock', expiresAt } as any,
+      now: expiresAt - 1,
+    } });
+
+    expect(wrapper.text()).not.toContain('Expired');
+    await wrapper.setProps({ now: expiresAt });
+
+    expect(wrapper.text()).toContain('Expired');
+    expect(wrapper.find('button.approve').exists()).toBe(false);
+    expect(wrapper.find('button.deny').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it.each([
+    { requestedBy: { label: 'Publish the agent' } },
+    { requestedBy: { agentId: 'Publish the agent', label: 'Publish the agent' } },
+  ])('renders a requester label only once when the agent id is missing or identical', ({ requestedBy }) => {
+    // risk: user clarity — requester identity must not appear duplicated on approval cards.
+    const wrapper = mount(ToolApproval, { props: {
+      msg: { id: 'msg-requester', kind: 'tool_approval', createdAt: 1, title, reason: 'Publish this Files draft.', command: 'Files draft publication', decision: 'pending', requestedBy } as any,
+    } });
+
+    expect(wrapper.find('.requester').text()).toBe('Requested by Publish the agent');
+    wrapper.unmount();
+  });
 });

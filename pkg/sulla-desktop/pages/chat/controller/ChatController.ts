@@ -48,7 +48,7 @@ import type {
   VoiceState,
 } from '../models';
 
-import { defaultChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
+import { defaultChatHeartbeatConfig, normalizeChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 
 // ─── Defaults ─────────────────────────────────────────────────────
 const DEFAULT_MODEL: ModelDescriptor = {
@@ -184,7 +184,7 @@ export class ChatController {
     this.model = ref(initial.model);
     this.partialHistory = initial.partialHistory === true;
     this.usage = ref(emptyTokenUsage());
-    this.heartbeat = ref(initial.heartbeat ?? defaultChatHeartbeatConfig());
+    this.heartbeat = ref(normalizeChatHeartbeatConfig(initial.heartbeat ?? defaultChatHeartbeatConfig()));
 
     this.messages = computed(() => this.thread.value.messages);
     this.isRunning = computed(() => isRunning(this.runState.value));
@@ -462,8 +462,20 @@ export class ChatController {
   }
 
   setHeartbeat(config: ChatHeartbeatConfig): void {
-    this.heartbeat.value = { ...config };
+    this.heartbeat.value = normalizeChatHeartbeatConfig(config);
     this.persist();
+  }
+
+  /**
+   * Saves a heartbeat exactly as the backend scheduler confirmed it, including the real start
+   * and six-hour deadline. Tab state must never hold an enabled heartbeat without its deadline:
+   * re-registering one after a crash would open a fresh six-hour window.
+   */
+  confirmHeartbeat(status: ChatHeartbeatConfig): void {
+    this.setHeartbeat({
+      intervalMinutes: status.intervalMinutes, message: status.message,
+      startedAt: status.startedAt ?? null, expiresAt: status.expiresAt ?? null, setBy: status.setBy,
+    });
   }
 
   setBackendThreadId(threadId: string): void {
@@ -956,7 +968,7 @@ export class ChatController {
     this.connection.value = state.connection;
     this.model.value = state.model;
     this.partialHistory = state.partialHistory === true;
-    this.heartbeat.value = state.heartbeat ?? defaultChatHeartbeatConfig();
+    this.heartbeat.value = normalizeChatHeartbeatConfig(state.heartbeat ?? defaultChatHeartbeatConfig());
     this.bus.emit({ kind: 'threadHydrated', threadId: state.thread.id });
   }
 

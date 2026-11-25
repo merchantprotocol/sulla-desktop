@@ -35,7 +35,7 @@ export class PendingDecisionRepository {
   async hasPendingForConversation(conversationId: string, now = Date.now()): Promise<boolean> {
     const rows = await this.client.query<{ id: string }>(`SELECT id FROM human_decisions
       WHERE status IN ('pending','deferred') AND record->>'conversationId'=$1
-        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND (status='answered' OR COALESCE(record->>'attention','') NOT IN ('answered','dismissed'))
         AND (record#>>'{payload,answerRoute}'='inbox' OR (record->>'expiresAt')::bigint>$2) LIMIT 1`, [conversationId, now]);
     return rows.length > 0;
   }
@@ -58,6 +58,14 @@ export class PendingDecisionRepository {
     return rows[0]?.record;
   }
 
+  async openRoutedQuestions(): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE record->>'kind'='question' AND record#>>'{route,authority}'='any'
+        AND status IN ('pending','deferred') AND COALESCE(record->>'attention','active')='active'
+      ORDER BY (record->>'createdAt')::bigint ASC`);
+    return rows.map(row => row.record);
+  }
+
   async ancestry(conversationId: string): Promise<string[]> {
     const rows = await this.client.query<{ id: string }>(`WITH RECURSIVE ancestors(id) AS (
       SELECT $1::text UNION SELECT job.parent_thread_id FROM agent_jobs job
@@ -71,6 +79,7 @@ export class PendingDecisionRepository {
     const rows = await this.client.query<AgentJobTaskTarget>(`SELECT j.job_id AS "jobId", j.status AS "jobStatus",
         task.ordinality - 1 AS "taskIndex", task.value->>'status' AS "taskStatus", task.value->>'threadId' AS "threadId",
         j.parent_channel AS "parentChannel", j.parent_thread_id AS "parentThreadId",
+        j.parent_job_id AS "parentJobId", task.value->>'spawnMode' AS "spawnMode",
         task.value->>'label' AS label, task.value->>'agentId' AS "agentId"
       FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
       WHERE task.value->>'threadId'=$1 LIMIT 1`, [threadId]);
@@ -184,11 +193,23 @@ export class PendingDecisionRepository {
     const attempt = randomUUID();
     const actor = record.answeredBy ?? { kind: 'human' as const };
     const humanAnswer = actor.kind === 'human';
+    const history = [{
+      threadId: actor.kind === 'agent' ? actor.threadId : record.route?.chain.at(-1)?.threadId ?? record.conversationId,
+      agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human',
+      action: 'answered', at: Date.now(),
+      ...(actor.note ? { note: actor.note.slice(0, 500) } : {}),
+    }];
+    const expectedHolder = actor.kind === 'agent' ? record.route?.holderIndex ?? null : null;
     const rows = await this.client.query<{ record: DecisionRecord }>(`WITH chosen AS (
-      UPDATE human_decisions SET record=record || jsonb_build_object('attention','answered','answerDelivery','queued','answers',$3::jsonb,'answerAttempt',$7::text,'answeredBy',$8::jsonb), updated_at=NOW()
+      UPDATE human_decisions SET record=record || jsonb_build_object('attention','answered','answerDelivery','queued','answers',$3::jsonb,'answerAttempt',$7::text,'answeredBy',$8::jsonb) ||
+        CASE WHEN record ? 'route' THEN jsonb_build_object('route', CASE WHEN status='answered' THEN record->'route' ELSE
+          COALESCE(record->'route','{}'::jsonb) || jsonb_build_object('history', COALESCE(record#>'{route,history}','[]'::jsonb) || $12::jsonb) END) ELSE '{}'::jsonb END, updated_at=NOW()
       WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$2
-        AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox'))
-        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox')
+          OR (status='answered' AND record->>'answerDelivery' IS NULL AND record->'answeredBy'=$8::jsonb AND record->'answers'=$3::jsonb))
+        AND (status='answered' OR COALESCE(record->>'attention','') NOT IN ('answered','dismissed'))
+        AND ($8::jsonb->>'kind'='human' OR ($11::integer IS NOT NULL AND record#>>'{route,authority}'='any'
+          AND (record#>>'{route,holderIndex}')::integer=$11 AND record#>>ARRAY['route','chain',$11::text,'threadId']=$13))
         AND COALESCE(record#>>'{payload,lateAnswerDelivered}','false') <> 'true'
       RETURNING record
     ), queued AS (
@@ -197,18 +218,28 @@ export class PendingDecisionRepository {
         (SELECT agent_id FROM conversation_history WHERE (thread_id=$2 OR id=$2) AND deleted_at IS NULL AND NULLIF(agent_id,'') IS NOT NULL
           ORDER BY CASE WHEN thread_id=$2 THEN 0 ELSE 1 END,last_active_at DESC NULLS LAST,id DESC LIMIT 1) FROM chosen
       ON CONFLICT(message_id) DO UPDATE SET sender=EXCLUDED.sender,kind=EXCLUDED.kind,body=EXCLUDED.body,ids=EXCLUDED.ids,receiver_agent_id=EXCLUDED.receiver_agent_id,delivered_at=NULL,lease_owner=NULL,lease_expires_at=NULL RETURNING message_id
-    ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt, JSON.stringify(actor), humanAnswer ? 'you' : 'system:decision', humanAnswer ? 'human' : 'decision']);
+      ) SELECT record FROM chosen`, [record.id, record.conversationId, JSON.stringify(answers), messageId, body, JSON.stringify({ messageId, threadId: record.conversationId, answerAttempt: attempt, decisionDelivery: 'queued' }), attempt, JSON.stringify(actor), humanAnswer ? 'you' : 'system:decision', humanAnswer ? 'human' : 'decision', expectedHolder, JSON.stringify(history), actor.kind === 'agent' ? actor.threadId : '']);
     return rows[0]?.record;
   }
 
   /** A job answer is saved before the mailbox is touched, so a stopped asker never loses the decision. */
   async recordJobAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined> {
+    const actor = record.answeredBy ?? { kind: 'human' as const };
+    const history = [{ threadId: actor.kind === 'agent' ? actor.threadId : record.route?.chain.at(-1)?.threadId ?? record.conversationId,
+      agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human', action: 'answered', at: Date.now(),
+      ...(actor.note ? { note: actor.note.slice(0, 500) } : {}) }];
+    const expectedHolder = actor.kind === 'agent' ? record.route?.holderIndex ?? null : null;
     const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions SET status='answered',
-      record=record || jsonb_build_object('status','answered','attention','answered','answerDelivery','queued','answers',$2::jsonb,'answeredBy',$3::jsonb),updated_at=NOW()
+      record=record || jsonb_build_object('status','answered','attention','answered','answerDelivery','queued','answers',$2::jsonb,'answeredBy',$3::jsonb) ||
+        CASE WHEN record ? 'route' AND status <> 'answered' THEN jsonb_build_object('route',
+          COALESCE(record->'route','{}'::jsonb) || jsonb_build_object('history', COALESCE(record#>'{route,history}','[]'::jsonb) || $6::jsonb)) ELSE '{}'::jsonb END,updated_at=NOW()
       WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$4
-        AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox'))
-        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed') RETURNING record`,
-    [record.id, JSON.stringify(answers), JSON.stringify(record.answeredBy ?? { kind: 'human' }), record.conversationId]);
+        AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox')
+          OR (status='answered' AND record->>'answerDelivery' IS NULL AND record->'answeredBy'=$3::jsonb AND record->'answers'=$2::jsonb))
+        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND ($3::jsonb->>'kind'='human' OR ($5::integer IS NOT NULL AND record#>>'{route,authority}'='any'
+          AND (record#>>'{route,holderIndex}')::integer=$5 AND record#>>ARRAY['route','chain',$5::text,'threadId']=$7)) RETURNING record`,
+    [record.id, JSON.stringify(answers), JSON.stringify(actor), record.conversationId, expectedHolder, JSON.stringify(history), actor.kind === 'agent' ? actor.threadId : '']);
     return rows[0]?.record;
   }
 

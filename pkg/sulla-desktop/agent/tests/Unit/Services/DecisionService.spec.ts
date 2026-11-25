@@ -11,6 +11,7 @@ const db = vi.hoisted(() => ({ query: vi.fn((sql: string, _params?: unknown[]) =
 vi.mock('../../../database/PostgresClient', () => ({ postgresClient: db }));
 
 import { DecisionService } from '../../../services/DecisionService';
+import { PublishApprovalCoordinator } from '../../../tools/files/PublishApprovalCoordinator';
 
 describe('DecisionService', () => {
   it('constructs without touching the renderer WebSocket client', () => {
@@ -99,7 +100,7 @@ describe('DecisionService', () => {
     const service = new DecisionService(undefined, { decisions: decisions as any, pendingDecisions: pendingDecisions as any });
     const { record, result } = await service.request({ kind: 'approval', title: 'Run?', toolName: 'write', conversationId: 'asker', channel: 'chat' }, 60_000);
     const response = { id: record.id, conversationId: record.conversationId, action: 'denied' as const };
-    const actor = { kind: 'agent' as const, agentId: 'coding-manager', label: 'Coding Manager', threadId: 'manager' };
+    const actor = { kind: 'human' as const };
 
     await expect((service.resolve as any)({ ...response, id: 'missing' })).rejects.toThrow('decision actor is required');
     const first = service.resolveAs(actor, response);
@@ -109,6 +110,63 @@ describe('DecisionService', () => {
     await expect(first).resolves.toMatchObject({ settled: true });
     await expect(result).resolves.toMatchObject({ status: 'denied', answeredBy: actor });
     expect(decisions.settle).toHaveBeenCalledOnce();
+  });
+
+  it('does not announce an expiry when a durable publish approval already settled', async() => {
+    // risk: irreversible side effects — a stale container timer must not tell an asker that an approved publish expired.
+    let status = 'pending';
+    const decisions = {
+      insert: vi.fn(async() => undefined),
+      expirePending: vi.fn(async() => {
+        if (status !== 'pending') return undefined;
+        status = 'expired';
+        return { id: 'publish-decision', kind: 'approval', status: 'expired', payload: { filesPublishRequestId: 'publish-1' } } as any;
+      }),
+      settleDurablePublish: vi.fn(async() => { status = 'approved'; return true; }),
+    };
+    const service = new DecisionService(undefined, { decisions: decisions as any, pendingDecisions: { ancestry: vi.fn(async() => []) } as any });
+    const deliver = vi.fn(async() => true);
+    const coordinator = new PublishApprovalCoordinator(service, { deliver }, { for: async() => 'Publish approved.' });
+    coordinator.start();
+    const { record } = await service.request({
+      kind: 'approval', title: 'Publish?', toolName: 'files_request_publish', conversationId: 'thread-1', channel: 'channel-1',
+      payload: { filesPublishRequestId: 'publish-1' },
+    } as any, 60_000);
+    const changed: any[] = [];
+    service.subscribe(record => changed.push(record));
+
+    await decisions.settleDurablePublish();
+    await service.expire(record.id);
+
+    expect(changed).toEqual([]);
+    expect(deliver).not.toHaveBeenCalled();
+    coordinator.dispose();
+  });
+
+  it('announces a normal pending-decision expiry exactly once', async() => {
+    // risk: irreversible side effects — a genuinely expired publish must reach Files and its asker exactly once.
+    const expired = { id: 'publish-decision', kind: 'approval', status: 'expired', payload: { filesPublishRequestId: 'publish-1' } } as any;
+    const decisions = {
+      insert: vi.fn(async() => undefined),
+      expirePending: vi.fn(async() => expired),
+    };
+    const service = new DecisionService(undefined, { decisions: decisions as any, pendingDecisions: { ancestry: vi.fn(async() => []) } as any });
+    const deliver = vi.fn(async() => true);
+    const coordinator = new PublishApprovalCoordinator(service, { deliver }, { for: async() => 'Publish expired.' });
+    coordinator.start();
+    const { record } = await service.request({
+      kind: 'approval', title: 'Publish?', toolName: 'files_request_publish', conversationId: 'thread-1', channel: 'channel-1',
+      payload: { filesPublishRequestId: 'publish-1' },
+    } as any, 60_000);
+    const changed: any[] = [];
+    service.subscribe(next => changed.push(next));
+
+    await service.expire(record.id);
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+
+    expect(changed).toEqual([expired]);
+    expect(deliver).toHaveBeenCalledWith(expired, 'Publish expired.');
+    coordinator.dispose();
   });
 });
 
@@ -140,7 +198,9 @@ describe('a question whose asker stops waiting', () => {
 
     await service.resolve({ id: record.id, conversationId: 'thread-1', action: 'answered', answers: [{ question: 'Color?', selected: ['Blue'] }] }, { kind: 'human' });
 
-    const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status = \$2/.test(sql))!;
-    expect(JSON.parse(String(update[1]?.[2])).answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);
+    const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status = \$2, record = \$3::jsonb/.test(sql))!;
+    const saved = JSON.parse(String(update[1]?.[2]));
+    expect(saved.answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);
+    expect(saved.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
   });
 });

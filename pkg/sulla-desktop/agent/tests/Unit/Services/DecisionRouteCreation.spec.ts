@@ -20,13 +20,23 @@ describe('decision route creation', () => {
     const pending = {
       ancestry: vi.fn(async() => ['asker-thread', 'root-thread']),
       findOpenQuestion: vi.fn(async() => undefined),
+      findById: vi.fn(async(id: string) => stored.find(record => record.id === id)),
     };
     const decisions = {
       insert: vi.fn(async(record: DecisionRecord) => { stored.push(record) }),
-      settle: vi.fn(async() => true),
+      settle: vi.fn(async(id: string, status: string, record: DecisionRecord) => {
+        const index = stored.findIndex(existing => existing.id === id);
+        if (index < 0) return false;
+        stored[index] = record;
+        return status === record.status;
+      }),
     };
     const routeResolver = { resolve: vi.fn(async() => chain) };
-    const service = new DecisionService(undefined, { pendingDecisions: pending as any, decisions: decisions as any, routeResolver: routeResolver as any });
+    const escalation = {
+      start: vi.fn(async() => undefined), reconcile: vi.fn(async() => undefined), answerAsAgent: vi.fn(),
+      authorize: vi.fn(async() => true), passFromResolveAs: vi.fn(async() => true), historyForAction: vi.fn(() => []),
+    };
+    const service = new DecisionService(undefined, { pendingDecisions: pending as any, decisions: decisions as any, routeResolver: routeResolver as any, escalation: escalation as any });
     const approval = await service.request({ kind: 'approval', conversationId: 'asker-thread', channel: 'child-channel', title: 'Approve?' });
     const plain = await service.requestQuestion({
       conversationId: 'asker-thread', channel: 'child-channel', title: 'Choose?', questions: [{ question: 'Which?', options: [{ label: 'A' }] }],

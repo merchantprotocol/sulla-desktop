@@ -28,6 +28,7 @@ export interface AgentMarketplaceManifest {
   manifestVersion: 1;
   metadata:        { slug: string; title: string; description: string; version: string; author?: string; marketplaceTemplateId?: string };
   spec: {
+    agentAwareness?: boolean;
     provider?:   string;
     /** @deprecated Read for compatibility only; new manifests write modelSlot. */
     model?:      string;
@@ -170,6 +171,7 @@ export class AgentDefinitionService {
         ...(agent.marketplace_template_id ? { marketplaceTemplateId: agent.marketplace_template_id } : {}),
       },
       spec: {
+        agentAwareness: agent.agent_awareness,
         ...(agent.provider ? { provider: agent.provider } : {}),
         ...(agent.model ? { model: agent.model } : {}),
         ...(agent.model_choice ? { modelChoice: agent.model_choice } : {}),
@@ -211,6 +213,7 @@ export class AgentDefinitionService {
     const input: AgentDefinitionInput = {
       slug:                  metadata.slug,
       name:                  metadata.title,
+      agentAwareness:        typeof spec.agentAwareness === 'boolean' ? spec.agentAwareness : true,
       description:           metadata.description ?? '',
       systemPrompt:          spec.prompt,
       promptContent:         spec.prompt,

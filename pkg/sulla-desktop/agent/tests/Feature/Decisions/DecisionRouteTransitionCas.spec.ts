@@ -23,8 +23,14 @@ describe('DecisionRouteTransitionSqlBuilder', () => {
     const timeout = builder.advanceHolder('question', 'question-1', 0, { kind: 'system', threadId: 'parent-thread' }, { holderIndex: 1 }, {
       threadId: 'parent-thread', agentId: 'parent', action: 'timeout', at: 101,
     }, 101);
-    expect(timeout.sql).toContain("$3 IN ('human','system')");
+    expect(timeout.sql).toContain("$3='human' OR (COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4");
     expect(timeout.sql).toContain("(record#>>'{route,holderDeadline}')::bigint <= $8");
+    expect(timeout.sql).toContain("($3 <> 'agent' OR record->>'kind'='approval' OR record#>>'{route,authority}'='any')");
+    const humanOnlyAnswer = builder.settleAs('question', 'task-question', 0, { kind: 'agent', threadId: 'parent-thread' }, 'answered', {});
+    expect(humanOnlyAnswer.sql).toContain("COALESCE(record#>>'{route,authority}','human')='any'");
+    const approvalGrant = builder.settleAs('approval', 'approval-1', 0, { kind: 'agent', threadId: 'parent-thread' }, 'approved', {});
+    expect(approvalGrant.sql).toContain("($3='human' OR ($3='system' AND $6='expired') OR ($3='agent' AND $6='denied'))");
+    expect(approvalGrant.sql).not.toContain("($3='agent' AND $6='approved')");
   });
 });
 
@@ -76,5 +82,59 @@ postgresSuite('DecisionRouteTransition CAS with real Postgres', () => {
     expect(outcomes.filter(Boolean)).toHaveLength(1);
     expect(stored.record.route?.history[0]).toEqual(history[0]);
     expect(stored.record.route?.history.length).toBe(outcomes[0] ? 1 : 2);
+  });
+
+  it('rejects an agent answer to a human-only question and any agent approval grant', async() => {
+    // risk: authorization — even a future caller that bypasses DecisionAuthorityPolicy cannot pass the persisted SQL guard.
+    const questionId = `decision-human-only-${ randomUUID() }`;
+    const approvalId = `decision-agent-grant-${ randomUUID() }`;
+    const route = (authority: 'human' | 'any') => ({
+      authority,
+      chain: [
+        { threadId: 'parent-thread', channel: 'chat', agentId: 'parent', jobId: 'parent-job', taskIndex: 0, kind: 'agent' as const },
+        { threadId: 'root-thread', channel: 'chat', agentId: 'human', kind: 'human' as const },
+      ],
+      holderIndex: 0, holderSince: Date.now(), history: [],
+    });
+    const makeRecord = (id: string, kind: 'question' | 'approval', authority: 'human' | 'any'): DecisionRecord => ({
+      id, conversationId: 'asker-thread', channel: 'chat', title: 'Pick one', kind,
+      status: 'pending', attention: 'active', createdAt: 1, expiresAt: Date.now() + 60_000,
+      route: route(authority),
+    });
+    await database.query('INSERT INTO human_decisions (id, session_id, status, record) VALUES ($1, $2, $3, $4::jsonb), ($5, $2, $3, $6::jsonb)',
+      [questionId, 'decision-cas-test', 'pending', JSON.stringify(makeRecord(questionId, 'question', 'human')),
+        approvalId, JSON.stringify(makeRecord(approvalId, 'approval', 'human'))]);
+
+    await expect(repository.settleAs(questionId, 0, { kind: 'agent', threadId: 'parent-thread' }, 'answered', { status: 'answered', attention: 'answered' } as any)).resolves.toBe(false);
+    await expect(repository.settleAs(approvalId, 0, { kind: 'agent', threadId: 'parent-thread' }, 'approved', { status: 'approved' } as any)).resolves.toBe(false);
+    await expect(repository.advanceHolder(questionId, 0, { kind: 'agent', threadId: 'parent-thread' }, { holderIndex: 1 }, {
+      threadId: 'parent-thread', agentId: 'parent', action: 'passed', at: Date.now(),
+    })).resolves.toBe(false);
+  });
+
+  it('rejects agent answers through both late-delivery SQL paths when a legacy question has no route', async() => {
+    // risk: authorization — an agent cannot answer a legacy or human-only question by bypassing the service through durable delivery.
+    const chatId = `decision-late-chat-${ randomUUID() }`;
+    const jobId = `decision-late-job-${ randomUUID() }`;
+    const makeLegacyRecord = (id: string, conversationId: string): DecisionRecord => ({
+      id, conversationId, channel: 'chat', title: 'Pick one', kind: 'question', status: 'expired', attention: 'active',
+      createdAt: 1, expiresAt: 2, payload: { answerRoute: 'inbox' },
+      questions: [{ question: 'Color?', options: [{ label: 'Blue' }] }],
+      answeredBy: { kind: 'agent', threadId: 'parent-thread', agentId: 'parent' },
+    });
+    const chatRecord = makeLegacyRecord(chatId, 'late-chat-thread');
+    const jobRecord = makeLegacyRecord(jobId, 'late-job-thread');
+    await database.query('INSERT INTO human_decisions (id, session_id, status, record) VALUES ($1, $2, $3, $4::jsonb), ($5, $2, $3, $6::jsonb)',
+      [chatId, 'decision-late-test', 'expired', JSON.stringify(chatRecord), jobId, JSON.stringify(jobRecord)]);
+    await database.query('INSERT INTO conversation_history (id, thread_id, agent_id, type) VALUES ($1, $2, $3, $4)',
+      [`history-${ chatId }`, chatRecord.conversationId, 'requester-agent', 'chat']);
+
+    const answers = [{ question: 'Color?', selected: ['Blue'] }];
+    await expect(repository.queueLateAnswer(chatRecord, answers, 'Parent answer')).resolves.toBeUndefined();
+    await expect(repository.recordJobAnswer(jobRecord, answers)).resolves.toBeUndefined();
+    const stored = await database.query<{ id: string; record: DecisionRecord }>(
+      'SELECT id, record FROM human_decisions WHERE id IN ($1, $2) ORDER BY id', [chatId, jobId]);
+    expect(stored).toHaveLength(2);
+    expect(stored.every(row => row.record.attention === 'active' && row.record.answeredBy?.kind === 'agent')).toBe(true);
   });
 });

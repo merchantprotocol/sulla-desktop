@@ -66,7 +66,7 @@ describe('IpcController channel registration', () => {
     ['model routing', ipc => new ModelRoutingIpcController(ipc, { router: { onStatusChange: vi.fn() } as any, recommendedState: vi.fn(), listAgents: vi.fn(), onIntegrationValueChange: vi.fn(), broadcast: vi.fn() }), ['model-routing:get', 'model-routing:set', 'model-routing:reset', 'model-routing:worker-set', 'model-routing:refresh', 'model-routing:cli-check', 'model-routing:cli-update']],
     ['chat heartbeat', ipc => new ChatHeartbeatIpcController(ipc, () => ({}) as any), ['chat-heartbeat:register', 'chat-heartbeat:set', 'chat-heartbeat:busy', 'chat-heartbeat:unregister']],
     ['extension ui', ipc => new ExtensionUiIpcController(ipc, { readGuard: guard as any, onHookAudit: vi.fn(async() => undefined), broadcast: vi.fn() }), ['extensions-ui:list', 'extension-permissions:local', 'extension-permissions:list', 'extension-permissions:audit', 'extension-permissions:set-hook', 'extension-permissions:revoke-all', 'extension-permissions:set-rail-hidden']],
-    ['chat messages', ipc => new ChatMessagesIpcController(ipc, { saveThreadState: vi.fn(), loadThreadState: vi.fn(), loadMessagesBefore: vi.fn(), deleteThreadState: vi.fn(), deleteMessages: vi.fn(), getMessageCount: vi.fn() }, log), ['chat-messages:save', 'chat-messages:load', 'chat-messages:load-before', 'chat-messages:delete', 'chat-messages:delete-messages', 'chat-messages:message-count']],
+    ['chat messages', ipc => new ChatMessagesIpcController(ipc, { saveThreadState: vi.fn(), loadThreadState: vi.fn(), loadMessagesBefore: vi.fn(), deleteThreadState: vi.fn(), deleteMessages: vi.fn(), getMessageCount: vi.fn() }, log), ['chat-messages:save', 'chat-messages:load', 'chat-messages:tool-payload', 'chat-messages:load-before', 'chat-messages:delete', 'chat-messages:delete-messages', 'chat-messages:message-count']],
     ['chat artifacts', ipc => new ChatArtifactsIpcController(ipc, { service: () => ({}) as any, readGuard: guard as any, getArtifactById: vi.fn(), getHistoryByThread: vi.fn() }), ['chat-artifacts:list', 'chat-artifacts:get', 'chat-artifacts:open-file', 'chat-artifacts:get-by-id', 'chat-artifacts:save', 'chat-artifacts:close', 'chat-artifacts:focus', 'chat-artifacts:reopen', 'chat-artifacts:retry-files-registration']],
     ['bookmarks', ipc => new BookmarksIpcController(ipc, { bookmarks: {} as any, configureArtifactSync: vi.fn(), listDockerLinks: vi.fn(), isAppWindow: () => true }), ['bookmarks:list', 'bookmarks:create', 'bookmarks:update', 'bookmarks:delete', 'bookmarks:move', 'bookmarks:docker-links']],
     ['message bus', ipc => new MessageBusIpcController(ipc, { bus: () => ({ dispatch: vi.fn(), send: vi.fn() }), allWebContents: () => [], send: vi.fn(), log: vi.fn() }), ['message-bus:connect']],
@@ -83,6 +83,15 @@ describe('IpcController channel registration', () => {
 });
 
 describe('IpcController delegation', () => {
+  it('chat messages: loads full tool payloads from the injected durable-log reader', async() => {
+    const ipc = new FakeIpc();
+    const payload = { toolCallId: 'run-1', result: 'FULL_RESULT' };
+    const reader = { load: vi.fn(async() => payload) };
+    new ChatMessagesIpcController(ipc, {} as any, log, reader).register();
+    expect(await ipc.invoke('chat-messages:tool-payload', {}, { threadId: 'thread-1', toolRunId: 'run-1' })).toEqual({ success: true, data: payload });
+    expect(reader.load).toHaveBeenCalledWith('thread-1', 'run-1');
+  });
+
   it('integration grant: grant stores granted permissions then refreshes the catalog; revoke clears them', async() => {
     const ipc = new FakeIpc();
     const store = { setGrant: vi.fn(async() => undefined), refreshCatalog: vi.fn(async() => undefined) };
@@ -183,14 +192,15 @@ describe('IpcController delegation', () => {
     expect(router.reset).not.toHaveBeenCalled();
   });
 
-  it('chat heartbeat: register requires a thread id; set reports unregistered threads', () => {
+  it('chat heartbeat: register requires a thread id; set reports unregistered threads', async() => {
     const ipc = new FakeIpc();
-    const service = { register: vi.fn(() => 'on'), configure: vi.fn(() => null), updateBusy: vi.fn(), unregister: vi.fn() };
+    const service = { register: vi.fn(async() => 'on'), configure: vi.fn(async() => null), updateBusy: vi.fn(), unregisterFromUi: vi.fn() };
     new ChatHeartbeatIpcController(ipc, () => service as any).register();
-    expect(ipc.invoke('chat-heartbeat:register', {}, { threadId: '  ' })).toEqual({ success: false, error: 'threadId is required' });
-    expect(ipc.invoke('chat-heartbeat:set', {}, { threadId: 't', config: {} })).toEqual({ success: false, error: 'chat heartbeat is not registered' });
+    expect(await ipc.invoke('chat-heartbeat:register', {}, { threadId: '  ' })).toEqual({ success: false, error: 'threadId is required' });
+    expect(await ipc.invoke('chat-heartbeat:set', {}, { threadId: 't', config: {} })).toEqual({ success: false, error: 'chat heartbeat is not registered' });
     expect(ipc.invoke('chat-heartbeat:unregister', {}, ' t ')).toEqual({ success: true });
-    expect(service.unregister).toHaveBeenCalledWith('t');
+    // A closing tab goes through unregisterFromUi, which keeps a delegated job's own heartbeat alive.
+    expect(service.unregisterFromUi).toHaveBeenCalledWith('t');
   });
 
   it('chat artifacts: get-by-id hides deleted histories', async() => {

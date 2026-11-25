@@ -43,7 +43,13 @@ class DecisionServiceFixture {
       this.records.set(id, next);
       return true;
     }),
-    expirePending: vi.fn(async(id: string) => { const previous = this.records.get(id); if (previous) this.records.set(id, { ...previous, status: 'expired' }) }),
+    expirePending: vi.fn(async(id: string) => {
+      const previous = this.records.get(id);
+      if (!previous || !['pending', 'deferred'].includes(previous.status)) return undefined;
+      const expired = { ...previous, status: 'expired' };
+      this.records.set(id, expired);
+      return expired;
+    }),
   };
   readonly pendingRepository = {
     ancestry: vi.fn(async() => []),
@@ -90,6 +96,7 @@ describe('Files request publish inline approval', () => {
 
       expect(decision).toMatchObject({ request_id: 'files-request-7', status: 'pending' });
       expect(record).toMatchObject({ id: decision.decision_id, kind: 'approval', status: 'pending', conversationId: 'chat-thread', payload: { filesPublishRequestId: 'files-request-7' } });
+      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
       expect(record.expiresAt - record.createdAt).toBe(7 * 24 * 60 * 60_000);
       expect(record.approvalPresentation).toMatchObject({ reason: 'Publishing this draft will make it available to agents.', command: 'Files draft publication', origin: { kind: 'files_publish' } });
       expect((worker as any).sentMessages).toHaveLength(1);
@@ -138,11 +145,11 @@ describe('Files request publish inline approval', () => {
       new PublishApprovalRouter({ taskForThread: async(threadId) => threadId === 'child-thread' ? { ...job, label } : null }));
     try {
       const labelled = fixture.records.get(JSON.parse((await worker('Publish the agent').execute({ file_id: 'file-7', version_id: 'version-7' })).responseString).decision_id);
-      expect(labelled.requestedBy).toEqual({ agentId: 'Publish the agent', label: 'Publish the agent', jobId: 'job-default', taskIndex: 1 });
+      expect(labelled.requestedBy).toEqual({ label: 'Publish the agent', jobId: 'job-default', taskIndex: 1 });
 
       fixture.records.clear();
       const unnamed = fixture.records.get(JSON.parse((await worker().execute({ file_id: 'file-7', version_id: 'version-7' })).responseString).decision_id);
-      expect(unnamed.requestedBy).toEqual({ agentId: 'default agent', jobId: 'job-default', taskIndex: 1 });
+      expect(unnamed.requestedBy).toEqual({ jobId: 'job-default', taskIndex: 1 });
     } finally { coordinator.dispose() }
   });
 

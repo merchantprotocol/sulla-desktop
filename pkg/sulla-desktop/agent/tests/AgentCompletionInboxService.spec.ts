@@ -4,6 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import { AgentCompletionInboxService, type PendingCompletion } from '../app/Services/AgentCompletionInboxService';
+import { CompletionAcknowledgementService } from '../app/Services/CompletionAcknowledgementService';
 import { CompletionFormatter } from '../app/Services/CompletionFormatter';
 import { CompletionIdleDispatcher } from '../app/Services/CompletionIdleDispatcher';
 
@@ -80,5 +81,20 @@ describe('AgentCompletionInboxService', () => {
     inbox.acknowledge(oldest);
     for (let index = 0; index < 2048; index++) inbox.acknowledge(completion(`job-${ index }`, 0));
     expect(inbox.enqueue('parent', 'thread', oldest)).toBe(true);
+  });
+
+  it('acknowledges a decision notice without recording a child task completion', async() => {
+    // risk: lifecycle integrity — a parent decision notice must never mark its fake holder index as a finished child task.
+    const tasks = { markTaskCompletionDelivered: vi.fn(async() => undefined), releaseTaskCompletion: vi.fn(async() => undefined) };
+    const claims = { acknowledge: vi.fn() };
+    const acknowledgements = new CompletionAcknowledgementService(tasks, {} as any, claims);
+    const notice: PendingCompletion = { jobId: 'decision-7', taskIndex: 0, results: [], dedupeKey: 'decision:decision-7:0' };
+
+    await acknowledgements.acknowledge(notice);
+    await acknowledgements.release(notice);
+
+    expect(tasks.markTaskCompletionDelivered).not.toHaveBeenCalled();
+    expect(tasks.releaseTaskCompletion).not.toHaveBeenCalled();
+    expect(claims.acknowledge).toHaveBeenCalledWith(notice);
   });
 });

@@ -5,46 +5,56 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <article v-if="row.subagent" class="dtr-agent" :data-status="row.status">
-    <div class="dtr-agent-head">
-      <span class="dtr-agent-marker" :class="{ 'dtr-agent-reviewer': row.subagent.isReviewer }" aria-hidden="true">{{ initial }}</span>
-      <div class="dtr-agent-identity">
-        <span class="dtr-agent-label">{{ row.target }}</span>
-        <span v-if="row.subagent.agentId" class="dtr-agent-id">{{ row.subagent.agentId }}</span>
-      </div>
-      <span class="dtr-duration">{{ duration }}</span>
-      <span class="dtr-status" :class="`dtr-status-${row.status}`">{{ statusLabel }}</span>
+  <li v-if="row.subagent" class="dtr-row dtr-agent" data-kind="agent" :data-status="row.status">
+    <div class="dtr-line">
+      <span class="dtr-ic">
+        <span class="dtr-marker" :data-role="row.subagent.isReviewer ? 'rev' : 'wrk'" :data-status="row.status" aria-hidden="true">{{ row.subagent.marker }}</span>
+      </span>
+      <div class="dtr-what"><span class="dtr-verb">{{ row.target }}</span><span v-if="row.subagent.agentId" class="dtr-agent-id">{{ row.subagent.agentId }}</span></div>
+      <span class="dtr-m"><span class="dtr-dur">{{ duration }}</span><span class="dtr-st" :data-s="row.status">{{ statusLabel }}</span></span>
       <button
-        type="button" class="dtr-agent-chevron" :aria-expanded="open"
+        type="button" class="dtr-x" :aria-expanded="open" :aria-controls="payloadId"
         :aria-label="`Brief, check-ins and report for ${row.target}`"
         @click="toggle"
-      >{{ open ? '⌄' : '›' }}</button>
+      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
     </div>
-    <p v-if="row.note" class="dtr-agent-note">
-      <time v-if="noteTime" class="dtr-agent-time">{{ noteTime }}</time>{{ row.note }}
+    <p v-if="row.note || row.subagent.followUpOf" class="dtr-note">
+      <time v-if="noteTime" class="dtr-when">{{ noteTime }}</time><span v-if="row.subagent.followUpOf">Follow-up of job {{ row.subagent.followUpOf.jobId }} task {{ row.subagent.followUpOf.taskIndex }}.{{ row.note ? ' ' : '' }}</span>{{ row.note }}
     </p>
-    <div v-if="agentMeta || row.subagent.conversationId || row.subagent.brief" class="dtr-agent-meta">
+    <div class="dtr-agent-meta">
       <span v-if="agentMeta">{{ agentMeta }}</span>
       <button v-if="row.subagent.conversationId && openConversation" type="button" @click="openAgent">Open agent</button>
-      <button v-if="row.subagent.brief" type="button" :aria-expanded="open" @click="toggle">Brief</button>
+      <button type="button" :aria-expanded="open" :aria-controls="payloadId" @click="toggle">Brief</button>
     </div>
-    <p v-if="open && historyError" class="dtr-agent-note" role="status">Check-in history could not be loaded.</p>
-    <pre v-if="open" class="dtr-payload dtr-agent-report" tabindex="0">{{ payloadText }}</pre>
-  </article>
-  <article v-else class="dtr-row" :class="`dtr-row-${row.kind}`">
-    <div class="dtr-icon" aria-hidden="true">{{ icon }}</div>
-    <button v-if="row.payload" class="dtr-main dtr-disclosure" type="button" :aria-expanded="open" @click="toggle" @keydown.enter.prevent="toggle" @keydown.space.prevent="toggle">
-      <span class="dtr-summary"><span class="dtr-verb">{{ row.verb }}</span><span class="dtr-target" :class="{ 'dtr-code': row.targetIsCode }">{{ row.target }}</span><span v-if="row.keyArgs" class="dtr-args dtr-code">{{ row.keyArgs }}</span></span>
-      <span class="dtr-meta"><span v-if="row.durationLabel" class="dtr-duration">{{ row.durationLabel }}</span><span class="dtr-status" :class="`dtr-status-${row.status}`">{{ row.status }}</span><span class="dtr-chevron" aria-hidden="true">{{ open ? '⌄' : '›' }}</span></span>
-      <span v-if="row.note" class="dtr-note">{{ row.note }}</span>
-    </button>
-    <div v-else class="dtr-main">
-      <div class="dtr-summary"><span class="dtr-verb">{{ row.verb }}</span><span class="dtr-target" :class="{ 'dtr-code': row.targetIsCode }">{{ row.target }}</span><span v-if="row.keyArgs" class="dtr-args dtr-code">{{ row.keyArgs }}</span></div>
-      <div class="dtr-meta"><span v-if="row.durationLabel" class="dtr-duration">{{ row.durationLabel }}</span><span class="dtr-status" :class="`dtr-status-${row.status}`">{{ row.status }}</span></div>
-      <div v-if="row.note" class="dtr-note">{{ row.note }}</div>
+    <p v-if="open && historyError" class="dtr-note" role="status">Check-in history could not be loaded.</p>
+    <pre v-if="open" :id="payloadId" class="dtr-raw" tabindex="0">{{ payloadText }}</pre>
+  </li>
+  <li v-else class="dtr-row" :data-kind="row.kind" :data-status="row.status">
+    <div class="dtr-line">
+      <span class="dtr-ic" aria-hidden="true"><svg viewBox="0 0 16 16" v-html="icon" /></span>
+      <div class="dtr-what">
+        <span v-if="row.cite !== undefined" class="dtr-cite">[{{ row.cite }}]</span><span class="dtr-verb">{{ row.verb }}</span>
+        <code v-if="row.targetIsCode" class="dtr-tg">{{ row.target }}</code><span v-else class="dtr-tg">{{ row.target }}</span>
+        <span v-if="row.keyArgs" class="dtr-args">{{ row.keyArgs }}</span>
+      </div>
+      <span class="dtr-m"><span class="dtr-dur">{{ row.durationLabel }}</span><span class="dtr-st" :data-s="row.status">{{ row.status }}</span></span>
+      <button
+        v-if="row.payload" type="button" class="dtr-x" :aria-expanded="open" :aria-controls="payloadId"
+        :aria-label="`Raw payload for ${row.verb} ${row.target}`"
+        @click="toggle"
+      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
     </div>
-    <pre v-if="open && row.payload" class="dtr-payload">{{ payloadText }}</pre>
-  </article>
+    <p v-if="row.note" class="dtr-note">{{ row.note }}</p>
+    <p v-if="open && toolPayloadLoading" class="dtr-note" role="status">Loading the complete tool result…</p>
+    <p v-if="open && toolPayloadError" class="dtr-note" role="status">
+      The complete tool result could not be loaded from the conversation log.
+      <button type="button" class="dtr-retry" @click="loadToolPayload">Retry</button>
+    </p>
+    <div v-if="open && payloadImages.length" class="dtr-images">
+      <figure v-for="image in payloadImages" :key="image.alt"><img :src="image.src" :alt="image.alt" /></figure>
+    </div>
+    <pre v-if="open && row.payload" :id="payloadId" class="dtr-raw" tabindex="0">{{ payloadText }}</pre>
+  </li>
 </template>
 
 <script setup lang="ts">
@@ -53,13 +63,31 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
-import type { TraceRow as TraceRowModel } from './traceTypes';
+import type { SubAgentTraceStatus, TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
+import { TracePayloadSerializer } from './TracePayloadSerializer';
 
 const props = defineProps<{ row: TraceRowModel }>();
 const disclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 const open = computed(() => disclosure.isOpen(props.row.id));
-const icon = computed(() => ({ thought: '·', tool: '◆', memory: '◈', heartbeat: '◌', activity: '•', handoff: '↗', retry: '↻', approval: '!', usage: '◫', source: '↗', subagent: '•' }[props.row.kind] ?? '•'));
+// Static icon paths from the approved mockup; never built from row data.
+const icons = {
+  shell: '<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5 6.5 7 8 5 9.5M8.5 10H11"/>',
+  file: '<path d="M4 2.5h5l3 3v8H4zM9 2.5v3h3"/>',
+  read: '<path d="M8 4.2C6.5 3.2 4.5 3 2.5 3.4v8.4c2-.4 4-.2 5.5.8 1.5-1 3.5-1.2 5.5-.8V3.4c-2-.4-4-.2-5.5.8zM8 4.2v8.4"/>',
+  thought: '<path d="M3 3.5h10v7H7.5L5 12.8v-2.3H3z"/>',
+  dot: '<circle cx="8" cy="8" r="2"/>',
+} as const;
+const icon = computed(() => {
+  switch (props.row.kind) {
+    case 'tool': return icons.shell;
+    case 'source': return icons.read;
+    case 'memory': case 'heartbeat': case 'approval': return icons.file;
+    case 'thought': return icons.thought;
+    default: return icons.dot;
+  }
+});
+const payloadId = computed(() => `dtr-raw-${props.row.id.replace(/[^\w-]/g, '_')}`);
 const openConversation = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
 const agentProjection = new SubAgentTraceProjection();
 const context = inject<{ backendThreadId: Ref<string | undefined> } | undefined>('chat:activity-context', undefined);
@@ -94,10 +122,43 @@ const payloadSource = computed<{ id: string; payload?: TraceRowModel['payload'] 
   if (previous?.id === id && (previous.payload === payload || (payload && previous.payload?.matches(payload)))) return previous;
   return { id, payload };
 });
-// Only the open disclosure reads this computed.
-const payloadText = computed(() => payloadSource.value.payload?.serialize(history.value?.checkins));
-const initial = computed(() => (props.row.subagent?.agentId || props.row.target || '?')[0].toUpperCase());
-const statusLabel = computed(() => props.row.status === 'quiet' ? 'no check-in' : props.row.status);
+// A pointer-backed payload supplements the card's own arguments; its loader only supplies the stored result.
+const payloadSerializer = new TracePayloadSerializer();
+const loadedPresentation = shallowRef<ReturnType<TracePayloadSerializer['present']> | null>(null);
+const toolPayloadLoading = ref(false);
+const toolPayloadError = ref(false);
+let loadGeneration = 0;
+async function loadToolPayload(): Promise<void> {
+  const payload = props.row.payload;
+  if (!payload?.load) return;
+  const generation = ++loadGeneration;
+  toolPayloadLoading.value = true;
+  toolPayloadError.value = false;
+  try {
+    const value = await payload.load();
+    if (generation === loadGeneration && open.value && props.row.payload === payload) {
+      loadedPresentation.value = payloadSerializer.present(value);
+    }
+  } catch {
+    if (generation === loadGeneration) toolPayloadError.value = true;
+  } finally {
+    if (generation === loadGeneration) toolPayloadLoading.value = false;
+  }
+}
+watch([open, () => props.row.payload], ([expanded, payload], _, onCleanup) => {
+  loadedPresentation.value = null;
+  toolPayloadError.value = false;
+  toolPayloadLoading.value = false;
+  if (!expanded || !payload?.load) { loadGeneration++; return; }
+  onCleanup(() => { loadGeneration++; });
+  void loadToolPayload();
+}, { immediate: true });
+const payloadPresentation = computed(() => loadedPresentation.value ?? payloadSerializer.present(
+  payloadSource.value.payload?.serialize(history.value?.checkins, history.value?.messages) ?? '',
+));
+const payloadImages = computed(() => payloadPresentation.value.images);
+const payloadText = computed(() => payloadPresentation.value.text);
+const statusLabel = computed(() => SubAgentTraceProjection.statusLabel(props.row.status as SubAgentTraceStatus));
 const agentMeta = computed(() => {
   const agent = props.row.subagent;
   if (!agent) return '';
@@ -109,8 +170,9 @@ const noteTime = computed(() => props.row.subagent?.noteAt !== undefined
 const rowNow = ref(Date.now());
 const ticking = computed(() => {
   const agent = props.row.subagent;
+  // Time since launch for every unsettled state; total run time once it ends.
   return agent?.startedAt !== undefined && agent.endedAt === undefined &&
-    (props.row.status === 'working' || props.row.status === 'running');
+    !['returned', 'failed', 'stopped'].includes(props.row.status);
 });
 watch(ticking, (active, _, onCleanup) => {
   rowNow.value = Date.now();
@@ -132,47 +194,57 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 </script>
 
 <style scoped>
-.dtr-row { position: relative; display: grid; grid-template-columns: 24px minmax(0, 1fr) 88px 58px 20px; gap: 8px; padding: 5px 0; color: var(--text-secondary); font-size: 12px; }
-.dtr-icon { color: var(--text-muted); text-align: center; font-size: 14px; }
-.dtr-main { min-width: 0; border: 0; padding: 0; color: inherit; background: none; text-align: left; font: inherit; }
-.dtr-disclosure { cursor: pointer; }
-.dtr-summary { display: flex; min-width: 0; gap: 7px; align-items: baseline; }
-.dtr-verb { color: var(--text-secondary); font-weight: 600; }
-.dtr-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dtr-code { font-family: var(--font-mono, ui-monospace, monospace); }
-.dtr-args { color: var(--text-muted); }
-.dtr-meta { display: grid; grid-template-columns: 88px 58px 20px; gap: 8px; align-items: center; white-space: nowrap; }
-.dtr-duration { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.dtr-status { color: var(--text-muted); text-transform: lowercase; }
-.dtr-status-failed { color: var(--status-error, #d66); }.dtr-status-waiting { color: var(--status-warning, #b88935); }.dtr-status-approved { color: var(--status-success, #57966a); }
-.dtr-chevron { color: var(--text-muted); font-size: 16px; line-height: 12px; }
-.dtr-note { margin-top: 3px; color: var(--text-muted); font-size: 11px; }
-.dtr-payload { grid-column: 2 / -1; max-height: 240px; overflow: auto; margin: 4px 0 0; padding: 8px; color: var(--text-secondary); background: color-mix(in srgb, var(--bg-surface) 80%, var(--text-primary)); font: 11px/1.45 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; }
-.dtr-agent { margin-top: 4px; padding: 5px 0; color: var(--text-secondary); }
-.dtr-agent-head { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto minmax(68px, auto) 20px; gap: 8px; align-items: baseline; font-size: 13px; }
-.dtr-agent-marker { justify-self: center; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--border-default); color: var(--text-secondary); font: 600 10px/1 var(--font-body); }
-.dtr-agent-reviewer { background: var(--bg-page); box-shadow: inset 0 0 0 1px var(--border-strong); }
-.dtr-agent[data-status="starting"] .dtr-agent-marker, .dtr-agent[data-status="stopped"] .dtr-agent-marker { opacity: .55; }
-.dtr-agent[data-status="failed"] .dtr-agent-marker { background: var(--status-error); color: var(--bg-page); box-shadow: none; }
-.dtr-agent[data-status="blocked"] .dtr-agent-marker, .dtr-agent[data-status="quiet"] .dtr-agent-marker { background: var(--status-warning); color: var(--bg-page); box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 26%, transparent); }
-.dtr-agent-identity { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 6px; min-width: 0; overflow-wrap: anywhere; }
-.dtr-agent-label { color: var(--text-primary); font-weight: 500; }
-.dtr-agent-id, .dtr-agent-time, .dtr-agent .dtr-duration { color: var(--text-muted); font: 11.5px var(--font-mono); }
-.dtr-agent .dtr-status { white-space: nowrap; }
-.dtr-status-working { color: var(--primary-color-text-override, var(--accent)); }
-.dtr-status-working::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin: 0 6px 1px 0; animation: dtr-agent-breath 1.9s ease-in-out infinite; }
-.dtr-status-blocked, .dtr-status-quiet { color: var(--status-warning); }
-.dtr-status-returned { color: var(--status-success); }
-@keyframes dtr-agent-breath { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) { .dtr-status-working::before { animation: none; } }
-.dtr-agent-note, .dtr-agent-meta, .dtr-agent-report { margin-left: 32px; }
-.dtr-agent-note { margin-block: 2px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px/1.45 var(--font-body); }
-.dtr-agent-time { margin-right: 6px; }
-.dtr-agent-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin-block: 2px 4px; color: var(--text-muted); font: 11.5px/18px var(--font-mono); overflow-wrap: anywhere; }
-.dtr-agent button { padding: 0; border: 0; color: var(--text-secondary); background: none; cursor: pointer; }
-.dtr-agent-meta button { font: 12.5px var(--font-body); text-decoration: underline; text-underline-offset: 3px; }
-.dtr-agent button:hover { color: var(--text-primary); }
-.dtr-agent button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dtr-agent-chevron { line-height: 1; font-size: 17px; }
-.dtr-agent-report { overflow-wrap: anywhere; }
+/* Approved Detailed row format (chat-subagent-items.html / chat-detailed-clean.html). */
+.dtr-row { position: relative; padding: 2px 0; list-style: none; }
+.dtr-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 24px; column-gap: 10px; align-items: start; border-radius: 6px; }
+.dtr-ic { grid-column: 1; grid-row: 1; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--bg-page); color: var(--text-muted); }
+.dtr-ic svg, .dtr-x svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.dtr-what { grid-column: 2; grid-row: 1; min-width: 0; padding: 2px 0; color: var(--text-secondary); font: 13px/20px var(--font-body); overflow-wrap: anywhere; }
+.dtr-verb { color: var(--text-primary); font-weight: 500; margin-right: 4px; }
+.dtr-tg { color: var(--text-primary); }
+code.dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface); font: 12.5px var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dtr-args { margin-left: 6px; color: var(--text-muted); font: 11.5px var(--font-mono, ui-monospace, monospace); }
+.dtr-cite { margin-right: 6px; color: var(--primary-color-text-override, var(--accent)); font: 11.5px var(--font-mono, ui-monospace, monospace); }
+.dtr-m { grid-column: 3; grid-row: 1; display: flex; gap: 10px; font-size: 12px; line-height: 24px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dtr-dur { width: 54px; text-align: right; color: var(--text-muted); }
+.dtr-st { width: 68px; color: var(--text-muted); }
+.dtr-st[data-s="failed"] { color: var(--status-error); font-weight: 500; }
+.dtr-st[data-s="waiting"], .dtr-st[data-s="blocked"], .dtr-st[data-s="quiet"] { color: var(--status-warning); font-weight: 500; }
+.dtr-st[data-s="returned"] { color: var(--status-success); font-weight: 500; }
+.dtr-st[data-s="working"] { color: var(--primary-color-text-override, var(--accent)); font-weight: 500; }
+.dtr-st[data-s="working"]::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: currentColor; vertical-align: middle; animation: dtr-breath 1.9s cubic-bezier(.45, 0, .55, 1) infinite; }
+@keyframes dtr-breath { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+.dtr-row[data-status="failed"] .dtr-ic { color: var(--status-error); }
+.dtr-x { grid-column: 4; grid-row: 1; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--text-muted); cursor: pointer; }
+.dtr-x:hover { background: var(--bg-surface); color: var(--text-primary); }
+.dtr-x svg { width: 14px; height: 14px; transition: transform .16s cubic-bezier(.22, 1, .36, 1); }
+.dtr-x[aria-expanded="true"] svg { transform: rotate(90deg); }
+.dtr-note { margin: 0 34px 2px; color: var(--text-secondary); font: 13px/19px var(--font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dtr-row[data-status="failed"] .dtr-note, .dtr-row[data-status="blocked"] .dtr-note { color: var(--text-primary); }
+.dtr-raw { margin: 4px 34px 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg-surface); color: var(--text-primary); font: 12px/1.6 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Sub-agent row: marker is the worker chart's agent marker. */
+.dtr-agent { margin-top: 4px; }
+.dtr-marker { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 600 10px/1 var(--font-body); }
+.dtr-marker[data-role="wrk"] { background: var(--border-muted); color: var(--text-secondary); }
+.dtr-marker[data-role="rev"] { background: var(--bg-page); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--border-default); }
+.dtr-marker[data-status="starting"], .dtr-marker[data-status="stopped"] { opacity: .45; }
+.dtr-marker[data-status="blocked"], .dtr-marker[data-status="quiet"] { background: var(--status-warning); color: var(--bg-page); box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 26%, transparent); }
+.dtr-marker[data-status="failed"] { background: var(--status-error); color: var(--bg-page); box-shadow: none; }
+.dtr-agent-id { margin-left: 6px; color: var(--text-secondary); font: 11.5px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
+.dtr-when { margin-right: 6px; color: var(--text-muted); font: 11px var(--font-mono, ui-monospace, monospace); }
+.dtr-agent-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin: 2px 34px 4px; color: var(--text-muted); font: 11.5px/18px var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.dtr-agent-meta button { padding: 0; border: 0; background: none; color: var(--primary-color-text-override, var(--accent)); font: 12.5px var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.dtr-row button:focus-visible { outline: 0; border-radius: 6px; box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 28%, transparent); }
+.dtr-retry { margin-left: 8px; border: 0; padding: 0; background: none; color: var(--primary-color-text-override, var(--accent)); font: inherit; text-decoration: underline; cursor: pointer; }
+.dtr-images { display: grid; gap: 8px; margin: 4px 34px 8px; }
+.dtr-images figure { margin: 0; }
+.dtr-images img { max-width: 100%; height: auto; }
+@media (max-width: 600px) {
+  .dtr-line { grid-template-columns: 24px minmax(0, 1fr) 24px; }
+  .dtr-m { grid-column: 2; grid-row: 2; line-height: 18px; padding-bottom: 2px; }
+  .dtr-dur { width: auto; text-align: left; } .dtr-st { width: auto; }
+  .dtr-x { grid-column: 3; }
+  .dtr-note, .dtr-raw, .dtr-agent-meta { margin-right: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .dtr-st[data-s="working"]::before { animation: none; } .dtr-x svg { transition: none; } }
 </style>

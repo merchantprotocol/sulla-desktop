@@ -53,6 +53,7 @@ import { DecisionAnswerDelivery, type DecisionAnswerDeliveryInput } from './Deci
 import { workerModelRouting, installWorkerRoute, detachTerminalWorkerChat, isWorkerMappingHumanTurn } from './WorkerModelRouting';
 import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import { AgentTurnStopper } from './AgentTurnStopper';
+import { AgentOrchestratorMessageFormatter } from './AgentOrchestratorMessageFormatter';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
 import { DesktopOrgMessengerFactory } from './DesktopOrgMessengerFactory';
@@ -123,6 +124,7 @@ export function drainAgentExecution(): Promise<void> {
 }
 
 export class BackendGraphWebSocketService {
+  private readonly orchestratorMessageFormatter = new AgentOrchestratorMessageFormatter();
   private readonly runLocationResolver = new AgentRunLocationResolver();
   private readonly wsService = getWebSocketClientService();
   private readonly schedulerService = getSchedulerService();
@@ -230,7 +232,7 @@ export class BackendGraphWebSocketService {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
-        content:   `[Message from orchestrator]\n${ message }`,
+        content:   this.orchestratorMessageFormatter.format(message),
         timestamp: Date.now(),
         metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
       } as any);
@@ -244,7 +246,7 @@ export class BackendGraphWebSocketService {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
-        content:   `[Message from orchestrator]\n${ message }`,
+        content:   this.orchestratorMessageFormatter.format(message),
         timestamp: Date.now(),
         metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
       } as any);
@@ -264,7 +266,7 @@ export class BackendGraphWebSocketService {
       return false;
     }
     const receipt = await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-      `[Message from orchestrator]\n${ message }`, threadId, undefined, agentId || parked.agentId, 'system', {
+      this.orchestratorMessageFormatter.format(message), threadId, undefined, agentId || parked.agentId, 'system', {
         source: 'orchestrator_job_message', ...messageMeta,
       });
     return receipt !== 'deferred';
@@ -819,6 +821,10 @@ export class BackendGraphWebSocketService {
     await awaitAgentContainerRuntimeRehydration();
     await this.subscribeToAgentChannels();
     await agentWaitProvider.scheduler.start();
+    // Provider import and heartbeat storage can wait on vault/DB initialization; neither may gate job recovery.
+    void import('../app/Providers/ChatHeartbeatServiceProvider')
+      .then(({ chatHeartbeatProvider }) => chatHeartbeatProvider.rehydrateJobHeartbeats())
+      .catch(error => console.warn('[BackendGraphWS] Job heartbeat recovery failed:', error));
     await recoverPendingAgentCompletions();
     await this.agentInbox.replayPending();
     this.retryDecisionAnswers();

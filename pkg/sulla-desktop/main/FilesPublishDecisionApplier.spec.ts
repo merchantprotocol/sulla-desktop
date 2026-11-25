@@ -29,7 +29,10 @@ class InlineApprovalFlowHarness {
     }),
     expirePending: vi.fn(async(id: string) => {
       const previous = this.records.get(id);
-      if (previous) this.records.set(id, { ...previous, status: 'expired' });
+      if (!previous || !['pending', 'deferred'].includes(previous.status)) return undefined;
+      const expired = { ...previous, status: 'expired' };
+      this.records.set(id, expired);
+      return expired;
     }),
     listRecent: vi.fn(async() => [...this.records.values()]),
   };
@@ -76,10 +79,11 @@ describe('Files publish decision flow', () => {
     const flow = new InlineApprovalFlowHarness();
     try {
       const record = await flow.decide('approved');
+      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/approve', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       });
-      expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved' }), expect.any(String));
+      expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'approved', expect.objectContaining({ status: 'approved', answeredBy: { kind: 'human' } }), expect.any(String));
       expect(flow.notifications).toEqual([`[Human decision] Jonathon approved publishing "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }).`]);
       expect(flow.errors).toEqual([]);
     } finally { flow.dispose() }
@@ -90,8 +94,9 @@ describe('Files publish decision flow', () => {
     const flow = new InlineApprovalFlowHarness();
     try {
       const record = await flow.decide('denied');
+      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
-      expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'denied', expect.objectContaining({ status: 'denied' }), expect.any(String));
+      expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'denied', expect.objectContaining({ status: 'denied', answeredBy: { kind: 'human' } }), expect.any(String));
       expect(flow.request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
       expect(flow.notifications).toEqual([`[Human decision] Jonathon denied publishing "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }).`]);
     } finally { flow.dispose() }
@@ -102,6 +107,7 @@ describe('Files publish decision flow', () => {
     const flow = new InlineApprovalFlowHarness();
     try {
       const record = await flow.decide('expired');
+      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
       expect(flow.repository.expirePending).toHaveBeenCalledWith(record.id);
       expect(flow.notifications).toEqual([`[Human decision] The request to publish "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }) expired: request a fresh publish if still needed.`]);
@@ -206,6 +212,7 @@ describe('Files publish decision flow', () => {
     const approved: DecisionRecord = {
       id: 'decision-twice', conversationId: 'chat-thread', channel: 'chat-channel', kind: 'approval', status: 'approved',
       title: 'Publish?', toolName: 'files_request_publish', createdAt: 100, expiresAt: 200, payload: { filesPublishRequestId: 'request/9' },
+      answeredBy: { kind: 'human' },
     };
     publisher.start();
     try {
@@ -217,18 +224,19 @@ describe('Files publish decision flow', () => {
     } finally { publisher.dispose() }
   });
 
-  it('refuses a non-human actor but keeps legacy pre-actor approvals compatible', async() => {
-    // risk: irreversible side effects — a future agent answer must never publish a Files draft, while legacy human decisions still complete.
+  it('refuses non-human and actorless approvals while applying human approvals and denials', async() => {
+    // risk: irreversible side effects — missing attribution is not proof of human approval and must never trigger Files publication.
     let listener: ((record: DecisionRecord) => void) | undefined;
     const request = vi.fn(async() => ({ ok: true, status: 200 }));
     const publisher = new FilesPublishDecisionApplier(
       { subscribe: (next) => { listener = next; return () => { listener = undefined } } },
       async() => ({ request }), () => undefined,
     );
-    const decision = (id: string): DecisionRecord => ({
+    const decision = (id: string, answeredBy?: DecisionRecord['answeredBy']): DecisionRecord => ({
       id, conversationId: 'chat-thread', channel: 'chat-channel', kind: 'approval', status: 'approved',
       title: 'Publish?', toolName: 'files_request_publish', createdAt: 100, expiresAt: 200,
       payload: { filesPublishRequestId: id },
+      ...(answeredBy ? { answeredBy } : {}),
     });
     publisher.start();
     try {
@@ -238,9 +246,12 @@ describe('Files publish decision flow', () => {
       listener?.({ ...decision('agent-denial'), status: 'denied', answeredBy: { kind: 'agent', agentId: 'codex-worker' } });
       await vi.waitFor(() => expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/agent-denial/reject', expect.any(Object)));
       expect(request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
-      listener?.(decision('legacy-human-approval'));
+      listener?.(decision('actorless-approval'));
+      await Promise.resolve();
+      expect(request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
+      listener?.(decision('human-approval', { kind: 'human' }));
       await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-      expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/legacy-human-approval/approve', expect.any(Object));
+      expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/human-approval/approve', expect.any(Object));
     } finally { publisher.dispose() }
   });
 });

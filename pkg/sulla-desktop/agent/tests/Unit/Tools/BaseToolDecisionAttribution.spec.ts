@@ -22,11 +22,11 @@ describe('decision attribution in tool results', () => {
       requiresApproval: vi.fn(async() => true),
       request: vi.fn(async() => ({
         record: { id: 'decision-1', title: 'Approve?', kind: 'approval' } as any,
-        result: Promise.resolve({ status: 'approved', answers: [], answeredBy: { kind: 'agent', agentId: 'coding-manager', label: 'Coding Manager' } }),
+        result: Promise.resolve({ status: 'approved', answers: [], answeredBy: { kind: 'agent', agentId: 'coding-manager', label: 'Jonathon' } }),
       })),
     });
     const result = await new DecisionAttributionTool().call({});
-    expect(result).toMatchObject({ success: true, result: 'Write completed.\nApproved by Coding Manager.' });
+    expect(result).toMatchObject({ success: true, result: 'Write completed.\nApproved by agent Jonathon.' });
   });
 
   it('names who denied a gated action without running it', async() => {
@@ -40,7 +40,7 @@ describe('decision attribution in tool results', () => {
       })),
     });
     const result = await new DeniedTool().call({});
-    expect(result).toMatchObject({ success: false, error: 'Action denied by Coding Manager; nothing was executed.' });
+    expect(result).toMatchObject({ success: false, error: 'Action denied by agent Coding Manager; nothing was executed.' });
     expect(execute).not.toHaveBeenCalled();
   });
 

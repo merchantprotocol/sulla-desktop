@@ -137,7 +137,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     if (!running) continue;
     const accepted = injectSteer(running.state as any, {
       role:    'user',
-      content: `[Message from orchestrator]\n${ message }`,
+      content: message.startsWith('[Decision from ') ? message : `[Message from orchestrator]\n${ message }`,
       metadata: {
         source:       'orchestrator_job_message',
         inputSource:  'system',

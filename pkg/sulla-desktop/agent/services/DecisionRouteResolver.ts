@@ -22,6 +22,7 @@ export class DecisionRouteResolver {
 
     const chain: DecisionRouteEntry[] = [];
     const visited = new Set([conversationId]);
+    let current = requester;
     let parentThreadId = requester.parentThreadId;
     let parentChannel = requester.parentChannel || channel;
 
@@ -29,6 +30,11 @@ export class DecisionRouteResolver {
       visited.add(parentThreadId);
       const parent = await this.taskForThread(parentThreadId);
       if (!parent) {
+        // A top-level chat has an agent and a human at the same thread. A
+        // pruned parent job, in contrast, is not a live agent holder.
+        if (current.parentJobId === null) {
+          chain.push({ threadId: parentThreadId, channel: parentChannel, agentId: parentChannel || DecisionRouteResolver.UNNAMED_AGENT, kind: 'agent' });
+        }
         chain.push(this.humanEntry(parentThreadId, parentChannel));
         return chain;
       }
@@ -36,12 +42,14 @@ export class DecisionRouteResolver {
         threadId: parentThreadId,
         channel: parentChannel,
         agentId: parent.agentId || parent.label || DecisionRouteResolver.UNNAMED_AGENT,
+        label: parent.label || undefined,
         jobId: parent.jobId,
         taskIndex: parent.taskIndex,
         kind: 'agent',
       });
       parentThreadId = parent.parentThreadId;
       parentChannel = parent.parentChannel || parentChannel;
+      current = parent;
     }
 
     // A corrupt cycle has no trustworthy root. Preserve the last distinct ancestor as the human fallback.
@@ -61,8 +69,11 @@ export class DecisionRouteResolver {
   }
 
   /** Missing, finished, stopped or pruned parent jobs are unavailable at advance time. */
-  async liveness(entry: DecisionRouteEntry): Promise<'available' | 'unavailable'> {
+  async liveness(entry: DecisionRouteEntry, askerThreadId?: string): Promise<'available' | 'unavailable'> {
     if (entry.kind === 'human') return 'available';
+    const asker = askerThreadId ? await this.taskForThread(askerThreadId) : null;
+    if (asker?.parentThreadId === entry.threadId && asker.spawnMode === 'sync') return 'unavailable';
+    if (!entry.jobId) return 'available';
     const task = await this.taskForThread(entry.threadId);
     if (!task || task.jobId !== entry.jobId || task.taskIndex !== entry.taskIndex) return 'unavailable';
     return ['running', 'parked'].includes(task.jobStatus) && ['running', 'parked'].includes(task.taskStatus)

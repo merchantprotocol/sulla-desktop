@@ -69,7 +69,7 @@ export class LateDecisionAnswerHandler {
     const queued = await this.decisions.queueLateAnswer(record, answers, body);
     if (!queued) {
       const existing = await this.decisions.findById(record.id);
-      if (existing && ['queued', 'processing', 'delivered', 'unavailable'].includes(existing.answerDelivery ?? '')) return { settled: true, conversationId: record.conversationId, late: true, reason: existing.answerDelivery === 'unavailable' ? 'The answer is recorded, but its original asker is no longer available.' : 'Answer queued in the original chat.' };
+      if (existing && ['queued', 'processing', 'delivered', 'unavailable'].includes(existing.answerDelivery ?? '') && this.isSameAnswer(existing, actor, answers)) return { settled: true, conversationId: record.conversationId, late: true, reason: existing.answerDelivery === 'unavailable' ? 'The answer is recorded, but its original asker is no longer available.' : 'Answer queued in the original chat.' };
       return { settled: false, conversationId: record.conversationId, late: true, reason: 'This request changed. Refresh For You before answering.' };
     }
     // Wake is best effort: the existing durable inbox also replays after restart.
@@ -83,7 +83,8 @@ export class LateDecisionAnswerHandler {
     const saved = await this.decisions.recordJobAnswer(record, answers);
     if (!saved) {
       const existing = await this.decisions.findById(record.id);
-      if (existing && ['queued', 'processing', 'delivered', 'unavailable'].includes(existing.answerDelivery ?? '')) {
+      const actor = record.answeredBy ?? { kind: 'human' as const };
+      if (existing && ['queued', 'processing', 'delivered', 'unavailable'].includes(existing.answerDelivery ?? '') && this.isSameAnswer(existing, actor, answers)) {
         return { settled: true, conversationId: record.conversationId, late: true, reason: existing.answerDelivery === 'unavailable' ? 'The answer is recorded, but its original asker is no longer available.' : 'Answer is already queued in the delegated task mailbox.' };
       }
       return { settled: false, conversationId: record.conversationId, late: true, reason: 'This request changed. Refresh For You before answering.' };
@@ -111,6 +112,13 @@ export class LateDecisionAnswerHandler {
       return { question: question.question, selected: selected.map(value => value.trim()) };
     });
     return normalized.every(Boolean) ? normalized as { question: string; selected: string[] }[] : null;
+  }
+
+  private isSameAnswer(record: DecisionRecord, actor: NonNullable<DecisionRecord['answeredBy']>, answers: { question: string; selected: string[] }[]): boolean {
+    const savedActor = record.answeredBy;
+    if (!savedActor || savedActor.kind !== actor.kind) return false;
+    if (actor.kind === 'agent' && (savedActor.threadId !== actor.threadId || savedActor.agentId !== actor.agentId)) return false;
+    return JSON.stringify(record.answers ?? []) === JSON.stringify(answers);
   }
 }
 

@@ -208,12 +208,8 @@ export class ActiveAgentsRegistry {
    */
   async buildCompactRoster(): Promise<string> {
     const lines: string[] = [];
-
-    try {
-      const { getHumanHeartbeatBridge } = await import('./HumanHeartbeatBridge');
-      const summary = await getHumanHeartbeatBridge().getPresenceSummary();
-      if (summary) lines.push(summary.replace(/\*\*/g, ''));
-    } catch { /* presence unavailable */ }
+    const presence = await this.buildHumanPresence();
+    if (presence) lines.push(presence);
 
     const agents = await this.getAllAgents();
     const agentParts = agents
@@ -257,5 +253,14 @@ export class ActiveAgentsRegistry {
     }
 
     return lines.join('\n');
+  }
+
+  /** Human presence remains useful to every agent, even when the roster is hidden. */
+  async buildHumanPresence(): Promise<string> {
+    try {
+      const { getHumanHeartbeatBridge } = await import('./HumanHeartbeatBridge');
+      return (await getHumanHeartbeatBridge().getPresenceSummary()).replace(/\*\*/g, '');
+    } catch { /* presence unavailable */ }
+    return '';
   }
 }

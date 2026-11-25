@@ -9,12 +9,12 @@
  * Work-executing agents (workflow-node agents, spawned worker agents) must run on the PRIMARY model
  * chain so autonomous work quality matches interactive chat on every install,
  * regardless of local configuration (Jonathon directive 2026-09-01). The
- * subconscious slot is reserved for observation/recall/summarizer agents.
+ * subconscious slot is reserved for memory recall, V7 writer and summarizer agents.
  *
  * Resolution order:
  *   1. `metadata.modelSlot` — explicit graph-stamped slot, always wins.
  *   2. Legacy heuristic — `isSubAgent` alone implies subconscious. Kept so
- *      unmarked observer graphs keep their fast tool-emitting chat peer.
+ *      unmarked memory graphs keep their fast tool-emitting chat peer.
  */
 
 export type ModelSlot = 'primary' | 'subconscious';

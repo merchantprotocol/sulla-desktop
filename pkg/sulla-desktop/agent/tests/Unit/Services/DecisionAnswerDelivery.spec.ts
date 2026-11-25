@@ -108,7 +108,7 @@ it('dispatches an agent decision envelope as a system turn, never keyboard or a 
   service.dispatchToAgent = vi.fn().mockResolvedValue('accepted');
   const entry: any = {
     target: { agentId: 'codex-luna-worker' },
-    envelope: { kind: 'decision', from: 'system:decision', body: '[Decision answered by Coding Manager]\nColor?: Blue', ids: { messageId: 'decision-answer:q', answerAttempt: 'attempt' } },
+    envelope: { kind: 'decision', from: 'system:decision', body: '[Decision answered by agent Coding Manager]\nColor?: Blue', ids: { messageId: 'decision-answer:q', answerAttempt: 'attempt' } },
   };
 
   await service.wakeInbox({ channel: 'sulla-desktop', threadId: 'asker' }, entry.envelope.body, [entry]);

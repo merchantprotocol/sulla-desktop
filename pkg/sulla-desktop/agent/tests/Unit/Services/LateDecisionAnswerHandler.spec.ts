@@ -18,9 +18,9 @@ describe('durable late answers', () => {
   });
   it('uses a named decision envelope for an agent answering a chat asker', async() => {
     const f = fixture();
-    const answered = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'worker', label: 'Worker' } };
+    const answered = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'worker', label: 'Jonathon' } };
     await f.handler.handle(answered, response);
-    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(answered, response.answers, '[Decision answered by Worker]\nPick a color\nColor?: Blue');
+    expect(f.decisions.queueLateAnswer).toHaveBeenCalledWith(answered, response.answers, '[Decision answered by agent Jonathon]\nPick a color\nColor?: Blue');
   });
   it('keeps a committed answer queued if the wake connection fails', async() => {
     const f = fixture(); f.send.mockRejectedValue(new Error('bus unavailable'));
@@ -28,12 +28,32 @@ describe('durable late answers', () => {
     expect(f.decisions.queueLateAnswer).toHaveBeenCalledTimes(1);
   });
   it('does not send a second wake or replace the answer when the same receipt already exists', async() => {
-    const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, answerDelivery: 'queued' });
+    const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers: response.answers });
     await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: true }); expect(f.send).not.toHaveBeenCalled();
   });
   it('does not report a conflicting or dismissed request as answered', async() => {
     const f = fixture(); f.decisions.queueLateAnswer.mockResolvedValue(undefined); f.decisions.findById.mockResolvedValue({ ...record, attention: 'dismissed' });
     await expect(f.handler.handle(record, response)).resolves.toMatchObject({ settled: false }); expect(f.send).not.toHaveBeenCalled();
+  });
+  it('rejects a competing answer after another actor won the compare-and-set', async() => {
+    // risk: concurrency — a later parent answer must not report success after the human already answered this question.
+    const f = fixture();
+    const attempt = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'parent', threadId: 'parent-thread' } };
+    f.decisions.queueLateAnswer.mockResolvedValue(undefined);
+    f.decisions.findById.mockResolvedValue({ ...record, attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers: [{ question: 'Color?', selected: ['Red'] }] });
+
+    await expect(f.handler.handle(attempt, response)).resolves.toMatchObject({ settled: false, reason: expect.stringContaining('changed') });
+    expect(f.send).not.toHaveBeenCalled();
+  });
+  it('treats an identical same-agent retry as idempotent', async() => {
+    // risk: user communication — retrying an already-committed parent answer does not create a duplicate inbox message.
+    const f = fixture();
+    const attempt = { ...record, answeredBy: { kind: 'agent' as const, agentId: 'parent', threadId: 'parent-thread' } };
+    f.decisions.queueLateAnswer.mockResolvedValue(undefined);
+    f.decisions.findById.mockResolvedValue({ ...attempt, attention: 'answered', answerDelivery: 'queued', answers: response.answers });
+
+    await expect(f.handler.handle(attempt, response)).resolves.toMatchObject({ settled: true });
+    expect(f.send).not.toHaveBeenCalled();
   });
   it('does not queue into a deleted or replacement conversation', async() => {
     const f = fixture(); f.conversations.find.mockResolvedValue(null);
@@ -57,7 +77,7 @@ describe('durable late answers', () => {
 
     await expect(handler.handle(delegated, response)).resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });
     expect(decisions.recordJobAnswer).toHaveBeenCalledWith(delegated, response.answers);
-    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, '[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
+    expect(jobMessages.send).toHaveBeenCalledWith('job-1', 2, '[Decision answered by agent Coding Manager]\nPick a color\nColor?: Blue');
     expect(decisions.markJobAnswerDelivered).toHaveBeenCalledExactlyOnceWith(record.id);
     expect(jobMessages.send.mock.invocationCallOrder[0]).toBeLessThan(decisions.markJobAnswerDelivered.mock.invocationCallOrder[0]);
     expect(sender.send).not.toHaveBeenCalled();
