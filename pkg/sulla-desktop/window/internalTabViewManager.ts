@@ -39,8 +39,6 @@ export class InternalTabViewManager {
         visible:           true,
         crashed:           false,
         transferring:      false,
-        running:           false,
-        activity:          this.isChatTabDescriptor(descriptor) ? this.idleChatActivity() : undefined,
         activityForwarded: false,
         descriptor,
       };
@@ -164,35 +162,28 @@ export class InternalTabViewManager {
   notifyChatRunning(sender: Electron.WebContents, tabId: string, running: boolean, input?: unknown): void {
     const tab = this.tabs.get(tabId);
     if (tab?.view.webContents !== sender || tab.crashed || tab.owner.isDestroyed()) return;
-    const activity = isChatTabActivitySnapshot(input)
-      ? input
-      : running
-        ? tab.activity && ['you', 'stalled', 'quiet', 'waiting'].includes(tab.activity.state)
-          ? tab.activity
-          : { state: 'working' as const, detail: 'Sulla is working' }
-        : tab.activity?.state === 'working' || !tab.activity
-          ? { state: 'idle' as const, detail: 'nothing running or scheduled' }
-          : tab.activity;
+    const activity = isChatTabActivitySnapshot(input) ? input : tab.activity;
     if (tab.running === running && sameActivity(tab.activity, activity) && tab.activityForwarded) return;
     tab.running = running;
     tab.activity = activity;
-    tab.activityForwarded = false;
     this.forwardChatActivity(tabId, tab);
   }
 
   private clearChatRunning(tabId: string, tab: InternalTabView): void {
-    if (!tab.activity && !tab.running) return;
-    const idleActivity = this.idleChatActivity();
-    if (!tab.running && sameActivity(tab.activity, idleActivity) && tab.activityForwarded) return;
-    tab.running = false;
-    tab.activity = idleActivity;
-    tab.activityForwarded = false;
-    this.forwardChatActivity(tabId, tab);
+    const wasActive = tab.running || (tab.activity && !sameActivity(tab.activity, this.idleChatActivity()));
+    tab.running = tab.running === undefined && !tab.activity ? undefined : false;
+    tab.activity = undefined;
+    if (wasActive) this.forwardChatActivity(tabId, tab);
   }
 
   private forwardChatActivity(tabId: string, tab: InternalTabView): void {
-    if (!tab.activity || tab.owner.isDestroyed()) return;
-    tab.owner.webContents.send('internal-tab-view:chat-running', tabId, Boolean(tab.running), tab.activity);
+    if (tab.owner.isDestroyed()) return;
+    if (tab.running === undefined && !tab.activity && !this.isChatTabDescriptor(tab.descriptor)) return;
+    const activity = tab.activity ?? (tab.running
+      ? { state: 'working' as const, detail: 'Sulla is working' }
+      : this.idleChatActivity());
+
+    tab.owner.webContents.send('internal-tab-view:chat-running', tabId, Boolean(tab.running), activity);
     tab.activityForwarded = true;
   }
 
@@ -249,7 +240,9 @@ export class InternalTabViewManager {
       tab.owner = target;
       this.trackOwner(target);
       tab.activityForwarded = false;
-      if (activity) this.notifyChatRunning(tab.view.webContents, tabId, Boolean(running), activity);
+      tab.running = running;
+      tab.activity = activity;
+      this.forwardChatActivity(tabId, tab);
     }
     this.armChromeReadyFallback(target);
     if (tab.visible && this.chromeReadyOwners.has(target.id)) this.attach(tab);

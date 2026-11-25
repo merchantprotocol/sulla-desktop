@@ -1019,7 +1019,7 @@ const allTabsById = computed(() => {
     const pinned = isTabPinned(id);
     const working = bt.mode === 'chat' && workingTabIds.value.has(bt.id);
     const snapshot = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
-    const activity = snapshot?.state === 'idle' && working ? 'working' : snapshot?.state ?? (working ? 'working' : undefined);
+    const activity = snapshot?.state ?? (working ? 'working' : undefined);
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ activity ? ACTIVITY_LABEL[activity] : 'ready' }${ snapshot?.detail ? ` · ${ snapshot.detail }` : '' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;

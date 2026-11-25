@@ -14,7 +14,7 @@ import Electron from 'electron';
 import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
-import type { ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
+import type { ChatTabActivityArgs } from '@pkg/shared/ChatTabActivity';
 import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -78,7 +78,7 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
-  'internal-tab-view:chat-running': (tabId: string, running: boolean, activity?: ChatTabActivitySnapshot) => void;
+  'internal-tab-view:chat-running': (...args: ChatTabActivityArgs) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -1367,7 +1367,7 @@ export interface IpcRendererEvents {
   'sulla:primary-color-changed': (color: string | null) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
-  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-running': (...args: ChatTabActivityArgs) => void;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:loaded': (tabId: string) => void;
