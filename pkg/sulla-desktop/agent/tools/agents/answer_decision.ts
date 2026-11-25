@@ -6,10 +6,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BaseTool, type ToolResponse } from '../base';
 import type { DecisionAgentAction, DecisionResponse } from '@pkg/shared/decisions';
-import { decisionService } from '../../services/DecisionService';
+import { toolDecisionPort, type AgentDecisionAnswerPort } from '../toolDecisionPort';
 
 /** Current-call identity comes from an active graph invocation or verified tool session only. */
 export class AnswerDecisionWorker extends BaseTool {
+  constructor(private readonly decisions: AgentDecisionAnswerPort = toolDecisionPort.resolveAgentAnswerPort()) { super() }
+
   name = '';
   description = '';
   schemaDef = {
@@ -55,7 +57,7 @@ export class AnswerDecisionWorker extends BaseTool {
     const action = input.action as DecisionAgentAction;
     const answers = Array.isArray(input.answers) ? input.answers as DecisionResponse['answers'] : undefined;
     const note = typeof input.note === 'string' ? input.note : undefined;
-    const outcome = await decisionService.answerAsAgent(threadId, decisionId, action, answers, note);
+    const outcome = await this.decisions.answerAsAgent(threadId, decisionId, action, answers, note);
     return {
       successBoolean: outcome.settled,
       responseString: outcome.settled

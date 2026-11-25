@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DecisionOutcome, DecisionRecord } from '@pkg/shared/decisions';
+import type { DecisionAgentAction, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
 /** The approval surface a tool call needs. Desktop's DecisionService satisfies it structurally. */
 export type ToolDecisionRequest = Omit<DecisionRecord, 'id' | 'status' | 'createdAt' | 'expiresAt'>;
@@ -13,9 +13,14 @@ export interface ToolDecisionHandle {
   readonly result: Promise<DecisionOutcome>;
 }
 
+export interface AgentDecisionAnswerPort {
+  answerAsAgent(threadId: string, decisionId: string, action: DecisionAgentAction, answers?: DecisionResponse['answers'], note?: string): Promise<{ settled: boolean; reason?: string }>;
+}
+
 export interface ToolDecisionPort {
   requiresApproval(toolName: string): Promise<boolean>;
   request(input: ToolDecisionRequest, timeoutMs?: number, signal?: AbortSignal): Promise<ToolDecisionHandle>;
+  answerAsAgent?: AgentDecisionAnswerPort['answerAsAgent'];
 }
 
 /**
@@ -30,6 +35,10 @@ export class UnavailableToolDecisionPort implements ToolDecisionPort {
   async request(): Promise<ToolDecisionHandle> {
     throw new Error('Approval is unavailable in this runtime. Nothing was executed.');
   }
+
+  async answerAsAgent(): Promise<{ settled: boolean; reason: string }> {
+    return { settled: false, reason: 'Decision answering is unavailable in this runtime.' };
+  }
 }
 
 /** Holds the approval port that tool calls use. Desktop main registers the real DecisionService at startup. */
@@ -42,6 +51,12 @@ export class ToolDecisionPortRegistry {
 
   resolve(): ToolDecisionPort {
     return this.port;
+  }
+
+  resolveAgentAnswerPort(): AgentDecisionAnswerPort {
+    return typeof this.port.answerAsAgent === 'function'
+      ? this.port as AgentDecisionAnswerPort
+      : new UnavailableToolDecisionPort();
   }
 }
 

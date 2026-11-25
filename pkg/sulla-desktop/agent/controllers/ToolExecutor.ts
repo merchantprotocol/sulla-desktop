@@ -276,7 +276,7 @@ export class ToolExecutor {
           const toolActivity = new TurnToolActivity(state.metadata);
           toolActivity.started(toolRunId, toolName);
           const result = await Promise.resolve()
-            .then(() => tool.invoke(args))
+            .then(() => tool.invoke(args, state))
             .finally(() => toolActivity.finished(toolRunId));
           const invokeMs = Date.now() - invokeStart;
           // Perf: how long this in-process tool actually took to run. node=
@@ -459,7 +459,7 @@ export class ToolExecutor {
         args,
         started,
         outcome: Promise.resolve()
-          .then(() => tool.invoke(args))
+          .then(() => tool.invoke(args, state))
           .then((result: ToolResult) => ({ result }))
           .catch((err: any) => ({ error: err?.message || String(err) }))
           .finally(() => toolActivity.finished(toolRunId)),

@@ -6,9 +6,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocked = vi.hoisted(() => ({ answerAsAgent: vi.fn(async(..._args: unknown[]) => ({ settled: true })) }));
-vi.mock('../../../../services/DecisionService', () => ({ decisionService: mocked }));
-vi.mock('../../../../tools/toolDecisionPort', () => ({ toolDecisionPort: { resolve: () => ({ requiresApproval: async() => false }) } }));
+vi.mock('../../../../tools/toolDecisionPort', () => ({ toolDecisionPort: {
+  resolve: () => ({ requiresApproval: async() => false }),
+  resolveAgentAnswerPort: () => ({ answerAsAgent: mocked.answerAsAgent }),
+} }));
 
+import { ToolExecutor } from '../../../../controllers/ToolExecutor';
+import { toolRegistry } from '../../../../tools/registry';
 import { AnswerDecisionWorker } from '../../../../tools/agents/answer_decision';
 
 describe('AnswerDecisionWorker', () => {
@@ -72,5 +76,27 @@ describe('AnswerDecisionWorker', () => {
     ]);
 
     expect(mocked.answerAsAgent.mock.calls.map(([threadId]) => threadId).sort()).toEqual(['holder-a', 'holder-b']);
+  });
+
+  it('binds the real ToolExecutor invocation to the current graph state', async() => {
+    // risk: authorization — the in-process graph path must not lose the verified holder identity between ToolExecutor and the worker.
+    const worker = new AnswerDecisionWorker();
+    worker.name = 'agents/answer_decision';
+    vi.spyOn(toolRegistry, 'createTool').mockResolvedValue(worker as any);
+    const executor = new ToolExecutor({
+      nodeId: 'node', nodeName: 'test', currentNodeRunContext: null,
+      wsChatMessage: async() => true, bumpStateVersion: () => {},
+    });
+    for (const method of ['getToolPolicyBlockReason', 'emitToolCallEvent', 'emitToolResultEvent', 'appendToolResultMessage']) {
+      vi.spyOn(executor as any, method).mockResolvedValue(null);
+    }
+    for (const method of ['persistStructuredToolRunRecord', 'pushToTranscript', 'trackFailureSignature']) {
+      vi.spyOn(executor as any, method).mockReturnValue(undefined);
+    }
+    const state = { metadata: { threadId: 'executor-holder', activityKeys: [], options: {} }, messages: [] } as any;
+
+    await executor.executeToolCalls(state, [{ name: 'agents/answer_decision', id: 'answer-call', args: { decisionId: 'd-executor', action: 'answer' } }]);
+
+    expect(mocked.answerAsAgent).toHaveBeenCalledWith('executor-holder', 'd-executor', 'answer', undefined, undefined);
   });
 });
