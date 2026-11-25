@@ -1130,7 +1130,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               if (parsed.type === 'item.started') {
                 callbacks.onToolStarted?.({ toolUseId: itemId, toolName: String(item.tool ?? item.name ?? kind), input: item.arguments ?? item.input });
                 liveness.toolStarted(itemId, String(item.tool ?? item.name ?? kind));
-              } else liveness.toolFinished(itemId);
+              } else if (parsed.type === 'item.completed') liveness.toolFinished(itemId);
             }
             if (isTool && parsed.type === 'item.started') sawToolExecution = true;
             if (kind === 'agent_message' && parsed.type === 'item.completed') {

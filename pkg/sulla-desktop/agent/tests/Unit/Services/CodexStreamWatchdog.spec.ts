@@ -14,20 +14,30 @@ vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'te
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
   getProviderExecutionTransport: vi.fn(), requireBrokeredContainerAuth: () => ({}), requireContainerToolConfig: () => ({}),
 }));
+// Container runs carry a runtime pod; VM runs have none and rely on the bridge lease's pod.
+const runtimePod = vi.hoisted(() => ({ id: 'codex-watchdog-test-pod' as string | undefined }));
+const VM_LEASE_POD = 'sulla-guest-codex-watchdog-lease';
 vi.mock('../../../services/AgentContainerRuntimeRegistry', () => ({
-  currentAgentContainerRuntime: () => ({
-    podId: 'codex-watchdog-test-pod', subject: 'test', jobId: 'test', deviceId: 'test', workspacePath: '/tmp',
-  }),
+  currentAgentContainerRuntime: () => runtimePod.id
+    ? { podId: runtimePod.id, subject: 'test', jobId: 'test', deviceId: 'test', workspacePath: '/tmp' }
+    : undefined,
+}));
+vi.mock('@pkg/backend/guestClis', () => ({ ensureGuestCli: vi.fn(async() => {}) }));
+vi.mock('../../../languagemodels/codexExecutionAuth', () => ({
+  resolveCodexExecutionAuth: vi.fn(async() => ({
+    kind: 'container-broker-lease', environment: {}, codexConfigOverrides: [], podId: VM_LEASE_POD, dispose: () => {},
+  })),
 }));
 vi.mock('../../../languagemodels/providerSessionStore', () => ({ providerSessionStore: { get: vi.fn(), set: vi.fn() } }));
 vi.mock('../../../tools/agents/workerMessaging', () => ({ prepareWorkerTurnPrompt: (_state: unknown, prompt: string) => prompt }));
 vi.mock('../../../utils/steerChannel', () => ({ onSteer: () => () => {}, markSteerPending: vi.fn() }));
 vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 
-beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
+beforeEach(() => { runtimePod.id = 'codex-watchdog-test-pod'; vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() });
 
-async function launch() {
+async function launch(runtime: 'container' | 'guest' = 'container') {
+  if (runtime === 'guest') runtimePod.id = undefined;
   const proc = Object.assign(new EventEmitter(), {
     stdin:    new PassThrough(),
     stdout:   new PassThrough(),
@@ -36,8 +46,8 @@ async function launch() {
     kill:     vi.fn(() => true),
   });
   vi.mocked(getProviderExecutionTransport).mockReturnValue({
-    runtime:   'container',
-    context:   vi.fn(() => Promise.resolve({ runtime: 'container' })),
+    runtime,
+    context:   vi.fn(() => Promise.resolve({ runtime })),
     files:     { write: vi.fn(() => Promise.resolve({ path: '/tmp/test-instructions.md', dispose: vi.fn() })) },
     spawn:     vi.fn(() => proc),
     terminate: vi.fn(async() => {}),
@@ -109,13 +119,15 @@ describe('Codex quiet stream watchdog', () => {
   // Jonathon (2026-11-24): an agent is stalled only when its WHOLE loop is idle.
   const emit = (run: Awaited<ReturnType<typeof launch>>, event: unknown) => run.proc.stdout.write(JSON.stringify(event) + '\n');
 
-  it('does not kill a run that is silent in chat but keeps making tool calls', async() => {
+  it('does not kill a run that is silent in chat but keeps running long tool calls', async() => {
     // risk: a working agent is killed as "stalled" because it sent no chat message
     const run = await launch();
-    for (let call = 0; call < 6; call++) {
+    for (let call = 0; call < 3; call++) {
       await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
       emit(run, { type: 'item.started', item: { id: `cmd-${ call }`, type: 'command_execution', command: 'npm test' } });
-      await vi.advanceTimersByTimeAsync(20_000);
+      // A 10-minute command prints nothing until it ends: more than three times the silence limit.
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(run.proc.kill).not.toHaveBeenCalled();
       emit(run, { type: 'item.completed', item: { id: `cmd-${ call }`, type: 'command_execution', command: 'npm test', exit_code: 0 } });
     }
     await vi.advanceTimersByTimeAsync(2 * 60_000);
@@ -157,5 +169,36 @@ describe('Codex quiet stream watchdog', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
     expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+  });
+
+  it('keeps a run waiting on the human alive past the tool ceiling', async() => {
+    // risk: an agent waiting on an approval or question is killed as hung while the human decides
+    const run = await launch();
+    emit(run, { type: 'item.started', item: { id: 'ask-1', type: 'mcp_tool_call', tool: 'ask_user_question' } });
+    await vi.advanceTimersByTimeAsync(LONG_TOOL_CEILING_MS + 60 * 60_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    emit(run, { type: 'item.completed', item: { id: 'ask-1', type: 'mcp_tool_call', tool: 'ask_user_question' } });
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 30_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+  });
+
+  it('counts relayed model output for a VM run on a bridge lease, and shows its retry state', async() => {
+    // risk: a VM Codex run reasoning past three minutes is killed because the stall clock reads no pod
+    const run = await launch('guest');
+    for (let minute = 0; minute < 8; minute++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      providerBridgeActivity.markModelOutput(VM_LEASE_POD);
+    }
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    expect(run.liveness).toHaveBeenCalled();
+    providerBridgeActivity.publishRetryStatus(VM_LEASE_POD, { status: 429, reason: 'request rate limit exceeded', retryAfterSeconds: 9 });
+    expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 30_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
   });
 });

@@ -42,7 +42,8 @@ export interface CliAgentEventResult {
   toolState?: {
     toolUseId: string;
     toolName:  string;
-    status:    'started' | 'completed';
+    /** Anything but 'started' means the call is over (succeeded, failed or was cancelled). */
+    status:    'started' | 'completed' | 'failed' | 'error' | 'cancelled';
   };
   error?: string;
 }
@@ -414,7 +415,8 @@ export class CliAgentService extends BaseLanguageModel {
         try { parsed = JSON.parse(trimmed) } catch { return }
         const event = this.spec.parseEvent(parsed);
         if (event.toolState?.toolUseId) {
-          if (event.toolState.status === 'completed') liveness.toolFinished(event.toolState.toolUseId);
+          // A failed, errored or cancelled call is over too; only 'started' holds the run open.
+          if (event.toolState.status !== 'started') liveness.toolFinished(event.toolState.toolUseId);
           else {
             sawToolExecution = true;
             if (liveness.toolStarted(event.toolState.toolUseId, event.toolState.toolName)) {

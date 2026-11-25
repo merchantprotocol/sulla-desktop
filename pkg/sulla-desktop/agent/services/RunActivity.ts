@@ -13,7 +13,7 @@
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
 import { runTools, type ToolInFlight } from './RunToolTracker';
-import { LONG_TOOL_CEILING_MS, describeHungTool } from './RunLivenessClock';
+import { LONG_TOOL_CEILING_MS, describeHungTool, toolHoldsRunAlive } from './RunLivenessClock';
 
 const lastActivity = new Map<string, number>();
 
@@ -49,6 +49,8 @@ export const RunActivity = {
 
   end(key: string): void {
     lastActivity.delete(key);
+    // Nothing the ended run started is still running; a stale entry would hold the key "busy".
+    runTools.clearKey(key);
     releaseChatActivity(`run:${ key }`);
   },
 };
@@ -89,9 +91,10 @@ export function watchForDeadRun(
       if (fired) return;
       const minutes = await deadRunMinutes();
       const now = Date.now();
-      // A tool still running (a long shell command emits nothing until it ends) is activity, up to the ceiling.
+      // A tool still running (a long shell command emits nothing until it ends) is
+      // activity, up to the ceiling; a wait on the human (approval, question) always is.
       const tool = RunActivity.toolInFlight(key);
-      if (tool && now - tool.startedAt < LONG_TOOL_CEILING_MS) return;
+      if (toolHoldsRunAlive(tool, now)) return;
       const clock = {
         createdAt: liveness.createdAt,
         startedAt: liveness.createdAt,

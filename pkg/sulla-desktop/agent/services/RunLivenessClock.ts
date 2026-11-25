@@ -18,6 +18,32 @@ export const LONG_TOOL_CEILING_MS = 2 * 60 * 60_000;
 
 export interface RunToolInFlight { name: string; startedAt: number }
 
+const HUMAN_WAIT_TOOL = /ask_user|approv|permission|question/i;
+
+/**
+ * Tools that wait on the human (approvals, ask_user_question). Waiting on the
+ * human is alive, however long it takes; approval expiry owns these, so they
+ * are never reported as a hung tool or a dead agent.
+ */
+export function isHumanWaitTool(name: string | undefined): boolean {
+  return HUMAN_WAIT_TOOL.test(name ?? '');
+}
+
+/** A tool still running keeps the run alive: a human wait always, anything else up to the ceiling. */
+export function toolHoldsRunAlive(tool: RunToolInFlight | undefined, now: number, ceilingMs: number = LONG_TOOL_CEILING_MS): boolean {
+  return tool !== undefined && (isHumanWaitTool(tool.name) || now - tool.startedAt < ceilingMs);
+}
+
+/** The tool a run is blocked on: a human wait first, then the oldest call. */
+export function blockingTool<T extends RunToolInFlight>(tools: Iterable<T>): T | undefined {
+  let oldest: T | undefined;
+  for (const tool of tools) {
+    if (isHumanWaitTool(tool.name)) return tool;
+    if (!oldest || tool.startedAt < oldest.startedAt) oldest = tool;
+  }
+  return oldest;
+}
+
 export type RunLivenessVerdict =
   | { kind: 'alive' }
   | { kind: 'silent'; silentMs: number }
@@ -68,11 +94,9 @@ export class RunLivenessClock {
 
   get toolsInFlight(): number { return this.tools.size }
 
-  /** The oldest tool call still running, if any. */
+  /** The tool call the run is blocked on (a human wait first, then the oldest), if any. */
   oldestTool(): RunToolInFlight | undefined {
-    let oldest: RunToolInFlight | undefined;
-    for (const tool of this.tools.values()) if (!oldest || tool.startedAt < oldest.startedAt) oldest = tool;
-    return oldest;
+    return blockingTool(this.tools.values());
   }
 
   /** Last time anything in the loop happened, including relayed provider output. */
@@ -84,8 +108,9 @@ export class RunLivenessClock {
     const now = this.clock();
     const silentMs = Math.max(0, now - this.lastSeenAt());
     const tool = this.oldestTool();
-    // A tool still running is the agent working, however quiet it is, up to the ceiling.
-    if (tool && now - tool.startedAt < this.toolCeilingMs) return { kind: 'alive' };
+    // A tool still running is the agent working, however quiet it is, up to the
+    // ceiling; a wait on the human (approval, question) has no ceiling here.
+    if (toolHoldsRunAlive(tool, now, this.toolCeilingMs)) return { kind: 'alive' };
     if (silentMs < this.silenceLimitMs) return { kind: 'alive' };
     if (tool) return { kind: 'tool_hung', silentMs, tool, runningMs: now - tool.startedAt };
     return { kind: 'silent', silentMs };

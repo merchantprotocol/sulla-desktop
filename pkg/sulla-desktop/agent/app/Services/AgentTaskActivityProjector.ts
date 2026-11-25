@@ -5,7 +5,7 @@
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
 import { LiveTaskStatusProjector } from './LiveTaskStatusProjector';
 import { UnresolvedBlockerPolicy } from './UnresolvedBlockerPolicy';
-import { LONG_TOOL_CEILING_MS } from '../../services/RunLivenessClock';
+import { LONG_TOOL_CEILING_MS, toolHoldsRunAlive } from '../../services/RunLivenessClock';
 
 export interface AgentTaskActivityReader {
   lastActivityAt(key: string): number | undefined;
@@ -54,13 +54,13 @@ export class AgentTaskActivityProjector {
     return { lastActivityAt, state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, tool) };
   }
 
-  /** A tool call still running and still under the hung-tool ceiling. */
-  isBusy(tool?: { startedAt: number }): boolean {
-    return tool !== undefined && this.now() - tool.startedAt < this.longCommandMs;
+  /** A tool call still running and still under the hung-tool ceiling, or waiting on the human. */
+  isBusy(tool?: { name?: string; startedAt: number }): boolean {
+    return toolHoldsRunAlive(tool && { name: tool.name ?? '', startedAt: tool.startedAt }, this.now(), this.longCommandMs);
   }
 
   /** Derived from the task's own lifecycle only. The job's status is never inherited. */
-  private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null, tool?: { startedAt: number }): string {
+  private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null, tool?: { name?: string; startedAt: number }): string {
     if (task.status === 'stopped') return 'stopped';
     // A stale task error can outlive a successfully delivered completion result.
     // Match AgentStateService's derived job status while keeping genuine errors terminal.
