@@ -3,10 +3,12 @@ import '../../Support/TestHomeEnv';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider';
+import { waitForAutomaticAgentExecution } from '../../../services/AgentExecutionReadiness';
+import { AgentOrchestratorMessageFormatter } from '../../../services/AgentOrchestratorMessageFormatter';
 import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
 import { BackendGraphWebSocketService } from '../../../services/BackendGraphWebSocketService';
 import { GraphRegistry } from '../../../services/GraphRegistry';
-import { parkedAgentRehydrator } from '../../../services/ParkedAgentRehydrator';
+import { ParkedAgentRehydrator, parkedAgentRehydrator } from '../../../services/ParkedAgentRehydrator';
 import { ThreadGraphCache } from '../../../services/ThreadGraphCache';
 import * as registry from '../../../tools/agents/jobRegistry';
 import { ReturnResultWorker } from '../../../tools/agents/return_result';
@@ -14,7 +16,7 @@ import { toolRegistry } from '../../../tools/registry';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../services/AgentExecutionReadiness', () => ({
-  waitForAutomaticAgentExecution: () => Promise.resolve(),
+  waitForAutomaticAgentExecution: vi.fn(() => Promise.resolve()),
   agentExecutionReadiness:        { active: true, draining: false },
 }));
 
@@ -22,6 +24,7 @@ const thread = 'worker';
 const state = (): any => ({ messages: [], metadata: { delegatedRunActive: true } });
 function fixture() {
   const service = Object.create(BackendGraphWebSocketService.prototype);
+  service.orchestratorMessageFormatter = new AgentOrchestratorMessageFormatter();
   service.recoveryAbort = new AbortController();
   service.activeAborts = new Map();
   service.dispatchToAgent = vi.fn().mockResolvedValue('accepted');
@@ -53,6 +56,7 @@ describe('delegated input admission', () => {
   it('injects an exact-thread peer claim once, wakes the parked owner, and never dispatches a second runner', async() => {
     const backend = fixture();
     const live = state();
+    vi.spyOn(parkedAgentRehydrator, 'resolve').mockResolvedValue(null);
     const abort = new AbortController();
     await agentJobLifecycle.withRunner(thread, live, async() => {
       const wake = agentJobLifecycle.waitForWake(thread, abort.signal);
@@ -69,6 +73,46 @@ describe('delegated input admission', () => {
         expect(live.metadata.relayed).toBe(true);
         expect(backend.dispatchToAgent).not.toHaveBeenCalled();
       } finally { abort.abort() }
+    });
+  });
+
+  it('waits out the automatic launch pause, then refuses a disabled parked definition', async() => {
+    const backend = fixture();
+    const live = state();
+    let resume!: () => void;
+    vi.mocked(waitForAutomaticAgentExecution).mockImplementationOnce(() => new Promise(resolve => { resume = resolve }));
+    const resolver = new ParkedAgentRehydrator(
+      { findByTaskThread: () => Promise.resolve({ status: 'running', tasks: [{ threadId: thread, status: 'parked', agentId: target.agentId }] } as any) },
+      { findBySlug: () => Promise.resolve({ enabled: false }) }, () => Promise.resolve(), () => {},
+    );
+    const resolve = vi.spyOn(parkedAgentRehydrator, 'resolve').mockImplementation(id => resolver.resolve(id));
+    await agentJobLifecycle.withRunner(thread, live, async() => {
+      const wake = backend.wakeInbox(target, peer.envelope.body, [peer]);
+      const rejected = expect(wake).rejects.toThrow(/disabled/);
+      try {
+        expect(resolve).not.toHaveBeenCalled();
+        expect(live.messages).toEqual([]);
+      } finally { resume(); await rejected }
+      expect(resolve).toHaveBeenCalledWith(thread);
+      expect(live.messages).toEqual([]);
+      expect(live.metadata.relayed).toBeUndefined();
+      expect(backend.dispatchToAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  it('uses the normal fallback if the owner returns during parked eligibility lookup', async() => {
+    const backend = fixture();
+    backend.dispatchToAgent.mockResolvedValue('failed');
+    const live = state();
+    vi.spyOn(parkedAgentRehydrator, 'resolve').mockImplementation(() => {
+      agentJobLifecycle.contractReturned(thread, { jobId: 'peer-race', taskIndex: 0, returnedAt: 1 });
+      return Promise.resolve(null);
+    });
+    await agentJobLifecycle.withRunner(thread, live, async() => {
+      expect(await backend.wakeInbox(target, peer.envelope.body, [peer])).toBe('failed');
+      expect(live.messages).toEqual([]);
+      expect(live.metadata.relayed).toBeUndefined();
+      expect(backend.dispatchToAgent).toHaveBeenCalledOnce();
     });
   });
 

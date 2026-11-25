@@ -433,8 +433,14 @@ timestamp: Date.now(),
       inboxMessageIds:           entries.map(entry => entry.envelope.ids.messageId),
       relayed:                   entries.some(entry => entry.envelope.ids.relayed === true),
     });
-    if (!human && target.threadId && !entries.some(entry => entry.envelope.kind === 'decision')) {
+    if (!human && target.threadId && !entries.some(entry => entry.envelope.kind === 'decision') && agentJobLifecycle.liveState(target.threadId)) {
+      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
+      const candidate = agentJobLifecycle.liveState(target.threadId);
+      // A non-parked task has no parked identity; a disabled parked one rejects.
+      if (candidate) await parkedAgentRehydrator.resolve(target.threadId);
+      if (this.recoveryAbort.signal.aborted || agentExecutionReadiness.draining) return 'deferred';
       const owner = agentJobLifecycle.liveState(target.threadId);
+      if (owner && owner !== candidate) return 'deferred'; // Retry eligibility for the new owner.
       if (owner) {
         const metadata = inboxMetadata();
         // Tighten the owner's tool scope before a synchronous CLI listener sees the input.

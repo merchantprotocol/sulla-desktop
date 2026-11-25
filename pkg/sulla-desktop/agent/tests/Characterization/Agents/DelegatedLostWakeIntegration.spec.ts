@@ -10,6 +10,7 @@ import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider
 import { DeferredStallInput } from '../../../app/Services/DeferredStallInput';
 import { clearCompletionInboxes, enqueueAgentCompletion, registerCompletionIdleDispatcher } from '../../../services/AgentCompletionInbox';
 import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
+import { AgentOrchestratorMessageFormatter } from '../../../services/AgentOrchestratorMessageFormatter';
 import { AgentWakeScheduler } from '../../../services/AgentWakeScheduler';
 import { BackendGraphWebSocketService } from '../../../services/BackendGraphWebSocketService';
 import { DelegatedFreshTurnRunner } from '../../../services/DelegatedFreshTurnRunner';
@@ -173,6 +174,7 @@ describe('delegated timer wake after graph-cache eviction', () => {
       state: 'scheduled',
     });
     const backend = Object.create(BackendGraphWebSocketService.prototype);
+    backend.orchestratorMessageFormatter = new AgentOrchestratorMessageFormatter();
     backend.activeAborts = new Map();
     backend.recoveryAbort = new AbortController();
     backend.dispatchToAgent = vi.fn(() => Promise.resolve('deferred'));
