@@ -132,6 +132,8 @@ export function decideBuiltinSeedAction(
   seenBefore: boolean,
 ): BuiltinSeedAction {
   if (!row) return seenBefore ? { kind: 'deleted-by-human' } : { kind: 'insert' };
+  // Files is authoritative once a version has been published; the boot fallback must not overwrite it.
+  if (row.use_case_file_id && row.use_case_version_id) return { kind: 'kept' };
 
   const bundleHash = hashManagedContent(content);
   const liveHash = hashManagedContent(row);

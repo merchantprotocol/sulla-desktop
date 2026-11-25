@@ -4,13 +4,22 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { decisionService } from '../services/DecisionService';
+import { AgentJobMessagingModel } from '../database/models/AgentJobMessagingModel';
 import { PublishApprovalCoordinator } from './files/PublishApprovalCoordinator';
+import { PublishApprovalOutcomeDelivery } from './files/PublishApprovalOutcomeDelivery';
+import { PublishApprovalOutcomeMessage, SettingsHumanNameReader } from './files/PublishApprovalOutcomeMessage';
+import { PublishApprovalRouter } from './files/PublishApprovalRouter';
 import { DesktopSnapshotRegistry } from './desktop/DesktopSnapshotRegistry';
 import { DesktopTargetPolicy } from './desktop/DesktopTargetPolicy';
 
 /** Application composition root for stateful tool collaborators. */
 export class ToolRuntime {
-  readonly publishApprovalCoordinator = new PublishApprovalCoordinator(decisionService);
+  readonly publishApprovalRouter = new PublishApprovalRouter(AgentJobMessagingModel);
+  readonly publishApprovalCoordinator = new PublishApprovalCoordinator(
+    decisionService,
+    new PublishApprovalOutcomeDelivery(this.publishApprovalRouter),
+    new PublishApprovalOutcomeMessage(new SettingsHumanNameReader()),
+  );
   readonly desktopSnapshotRegistry = new DesktopSnapshotRegistry();
   readonly desktopTargetPolicy = new DesktopTargetPolicy();
 

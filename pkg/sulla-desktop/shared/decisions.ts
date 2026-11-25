@@ -21,6 +21,10 @@ export interface DecisionRecord {
   supersededBy?:           string;
   /** Exact durable ancestry; kept after completed worker jobs are pruned. */
   relatedConversationIds?: string[];
+  /** Durable identity of an agent that requested an approval from a delegated thread. */
+  requestedBy?: { agentId?: string; label?: string; jobId?: string; taskIndex?: number };
+  /** Trusted card copy persisted with the decision, never recovered from transcript text. */
+  approvalPresentation?: { reason: string; command: string; origin: { kind: string } };
   questions?:              { question: string; header?: string; multiSelect?: boolean; task?: boolean; command?: string; options: { label: string; description?: string }[] }[];
   /** What the user chose, kept so an answer survives even if delivering it fails. */
   answers?:                { question: string; selected: string[] }[];

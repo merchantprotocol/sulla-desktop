@@ -468,10 +468,11 @@ const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
 const mainDecisionTranscript = computed(() => !props.agentTabContractId && !props.agentTabThreadId &&
   !props.initialAgentId && !props.supportSessionId && !controller.thread.value.agentId);
-const transcriptDecisionIds = computed(() => mainDecisionTranscript.value ? controller.messages.value.flatMap(message => {
-  const id = message.kind === 'tool_question' ? message.questionId : message.kind === 'tool_approval' ? message.approvalId : undefined;
+const transcriptDecisionIds = computed(() => controller.messages.value.flatMap(message => {
+  const id = message.kind === 'tool_approval' ? message.approvalId :
+    mainDecisionTranscript.value && message.kind === 'tool_question' ? message.questionId : undefined;
   return id ? [id] : [];
-}) : []);
+}));
 provide('chat:main-decision-transcript', mainDecisionTranscript);
 const chatDecisionStore = ChatDecisions.provide(subAgentParentThreadId, transcriptDecisionIds);
 const agentStateClient = inject(AGENT_STATE_CLIENT_KEY);
@@ -509,7 +510,10 @@ const hasArtifact      = computed(() => controller.artifacts.value.list.length >
 // LRU-evicted after 20 tabs, so a conversation reopened from History (its
 // transcript hydrated from the thread store / DB) would otherwise be hidden
 // behind the empty "new chat" landing.
-const hasTranscript = computed(() => adapter.hasSentMessage.value || controller.thread.value.messages.length > 0);
+const hasTranscript = computed(() => adapter.hasSentMessage.value || controller.thread.value.messages.length > 0 ||
+  chatDecisionStore.decisions.value.some(record => record.kind === 'approval' && record.payload?.filesPublishRequestId &&
+    ['pending', 'deferred'].includes(record.status) &&
+    (record.conversationId === subAgentParentThreadId.value || record.relatedConversationIds?.includes(subAgentParentThreadId.value ?? '') === true)));
 const artifactExpanded = ref(false);
 
 function onArtifactExpand(ev: Event): void {
