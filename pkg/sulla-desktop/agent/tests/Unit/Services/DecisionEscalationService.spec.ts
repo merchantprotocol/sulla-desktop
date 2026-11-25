@@ -17,7 +17,11 @@ import type { AgentJobTaskTarget } from '../../../database/models/AgentJobMessag
 
 class MemoryDecisionStore {
   private readonly records = new Map<string, DecisionRecord>();
+  readonly settleCalls: Array<{ id: string; actor: DecisionTransitionActor; status: DecisionSettlementStatus }> = [];
+  askerTask?: AgentJobTaskTarget;
+  readonly deliveredJobAnswers: Array<{ jobId: string; taskIndex: number; message: string }> = [];
   failOpenRoutedQuestionsOnce = false;
+  lateChatAnswers: DecisionRecord[] = [];
 
   put(record: DecisionRecord): void { this.records.set(record.id, structuredClone(record)) }
   async insert(record: DecisionRecord): Promise<void> { this.put(record) }
@@ -30,26 +34,48 @@ class MemoryDecisionStore {
   async findById(id: string): Promise<DecisionRecord | undefined> { const record = this.records.get(id); return record && structuredClone(record) }
   async findOpenQuestion(): Promise<undefined> { return undefined }
   async ancestry(): Promise<string[]> { return [] }
-  async taskForThread(): Promise<AgentJobTaskTarget | null> { return null }
+  async taskForThread(threadId: string): Promise<AgentJobTaskTarget | null> { return this.askerTask?.threadId === threadId ? this.askerTask : null }
   async expireOpenDecisions(): Promise<DecisionRecord[]> { return [] }
   async queueLateAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined> {
     const current = this.records.get(record.id);
     const route = current?.route;
     const actor = record.answeredBy ?? { kind: 'human' as const };
-    if (!current || !route || !['pending', 'expired'].includes(current.status) || !['active', undefined].includes(current.attention)) return undefined;
-    if (actor.kind === 'agent' && (route.authority !== 'any' || route.chain[route.holderIndex]?.threadId !== actor.threadId)) return undefined;
+    if (!current || current.answerDelivery || (!['pending', 'expired'].includes(current.status) && current.status !== 'answered') ||
+      (current.status !== 'answered' && !['active', undefined].includes(current.attention)) ||
+      (current.status === 'answered' && (current.answeredBy?.kind !== actor.kind || JSON.stringify(current.answers) !== JSON.stringify(answers)))) return undefined;
+    if (actor.kind === 'agent' && (!route || route.authority !== 'any' || route.chain[route.holderIndex]?.threadId !== actor.threadId)) return undefined;
     const history: DecisionRouteHistoryEntry = {
-      threadId: actor.kind === 'agent' ? actor.threadId ?? '' : current.conversationId,
+      threadId: actor.kind === 'agent' ? actor.threadId ?? '' : route?.chain.at(-1)?.threadId ?? current.conversationId,
       agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human', action: 'answered', at: this.records.size,
       ...(actor.note ? { note: actor.note.slice(0, 500) } : {}),
     };
     const answered = { ...current, attention: 'answered' as const, answerDelivery: 'queued' as const,
-      answeredBy: actor, answers, route: { ...route, history: [...route.history, history] } };
+      answeredBy: actor, answers, ...(route && current.status !== 'answered' ? { route: { ...route, history: [...route.history, history] } } : {}) };
+    this.put(answered);
+    this.lateChatAnswers.push(structuredClone(answered));
+    return structuredClone(answered);
+  }
+  async recordJobAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined> {
+    const current = this.records.get(record.id);
+    const actor = record.answeredBy ?? { kind: 'human' as const };
+    if (!current || (current.status === 'answered' && (current.answerDelivery || JSON.stringify(current.answers) !== JSON.stringify(answers) || current.answeredBy?.kind !== actor.kind)) ||
+      (!['pending', 'deferred', 'expired', 'answered'].includes(current.status) || current.attention === 'dismissed')) return undefined;
+    const route = current.route;
+    const history: DecisionRouteHistoryEntry = { threadId: actor.kind === 'agent' ? actor.threadId ?? '' : route?.chain.at(-1)?.threadId ?? current.conversationId,
+      agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human', action: 'answered', at: this.records.size,
+      ...(actor.note ? { note: actor.note.slice(0, 500) } : {}) };
+    const answered = { ...current, status: 'answered' as const, attention: 'answered' as const, answerDelivery: 'queued' as const,
+      answeredBy: actor, answers, ...(route && current.status !== 'answered' ? { route: { ...route, history: [...route.history, history] } } : {}) };
     this.put(answered);
     return structuredClone(answered);
   }
   async find(conversationId: string): Promise<{ id: string } | null> { return { id: conversationId } }
-  async markJobAnswerDelivered(): Promise<boolean> { return true }
+  async markJobAnswerDelivered(id: string): Promise<boolean> {
+    const current = this.records.get(id);
+    if (!current || current.answerDelivery !== 'queued') return false;
+    this.put({ ...current, answerDelivery: 'delivered' });
+    return true;
+  }
   async openRoutedQuestions(): Promise<DecisionRecord[]> {
     if (this.failOpenRoutedQuestionsOnce) { this.failOpenRoutedQuestionsOnce = false; throw new Error('database not ready') }
     return [...this.records.values()].filter(record => record.kind === 'question' && record.status === 'pending' && record.attention === 'active' && record.route?.authority === 'any').map(record => structuredClone(record));
@@ -75,6 +101,7 @@ class MemoryDecisionStore {
 
   async settleAs(id: string, expectedIndex: number, actor: DecisionTransitionActor, status: DecisionSettlementStatus,
     patch: Partial<Omit<DecisionRecord, 'route'>>, history: DecisionRouteHistoryEntry[] = []): Promise<boolean> {
+    this.settleCalls.push({ id, actor, status });
     const record = this.records.get(id);
     const route = record?.route;
     if (!record || !route || !['pending', 'deferred'].includes(record.status) || (record.kind === 'question' && record.attention !== 'active')) return false;
@@ -127,13 +154,19 @@ class EscalationHarness {
   readonly routeResolver: any;
   readonly escalation: DecisionEscalationService;
   readonly decisions: DecisionService;
+  readonly askerMessages: Array<{ jobId: string; taskIndex: number; message: string }> = [];
+  readonly chatAnswerWakes: Array<{ channel: string; type: string }> = [];
   now = 100;
 
   constructor(routes: any) {
     this.routeResolver = routes;
     this.escalation = new DecisionEscalationService(this.store as any, routes, this.authority, this.notifier,
       (actor, response) => this.decisions.resolveAs(actor, response), () => undefined, () => this.now);
-    const lateAnswers = new LateDecisionAnswerHandler(this.store as any, this.store as any, { send: async() => true });
+    const lateAnswers = new LateDecisionAnswerHandler(this.store as any, this.store as any, { send: async(channel, message) => {
+      this.chatAnswerWakes.push({ channel, type: message.type }); return true;
+    } }, {
+      send: async(jobId, taskIndex, message) => { this.askerMessages.push({ jobId, taskIndex, message }); return true },
+    });
     this.decisions = new DecisionService(lateAnswers, {
       decisions: this.store as any, pendingDecisions: this.store as any,
       routeResolver: routes, authorityPolicy: this.authority, holderNotifier: this.notifier,
@@ -331,7 +364,6 @@ describe('DecisionEscalationService', () => {
     const humanAnswer = {
       id: requested.record.id, conversationId: 'asker', action: 'answered', answers: [{ question: 'Which?', selected: ['A'] }],
     } as const;
-    await expect(harness.decisions.resolveAs({ kind: 'human' }, humanAnswer)).resolves.toMatchObject({ settled: false });
     await expect(harness.decisions.answerAsAgent('parent', requested.record.id, 'pass')).resolves.toMatchObject({ settled: true });
     await expect(harness.decisions.answerAsAgent('root-chat', requested.record.id, 'pass')).resolves.toMatchObject({ settled: true });
     await expect(harness.decisions.resolveAs({ kind: 'human' }, humanAnswer)).resolves.toMatchObject({ settled: true });
@@ -356,6 +388,62 @@ describe('DecisionEscalationService', () => {
       id: passed.record.id, conversationId: 'asker', action: 'answered', answers: [{ question: 'Which?', selected: ['A'] }],
     });
     await expect(passed.result).resolves.toMatchObject({ status: 'answered', answeredBy: { kind: 'human' } });
+  });
+
+  it('lets the human override an agent-held persistent question and delivers it once to the delegated asker', async() => {
+    // risk: concurrency — a human answer must win the durable holder CAS, wake the original asker once, and reject a stale agent answer.
+    const chain = [agent('parent', 'manager', 'parent-job'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    harness.store.askerTask = { jobId: 'asker-job', taskIndex: 2, jobStatus: 'running', taskStatus: 'running', threadId: 'asker',
+      parentThreadId: 'parent', parentChannel: 'chat', agentId: 'asker-agent' };
+    const requested = await harness.decisions.requestQuestion({ conversationId: 'asker', channel: 'chat', title: 'Which option?',
+      questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] });
+    expect(requested.record.route).toMatchObject({ holderIndex: 0, chain });
+
+    await expect(harness.decisions.resolve({ id: requested.record.id, conversationId: 'asker', action: 'answered',
+      answers: [{ question: 'Which?', selected: ['A'] }] }, { kind: 'human' })).resolves.toMatchObject({ settled: true });
+    const answered = (await harness.store.findById(requested.record.id))!;
+    expect(answered).toMatchObject({ status: 'answered', answeredBy: { kind: 'human' }, answerDelivery: 'delivered', answers: [{ question: 'Which?', selected: ['A'] }] });
+    expect(answered.route?.history).toEqual([expect.objectContaining({ threadId: 'root-chat', agentId: 'human', action: 'answered' })]);
+    expect(harness.store.settleCalls).toEqual([{ id: requested.record.id, actor: { kind: 'human' }, status: 'answered' }]);
+    expect(harness.askerMessages).toEqual([{ jobId: 'asker-job', taskIndex: 2,
+      message: '[Decision answered by your human]\nWhich option?\nWhich?: A' }]);
+
+    await expect(harness.decisions.answerAsAgent('parent', requested.record.id, 'answer', [{ question: 'Which?', selected: ['B'] }]))
+      .resolves.toMatchObject({ settled: false });
+    expect(harness.askerMessages).toHaveLength(1);
+    expect(harness.store.settleCalls).toHaveLength(1);
+  });
+
+  it('keeps the existing inbox settlement path after a question reaches the human level', async() => {
+    // risk: compatibility — escalation must not change the existing durable inbox path once the human already holds the question.
+    const chain = [agent('parent', 'manager', 'parent-job'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    const requested = await harness.decisions.requestQuestion({ conversationId: 'asker', channel: 'chat', title: 'Which option?',
+      questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] });
+    await harness.escalation.advance(requested.record.id, 'passed', { kind: 'agent', threadId: 'parent', agentId: 'manager' });
+
+    await expect(harness.decisions.resolve({ id: requested.record.id, conversationId: 'asker', action: 'answered',
+      answers: [{ question: 'Which?', selected: ['B'] }] }, { kind: 'human' })).resolves.toMatchObject({ settled: true, late: true });
+    expect((await harness.store.findById(requested.record.id))?.route).toMatchObject({ holderIndex: 1 });
+    expect(harness.store.settleCalls).toEqual([]);
+    expect(harness.store.lateChatAnswers).toHaveLength(1);
+    expect(harness.chatAnswerWakes).toEqual([{ channel: 'chat', type: 'decision_answer_queued' }]);
+  });
+
+  it('answers a legacy inbox question with no route through the existing chat path', async() => {
+    // risk: compatibility — questions saved before routing was introduced must remain answerable without acquiring a synthetic route.
+    const harness = new EscalationHarness(new FixedRouteResolver([human]));
+    const legacy: DecisionRecord = { id: 'legacy-question', conversationId: 'legacy-asker', channel: 'chat', title: 'Which option?', kind: 'question',
+      status: 'pending', attention: 'active', createdAt: 1, expiresAt: 1_000_000,
+      payload: { answerRoute: 'inbox' }, questions: [{ question: 'Which?', options: [{ label: 'A' }] }] };
+    harness.store.put(legacy);
+
+    await expect(harness.decisions.resolve({ id: legacy.id, conversationId: legacy.conversationId, action: 'answered',
+      answers: [{ question: 'Which?', selected: ['A'] }] }, { kind: 'human' })).resolves.toMatchObject({ settled: true, late: true });
+    expect((await harness.store.findById(legacy.id))?.route).toBeUndefined();
+    expect(harness.store.lateChatAnswers).toHaveLength(1);
+    expect(harness.chatAnswerWakes).toEqual([{ channel: 'chat', type: 'decision_answer_queued' }]);
   });
 
   it('authorizes the new holder after a timeout using the persisted route, not the waiter snapshot', async() => {

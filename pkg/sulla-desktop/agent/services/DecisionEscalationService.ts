@@ -64,6 +64,32 @@ export class DecisionEscalationService {
     return this.resolveAs(actor, response);
   }
 
+  async answerAsHuman(record: DecisionRecord, response: DecisionResponse,
+    deliver: (record: DecisionRecord) => Promise<{ settled: boolean; conversationId?: string; reason?: string; late?: boolean; closed?: boolean }>) {
+    const route = record.route;
+    if (response.action !== 'answered' || record.kind !== 'question' || route?.authority !== 'any' || route.chain[route.holderIndex]?.kind !== 'agent') {
+      return { settled: false, reason: 'This question is no longer held by an agent.' };
+    }
+    const questions = record.questions ?? [];
+    if (!Array.isArray(response.answers) || response.answers.length !== questions.length) throw new Error('Answer every question');
+    const answers = questions.map((question, index) => {
+      const selected = response.answers![index]?.selected;
+      if (!Array.isArray(selected) || !selected.length || (!question.multiSelect && selected.length !== 1) ||
+        selected.some(value => typeof value !== 'string' || !value.trim() || value.length > 10000)) throw new Error('Answer could not be recorded.');
+      return { question: question.question, selected: selected.map(value => value.trim()) };
+    });
+    const actor: DecisionActor = { kind: 'human' };
+    const history = this.historyForAction(record, actor, 'answered', response.note);
+    const patch: Partial<Omit<DecisionRecord, 'route'>> = { status: 'answered', attention: 'answered', answeredBy: actor, answers };
+    if (!await this.records.settleAs(record.id, route.holderIndex, actor, 'answered', patch, history)) {
+      return { settled: false, reason: 'This question was already answered or dismissed.' };
+    }
+    const answered = await this.records.findById(record.id) ?? { ...record, ...patch, route: { ...route, history: [...route.history, ...history] } };
+    this.changed(answered);
+    const receipt = await deliver(answered);
+    return { ...receipt, settled: true, conversationId: answered.conversationId };
+  }
+
   pass(threadId: string, decisionId: string, note?: string) { return this.answerAsAgent(threadId, decisionId, 'pass', undefined, note) }
   denyAsAgent(threadId: string, decisionId: string, note?: string) { return this.answerAsAgent(threadId, decisionId, 'deny', undefined, note) }
 

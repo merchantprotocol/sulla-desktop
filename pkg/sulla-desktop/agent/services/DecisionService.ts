@@ -243,12 +243,15 @@ export class DecisionService {
     if (!record || record.conversationId !== response.conversationId) return { settled: false, reason: 'Request is no longer waiting.' };
     if (entry) entry.record = record;
     const agentHolder = record.kind === 'question' && record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent';
+    if (record.kind === 'question' && record.attention === 'answered') return { settled: false, reason: 'This question was already answered.' };
     const agentAction: DecisionAgentAction | undefined = response.action === 'answered' ? 'answer' : response.action === 'denied' ? 'deny'
       : response.action === 'passed' ? 'pass' : response.action === 'approved' ? 'approve' : response.action === 'deferred' ? 'pass' : undefined;
     if (actor.kind === 'agent' && (!agentHolder || !agentAction || !await this.escalation.authorize(record, actor, agentAction))) {
       return { settled: false, reason: 'Only the authorized holder may take that action.' };
     }
-    if (actor.kind === 'human' && agentHolder) return { settled: false, reason: 'Only the authorized holder may take that action.' };
+    if (!entry && actor.kind === 'human' && agentHolder && response.action === 'answered') {
+      return this.escalation.answerAsHuman(record, response, answered => this.lateAnswerHandler.handle(answered, response));
+    }
     if (response.action === 'passed') {
       if (entry?.busy) return { settled: false, reason: 'Already answered or unavailable.' };
       if (entry) entry.busy = true;
