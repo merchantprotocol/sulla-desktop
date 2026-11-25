@@ -27,13 +27,32 @@
         <p class="dc-grp">{{ group.label }}</p>
         <article v-for="item in group.items" :key="item.record.id" class="dc-route-item">
           <div class="dc-route-head">
-            <DecisionHolderLine :presentation="item.presentation" compact />
+            <span class="dc-route-status" :data-turn="item.presentation.turn">{{ item.presentation.statusLabel }}</span>
+            <span class="dc-route-time">{{ item.presentation.statusTimeLabel }}</span>
+            <span class="dc-sp" />
             <button type="button" class="dc-btn" :class="{ 'dc-pri': item.presentation.turn === 'yours' }" @click="openDecision(item.record)">
               {{ item.presentation.turn === 'settled' ? 'Jump to' : routeButton(item.record, item.presentation.turn) }}
             </button>
           </div>
           <p class="dc-q">{{ item.record.title }}</p>
-          <p v-if="item.presentation.answerSummary" class="dc-route-answer">{{ item.presentation.answerSummary }}</p>
+          <div class="dc-route-origin">
+            <DecisionActorMarker
+              :role="item.presentation.turn === 'yours' ? item.presentation.requesterRole : item.presentation.holderRole"
+              :initials="item.presentation.turn === 'yours' ? item.presentation.requesterInitial : item.presentation.holderInitial"
+            />
+            <span v-if="item.presentation.turn === 'with-agent'">
+              <b>With {{ item.presentation.holderLabel || 'an agent' }}</b>
+              <small>from {{ item.presentation.requesterLabel }}<template v-if="item.presentation.routeDetail"> · {{ item.presentation.routeDetail }}</template></small>
+            </span>
+            <span v-else-if="item.presentation.turn === 'settled'">
+              <b>{{ item.presentation.answeredByLabel || item.presentation.holderLine }}</b>
+              <small v-if="item.presentation.routeDetail">{{ item.presentation.routeDetail }}</small>
+            </span>
+            <span v-else>
+              from {{ item.presentation.requesterLabel }}
+              <small v-if="item.presentation.routeDetail">{{ item.presentation.routeDetail }}</small>
+            </span>
+          </div>
         </article>
       </section>
       <div v-if="legacyDecisions.length" class="dc-sum">
@@ -101,7 +120,7 @@ import { isOpenDecision } from '../../messages/sideDock';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import type { DecisionRouteTurn } from '../../decisions/DecisionRoutePresenter';
 import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
-import DecisionHolderLine from '../tool/DecisionHolderLine.vue';
+import DecisionActorMarker from '../../decisions/DecisionActorMarker.vue';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
 
@@ -202,9 +221,17 @@ function openDecision(record: DecisionRecord): void {
 .dc-route-counts b { color: var(--text-primary); }
 .dc-grp { margin: 14px 0 4px; color: var(--text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .dc-route-item { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border-default); }
-.dc-route-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; }
-.dc-route-head > :first-child { flex: 1; min-width: 0; }
+.dc-route-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dc-route-status { color: var(--text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.dc-route-status[data-turn="yours"] { color: var(--status-warning); }
+.dc-route-time { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dc-route-head .dc-sp { flex: 1; min-width: 0; }
 .dc-route-head .dc-btn { flex: none; }
-.dc-route-item .dc-q { overflow-wrap: anywhere; }
-.dc-route-answer { margin: -2px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 18px; overflow-wrap: anywhere; }
+.dc-route-item .dc-q { overflow-wrap: anywhere; font-weight: 500; }
+.dc-route-origin { display: flex; align-items: flex-start; gap: 7px; color: var(--text-secondary); font-size: 12.5px; line-height: 18px; min-width: 0; }
+.dc-route-origin > span { min-width: 0; overflow-wrap: anywhere; }
+.dc-route-origin b { color: var(--text-primary); font-weight: 500; }
+.dc-route-origin small { display: block; color: var(--text-muted); font-size: 12px; line-height: 18px; }
+.dc-route-item .dc-btn { border-color: var(--border-strong); border-radius: 8px; }
+.dc-route-item .dc-pri { border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); font-weight: 600; }
 </style>

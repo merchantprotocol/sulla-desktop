@@ -13,7 +13,7 @@
     :aria-label="routePresentation ? `Question from ${routePresentation.requesterLabel}` : 'Question from Sulla'"
   >
     <template v-if="routePresentation">
-      <DecisionHolderLine :presentation="routePresentation" /><p class="qc-route-from"><span class="qc-route-avatar">{{ routePresentation.requesterInitial }}</span><span>Question from <b>{{ routePresentation.requesterLabel }}</b></span></p><DecisionTrail :rows="routePresentation.trail" />
+      <DecisionHolderLine :presentation="routePresentation" /><p class="qc-route-from"><DecisionActorMarker :role="routePresentation.requesterRole" :initials="routePresentation.requesterInitial" /><span>Question from <b>{{ routePresentation.requesterLabel }}</b></span></p><DecisionTrail :rows="routePresentation.trail" />
     </template>
     <header v-else class="qc-status">
       <span
@@ -220,6 +220,7 @@ import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
 import DecisionHolderLine from './DecisionHolderLine.vue';
 import DecisionTrail from './DecisionTrail.vue';
+import DecisionActorMarker from '../../decisions/DecisionActorMarker.vue';
 
 const props = defineProps<{ msg: ToolQuestionMessage; decision?: DecisionRecord; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
@@ -339,9 +340,9 @@ async function submit(): Promise<void> {
   transition: opacity 0.2s ease;
 }
 .qc-route { max-width: 640px; min-width: 0; padding: 12px 16px 14px; border-color: var(--border-strong); border-radius: 12px; background: var(--bg-surface); } .qc-route.qc-settled { opacity: 1; border-color: var(--border-default); background: var(--bg-surface); }
-.qc-route-from { display: flex; align-items: flex-start; gap: 7px; margin: 8px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 20px; } .qc-route-from b { color: var(--text-primary); font: 500 11.5px var(--font-mono); } .qc-route-avatar { display: grid; place-items: center; width: 18px; height: 18px; flex: none; margin-top: 1px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 14%, var(--bg-surface)); color: var(--accent); font-size: 10px; font-weight: 700; }
+.qc-route-from { display: flex; align-items: flex-start; gap: 7px; margin: 8px 0 0; color: var(--text-secondary); font-size: 12.5px; line-height: 20px; } .qc-route-from b { color: var(--text-primary); font: 500 11.5px var(--font-mono); }
 .qc-route-body { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-default); } .qc-route-body .qc-block { margin: 0; padding: 0; border: 0; border-radius: 0; } .qc-route-body .qc-block + .qc-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-default); } .qc-route-body .qc-block + .qc-block::before { display: none; }
-.qc-route-body .qc-question { float: none; font-size: 15px; line-height: 1.55; } .qc-route-body .qc-options { margin: 10px 0 0; } .qc-route-body .qc-option { padding: 10px 14px; background: var(--bg-surface); } .qc-route-body .qc-actions { flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; } .qc-route-body .qc-submit { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; } .qc-route-hint { flex: 1 1 220px; min-width: 0; color: var(--text-muted); line-height: 18px; }
+.qc-route-body .qc-question { float: none; font-size: 15px; line-height: 1.55; } .qc-route-body .qc-options { margin: 10px 0 0; } .qc-route-body .qc-option { padding: 10px 14px; border-color: var(--border-strong); background: var(--bg-surface); } .qc-route-body .qc-option-text { gap: 2px; } .qc-route-body .qc-custom { padding: 0; border: 0; background: transparent; } .qc-route-body .qc-custom-choice { display: none; } .qc-route-body .qc-actions { flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; } .qc-route-body .qc-submit { height: 30px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; } .qc-route-hint { flex: 1 1 220px; min-width: 0; color: var(--text-muted); line-height: 18px; }
 .qc-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
 .qc-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-secondary); }
 .qc-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
@@ -431,7 +432,6 @@ async function submit(): Promise<void> {
 .qc-settled:not(.qc-original) .qc-option:not(.picked) { display: none; }
 .qc-settled .qc-option:hover { border-color: var(--border-default); }
 .qc-settled:has(.qc-late) { opacity: 0.9; }
-@media (prefers-reduced-motion: reduce) {
-  .qc, .qc-option { transition: none; }
-}
+@media (max-width: 600px) { .qc-route { padding: 12px 12px 14px; } }
+@media (prefers-reduced-motion: reduce) { .qc, .qc-option { transition: none; } }
 </style>

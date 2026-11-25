@@ -42,7 +42,7 @@ describe('DecisionRoutePresenter', () => {
     expect(view.holderLine).toBe('With Coding Manager until 3:25 PM');
     expect(view.secondaryLine).toBe('· then Sulla, then you');
     expect(view.trail[0]).toMatchObject({ time: '2:19 PM', actorLabel: 'Codex Luna Worker', actorInitial: 'L', actionLabel: 'asked' });
-    expect(view.trail[1]).toMatchObject({ time: 'now', actorLabel: 'Coding Manager', actionLabel: 'With Coding Manager until 3:25 PM', current: true });
+    expect(view.trail[1]).toMatchObject({ time: 'now', actorLabel: 'Coding Manager', actorRole: 'mgr', actionLabel: 'With Coding Manager until 3:25 PM', current: true });
     const labeled = record({ route: { ...record().route!, chain: [{ ...record().route!.chain[0], label: 'Product Lead' }, ...record().route!.chain.slice(1)] as any } });
     expect(presenter.present(labeled).holderLabel).toBe('Product Lead');
   });
@@ -103,6 +103,58 @@ describe('DecisionRoutePresenter', () => {
     } }));
     expect(fallbackView.holderInitial).toBe('Y');
     expect(fallbackView.trail[1]).toMatchObject({ actorLabel: 'You', actorInitial: 'Y' });
+  });
+
+  it('shows when the human received the current turn and uses the outlined-you actor role', () => {
+    // risk: answerability — the human must see when a decision reached them, not a misleading live-agent “now”.
+    const reached = Date.UTC(2026, 10, 25, 15, 21);
+    const currentHuman = record({ route: {
+      ...record().route!, holderIndex: 2, holderSince: reached,
+      history: [{ threadId: 'sulla', agentId: 'sulla', action: 'passed', at: reached }],
+    } });
+    const humanRow = presenter.present(currentHuman).trail.at(-1);
+    const reachedLabel = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(reached));
+    expect(humanRow).toMatchObject({ time: reachedLabel, timestamp: reached, actorLabel: 'You', actorInitial: 'Y', actorKind: 'human', actorRole: 'you', current: true });
+
+    const agentRow = presenter.present(record()).trail.at(-1);
+    expect(agentRow).toMatchObject({ time: 'now', actorInitial: 'C', actorKind: 'agent', actorRole: 'mgr', current: true });
+  });
+
+  it('derives main, manager, worker, and human marker roles from route ancestry', () => {
+    // risk: actor attribution — marker shape must follow persisted ancestry, never a model label.
+    const routed = record({ route: {
+      ...record().route!, history: [{ threadId: 'sulla', agentId: 'sulla', action: 'passed', at: deadline }],
+    } });
+    const view = presenter.present(routed);
+    expect(view.requesterRole).toBe('wrk');
+    expect(presenter.present(record()).holderRole).toBe('mgr');
+    expect(view.trail[0].actorRole).toBe('wrk');
+    expect(view.trail[1].actorRole).toBe('main');
+    expect(view.trail[2].actorRole).toBe('mgr');
+    const humanTurn = presenter.present(record({ route: { ...record().route!, holderIndex: 2 } }));
+    expect(humanTurn.holderRole).toBe('you');
+    expect(humanTurn.trail.at(-1)?.actorRole).toBe('you');
+  });
+
+  it('classifies actionable top counts and keeps settled and route-less records out of routed groups', () => {
+    // risk: decision visibility — settled work must not inflate actionable counts, while legacy pending items still count as yours.
+    const yours = record({ id: 'human-turn', route: { ...record().route!, holderIndex: 2 } });
+    const withAgent = record({ id: 'agent-turn' });
+    const settled = record({ id: 'settled', status: 'answered', answeredBy: { kind: 'human' } });
+    const legacy = record({ id: 'legacy', route: undefined });
+    const groups = presenter.group([yours, withAgent, settled, legacy]);
+    expect(groups.yourTurn.map(item => item.record.id)).toEqual(['human-turn']);
+    expect(groups.withAgent.map(item => item.record.id)).toEqual(['agent-turn']);
+    expect(groups.settled.map(item => item.record.id)).toEqual(['settled']);
+    expect(presenter.counts([yours, withAgent, settled, legacy], 2)).toEqual({ yourTurn: 3, withAgent: 1 });
+  });
+
+  it('punctuates an automatic timeout as a completed escalation note', () => {
+    // risk: accountability — a timeout must read as an automatic move, not an action by the human.
+    const timedOut = record({ route: { ...record().route!, history: [{
+      threadId: 'manager', agentId: 'coding-manager', action: 'timeout', at: deadline,
+    }] } });
+    expect(presenter.present(timedOut).trail[1].actionLabel).toBe('ran out of time after 1h 6m. Moved up with no note.');
   });
 
   it('sanitizes untrusted history notes to plain text without markdown or links', () => {
