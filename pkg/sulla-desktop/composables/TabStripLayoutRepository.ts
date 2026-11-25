@@ -2,15 +2,31 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { shallowRef, type ShallowRef } from 'vue';
+
 import type { TabGroupId } from './TabGroupModel';
 
 export type TabStripStorage = Pick<Storage, 'getItem' | 'setItem'>;
 
 /** Persists folded group IDs under the caller's existing per-window storage key. */
 export class TabStripLayoutRepository {
+  private static readonly stateByStorage = new WeakMap<object, Map<string, ShallowRef<TabGroupId[]>>>();
   private readonly groupIds: readonly TabGroupId[] = ['chats', 'browser', 'tools'];
+  readonly foldedGroups:     ShallowRef<TabGroupId[]>;
 
-  constructor(private readonly storage: TabStripStorage, private readonly key: string) {}
+  constructor(private readonly storage: TabStripStorage, private readonly key: string) {
+    let byKey = TabStripLayoutRepository.stateByStorage.get(storage as object);
+    if (!byKey) {
+      byKey = new Map();
+      TabStripLayoutRepository.stateByStorage.set(storage as object, byKey);
+    }
+    let state = byKey.get(key);
+    if (!state) {
+      state = shallowRef(this.loadFoldedGroups());
+      byKey.set(key, state);
+    }
+    this.foldedGroups = state;
+  }
 
   loadFoldedGroups(): TabGroupId[] {
     try {
@@ -28,6 +44,12 @@ export class TabStripLayoutRepository {
     try {
       this.storage.setItem(this.key, JSON.stringify(this.validGroupIds(groupIds)));
     } catch { /* storage can be unavailable in a hosted renderer */ }
+  }
+
+  setFoldedGroups(groupIds: readonly string[]): void {
+    const valid = this.validGroupIds(groupIds);
+    this.foldedGroups.value = valid;
+    this.saveFoldedGroups(valid);
   }
 
   private validGroupIds(values: readonly unknown[]): TabGroupId[] {

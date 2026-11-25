@@ -6,8 +6,7 @@
 /**
  * This is the entry point for the Agent window.
  */
-// hoping this is the absolute earliest we can run in the renderer context
-import { startWindowContextHydration } from '@pkg/sulla';
+
 import '@pkg/composables/useBrowserTabs'; // register transfer IPC before renderer startup
 
 import { createApp, h } from 'vue';
@@ -23,6 +22,8 @@ import store from './store';
 
 import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { isChatTabActivitySnapshot, type ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
+import { startWindowContextHydration } from '@pkg/sulla';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const windowBootStartedAt = Date.now();
@@ -56,12 +57,22 @@ const router = createRouter({
 const tabHost = new URLSearchParams(window.location.search).get('tabHost') === '1';
 const hostedTabId = new URLSearchParams(window.location.search).get('tabId') || '';
 if (tabHost && hostedTabId) {
-  window.addEventListener('sulla:chat-running', event => {
-    const detail = (event as CustomEvent<{ tabId: string; running: boolean }>).detail;
+  const onChatRunning = (event: Event) => {
+    const detail = (event as CustomEvent<{ tabId?: string; running?: boolean }>).detail;
     if (detail?.tabId === hostedTabId && typeof detail.running === 'boolean') {
       ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.running);
     }
-  });
+  };
+  const onChatActivity = (event: Event) => {
+    const detail = (event as CustomEvent<ChatTabActivitySnapshot & { tabId?: string }>).detail;
+    if (detail?.tabId !== hostedTabId || !isChatTabActivitySnapshot(detail)) return;
+    ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, detail.state === 'working', {
+      state: detail.state,
+      ...(detail.detail ? { detail: detail.detail } : {}),
+    });
+  };
+  window.addEventListener('sulla:chat-running', onChatRunning);
+  window.addEventListener('sulla:chat-activity', onChatActivity);
 }
 // BrowserTab sizes itself from its parent (height: 100%). In the main window that
 // parent is AgentRouter's absolutely positioned tab layer; a tab host has no such
