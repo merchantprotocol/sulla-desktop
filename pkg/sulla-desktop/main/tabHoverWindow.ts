@@ -85,14 +85,16 @@ export class TabHoverWindow {
     };
 
     const ownerContents = owner.webContents;
+    const ownerId = owner.id;
 
-    this.windows.set(owner.id, hover);
+    this.windows.set(ownerId, hover);
     ownerContents.on('did-start-navigation', dismiss);
     ownerContents.on('render-process-gone', dismiss);
     for (const event of ['blur', 'hide', 'minimize', 'move', 'resize'] as const) owner.on(event as 'blur', dismiss);
     owner.once('closed', teardown);
+    popup.webContents.once('render-process-gone', teardown);
     popup.once('closed', () => {
-      this.windows.delete(owner.id);
+      if (this.windows.get(ownerId) === hover) this.windows.delete(ownerId);
       ownerContents.removeListener('did-start-navigation', dismiss);
       ownerContents.removeListener('render-process-gone', dismiss);
       for (const event of ['blur', 'hide', 'minimize', 'move', 'resize'] as const) owner.removeListener(event as 'blur', dismiss);
