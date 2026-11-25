@@ -380,6 +380,16 @@ export class TopicLog {
 // SullaLogger — singleton combining topic + conversation logging
 // ══════════════════════════════════════════════════════════════════════════════
 
+export interface ConversationEventAppender {
+  append(filePath: string, contents: string): void;
+}
+
+class FileConversationEventAppender implements ConversationEventAppender {
+  append(filePath: string, contents: string): void {
+    fs.appendFileSync(filePath, contents, 'utf-8');
+  }
+}
+
 class SullaLogger extends EventEmitter {
   private readonly dir:            string;
   private readonly indexPath:      string;
@@ -397,7 +407,7 @@ class SullaLogger extends EventEmitter {
   // ── Topic log cache (static, shared across all callers) ──
   private static topics = new Map<string, TopicLog>();
 
-  constructor() {
+  constructor(private readonly eventAppender: ConversationEventAppender = new FileConversationEventAppender()) {
     super();
     this.setMaxListeners(20);
     this.dir = resolveSullaLogsDir();
@@ -505,15 +515,15 @@ class SullaLogger extends EventEmitter {
   }
 
   /** Append an event to a conversation's event log. */
-  log(conversationId: string, event: ConversationEvent): void {
+  log(conversationId: string, event: ConversationEvent): boolean {
     // Never persist subconscious machinery to history/logs (see start()).
-    if (isSubconsciousConversationId(conversationId)) return;
+    if (isSubconsciousConversationId(conversationId)) return false;
     try {
       this.ensureDir();
       const filePath = this.resolveFilePath(conversationId);
-      fs.appendFileSync(filePath, formatEvent(event), 'utf-8');
+      this.eventAppender.append(filePath, formatEvent(event));
       const jsonlPath = this.resolveJsonlPath(conversationId);
-      fs.appendFileSync(jsonlPath, JSON.stringify(event) + '\n', 'utf-8');
+      this.eventAppender.append(jsonlPath, JSON.stringify(event) + '\n');
       this.emit('event', { conversationId, event });
 
       // Throttled activity update to history DB (max once per 30s per conversation)
@@ -524,8 +534,10 @@ class SullaLogger extends EventEmitter {
         ConversationHistoryModel.updateActivity(conversationId)
           .catch(err => globalThis.console.error('[SullaLogger] Failed to update activity in history:', err));
       }
+      return true;
     } catch (err) {
       globalThis.console.error('[SullaLogger] Failed to write event:', err);
+      return false;
     }
   }
 
@@ -626,14 +638,21 @@ class SullaLogger extends EventEmitter {
     }
   }
 
-  logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown, toolCallId?: string): void {
-    this.log(conversationId, {
+  async logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown, toolCallId?: string): Promise<boolean> {
+    const written = this.log(conversationId, {
       ts:       new Date().toISOString(),
       type:     'tool_call',
       toolName,
       args: redactToolArgs(toolName.replace(/^mcp__.*?__|^[^/]+\//, ''), args),
       ...(result !== undefined ? { result } : {}), ...(toolCallId ? { toolCallId } : {}),
     });
+    if (!written) return false;
+
+    // The payload loader resolves through this database association; an append alone
+    // is not enough to safely replace the renderer's only full-result copy.
+    const association = await ConversationHistoryModel.getFileAssociations(conversationId);
+    const expectedLog = path.resolve(this.resolveJsonlPath(conversationId));
+    return Boolean(association.log_file && path.resolve(association.log_file) === expectedLog);
   }
 
   logLLMCall(conversationId: string, direction: 'request' | 'response', data: Record<string, unknown>): void {

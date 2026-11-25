@@ -25,6 +25,7 @@ import {
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { ClaudeToolPolicy } from './claudeToolPolicy';
 import { ClaudeToolEventTracker } from './claudeToolEvents';
+import { ProviderToolActivityReporter } from './ProviderToolActivityReporter';
 import {
   CliFaultError, CliHandoffFailure, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
 } from './cliFaultRecovery';
@@ -1364,10 +1365,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         };
 
         const reportedToolIds = new Set<string>();
-        const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
-          if (!msg) return;
-          try { callbacks.onActivity?.(reportingActivity === 'tool' ? msg.replace(/\s+/g, ' ').trim().slice(0, 80) : msg, reportingActivity) } catch { /* ignore */ }
-        };
+        const activityReporter = new ProviderToolActivityReporter(callbacks.onActivity);
+        const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => activityReporter.report(msg, reportingActivity);
 
         const emitToolActivity = (id: string | undefined, name: string, input: unknown) => {
           if (id && reportedToolIds.has(id)) return;

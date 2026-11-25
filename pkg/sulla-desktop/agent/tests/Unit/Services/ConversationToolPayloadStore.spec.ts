@@ -16,12 +16,22 @@ it('loads the complete 5 MB tool result by thread and tool id, without reading o
   try {
     const file = path.join(directory, 'conversation.jsonl');
     const result = `RESULT_START:${ 'x'.repeat(5_000_000) }:RESULT_END`;
-    await writeFile(file, `${ JSON.stringify({ type: 'tool_call', toolCallId: 'run-1', toolName: 'exec', result }) }\n`);
+    const lines = [
+      JSON.stringify({ type: 'message', content: 'unrelated row' }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'run-other', toolName: 'exec', result: 'other result' }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'run-1', toolName: 'exec', args: { path: 'redacted' } }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'run-1', toolName: 'exec', result }),
+    ];
+    await writeFile(file, `${ lines.join('\n') }\n`);
     const history = { getFileAssociations: vi.fn(async() => ({ log_file: file })) };
     const store = new ConversationToolPayloadStore(history, () => directory);
+    const parse = vi.spyOn(JSON, 'parse');
 
     const event = await store.load('thread-1', 'run-1') as { result: string; toolCallId: string };
     expect(event).toMatchObject({ toolCallId: 'run-1', result });
+    // Cheap id filtering skipped both unrelated lines; the first matching call without a result was ignored.
+    expect(parse).toHaveBeenCalledTimes(2);
+    parse.mockRestore();
     expect(await store.load('thread-1', 'missing')).toBeNull();
     history.getFileAssociations.mockResolvedValue({ log_file: path.join(tmpdir(), 'outside.jsonl') });
     expect(await store.load('thread-1', 'run-1')).toBeNull();

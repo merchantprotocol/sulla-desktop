@@ -28,6 +28,7 @@ import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolI
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { CodexToolEventEmitter } from './codexToolEvents';
+import { ProviderToolActivityReporter } from './ProviderToolActivityReporter';
 import { CodexTurnOutcome } from './codexTurnOutcome';
 import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
@@ -838,10 +839,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.stdin.end();
       } catch { /* stdin already closed */ }
 
-      const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
-        if (!msg) return;
-        try { callbacks.onActivity?.(reportingActivity === 'tool' ? msg.replace(/\s+/g, ' ').trim().slice(0, 80) : msg, reportingActivity) } catch { /* ignore */ }
-      };
+      const activityReporter = new ProviderToolActivityReporter(callbacks.onActivity);
+      const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => activityReporter.report(msg, reportingActivity);
 
       proc.once('spawn', () => {
         spawnedAt = Date.now();

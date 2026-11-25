@@ -111,6 +111,7 @@ export class DetailedTraceProjection {
       message.toolPayloadRef ? async() => {
         const event = await this.toolPayloads.load(message.toolPayloadRef!);
         const stored = event && typeof event === 'object' ? event as Record<string, unknown> : {};
+        if (!Object.prototype.hasOwnProperty.call(stored, 'result')) throw new Error('The conversation log entry has no complete tool result.');
         return { tool: target, status: message.status, input, output: stored.result, error: typeof stored.error === 'string' ? stored.error : error, description: desc, meta };
       } : undefined);
     const shell = this.shellCommand(message);

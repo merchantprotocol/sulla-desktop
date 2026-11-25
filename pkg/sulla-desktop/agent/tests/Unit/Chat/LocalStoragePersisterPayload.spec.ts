@@ -15,26 +15,26 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 beforeEach(() => { localStorage.clear(); vi.mocked(ipcRenderer.invoke).mockClear(); });
 
-// risk: performance and data accuracy — full results stay in the durable log, not duplicated into saved thread snapshots.
-it('persists a 5 MB tool result as a bounded pointer in both sinks', () => {
-  const threadId = asThreadId('thread-large-payload');
-  const result = `FULL_RESULT:${ 'x'.repeat(5_000_000) }:END`;
+// risk: data loss — a failed or unconfirmed log write must survive localStorage and database reload as the full inline result.
+it('keeps an unconfirmed large result inline in both saved copies and after reload', () => {
+  const threadId = asThreadId('thread-unconfirmed-payload');
+  const result = `FULL_INLINE_RESULT:${ 'x'.repeat(180_000) }:END`;
   const state = {
     thread: {
       id: threadId,
-      messages: [{ id: asMessageId('123_tool_large-call'), kind: 'tool', createdAt: 1, tool: 'Exec', status: 'ok', output: result }],
+      messages: [{ id: asMessageId('123_tool_unconfirmed-call'), kind: 'tool', createdAt: 1, tool: 'Exec', status: 'ok', output: result }],
     },
   } as unknown as ThreadState;
 
-  new LocalStoragePersister().save(state);
+  const persister = new LocalStoragePersister();
+  persister.save(state);
 
-  const cached = JSON.parse(localStorage.getItem(`chat:thread:${ threadId }`)!) as ThreadState;
+  const cached = persister.load(threadId)!;
   const browserTool = cached.thread.messages[0] as any;
   const dbSave = vi.mocked(ipcRenderer.invoke).mock.calls.find(([channel]) => channel === 'chat-messages:save')?.[2] as ThreadState;
   const databaseTool = dbSave.thread.messages[0] as any;
   for (const tool of [browserTool, databaseTool]) {
-    expect(tool).toMatchObject({ toolPayloadRef: { threadId, toolRunId: 'large-call' } });
-    expect(tool.output).toBeUndefined();
-    expect(JSON.stringify(tool).length).toBeLessThan(1_000);
+    expect(tool.output).toBe(result);
+    expect(tool).not.toHaveProperty('toolPayloadRef');
   }
 });

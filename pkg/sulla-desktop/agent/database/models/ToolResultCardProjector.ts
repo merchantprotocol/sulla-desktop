@@ -17,11 +17,13 @@ export class ToolResultCardProjector {
     const error = typeof data?.error === 'string' ? data.error : undefined;
     const hasInlineImage = this.hasInlineImage(result);
     const large = hasInlineImage || this.serializedLength(result) + (error?.length ?? 0) > this.pointerThreshold;
-    const sourceThreadId = typeof data?.payloadThreadId === 'string' ? data.payloadThreadId : defaultThreadId;
+    const payloadThreadId = typeof data?.payloadThreadId === 'string' ? data.payloadThreadId : undefined;
+    const sourceThreadId = payloadThreadId ?? defaultThreadId;
+    const durablePayloadConfirmed = data?.payloadPersisted === true && Boolean(payloadThreadId);
 
     card.status = data?.success === true ? 'success' : 'failed';
     delete card.result;
-    if (data?.payloadThreadId || large || hasInlineImage) {
+    if (durablePayloadConfirmed && (payloadThreadId || large || hasInlineImage)) {
       card.toolPayloadRef = { threadId: sourceThreadId, toolRunId: card.toolRunId };
       delete card.output;
       card.error = undefined;
