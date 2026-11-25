@@ -168,7 +168,7 @@ describe('native tab strip popups', () => {
     const owner = opener();
     const request = (id: string) => {
       if (channel === 'tab-context-menu') openMenu(owner, id);
-      else emit('tab-hover:show', owner, { id, anchor: { x: 20, y: 20 }, palette: {}, title: 'Title', status: 'Idle', detail: '' });
+      else emit('tab-hover:show', owner, { id, anchor: { x: 20, y: 45, aboveY: 5 }, palette: {}, title: 'Title', status: 'Idle', detail: '' });
     };
 
     request('first');
@@ -188,5 +188,21 @@ describe('native tab strip popups', () => {
     expect(replacement.webContents.send).toHaveBeenCalledWith(
       `${ channel }:data`, expect.objectContaining(channel === 'tab-hover' ? { id: 'second' } : { requestId: 'second' }),
     );
+  });
+
+  it.each([
+    { y: 45, aboveY: 5, expectedY: 45, above: false },
+    { y: 588, aboveY: 542, expectedY: 304, above: true },
+  ])('keeps the hover card in the work area for a tab at y=$y', async({ y, aboveY, expectedY, above }) => {
+    const owner = opener();
+
+    emit('tab-hover:show', owner, {
+      id: 'hover', anchor: { x: 790, y, aboveY }, palette: {}, title: 'Long tab title', status: 'Working', detail: '',
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const [popup] = popups;
+
+    expect(popup.setBounds).toHaveBeenCalledExactlyOnceWith({ x: 474, y: expectedY, width: 326, height: 238 });
+    expect(popup.webContents.send).toHaveBeenCalledWith('tab-hover:data', expect.objectContaining({ above }));
   });
 });

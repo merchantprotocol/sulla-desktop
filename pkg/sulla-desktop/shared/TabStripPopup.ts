@@ -36,7 +36,7 @@ export type TabContextMenuRequest = {
 
 export interface TabHoverRequest {
   id:      string;
-  anchor:  { x: number; y: number };
+  anchor:  { x: number; y: number; aboveY: number };
   palette: TabStripPopupPalette;
   title:   string;
   status:  string;
