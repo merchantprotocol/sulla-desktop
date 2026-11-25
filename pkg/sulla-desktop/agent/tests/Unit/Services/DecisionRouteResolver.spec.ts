@@ -44,6 +44,29 @@ describe('DecisionRouteResolver', () => {
     await expect(resolver.liveness(chain[1])).resolves.toBe('available');
   });
 
+  it('skips a parent blocked in a synchronous spawn', async() => {
+    // risk: liveness — a synchronous child spawn blocks its parent from receiving or answering a new decision.
+    const resolver = new DecisionRouteResolver(new TaskMap(new Map([
+      ['child-thread', { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', spawnMode: 'sync', parentThreadId: 'parent-thread', parentChannel: 'parent-channel' }],
+      ['parent-thread', { jobId: 'parent-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', parentThreadId: 'root-chat', parentChannel: 'root-channel', parentJobId: null }],
+    ])));
+    const chain = await resolver.resolve('child-thread', 'child-channel');
+
+    await expect(resolver.liveness(chain[0], 'child-thread')).resolves.toBe('unavailable');
+    await expect(resolver.liveness(chain[1], 'child-thread')).resolves.toBe('available');
+  });
+
+  it('does not mistake a pruned parent job for an agent in the root chat', async() => {
+    // risk: authorization — a missing parent job must advance to the human, not manufacture an agent holder.
+    const resolver = new DecisionRouteResolver(new TaskMap(new Map([
+      ['child-thread', { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', parentThreadId: 'pruned-thread', parentChannel: 'parent-channel', parentJobId: 'pruned-job' }],
+    ])));
+
+    await expect(resolver.resolve('child-thread', 'child-channel')).resolves.toEqual([
+      { threadId: 'pruned-thread', channel: 'parent-channel', agentId: 'human', kind: 'human' },
+    ]);
+  });
+
   it('stops a corrupt ancestry cycle at the last distinct ancestor and retains a human fallback', async() => {
     // risk: routing — a corrupt parent loop must not return the decision to the asker or loop indefinitely.
     const resolver = new DecisionRouteResolver(new TaskMap(new Map([

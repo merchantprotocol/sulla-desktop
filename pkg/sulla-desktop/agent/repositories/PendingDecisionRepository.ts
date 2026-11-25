@@ -79,6 +79,7 @@ export class PendingDecisionRepository {
     const rows = await this.client.query<AgentJobTaskTarget>(`SELECT j.job_id AS "jobId", j.status AS "jobStatus",
         task.ordinality - 1 AS "taskIndex", task.value->>'status' AS "taskStatus", task.value->>'threadId' AS "threadId",
         j.parent_channel AS "parentChannel", j.parent_thread_id AS "parentThreadId",
+        j.parent_job_id AS "parentJobId", task.value->>'spawnMode' AS "spawnMode",
         task.value->>'label' AS label, task.value->>'agentId' AS "agentId"
       FROM agent_jobs j CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
       WHERE task.value->>'threadId'=$1 LIMIT 1`, [threadId]);

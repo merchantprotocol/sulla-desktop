@@ -33,6 +33,7 @@ export class AgentAwarenessPolicy {
     'read_agent_conversation',
     'close_agent_conversation',
     'promote_to_tab',
+    'answer_decision',
   ]);
 
   canSeeOtherAgents(setting?: AgentAwarenessSetting | null): boolean {

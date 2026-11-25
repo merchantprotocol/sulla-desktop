@@ -6,6 +6,19 @@ import { describe, expect, it, vi } from 'vitest';
 import { PendingDecisionRepository } from '../../../repositories/PendingDecisionRepository';
 
 describe('PendingDecisionRepository', () => {
+  it('selects spawn mode and parent job id for escalation route decisions', async() => {
+    // risk: authorization — omitted persisted route fields can send a decision to a blocked sync-spawn parent or misclassify a pruned parent as a root chat.
+    const task = { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', spawnMode: 'sync', parentJobId: 'missing-parent-job' };
+    const query = vi.fn(async() => [task]);
+    const repository = new PendingDecisionRepository({ query });
+
+    await expect(repository.taskForThread('child-thread')).resolves.toMatchObject(task);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain(`task.value->>'spawnMode' AS "spawnMode"`);
+    expect(sql).toContain('j.parent_job_id AS "parentJobId"');
+    expect(params).toEqual(['child-thread']);
+  });
+
   it('reuses the pending Decide approval for a Files publish request', async() => {
     // risk: irreversible side effects — retrying publication must not create duplicate human approvals.
     const record = { id:'decision-1', kind:'approval', status:'pending' } as any;

@@ -5,6 +5,7 @@
 
 import type { DecisionRecord, DecisionRouteEntry } from '@pkg/shared/decisions';
 import { enqueueAgentCompletion } from './AgentCompletionInbox';
+import { AgentAwarenessPolicy } from './AgentAwarenessPolicy';
 
 export interface DecisionHolderDelivery {
   sendJob(input: { jobId: string; taskIndex: number; message: string }): Promise<{ successBoolean: boolean; responseString: string }>;
@@ -55,6 +56,10 @@ export class DecisionHolderNotifier {
 }
 
 class RuntimeDecisionHolderDelivery implements DecisionHolderDelivery {
+  private readonly answerDecisionNames = ['agents/answer_decision', 'agents_answer_decision', 'answer_decision'];
+
+  constructor(private readonly awarenessPolicy = new AgentAwarenessPolicy()) {}
+
   async sendJob(input: { jobId: string; taskIndex: number; message: string }): Promise<{ successBoolean: boolean; responseString: string }> {
     const { sendJobMessage } = await import('../tools/agents/send_job_message');
     return sendJobMessage(input);
@@ -69,19 +74,23 @@ class RuntimeDecisionHolderDelivery implements DecisionHolderDelivery {
 
   async canUseTool(holder: DecisionRouteEntry): Promise<boolean> {
     const { GraphRegistry } = await import('./GraphRegistry');
-    const allowed = (GraphRegistry.get(holder.threadId)?.state.metadata as any)?.allowedToolNames;
-    const capabilityTools = ['agents/answer_decision', 'agents_answer_decision', 'answer_decision', 'agents', 'exec',
-      'agents/spawn_agent', 'agents_spawn_agent', 'agents_send_job_message', 'agents/send_job_message', 'spawn_agent', 'send_job_message'];
-    if (Array.isArray(allowed) && allowed.length > 0 && !capabilityTools.some(name => allowed.includes(name))) return false;
-    if (!holder.jobId) return true;
-    const { AgentJobMessagingModel } = await import('../database/models/AgentJobMessagingModel');
-    const target = await AgentJobMessagingModel.taskForThread(holder.threadId);
-    if (!target || target.jobId !== holder.jobId || target.taskIndex !== holder.taskIndex) return false;
-    const { agentDefinitionService } = await import('./AgentDefinitionService');
-    const definition = await agentDefinitionService.findBySlug(holder.agentId);
-    if (!definition) return false;
+    const metadata = GraphRegistry.get(holder.threadId)?.state.metadata as any;
+    let definition: any;
+    if (!holder.jobId && !metadata) return false;
+    if (holder.jobId) {
+      const { AgentJobMessagingModel } = await import('../database/models/AgentJobMessagingModel');
+      const target = await AgentJobMessagingModel.taskForThread(holder.threadId);
+      if (!target || target.jobId !== holder.jobId || target.taskIndex !== holder.taskIndex) return false;
+      const { agentDefinitionService } = await import('./AgentDefinitionService');
+      definition = await agentDefinitionService.findBySlug(holder.agentId);
+      if (!definition) return false;
+    }
+    const awareness = typeof metadata?.agentAwareness === 'boolean' ? { agent_awareness: metadata.agentAwareness } : definition;
+    if (!this.awarenessPolicy.allowsTool(awareness, 'agents/answer_decision')) return false;
+    const allowed = metadata?.allowedToolNames;
+    if (Array.isArray(allowed) && allowed.length > 0 && !this.hasAnswerDecisionTool(allowed)) return false;
     const configured = definition.allowed_tools ?? [];
-    return configured.length === 0 || configured.some(name => capabilityTools.includes(name));
+    return configured.length === 0 || this.hasAnswerDecisionTool(configured);
   }
 
   async humanIsActive(channel: string, threadId: string): Promise<boolean> {
@@ -98,6 +107,10 @@ class RuntimeDecisionHolderDelivery implements DecisionHolderDelivery {
     if (!target || !['running', 'parked'].includes(target.jobStatus) || !['running', 'parked'].includes(target.taskStatus)) return false;
     if (target.taskStatus === 'parked') return true;
     const { GraphRegistry } = await import('./GraphRegistry');
-    return Boolean(GraphRegistry.get(holder.threadId));
+    return GraphRegistry.get(holder.threadId)?.state.metadata.threadId === holder.threadId;
+  }
+
+  private hasAnswerDecisionTool(names: readonly string[]): boolean {
+    return this.answerDecisionNames.some(name => names.includes(name));
   }
 }
