@@ -27,6 +27,12 @@ export interface CodexExecutionAuth {
   readonly environment: Readonly<Record<string, string>>;
   /** Appended as `-c <override>` codex CLI args. Empty for guest-auth-file. */
   readonly codexConfigOverrides: readonly string[];
+  /**
+   * Pod id the provider bridge records model output and retry status under.
+   * VM runs have no container runtime, so this is how their stall clock sees
+   * relayed reasoning. Undefined for guest-auth-file (no bridge).
+   */
+  readonly podId?: string;
   /** Releases the bridge lease, if any. Safe to call more than once. */
   dispose(): void;
 }
@@ -44,6 +50,7 @@ function fromLease(kind: 'container-broker-lease' | 'pending-memory-bridge', lea
     kind,
     environment:          lease.config.environment,
     codexConfigOverrides: lease.config.codexConfigOverrides ?? [],
+    podId:                lease.podId,
     dispose() {
       if (disposed) return;
       disposed = true;

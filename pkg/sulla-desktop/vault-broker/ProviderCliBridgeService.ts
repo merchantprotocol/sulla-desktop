@@ -275,6 +275,8 @@ export class ProviderCliBridgeService {
             const { done, value } = await reader.read();
             if (done || response.destroyed) break;
             providerBridgeActivity.mark(identity.context.pod_id);
+            // Model output (reasoning included) keeps the run's stall clock alive; error bodies do not.
+            if (status < 400) providerBridgeActivity.markModelOutput(identity.context.pod_id);
             if (captureProviderReason && providerErrorBytes < MAX_PROVIDER_ERROR_BODY_BYTES) {
               const availableBytes = MAX_PROVIDER_ERROR_BODY_BYTES - providerErrorBytes;
               const captured = Buffer.from(value.subarray(0, availableBytes));
@@ -392,6 +394,7 @@ export class ProviderCliBridgeService {
   return {
     config,
     signal: lifetime.signal,
+    podId:  identity.context.pod_id,
     revoke,
     async close() {
       if (closed) return;
