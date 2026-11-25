@@ -133,9 +133,8 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       continue;
     }
     const { GraphRegistry } = await import('../../services/GraphRegistry');
-    const running = GraphRegistry.get(target.threadId);
-    if (!running) continue;
-    const accepted = injectSteer(running.state as any, {
+    const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');
+    const steer = {
       role:    'user',
       content: `[Message from orchestrator]\n${ message }`,
       metadata: {
@@ -143,8 +142,13 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
         inputSource:  'system',
         ...meta,
       },
-    } as any);
-    if (accepted) {
+    } as const;
+    if (agentJobLifecycle.deliver(target.threadId, steer)) {
+      deliveredLive++;
+      continue;
+    }
+    const running = GraphRegistry.get(target.threadId);
+    if (running && injectSteer(running.state, steer)) {
       await AgentJobMessagingModel.markMessagesDelivered([record.id], target.threadId);
       deliveredLive += 1;
     }

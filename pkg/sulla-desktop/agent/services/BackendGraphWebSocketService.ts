@@ -210,46 +210,18 @@ export class BackendGraphWebSocketService {
   /** Returns true when the wake actually dispatched a turn, false when a live run is already in flight. */
   async wakeParkedAgent(channelId: string, threadId: string, message: string, agentId?: string, messageMeta: Record<string, unknown> = {}): Promise<boolean> {
     await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
+    const steer = {
+      id: nextMessageId(), role: 'user' as const, content: this.orchestratorMessageFormatter.format(message), timestamp: Date.now(),
+      metadata: { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
+    };
+    if (agentJobLifecycle.deliver(threadId, steer)) return true;
     const parked = await parkedAgentRehydrator.resolve(threadId);
+    if (agentJobLifecycle.deliver(threadId, steer)) return true;
     if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
-    // The manager is blocked inside spawn_agent's own in-process wait for its
-    // children (waitForWake registered for this exact thread in THIS
-    // process). Its own loop owns that turn's lifecycle — inject the message
-    // into its live state and release the waiter instead of dispatching a
-    // disconnected new turn, which would leave this exact Promise (and its
-    // eventual completeJob/deliverJobCompletion once the loop returns)
-    // blocked forever.
     const delegated = GraphRegistry.get(threadId);
-    if (agentJobLifecycle.hasLiveWaiter(threadId)) {
-      // Should not happen — the waiter and this GraphRegistry entry share the
-      // same spawn_agent call's lifetime — but release the waiter either way
-      // so a contradiction here cannot leak the Promise.
-      if (!delegated) {
-        console.warn(`[BackendGraphWS] Live waiter for thread ${ threadId } has no GraphRegistry state; waking without delivering the message.`);
-        agentJobLifecycle.wake(threadId);
-        return false;
-      }
-      injectSteer(delegated.state, {
-        id:        nextMessageId(),
-        role:      'user',
-        content:   this.orchestratorMessageFormatter.format(message),
-        timestamp: Date.now(),
-        metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
-      } as any);
-      agentJobLifecycle.wake(threadId);
-      return true;
-    }
-    // The worker can persist its wait just before spawn_agent registers the
-    // in-process waiter. Keep this wake on the same graph: inject now and
-    // latch the wake for waitForWake() to consume once settlement begins.
-    if (delegated && (delegated.state.metadata as any)?.delegatedRunActive) {
-      injectSteer(delegated.state, {
-        id:        nextMessageId(),
-        role:      'user',
-        content:   this.orchestratorMessageFormatter.format(message),
-        timestamp: Date.now(),
-        metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
-      } as any);
+    if (agentJobLifecycle.hasLiveWaiter(threadId) || delegated?.state.metadata?.delegatedRunActive) {
+      if (!delegated) return false;
+      injectSteer(delegated.state, steer);
       agentJobLifecycle.wake(threadId);
       return true;
     }
@@ -351,7 +323,7 @@ export class BackendGraphWebSocketService {
   /** Lazy so bare test instances (Object.create) still get one. */
   private get delegatedCompletionHandoff(): DelegatedCompletionHandoff {
     return this.completionHandoff ??= new DelegatedCompletionHandoff(
-      { take: takeAgentCompletions, format: formatCompletionBatch, currentEntries: (...args) => completionInboxStore.currentEntries(...args) },
+      { take: takeAgentCompletions, requeueQuietly: requeueAgentCompletionQuietly, format: formatCompletionBatch, currentEntries: (...args) => completionInboxStore.currentEntries(...args) },
       agentJobLifecycle,
       {
         firstDelivered: entry => agentJobProvider.jobs.markTaskCompletionFirstDelivered(entry.jobId, entry.taskIndex, Date.now()),
@@ -413,6 +385,7 @@ export class BackendGraphWebSocketService {
   private readonly deliveringDecisionThreads = new Set<string>();
 
   private decisionThreadOwned(channel: string, threadId: string): boolean {
+    if (agentJobLifecycle.liveState(threadId)) return true;
     const metadata = GraphRegistry.get(threadId)?.state.metadata as any;
     return this.hasActiveRun(channel, threadId) || !!metadata?.runtimeRunnerActive || !!metadata?.delegatedRunActive || agentJobLifecycle.hasLiveWaiter(threadId);
   }
@@ -440,7 +413,7 @@ export class BackendGraphWebSocketService {
 
   private async wakeInbox(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<AgentInboxDeliveryReceipt> {
     const human = entries.every(entry => entry.envelope.kind === 'human');
-    if (this.inboxThread(target) || (human && target.threadId && this.decisionThreadOwned(target.channel, target.threadId))) return 'deferred';
+    if (this.inboxThread(target) || (target.threadId && agentJobLifecycle.liveState(target.threadId)) || (human && target.threadId && this.decisionThreadOwned(target.channel, target.threadId))) return 'deferred';
     const threadId = target.threadId || this.inboxThread(target);
     if (human && threadId) this.deliveringDecisionThreads.add(threadId);
     try {
@@ -486,10 +459,10 @@ export class BackendGraphWebSocketService {
   private async handleCompletionWake(channelId: string, threadId: string): Promise<void> {
     await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
     if (this.hasActiveRun(channelId, threadId)) return;
-    const delegated = GraphRegistry.get(threadId);
+    const fallback = () => GraphRegistry.get(threadId)?.state;
     // A runner-owned delegated manager (parked or mid-turn) gets the batch
     // injected and its runner woken; never a second, disconnected turn.
-    if (await this.delegatedCompletionHandoff.deliver(channelId, threadId, delegated?.state as any)) return;
+    if (await this.delegatedCompletionHandoff.deliver(channelId, threadId, fallback)) return;
     const entries = takeAgentCompletions(channelId, threadId);
     if (!entries.length) return;
     // Same trigger mapping as handleChannelMessage: only heartbeat has its own
@@ -507,7 +480,7 @@ export class BackendGraphWebSocketService {
         return;
       }
       const parked = await parkedAgentRehydrator.resolve(threadId);
-      const threadAgentId = String((delegated?.state.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
+      const threadAgentId = String((fallback()?.metadata as any)?.agentId || parked?.agentId || '').trim() || undefined;
       return this.dispatchToAgent(channelId, triggerType, '', threadId, undefined, threadAgentId, 'system', {
         source: 'sub_agent_completion', completionEntries: entries, renderCompletionEntries: true,
       });
@@ -527,6 +500,7 @@ export class BackendGraphWebSocketService {
     this.unsubscribes = [];
     agentWaitProvider.scheduler.stop();
     for (const abort of this.activeAborts.values()) abort.abort();
+    agentJobLifecycle.interruptRunners();
     GraphRegistry.abortRuntimeRuns();
     await Promise.all([Promise.allSettled([...this.dispatchedRuns]), settleHiddenAgentRuns()]);
     this.dispose();
@@ -832,7 +806,7 @@ export class BackendGraphWebSocketService {
       for (const task of job.tasks) {
         if (task.status !== 'running' || !task.threadId || task.returnedAt) continue;
         if (this.recoveryAbort.signal.aborted || this.hasActiveRun(job.parentChannel ?? 'sulla-desktop', task.threadId) ||
-          (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
+          agentJobLifecycle.liveState(task.threadId) || (GraphRegistry.get(task.threadId)?.state.metadata as any)?.runtimeRunnerActive ||
           probeAgentContainerRuntime(undefined, task.threadId) !== false || await this.hasPendingDecision(task.threadId)) return false;
       }
       return true;
@@ -1101,81 +1075,53 @@ export class BackendGraphWebSocketService {
       return;
     }
 
-    // ── Inject message into running graph state (no execution trigger) ──
-    if (msg.type === 'inject_message') {
-      const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
-      const content = (data?.content ?? '').trim();
-      const threadId = data?.threadId as string | undefined;
-      if (!content || !threadId) return;
-      if (channelId === MOBILE_RELAY_CHANNEL_ID) {
-        const run = this.relayRuns.get(threadId);
-        if (!run || run.id !== data?.relayRunId || run.controller.signal.aborted) return;
-      }
-
-      // Only a thread with a run in flight can absorb a steer. A registered
-      // but idle graph would just hold the message with nobody to read it.
-      const existing = this.activeAborts.has(this.abortKey(channelId, threadId)) ? GraphRegistry.get(threadId) : undefined;
-      if (existing) {
-        await this.applySupportSessionCapability(existing.state, data?.metadata);
-        // Run in flight — steer it without starting a new execution
-        const attachments = data?.metadata?.attachments as any[] | undefined;
-        const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
-        const files = Array.isArray(data?.metadata?.fileReferences) ? data.metadata.fileReferences : [];
-        const fileContext = files.length ? `\n\n<attached_files>\n${ files.map((file:any) => `- ${ file.name ?? file.path } · file ${ file.fileId } · version ${ file.versionId } · path ${ file.path }`).join('\n') }\nWhen returning one of these files, include a sulla-file:// link with fileId, version, path, and name query parameters so Desktop renders a durable file card.\n</attached_files>` : '';
-        const contextualContent = `${ content }${ fileContext }`;
-        const messageContent: any = hasAttachments
-          ? [{ type: 'text', text: contextualContent }, ...attachments.filter((a: any) => a?.type === 'image' && a?.source?.type === 'base64')]
-          : contextualContent;
-
-        injectSteer(existing.state, {
-          id:        nextMessageId(),
-          role:      'user',
-          content:   messageContent,
-          timestamp: Date.now(),
-          metadata:  {
-            ...data?.metadata,
-            source: data?.metadata?.source || 'inject',
-            inputSource: data?.metadata?.inputSource || 'keyboard',
-          },
-        } as any);
-        console.log(`[BackendGraphWS] Steered running thread ${ threadId }: ${ content.slice(0, 50) }...`);
-        return;
-      }
-
-      if (channelId === MOBILE_RELAY_CHANNEL_ID) return;
-
-      // Graph not found — fall through to full dispatch (triggers execution)
-      console.log(`[BackendGraphWS] inject_message: no running state for thread ${ threadId }, falling back to full dispatch`);
-    }
-
     if (msg.type !== 'user_message' && msg.type !== 'inject_message') return;
-
     const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
     const content = (data?.content ?? '').trim();
-    const hasAttachments = Array.isArray(data?.metadata?.attachments) && data.metadata.attachments.length > 0;
+    const attachments = data?.metadata?.attachments;
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
     if (!content && !hasAttachments) return;
-
-    // A hidden sub-agent opened in a tab is still driven by its spawn_agent
-    // runner. A message typed into that tab steers the live run; starting a
-    // second execution on the same state would race the runner.
-    const delegated = typeof data?.threadId === 'string' ? GraphRegistry.get(data.threadId) : undefined;
-    // A sub-agent parked mid in-process wait for its own children owns that
-    // turn's lifecycle the same way: inject and release its waiter instead of
-    // falling through to a disconnected new dispatchToAgent turn below.
-    const parkedWaiter = typeof data?.threadId === 'string' && agentJobLifecycle.hasLiveWaiter(data.threadId);
-    if (content && delegated && (parkedWaiter || (delegated.state.metadata as any)?.delegatedRunActive)) {
-      await this.applySupportSessionCapability(delegated.state, data?.metadata);
-      injectSteer(delegated.state, {
-        id:        nextMessageId(),
-        role:      'user',
-        content,
-        timestamp: Date.now(),
-        metadata:  { ...data?.metadata, source: data?.metadata?.source || 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
-      } as any);
-      if (parkedWaiter) agentJobLifecycle.wake(data.threadId as string);
-      console.log(`[BackendGraphWS] Steered delegated run ${ data.threadId }: ${ content.slice(0, 50) }...`);
-      return;
+    const target = typeof data.threadId === 'string' ? data.threadId : '';
+    if (msg.type === 'inject_message' && !target) return;
+    if (msg.type === 'inject_message' && channelId === MOBILE_RELAY_CHANNEL_ID) {
+      const run = this.relayRuns.get(target);
+      if (!run || run.id !== data.relayRunId || run.controller.signal.aborted) return;
     }
+    if (target) {
+      const policy = new SupportSessionPolicy();
+      const requested = policy.sessionForTurn(undefined, data.metadata?.supportSessionId);
+      const names = policy.remoteToolNames(SUPPORT_TOOL_NAMES);
+      // Resolve cached tool schemas before taking a recipient; a stored support
+      // scope also applies when the renderer omits the session id.
+      const tools = await Promise.all(names.map(name => toolRegistry.convertToolToLLM(name)));
+      const live = agentJobLifecycle.liveState(target);
+      const state = live ?? GraphRegistry.get(target)?.state;
+      const waiter = agentJobLifecycle.hasLiveWaiter(target);
+      if (state && (live || waiter || state.metadata?.delegatedRunActive ||
+        (msg.type === 'inject_message' && this.hasActiveRun(channelId, target)))) {
+        const session = policy.sessionForTurn(state.metadata.supportSessionId, requested);
+        if (session) {
+          state.metadata.supportSessionId = session;
+          state.metadata.allowedToolNames = names;
+          state.metadata.supportContext = policy.remoteContext();
+          (state as any).llmTools = tools;
+        }
+        const files = Array.isArray(data.metadata?.fileReferences) ? data.metadata.fileReferences : [];
+        const fileContext = files.length ? `\n\n<attached_files>\n${ files.map((file:any) => `- ${ file.name ?? file.path } · file ${ file.fileId } · version ${ file.versionId } · path ${ file.path }`).join('\n') }\nWhen returning one of these files, include a sulla-file:// link with fileId, version, path, and name query parameters so Desktop renders a durable file card.\n</attached_files>` : '';
+        const contextualContent = `${ content }${ fileContext }`;
+        const steer = {
+          id: nextMessageId(), role: 'user' as const, timestamp: Date.now(),
+          content: hasAttachments ? [{ type: 'text', text: contextualContent }, ...attachments.filter((item: any) => item?.type === 'image' && item?.source?.type === 'base64')] : contextualContent,
+          metadata: { ...data.metadata, source: data.metadata?.source || 'inject', inputSource: data.metadata?.inputSource || 'keyboard' },
+        };
+        if (!agentJobLifecycle.deliver(target, steer)) {
+          injectSteer(state, steer);
+          if (waiter) agentJobLifecycle.wake(target);
+        }
+        return;
+      }
+    }
+    if (msg.type === 'inject_message' && channelId === MOBILE_RELAY_CHANNEL_ID) return;
 
     // ThreadId is owned by the frontend chat interface — reuse it to maintain conversation
     const threadIdFromMsg = data?.threadId as string | undefined;
@@ -1314,7 +1260,7 @@ export class BackendGraphWebSocketService {
     // Explicit persona picks always win. A new chat opens on the selected agent or the
     // New chats default. A thread that already carries a stored route keeps it.
     else if (!explicitAgentId && channelId === SULLA_DESKTOP_CHANNEL_ID && triggerType === 'sulla-desktop') {
-      const liveState = GraphRegistry.get(threadId)?.state;
+      const liveState = agentJobLifecycle.liveState(threadId) ?? GraphRegistry.get(threadId)?.state;
       const priorState = liveState ?? await loadThreadState(threadId);
       const rememberedAgentId = String((priorState?.metadata as any)?.routedAgentId || '').trim();
       if (rememberedAgentId) agentId = rememberedAgentId;

@@ -9,7 +9,7 @@ import type { AgentTaskWait, AgentTaskWaitRepository } from '../app/Repositories
  * is nothing left to wake; false when it could not be delivered yet and the
  * claimed wait must be retried rather than dropped.
  */
-export type AgentWakeHandler = (wait: AgentTaskWait) => Promise<boolean | void>;
+export type AgentWakeHandler = (wait: AgentTaskWait, wakeId: string, attempt: number) => Promise<boolean | void>;
 
 export class AgentWakeScheduler {
   static readonly RETRY_DELAY_MS = 30_000;
@@ -43,13 +43,13 @@ export class AgentWakeScheduler {
     this.timers.clear();
   }
 
-  schedule(wait: AgentTaskWait): void {
+  schedule(wait: AgentTaskWait, wakeId = `timer:${ wait.jobId }:${ wait.taskIndex }:${ wait.wakeAt.getTime() }`): void {
     if (this.stopping.signal.aborted) return;
     const key = `${ wait.jobId }:${ wait.taskIndex }`;
     const prior = this.timers.get(key);
     if (prior) clearTimeout(prior);
     const timer = setTimeout(() => {
-      this.fire(wait.jobId, wait.taskIndex).catch(err => console.error(`[AgentWakeScheduler] Wake for ${ key } failed:`, err));
+      this.fire(wait.jobId, wait.taskIndex, wakeId).catch(err => console.error(`[AgentWakeScheduler] Wake for ${ key } failed:`, err));
     }, Math.max(0, wait.wakeAt.getTime() - this.now()));
     timer.unref?.();
     this.timers.set(key, timer);
@@ -62,14 +62,14 @@ export class AgentWakeScheduler {
     this.timers.delete(key);
   }
 
-  private async fire(jobId: string, taskIndex: number): Promise<void> {
+  private async fire(jobId: string, taskIndex: number, wakeId: string): Promise<void> {
     const key = `${ jobId }:${ taskIndex }`;
     this.cancel(jobId, taskIndex);
     const signal = this.stopping.signal;
     try { await this.beforeClaim(signal) } catch (error: any) {
       if (error?.name === 'AbortError' || signal.aborted) return;
       // No durable claim or attempt has been spent while infrastructure is unavailable.
-      this.schedule({ jobId, taskIndex, wakeAt: new Date(this.now() + AgentWakeScheduler.RETRY_DELAY_MS), reason: '', state: 'scheduled' });
+      this.schedule({ jobId, taskIndex, wakeAt: new Date(this.now() + AgentWakeScheduler.RETRY_DELAY_MS), reason: '', state: 'scheduled' }, wakeId);
       return;
     }
     if (signal.aborted) return;
@@ -77,7 +77,7 @@ export class AgentWakeScheduler {
     if (!claimed) return;
     let delivered = false;
     try {
-      delivered = (await this.wake(claimed)) !== false;
+      delivered = (await this.wake(claimed, wakeId, (this.failedAttempts.get(key) ?? 0) + 1)) !== false;
     } catch (error) {
       console.warn(`[AgentWakeScheduler] Wake for ${ key } threw; releasing it for retry:`, error);
     }
@@ -98,6 +98,6 @@ export class AgentWakeScheduler {
       return;
     }
     this.failedAttempts.set(key, attempts);
-    if (released) this.schedule(released);
+    if (released) this.schedule(released, wakeId);
   }
 }
