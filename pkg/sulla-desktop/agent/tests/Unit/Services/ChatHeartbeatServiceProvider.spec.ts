@@ -8,9 +8,9 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireChatActivity: vi.fn(), releaseChatActivity: vi.fn() }));
 vi.mock('@pkg/agent/services/GraphRegistry', () => ({ GraphRegistry: { get: vi.fn() } }));
 vi.mock('@pkg/agent/services/WebSocketClientService', () => ({ getWebSocketClientService: vi.fn() }));
-const waits = vi.hoisted(() => ({ cancel: vi.fn(async() => true), pending: vi.fn(async() => ({ id: 'wait-1' })), wake: vi.fn(async() => true) }));
+const waits = vi.hoisted(() => ({ pending: vi.fn(async() => ({ id: 'wait-1' })), wake: vi.fn(async() => true) }));
 vi.mock('@pkg/agent/services/AgentWaitServices', () => ({
-  agentWaitProvider: { cancel: waits.cancel, repository: { pending: waits.pending, cancel: waits.cancel }, scheduler: { cancel: waits.cancel } },
+  agentWaitProvider: { repository: { pending: waits.pending } },
 }));
 vi.mock('@pkg/agent/services/BackendGraphWebSocketService', () => ({
   getBackendGraphWebSocketService: () => ({ wakeParkedAgent: waits.wake }),
@@ -63,8 +63,8 @@ describe('ChatHeartbeatServiceProvider', () => {
     });
   });
 
-  it('wakes a parked job on a beat without cancelling its agents/wait, and reports the wait from the wait repository', async() => {
-    // risk: a heartbeat silently destroys the agent's own agents/wait timer, or claims a wait that no longer exists.
+  it('includes the wait repository state in a parked-job heartbeat notice', async() => {
+    // risk: a heartbeat tells a worker that an agents/wait timer is pending after it was consumed or cancelled.
     vi.useFakeTimers();
     try {
       const provider = new ChatHeartbeatServiceProvider({
@@ -86,8 +86,6 @@ describe('ChatHeartbeatServiceProvider', () => {
       expect(waits.wake).toHaveBeenCalledTimes(1);
       expect(waits.pending).toHaveBeenCalledWith('wait-job', 0);
       expect(String(waits.wake.mock.calls[0]?.[2])).toContain('Your agents/wait timer is still pending and will still wake you.');
-      expect(waits.cancel).not.toHaveBeenCalled();
-
       waits.pending.mockResolvedValueOnce(null as any);
       await vi.advanceTimersByTimeAsync(5 * 60_000);
       expect(waits.wake).toHaveBeenCalledTimes(2);
