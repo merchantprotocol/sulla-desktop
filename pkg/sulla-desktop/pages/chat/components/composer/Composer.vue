@@ -993,8 +993,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-capsule[data-glow-level="1"] { --glow-o: .54; }
 .composer-capsule[data-glow-level="2"] { --glow-o: .67; }
 .composer-capsule[data-glow-level="3"] { --glow-o: .76; }
-.composer-capsule.glow-stream { --glow-o: .62; }
-.composer-capsule.glow-deep { --glow-o: .56; }
+.composer-capsule.glow-stream { --glow-o: max(var(--glow-o), .62); }
+.composer-capsule.glow-deep { --glow-o: max(var(--glow-o), .56); }
 .composer-halo {
   position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--glow-c) 56%, transparent), color-mix(in srgb, var(--glow-c) 22%, transparent) 55%, transparent);
