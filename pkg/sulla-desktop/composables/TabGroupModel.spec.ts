@@ -6,9 +6,10 @@ import { TabGroupModel } from './TabGroupModel';
 describe('TabGroupModel', () => {
   const model = new TabGroupModel();
 
-  it('maps chat and secretary to Chats, browser to Browser, and all other modes to Tools', () => {
+  it('maps chat, legacy secretary and Secretary conversations to Chats, browser to Browser, and all other modes to Tools', () => {
     expect(model.groupForMode('chat')).toBe('chats');
     expect(model.groupForMode('secretary')).toBe('chats');
+    expect(model.groupForMode('conversations')).toBe('chats');
     expect(model.groupForMode('browser')).toBe('browser');
     for (const mode of ['welcome', 'calendar', 'vault', 'files', undefined]) {
       expect(model.groupForMode(mode)).toBe('tools');
