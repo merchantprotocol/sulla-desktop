@@ -25,7 +25,7 @@ describe('private decision mailbox ownership', () => {
     const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
     const { GraphRegistry } = await import('../../../services/GraphRegistry');
     const { agentJobLifecycle } = await import('../../../services/AgentJobLifecycleService');
-    vi.spyOn(GraphRegistry, 'get').mockReturnValue(undefined);
+    vi.spyOn(GraphRegistry, 'get').mockReturnValue(null);
     vi.spyOn(agentJobLifecycle, 'hasLiveWaiter').mockReturnValue(false);
     const state:any = { metadata: {}, messages: [] };
     const release = agentJobLifecycle.registerRunner('evicted-live', state);
