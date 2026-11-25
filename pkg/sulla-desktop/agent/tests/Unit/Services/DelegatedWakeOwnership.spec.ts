@@ -113,12 +113,19 @@ describe('live delegated wake ownership', () => {
     vi.useFakeTimers();
     const h = harness();
     h.state.metadata.options = { abort: h.abort };
-    const run = h.run();
+    const publishCompletion = vi.fn();
+    const writeTerminal = vi.fn();
+    const settled = h.run().then(writeTerminal).then(publishCompletion);
+    const outcome = settled.catch(error => error);
     await vi.advanceTimersByTimeAsync(0);
     expect(h.lifecycle.hasLiveWaiter(taskThread)).toBe(true);
     if (reason === 'task stop') h.abort.abort();
     else h.lifecycle.interruptRunners();
-    await run;
+    if (reason === 'runtime drain') {
+      expect(await outcome).toMatchObject({ runtimeInterrupted: true });
+      expect(writeTerminal).not.toHaveBeenCalled();
+      expect(publishCompletion).not.toHaveBeenCalled();
+    } else await settled;
     expect(h.lifecycle.liveState(taskThread)).toBeUndefined();
     expect(h.lifecycle.hasLiveWaiter(taskThread)).toBe(false);
     expect(h.lifecycle.deliver(taskThread, timer())).toBe(false);

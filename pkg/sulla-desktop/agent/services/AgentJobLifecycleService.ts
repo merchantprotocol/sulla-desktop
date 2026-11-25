@@ -30,13 +30,13 @@ export class AgentJobLifecycleService {
     private readonly settleReturn: (jobId: string, taskIndex: number) => Promise<boolean> = () => Promise.resolve(false),
   ) {}
 
-  private readonly runners = new Map<string, AgentGraphState>();
+  private readonly runners = new Map<string, { state: AgentGraphState; accepting: boolean }>();
 
   registerRunner(threadId: string, state: AgentGraphState): () => void {
     if (this.runners.has(threadId)) throw new Error('Delegated thread already has a live runner');
-    this.runners.set(threadId, state);
+    this.runners.set(threadId, { state, accepting: true });
     return () => {
-      if (this.runners.get(threadId) !== state) return;
+      if (this.runners.get(threadId)?.state !== state) return;
       state.metadata.delegatedRunActive = false;
       this.runners.delete(threadId);
       this.pendingWakes.delete(threadId);
@@ -48,7 +48,19 @@ export class AgentJobLifecycleService {
     try { return await run() } finally { release() }
   }
 
-  liveState(threadId: string): AgentGraphState | undefined { return this.runners.get(threadId) }
+  hasRunner(threadId: string): boolean { return this.runners.has(threadId) }
+
+  closeInput(threadId: string, state: AgentGraphState): void {
+    const runner = this.runners.get(threadId);
+    if (runner?.state !== state) return;
+    runner.accepting = false;
+    state.metadata.delegatedRunActive = false;
+  }
+
+  liveState(threadId: string): AgentGraphState | undefined {
+    const runner = this.runners.get(threadId);
+    return runner?.accepting ? runner.state : undefined;
+  }
 
   /** Lookup, deduplication, injection and release share a single JS turn. */
   deliver(threadId: string, message: ChatMessage): boolean {
@@ -63,7 +75,7 @@ export class AgentJobLifecycleService {
   }
 
   interruptRunners(): void {
-    for (const state of this.runners.values()) {
+    for (const { state } of this.runners.values()) {
       state.metadata.runtimeInterrupted = true;
       state.metadata.options?.abort?.abort();
     }
@@ -175,7 +187,7 @@ export const returnedTaskSettlement: ReturnedTaskSettlement = new ReturnedTaskSe
   recordTaskCompletion,
   deliver:              deliverJobCompletion,
   completeJob,
-  hasLiveRunner:        (threadId: string): boolean => !!agentJobLifecycle.liveState(threadId) || agentJobLifecycle.hasLiveWaiter(threadId),
+  hasLiveRunner:        (threadId: string): boolean => agentJobLifecycle.hasRunner(threadId) || agentJobLifecycle.hasLiveWaiter(threadId),
 });
 
 export const agentJobLifecycle: AgentJobLifecycleService = new AgentJobLifecycleService(
