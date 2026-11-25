@@ -30,6 +30,7 @@ export interface AgentStateStore {
 }
 export interface AgentStateCache { jobs: Map<string, AgentJob>; }
 export type AgentStateChangeListener = (version: number) => void;
+export type AgentJobChangeListener = (previous: AgentJob, next: AgentJob) => void;
 export type AgentStateMutationPrecondition = (current: AgentJob, candidate: AgentJob) => boolean | Promise<boolean>;
 
 /** Instance-owned serialization for read/modify/write operations on one job. */
@@ -82,6 +83,11 @@ export class AgentStateService {
   onChange(listener: AgentStateChangeListener): () => void {
     this.changes.on('change', listener);
     return () => this.changes.off('change', listener);
+  }
+
+  onJobChange(listener: AgentJobChangeListener): () => void {
+    this.changes.on('job', listener);
+    return () => this.changes.off('job', listener);
   }
 
   private refreshUnsafe(live = false): Promise<AgentJob[]> {
@@ -291,11 +297,13 @@ export class AgentStateService {
       if (precondition && !await precondition(current, next)) return undefined;
       if (persist && !await persist(next)) return undefined;
       // A reconcile pass that changes nothing must not rewrite the row (tasks jsonb) or invalidate read caches.
+      const changed = JSON.stringify(current) !== JSON.stringify(next);
       if (persist) this.writeVersion++;
-      else if (JSON.stringify(current) !== JSON.stringify(next)) { await this.store.replaceState(next); this.writeVersion++; }
+      else if (changed) { await this.store.replaceState(next); this.writeVersion++; }
       this.cache.jobs.set(next.jobId, next);
       this.trimTerminalCache();
       this.emitChange();
+      if (changed) this.changes.emit('job', current, next);
       this.pendingTerminalWrites.delete(next.jobId);
       this.failures?.observe(current, next);
       return next;

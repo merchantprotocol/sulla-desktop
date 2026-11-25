@@ -256,6 +256,23 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   /** Compact active work for operational callers that do not need durable history or result payloads. */
   async activeJobs(): Promise<AgentJob[]> { return this.jobsForList(1, false) }
 
+  /** A parent task does not need its own heartbeat while any delegated child remains open. */
+  async hasRunningChildren(jobId: string, taskIndex: number): Promise<boolean> {
+    const rows = await this.connection.select(`SELECT EXISTS (
+      SELECT 1 FROM agent_jobs child
+      WHERE child.parent_job_id = $1 AND child.parent_task_index = $2
+        AND child.status IN ('running', 'parked')
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(child.tasks) AS child_task(value)
+          WHERE child_task.value->>'status' IN ('queued', 'running', 'parked')
+            -- An open blocker is still live work the parent is waiting on (AgentStateService.isOpenBlocker).
+            OR (child_task.value->>'status' = 'blocked'
+              AND child_task.value->>'returnedAt' IS NULL AND child_task.value->>'finishedAt' IS NULL)
+        )
+    ) AS has_running_children`, [jobId, taskIndex]);
+    return rows[0]?.has_running_children === true;
+  }
+
   /**
    * Live Agents projection input: every running/parked job, jobs that ended within `recentMs`, and the
    * ancestor chain of each (so root threads still resolve). Replaces a full-table read of every job

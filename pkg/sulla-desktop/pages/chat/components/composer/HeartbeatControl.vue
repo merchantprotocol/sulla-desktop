@@ -129,6 +129,8 @@ const status = ref<ChatHeartbeatStatus>({
   enabled:  false,
   nextAt:   null,
   pending:  false,
+  startedAt: null,
+  expiresAt: null,
   ...defaultChatHeartbeatConfig(),
 });
 let registeredThreadId = '';
@@ -195,22 +197,34 @@ async function register(threadId: string): Promise<boolean> {
 }
 
 async function apply(config: ChatHeartbeatConfig): Promise<void> {
-  const normalized = normalizeChatHeartbeatConfig(config);
-  controller.setHeartbeat(normalized);
+  const normalized = normalizeChatHeartbeatConfig({ ...config, startedAt: null, expiresAt: null, setBy: 'human' });
   syncForm(normalized);
   // Register on demand — the chat may not have been registered yet (thread
   // id arrived late, or the first attempt failed).
-  if (!registeredThreadId && !await register(backendThreadId.value)) {
-    if (!backendThreadId.value) error.value = 'This chat has no backend thread yet — send a message first.';
-    return;
+  if (!registeredThreadId) {
+    const registered = await register(backendThreadId.value);
+    syncForm(normalized);
+    if (!registered) {
+      // No timer exists yet, so there is no deadline to lose: keep the choice
+      // for the registration that follows.
+      controller.setHeartbeat(normalized);
+      if (!backendThreadId.value) error.value = 'This chat has no backend thread yet — send a message first.';
+      return;
+    }
   }
   try {
     const result = await ipcRenderer.invoke('chat-heartbeat:set', { threadId: registeredThreadId, config: normalized });
     if (!result?.success) throw new Error(result?.error || 'update failed');
     status.value = result.status;
+    // Tab state is saved only now, with the deadline the scheduler really set.
+    // Saving it earlier left an enabled heartbeat with no deadline on disk, and
+    // a crash in that gap handed the next registration a fresh six hours.
+    controller.confirmHeartbeat(result.status);
+    syncForm(controller.heartbeat.value);
     error.value = '';
   } catch (err) {
     error.value = errorText(err);
+    syncForm(controller.heartbeat.value);
   }
 }
 
@@ -241,7 +255,15 @@ function onPointerDown(event: PointerEvent): void {
 }
 
 function onStatus(_event: unknown, value: ChatHeartbeatStatus): void {
-  if (value?.threadId === registeredThreadId) status.value = value;
+  if (value?.threadId !== registeredThreadId) return;
+  status.value = value;
+  // Auto-off may arrive as a status update even if the paired config event was
+  // missed during a renderer transition. Keep the composer switch truthful.
+  if (!value.enabled && controller.heartbeat.value.intervalMinutes !== null) {
+    const config = normalizeChatHeartbeatConfig({ ...controller.heartbeat.value, intervalMinutes: null, startedAt: null, expiresAt: null });
+    controller.setHeartbeat(config);
+    syncForm(config);
+  }
 }
 
 function onConfig(_event: unknown, value: { threadId: string; config: ChatHeartbeatConfig }): void {
