@@ -27,6 +27,7 @@ import { createWorkflowLauncher } from './launcher.js';
 import { settleUnownedRun, waitForRunnerHandshake } from './managerLifecycle.js';
 import { createPlaybookState, resolveDecision } from '../../../packages/workflow-engine/src/WorkflowPlaybook.js';
 import { workflowConcurrencyLimit } from '../../../packages/workflow-engine/src/workflowConcurrency.js';
+import { DESKTOP_WORKFLOW_OWNER_IDENTITY } from '../../../packages/workflow-engine/src/ownerIdentity.js';
 import { AbandonedRunReaper } from './AbandonedRunReaper.js';
 import { ProcessGuard } from './ProcessGuard.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
@@ -747,8 +748,9 @@ async function establishLegacyOwnership(): Promise<void> {
   try {
     await client.query('BEGIN');
     await client.query(
-      `UPDATE workflows SET owner_issuer='urn:sulla:desktop',owner_subject='local-owner'
+      `UPDATE workflows SET owner_issuer=$1,owner_subject=$2
         WHERE owner_issuer IS NULL AND owner_subject IS NULL`,
+      [DESKTOP_WORKFLOW_OWNER_IDENTITY.issuer, DESKTOP_WORKFLOW_OWNER_IDENTITY.subject],
     );
     await client.query(
       `UPDATE workflow_executions e SET owner_issuer=w.owner_issuer,owner_subject=w.owner_subject,
