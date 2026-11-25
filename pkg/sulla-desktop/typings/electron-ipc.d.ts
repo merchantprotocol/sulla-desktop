@@ -15,6 +15,7 @@ import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
 import type { ChatTabActivityArgs } from '@pkg/shared/ChatTabActivity';
+import type { TabContextMenuRequest, TabHoverRequest } from '@pkg/shared/TabStripPopup';
 import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -237,12 +238,10 @@ export interface IpcMainEvents {
   // #endregion
 
   // #region Tab context menu (popup window)
-  'tab-context-menu:show': (payload: {
-    screenX: number;
-    screenY: number;
-    items:   string[];
-    tabData: Record<string, unknown>;
-  }) => void;
+  'tab-context-menu:show':           (payload: TabContextMenuRequest) => void;
+  'tab-context-menu:hide-attention': (id: string) => void;
+  'tab-hover:show':                  (payload: TabHoverRequest) => void;
+  'tab-hover:hide':                  (id: string) => void;
   'tab-context-menu:action':  (action: string) => void;
   'tab-context-menu:dismiss': () => void;
   // #endregion
@@ -1410,6 +1409,7 @@ export interface IpcRendererEvents {
   'claude-oauth:result':            (result: import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
+  'tab-context-menu:attention-closed': (id: string) => void;
   'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;
   'more-menu:selected':             (action: string, extra: Record<string, unknown> | null) => void;
   'more-menu:fetch-history':        () => void;

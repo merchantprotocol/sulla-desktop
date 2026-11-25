@@ -416,19 +416,7 @@ function openRailApp(slug: string) {
 // ── Bookmarks pane ──
 const BOOKMARKS_OPEN_KEY = 'sulla:bookmarks-pane-open';
 const bookmarksOpen = ref(localStorage.getItem(BOOKMARKS_OPEN_KEY) === '1');
-const activeTabStripOverlays = reactive(new Set<symbol>());
-function onTabStripOverlayChange(event: Event): void {
-  const detail = (event as CustomEvent<{ id?: symbol; visible?: boolean }>).detail;
-  if (typeof detail?.id !== 'symbol' || typeof detail.visible !== 'boolean') return;
-  if (detail.visible) activeTabStripOverlays.add(detail.id);
-  else activeTabStripOverlays.delete(detail.id);
-}
-onMounted(() => window.addEventListener('sulla:tab-strip-overlay', onTabStripOverlayChange));
-onUnmounted(() => {
-  window.removeEventListener('sulla:tab-strip-overlay', onTabStripOverlayChange);
-  activeTabStripOverlays.clear();
-});
-const shellOverlayVisible = computed(() => vaultUnlockVisible.value || startupOverlayVisible.value || bookmarksOpen.value || !!permissionPrompt.value || modeRailOverlayOpen.value || noAiBannerVisible.value || activeTabStripOverlays.size > 0);
+const shellOverlayVisible = computed(() => vaultUnlockVisible.value || startupOverlayVisible.value || bookmarksOpen.value || !!permissionPrompt.value || modeRailOverlayOpen.value || noAiBannerVisible.value);
 watch(shellOverlayVisible, (visible) => {
   const id = /^\/Browser\/(.+)$/.exec(route.path)?.[1];
   if (!id || !internalTabRoute(id)) return;
