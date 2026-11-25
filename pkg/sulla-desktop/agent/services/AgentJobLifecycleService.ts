@@ -56,11 +56,21 @@ export class AgentJobLifecycleService {
     if (runner?.state !== state) return;
     runner.accepting = false;
     state.metadata.delegatedRunActive = false;
+    if (GraphRegistry.get(threadId)?.state === state) GraphRegistry.delete(threadId);
+  }
+
+  /** Commit and release the reader in one turn, including for a CLI return from a different state object. */
+  contractReturned(threadId: string, receipt: { jobId: string; taskIndex: number; returnedAt: number }): void {
+    const runner = this.runners.get(threadId);
+    if (!runner) return;
+    (runner.state.metadata as any).delegatedContractReturned = receipt;
+    this.closeInput(threadId, runner.state);
+    this.waiters.get(threadId)?.resolve();
   }
 
   liveState(threadId: string): AgentGraphState | undefined {
     const runner = this.runners.get(threadId);
-    return runner?.accepting ? runner.state : undefined;
+    return runner?.accepting && !(runner.state.metadata as any).delegatedContractReturned ? runner.state : undefined;
   }
 
   wakeFacts(threadId: string, state: AgentGraphState, cacheHit = GraphRegistry.containsState(threadId, state)) {
@@ -113,10 +123,9 @@ export class AgentJobLifecycleService {
   }
 
   async waitForWake(threadId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void> {
-    if (signal?.aborted) return;
     const state = this.liveState(threadId);
-    if (state && (DeferredStallInput.actionableMessages(state).length || DelegatedCompletionHandoff.hasWakeEntries(state) ||
-      (state.metadata as any).delegatedContractReturned)) return;
+    if (signal?.aborted || (!state && this.hasRunner(threadId))) return;
+    if (state && (DeferredStallInput.actionableMessages(state).length || DelegatedCompletionHandoff.hasWakeEntries(state))) return;
     const queuedAt = this.pendingWakes.get(threadId);
     this.pendingWakes.delete(threadId);
     if (!state && queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;

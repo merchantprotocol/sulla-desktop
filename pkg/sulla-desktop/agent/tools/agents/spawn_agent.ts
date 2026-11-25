@@ -889,7 +889,6 @@ content: `[Message from orchestrator]\n${ row.message }`,
         // The last consumer has decided. Close admission before terminal I/O;
         // teardown still owns the registration until persistence finishes.
         agentJobLifecycle.closeInput(threadId, subState);
-        if (GraphRegistry.get(threadId)?.state === subState) GraphRegistry.delete(threadId);
         // Settlement and stop both invalidate any scheduled timer before
         // the task status changes, so a racing callback cannot wake it later.
         await agentWaitProvider.cancel(activityJobId!, index);

@@ -78,6 +78,9 @@ export class ReturnResultWorker extends BaseTool {
 
     const status = contractReturnStatus(contract, candidate);
     const summary = contract.schema && typeof input.summary === 'string' && input.summary.trim() ? input.summary.trim() : undefined;
+    // Resolve the lifecycle before the durable write: no asynchronous gap between
+    // learning the return committed and closing the registered input paths.
+    const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');
     let recorded: AgentJob;
     try {
       recorded = await recordTaskReturn(job.jobId, taskIndex, {
@@ -92,22 +95,11 @@ export class ReturnResultWorker extends BaseTool {
     // Returning the contract is the terminal action for this delegated turn.
     // AgentNode reads this after tool execution (and in its error path) so it
     // does not start a post-return provider call or publish a late runtime error.
-    if (this.state?.metadata) {
-      (this.state.metadata as any).delegatedContractReturned = {
-        jobId: job.jobId,
-        taskIndex,
-        returnedAt: recorded.tasks[taskIndex]?.returnedAt ?? Date.now(),
-      };
-    }
+    const receipt = { jobId: job.jobId, taskIndex, returnedAt: recorded.tasks[taskIndex]?.returnedAt ?? Date.now() };
+    if (this.state?.metadata) (this.state.metadata as any).delegatedContractReturned = receipt;
 
     if (recorded.visibility !== 'tab') {
-      const { agentJobLifecycle } = await import('../../services/AgentJobLifecycleService');
-      const thread = recorded.tasks[taskIndex]?.threadId;
-      const live = thread && agentJobLifecycle.liveState(thread);
-      if (live) {
-        (live.metadata as any).delegatedContractReturned = { jobId: job.jobId, taskIndex, returnedAt: recorded.tasks[taskIndex].returnedAt };
-        agentJobLifecycle.wake(thread);
-      }
+      agentJobLifecycle.contractReturned(threadId, receipt);
       // A rehydrated parked manager has no original promise chain left to
       // settle it after a restart, so its return commits and wakes its parent
       // here. A live runner sees the same recorded return and completion is

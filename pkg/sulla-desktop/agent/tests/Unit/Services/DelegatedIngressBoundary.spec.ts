@@ -7,6 +7,9 @@ import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
 import { BackendGraphWebSocketService } from '../../../services/BackendGraphWebSocketService';
 import { GraphRegistry } from '../../../services/GraphRegistry';
 import { parkedAgentRehydrator } from '../../../services/ParkedAgentRehydrator';
+import { ThreadGraphCache } from '../../../services/ThreadGraphCache';
+import * as registry from '../../../tools/agents/jobRegistry';
+import { ReturnResultWorker } from '../../../tools/agents/return_result';
 import { toolRegistry } from '../../../tools/registry';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
@@ -108,6 +111,46 @@ describe('delegated input admission', () => {
       expect(next.metadata.allowedToolNames.length).toBeGreaterThan(0);
       expect(next.metadata.allowedToolNames).not.toContain('support.runtime.exec');
     });
+  });
+
+  it.each([true, false])('routes late renderer and peer input normally at return commit (cached=%s)', async(cached) => {
+    const backend = fixture();
+    const closing = state();
+    closing.metadata.threadId = thread;
+    const cache = new ThreadGraphCache(() => Promise.resolve(), () => false);
+    if (cached) cache.set(thread, { state: closing, graph: {} as any });
+    vi.spyOn(GraphRegistry, 'get').mockImplementation(id => cache.get(id) ?? null);
+    vi.spyOn(GraphRegistry, 'delete').mockImplementation(id => cache.delete(id));
+    const job: any = { jobId: 'returning', status: 'running', visibility: 'hidden', tasks: [{ threadId: thread }] };
+    vi.spyOn(registry, 'findTaskByThread').mockResolvedValue({ job, taskIndex: 0 });
+    vi.spyOn(agentJobProvider.reviewItems, 'itemsForTask').mockResolvedValue([]);
+    vi.spyOn(agentJobProvider.reviewGate, 'refusal').mockResolvedValue(null);
+    vi.spyOn(agentJobProvider.service, 'openChildrenForThread').mockResolvedValue(0);
+    vi.spyOn(registry, 'recordTaskReturn').mockResolvedValue({ ...job, tasks: [{ threadId: thread, returnedAt: 1 }] });
+    backend.dispatchToAgent.mockResolvedValue('deferred');
+    const abort = new AbortController();
+    try {
+      await agentJobLifecycle.withRunner(thread, closing, async() => {
+        const waiting = agentJobLifecycle.waitForWake(thread, abort.signal);
+        const tool = new ReturnResultWorker();
+        tool.setState(cached ? closing : { metadata: { threadId: thread } } as any);
+        try {
+          expect((await (tool as any)._validatedCall({ summary: 'done' })).successBoolean).toBe(true);
+          expect(agentJobLifecycle.hasLiveWaiter(thread)).toBe(false);
+          expect(agentJobLifecycle.hasRunner(thread)).toBe(true);
+          expect(agentJobLifecycle.liveState(thread)).toBeUndefined();
+          expect(cache.has(thread)).toBe(false);
+          await message(backend);
+          expect(await backend.wakeInbox(target, peer.envelope.body, [peer])).toBe('deferred');
+          expect(backend.dispatchToAgent).toHaveBeenCalledTimes(2);
+          expect(closing.messages).toEqual([]);
+          // The runner may not have reached its next wait at commit time.
+          const later = agentJobLifecycle.waitForWake(thread, abort.signal);
+          expect(agentJobLifecycle.hasLiveWaiter(thread)).toBe(false);
+          await later;
+        } finally { abort.abort(); await waiting }
+      });
+    } finally { cache.clear() }
   });
 
   it('dispatches renderer input normally during terminal persistence on an evicted thread', async() => {
