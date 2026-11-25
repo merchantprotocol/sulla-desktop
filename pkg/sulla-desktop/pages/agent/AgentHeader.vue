@@ -588,9 +588,7 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
   // Cmd+1 through Cmd+9: switch to nth tab (Cmd+9 = last tab)
   if (meta && !e.shiftKey && e.key >= '1' && e.key <= '9') {
     e.preventDefault();
-    const allTabs = shortcutVisibleTabs.value;
-    const idx = e.key === '9' ? allTabs.length - 1 : parseInt(e.key) - 1;
-    const target = allTabs[idx];
+    const target = tabGroupModel.shortcutTab(orderedTabs.value, e.key);
     if (target) activateTab(target);
     return;
   }
@@ -1050,17 +1048,7 @@ const allTabsById = computed(() => {
 /** Saved order is reconciled and sorted into visual order by the group model. */
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
 
-const activeTabIdentity = computed(() => {
-  const active = orderedTabs.value.find(tab => tab.isActive);
-  return active ? `${ active.id }|${ active.mode || '' }|${ active.pinned ? 'pinned' : 'unpinned' }` : '';
-});
-watch(activeTabIdentity, identity => {
-  if (!identity) return;
-  const active = orderedTabs.value.find(tab => tab.isActive);
-  if (active && !active.pinned) setGroupFolded(tabGroupModel.groupForMode(active.mode), false);
-}, { flush: 'post' });
-
-const shortcutVisibleTabs = computed(() => orderedTabs.value.filter(tab => tab.pinned || !isGroupFolded(tabGroupModel.groupForMode(tab.mode))));
+const visibleTabs = computed(() => orderedTabs.value.filter(tab => tab.pinned || !isGroupFolded(tabGroupModel.groupForMode(tab.mode))));
 
 const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
 
@@ -1111,7 +1099,7 @@ async function closeBrowserTab(id: string) {
   let nextTab: HeaderTab | null = null;
   if (isActive) {
     const visual = orderedTabs.value;
-    const visibleIds = new Set(shortcutVisibleTabs.value.map(tab => tab.id));
+    const visibleIds = new Set(visibleTabs.value.map(tab => tab.id));
     const visualIdx = visual.findIndex(tab => tab.browserId === id);
     const candidate = visual.slice(visualIdx + 1).find(tab => visibleIds.has(tab.id)) ??
       visual.slice(0, visualIdx).reverse().find(tab => visibleIds.has(tab.id));
@@ -1981,7 +1969,7 @@ function handleTabContextMenuAction(
 
 /* Pinned tabs keep their title (shortened) and show a pin plus an accent
    underline, so they read as pinned instead of collapsing to a bare icon. */
-.tab-pinned {
+.tab-pinned:not(.tab-active):not(.tab-active-native) {
   min-width: 0;
   max-width: 150px;
   flex: 0 0 auto;
@@ -2193,7 +2181,7 @@ function handleTabContextMenuAction(
   background: color-mix(in srgb, var(--border-default) 55%, transparent);
 }
 .app-titlebar .tab-active-indicator { display: none; }
-.app-titlebar .tab-pinned { min-width: 64px; max-width: none; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
+.app-titlebar .tab-pinned:not(.tab-active):not(.tab-active-native) { min-width: 64px; max-width: none; flex: 0 1 var(--tab-basis, 190px); border-radius: 9px 9px 0 0; box-shadow: none; padding: 0 var(--tab-padding, 12px); }
 .app-titlebar .tab-pinned.tab-active { box-shadow: none; }
 .app-titlebar .tab-scroll-chevron { width: 22px; height: 28px; flex: 0 0 22px; }
 .app-titlebar .tab-new { width: 28px; height: 28px; flex: 0 0 28px; margin: 0; border-radius: 7px; }
