@@ -81,6 +81,33 @@ describe('TabTransferService', () => {
     expect(ghost.destroyed).toBe(true);
   });
 
+  it('cancels a detached drag without releasing or adopting its tab', () => {
+    // risk: Escape/pointercancel commits a tear-off after the user cancelled it
+    const ipc = new FakeIpc();
+    const actions: string[] = [];
+    const source = new FakeWindow(1, actions, undefined, ipc);
+    const ghost = {
+      destroyed:            false,
+      isDestroyed() { return this.destroyed },
+      destroy() { this.destroyed = true },
+      once:                 vi.fn(),
+      setIgnoreMouseEvents: vi.fn(),
+      loadURL:              vi.fn(),
+      showInactive:         vi.fn(),
+      setPosition:          vi.fn(),
+    };
+    const service = new TabTransferService(ipc as any, { getCursorScreenPoint: () => ({ x: 100, y: 100 }) } as any, () => source as any, () => [source] as any, () => source as any, {} as any, () => ghost as any);
+    service.install();
+    ipc.emit('tabs:drag-start', { sender: source.webContents }, { tabId: 'tab-1', descriptor: { id: 'tab-1' } });
+
+    ipc.emit('tabs:drag-cancel', { sender: source.webContents }, { tabId: 'tab-1' });
+
+    expect(ghost.destroyed).toBe(true);
+    expect((service as any).drags.size).toBe(0);
+    expect(actions).not.toContain('tabs:release');
+    expect(actions).not.toContain('tabs:adopt');
+  });
+
   it('forgets renderer readiness when a window closes', () => {
     // risk: stale BrowserWindow ids prevent a replacement window from awaiting renderer readiness
     const ipc = new FakeIpc(); const actions: string[] = [];
