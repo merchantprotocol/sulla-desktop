@@ -35,9 +35,30 @@ it('stores inline image blocks by reference even below the text payload threshol
   expect(JSON.stringify(card)).not.toContain(image);
 });
 
+// risk: data loss — inline output remains recoverable for small confirmed writes, and oversized output is offloaded only after durable confirmation.
+it('keeps small confirmed results inline and only points large results to confirmed logs', () => {
+  const projector = new ToolResultCardProjector(formatToolResult);
+  const smallResult = `SMALL_RESULT:${ 's'.repeat(2_000) }:END`;
+  const largeResult = `LARGE_RESULT:${ 'l'.repeat(5_000_000) }:END`;
+  const small = { toolRunId: 'run-small', toolName: 'exec', status: 'running' as const, args: {} };
+  const confirmedLarge = { toolRunId: 'run-confirmed', toolName: 'exec', status: 'running' as const, args: {} };
+  const unconfirmedLarge = { toolRunId: 'run-unconfirmed', toolName: 'exec', status: 'running' as const, args: {} };
+
+  projector.project(small, { success: true, result: smallResult, payloadThreadId: 'thread-small', payloadPersisted: true }, 'thread-small');
+  projector.project(confirmedLarge, { success: true, result: largeResult, payloadThreadId: 'thread-confirmed', payloadPersisted: true }, 'thread-confirmed');
+  projector.project(unconfirmedLarge, { success: true, result: largeResult, payloadThreadId: 'thread-unconfirmed', payloadPersisted: false }, 'thread-unconfirmed');
+
+  expect(small.output).toBe(smallResult);
+  expect(small).not.toHaveProperty('toolPayloadRef');
+  expect(confirmedLarge).toMatchObject({ toolPayloadRef: { threadId: 'thread-confirmed', toolRunId: 'run-confirmed' } });
+  expect(confirmedLarge).not.toHaveProperty('output');
+  expect(unconfirmedLarge.output).toBe(largeResult);
+  expect(unconfirmedLarge).not.toHaveProperty('toolPayloadRef');
+});
+
 // risk: data loss — a large result must remain inline unless the durable append and thread association were confirmed.
 it('keeps the full result inline when persistence or its thread association is unconfirmed', () => {
-  const result = `INLINE_RESULT:${ 'x'.repeat(160_000) }:END`;
+  const result = `INLINE_RESULT:${ 'x'.repeat(5_000_000) }:END`;
   const projector = new ToolResultCardProjector(formatToolResult);
   const failedWrite = { toolRunId: 'run-write-failed', toolName: 'exec', status: 'running' as const, args: {} };
   const missingAssociation = { toolRunId: 'run-no-association', toolName: 'exec', status: 'running' as const, args: {} };

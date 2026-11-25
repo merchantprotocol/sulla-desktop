@@ -23,7 +23,7 @@ export class ToolResultCardProjector {
 
     card.status = data?.success === true ? 'success' : 'failed';
     delete card.result;
-    if (durablePayloadConfirmed && (payloadThreadId || large || hasInlineImage)) {
+    if (durablePayloadConfirmed && (large || hasInlineImage)) {
       card.toolPayloadRef = { threadId: sourceThreadId, toolRunId: card.toolRunId };
       delete card.output;
       card.error = undefined;

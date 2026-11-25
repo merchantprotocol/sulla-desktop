@@ -22,14 +22,15 @@ export class ConversationToolPayloadStore {
     if (!file || !isInsideLogsDir(file, this.logsDirectory())) return null;
     const lines = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
     const escapedId = JSON.stringify(toolRunId).slice(1, -1);
+    let matchingEvent: unknown | null = null;
     for await (const line of lines) {
       // JSONL rows without this id cannot contain the target event; skip parsing them.
       if (!line.includes(toolRunId) && !line.includes(escapedId)) continue;
       try {
         const event = JSON.parse(line);
-        if (event?.type === 'tool_call' && event.toolCallId === toolRunId && Object.prototype.hasOwnProperty.call(event, 'result')) return event;
+        if (event?.type === 'tool_call' && event.toolCallId === toolRunId && Object.prototype.hasOwnProperty.call(event, 'result')) matchingEvent = event;
       } catch { /* Ignore malformed records and keep searching later lines. */ }
     }
-    return null;
+    return matchingEvent;
   }
 }

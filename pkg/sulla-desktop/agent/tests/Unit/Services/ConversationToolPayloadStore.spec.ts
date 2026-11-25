@@ -39,3 +39,22 @@ it('loads the complete 5 MB tool result by thread and tool id, without reading o
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+// risk: data accuracy — reused tool-call IDs must resolve to the latest complete result, not stale output from an earlier call.
+it('returns the last result-bearing event when a tool-call ID is reused', async() => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'sulla-tool-payload-reused-id-'));
+  try {
+    const file = path.join(directory, 'conversation.jsonl');
+    await writeFile(file, [
+      JSON.stringify({ type: 'tool_call', toolCallId: 'reused-run', args: { attempt: 1 }, result: 'stale result' }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'reused-run', args: { attempt: 2 }, result: 'latest result' }),
+    ].join('\n'));
+    const history = { getFileAssociations: vi.fn(async() => ({ log_file: file })) };
+    const store = new ConversationToolPayloadStore(history, () => directory);
+
+    const event = await store.load('thread-reused', 'reused-run') as { args: { attempt: number }; result: string };
+    expect(event).toMatchObject({ args: { attempt: 2 }, result: 'latest result' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
