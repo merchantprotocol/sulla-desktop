@@ -189,8 +189,14 @@ class TabContextMenuWindow {
 
     this.popup = popup;
     this.loaded = popup.loadFile(path.join(app.getAppPath(), ...assets, 'tab-context-menu.html'));
-    popup.on('blur', () => this.close());
-    popup.on('closed', () => {
+    popup.on('blur', () => {
+      if (this.popup === popup) this.close();
+    });
+    popup.webContents.once('render-process-gone', () => {
+      if (!popup.isDestroyed()) popup.destroy();
+    });
+    popup.once('closed', () => {
+      if (this.popup !== popup) return;
       this.popup = undefined;
       this.loaded = undefined;
       this.close();

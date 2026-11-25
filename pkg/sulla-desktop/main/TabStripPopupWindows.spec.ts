@@ -91,6 +91,7 @@ describe('native tab strip popups', () => {
   beforeEach(async() => {
     vi.useFakeTimers();
     electron.getTheme.mockReset().mockResolvedValue('protocol-dark');
+    electron.screen.getDisplayNearestPoint.mockReset().mockReturnValue({ workArea: { x: 0, y: 0, width: 800, height: 600 } });
     const { registerTabContextMenuIpc } = await import('./tabContextMenuWindow');
 
     registerTabContextMenuIpc();
@@ -161,5 +162,31 @@ describe('native tab strip popups', () => {
     expect(second.webContents.listenerCount('did-start-navigation')).toBe(0);
     expect(second.webContents.listenerCount('render-process-gone')).toBe(0);
     expect(second.listenerCount('closed')).toBe(0);
+  });
+
+  it.each(['tab-context-menu', 'tab-hover'])('recreates a fresh %s after its own renderer crashes', async(channel) => {
+    const owner = opener();
+    const request = (id: string) => {
+      if (channel === 'tab-context-menu') openMenu(owner, id);
+      else emit('tab-hover:show', owner, { id, anchor: { x: 20, y: 20 }, palette: {}, title: 'Title', status: 'Idle', detail: '' });
+    };
+
+    request('first');
+    await vi.advanceTimersByTimeAsync(0);
+    const [popup] = popups;
+
+    expect(popup.visible).toBe(true);
+    popup.webContents.emit('render-process-gone');
+    expect(popup.destroyed).toBe(true);
+    expect(owner.webContents.listenerCount('render-process-gone')).toBe(0);
+
+    request('second');
+    await vi.advanceTimersByTimeAsync(0);
+    const replacement = popups[1];
+
+    expect(replacement.visible).toBe(true);
+    expect(replacement.webContents.send).toHaveBeenCalledWith(
+      `${ channel }:data`, expect.objectContaining(channel === 'tab-hover' ? { id: 'second' } : { requestId: 'second' }),
+    );
   });
 });
