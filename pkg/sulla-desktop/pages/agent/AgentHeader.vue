@@ -1294,7 +1294,11 @@ function tabIsIconOnly(tab: HeaderTab, id: TabGroupId): boolean {
 function tabSizingStyle(tab: HeaderTab, id: TabGroupId): Record<string, string> | undefined {
   const width = layoutForGroup(id)?.tabWidths.get(tab.id);
 
-  return width === undefined ? undefined : { width: `${ width }px`, flex: `0 0 ${ width }px` };
+  return width === undefined ? undefined : {
+    width: `${ width }px`,
+    maxWidth: `${ width }px`,
+    flex: `0 0 ${ width }px`,
+  };
 }
 
 watch(tabStripLayout, () => {

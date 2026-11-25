@@ -175,7 +175,7 @@ describe('TabGroupModel', () => {
     expect(layout.reduce((total, group) => total + group.width, 0) + 16).toBeLessThanOrEqual(520);
   });
 
-  it('takes width from the widest tabs before truncating shorter titles', () => {
+  it('levels the widest tabs together without crossing their floors', () => {
     const layout = calculateTabStripLayout({
       groups: [
         layoutGroup('chats', [
@@ -191,10 +191,56 @@ describe('TabGroupModel', () => {
       availableWidth: 880,
     });
 
-    expect(layout[0].tabWidths.get('long')).toBe(100);
-    expect(layout[0].tabWidths.get('busy')).toBe(180);
+    expect(layout[0].tabWidths.get('long')).toBeCloseTo(140, 4);
+    expect(layout[0].tabWidths.get('busy')).toBeCloseTo(140, 4);
     expect(layout[0].tabWidths.get('short')).toBe(90);
     expect(layout[0].tabWidths.get('active')).toBe(220);
+  });
+
+  it('keeps shorter titles whole while a longer title is still full', () => {
+    const layout = calculateTabStripLayout({
+      groups: [layoutGroup('chats', [
+        { id: 'short', width: 80 },
+        { id: 'medium', width: 160 },
+        { id: 'long', width: 240 },
+      ], 50)],
+      activeGroup: 'chats',
+      availableWidth: 454,
+    });
+
+    expect(layout[0].tabWidths.get('short')).toBe(80);
+    expect(layout[0].tabWidths.get('medium')).toBeCloseTo(160, 4);
+    expect(layout[0].tabWidths.get('long')).toBeCloseTo(160, 4);
+  });
+
+  it('keeps busy and idle non-active tabs above their respective floors', () => {
+    const layout = calculateTabStripLayout({
+      groups: [layoutGroup('chats', [
+        { id: 'busy', width: 220, busy: true },
+        { id: 'idle', width: 80 },
+      ], 50)],
+      activeGroup: 'chats',
+      availableWidth: 198,
+    });
+
+    expect(layout[0].tabWidths.get('busy')).toBe(110);
+    expect(layout[0].tabWidths.get('idle')).toBe(36);
+  });
+
+  it('does not level the active tab with non-active tabs', () => {
+    const layout = calculateTabStripLayout({
+      groups: [layoutGroup('chats', [
+        { id: 'active', width: 510, active: true },
+        { id: 'busy', width: 250, busy: true },
+        { id: 'idle', width: 200 },
+      ], 50)],
+      activeGroup: 'chats',
+      availableWidth: 800,
+    });
+
+    expect(layout[0].tabWidths.get('active')).toBe(510);
+    expect(layout[0].tabWidths.get('busy')).toBeCloseTo(118, 4);
+    expect(layout[0].tabWidths.get('idle')).toBeCloseTo(118, 4);
   });
 
   it('switches the expanded group and compacts the previous active capsule', () => {
