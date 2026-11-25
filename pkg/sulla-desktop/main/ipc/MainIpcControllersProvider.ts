@@ -39,7 +39,7 @@ import { initializeMainClaudeModelCatalogBoundary } from '@pkg/agent/languagemod
 import { modelRouter, recommendedState } from '@pkg/agent/languagemodels/modelRouter';
 import { acknowledgeAgentTabReady, getAgentTabThreadSnapshot } from '@pkg/agent/services/AgentTabOpener';
 import { configureChatArtifactBookmarkSync, configureChatArtifactFilesRegistration, getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
-import { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatService';
+import { chatHeartbeatProvider } from '@pkg/agent/app/Providers/ChatHeartbeatServiceProvider';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { IpcMessageBus } from '@pkg/agent/services/IpcMessageBus';
 import { getUsageSummary } from '@pkg/agent/usage/providerUsage';
@@ -154,7 +154,7 @@ export class MainIpcControllersProvider {
       getArtifactById:    id => ChatArtifactModel.getById(id) as any,
       getHistoryByThread: threadId => ConversationHistoryModel.getByThread(threadId) as any,
     });
-    this.chatHeartbeat = new ChatHeartbeatIpcController(raw, getChatHeartbeatService);
+    this.chatHeartbeat = new ChatHeartbeatIpcController(raw, () => chatHeartbeatProvider.registrations());
     this.usage = new UsageIpcController(proxy, {
       summary:            (hours, profileId) => getUsageSummary(hours, profileId),
       activeContractorId: async() => (await import('../sullaCloudAuth')).getActiveContractorId(),

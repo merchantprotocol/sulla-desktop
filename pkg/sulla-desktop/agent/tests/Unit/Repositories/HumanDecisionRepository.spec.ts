@@ -62,11 +62,15 @@ describe('HumanDecisionRepository', () => {
     await expect(repo.listRecent()).resolves.toEqual([record]);
   });
 
-  it('expires a single pending decision by id', async() => {
-    const client = new FakeQueryClient();
-    await new HumanDecisionRepository(client).expirePending('d-9');
+  it('returns the row only when a pending decision was expired', async() => {
+    // risk: irreversible side effects — subscribers must only announce an expiry that actually won the database race.
+    const expired = { ...record, status: 'expired' } as DecisionRecord;
+    const client = new FakeQueryClient([{ record: expired }]);
+    await expect(new HumanDecisionRepository(client).expirePending('d-9')).resolves.toEqual(expired);
     expect(client.calls[0].sql).toMatch(/SET status = 'expired'/);
+    expect(client.calls[0].sql).toMatch(/WHERE id = \$1 AND status IN \('pending', 'deferred'\) RETURNING record/);
     expect(client.calls[0].params).toEqual(['d-9']);
+    await expect(new HumanDecisionRepository(new FakeQueryClient([])).expirePending('d-9')).resolves.toBeUndefined();
   });
 });
 

@@ -20,6 +20,8 @@ import { agentJobProvider } from '@pkg/agent/app/Providers/AgentJobServiceProvid
 import { AgentTraceHistory } from '@pkg/agent/app/Services/AgentTraceHistory';
 import { AgentRuntimeLiveness } from '@pkg/agent/app/Services/AgentRuntimeLiveness';
 import { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
+import { AgentLaunchCapabilityLookup } from '@pkg/agent/services/AgentLaunchCapabilityLookup';
+import { agentDefinitionService } from '@pkg/agent/services/AgentDefinitionService';
 import { ParentStallNoticeService } from '@pkg/agent/app/Services/ParentStallNoticeService';
 import { completionInboxStore } from '@pkg/agent/services/AgentCompletionInbox';
 import { PendingDecisionRepository } from '@pkg/agent/repositories/PendingDecisionRepository';
@@ -144,6 +146,7 @@ export interface AgentDefinitionResponse {
   canCall:            string[];
   isBuiltin:          boolean;
   frontDoor:          boolean | null;
+  agentAwareness:     boolean;
   allowedTools:       string[];
   skillRefs:          string[];
   routineRefs:        string[];
@@ -225,6 +228,7 @@ async function previewFor(id: string, logFile: string | undefined, logsDir: stri
 
 // The reconciler's container probes, kept so a quiet agent can read "still running" or "stopped responding".
 const agentRuntimeLiveness = new AgentRuntimeLiveness();
+const agentLaunchCapabilities = new AgentLaunchCapabilityLookup(agentDefinitionService);
 const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
   latest: async(jobId, taskIndex) => (await agentJobProvider.messaging.latestTelemetryForJobs([jobId]))[jobId]?.[taskIndex]?.latestCheckin ?? null,
   // One batched read per snapshot instead of one telemetry query pair per task.
@@ -238,7 +242,7 @@ const agentStateProjector = new AgentStateProjector(agentJobProvider.states, {
     return Object.fromEntries(Object.entries(telemetry).map(([jobId, tasks]) =>
       [jobId, Object.fromEntries(Object.entries(tasks).map(([index, item]) => [index, item.lastMessageDeliveredAt ?? null]))]));
   },
-}, Date.now, {}, agentJobProvider.activity, agentRuntimeLiveness);
+}, Date.now, {}, agentJobProvider.activity, agentRuntimeLiveness, Date.now(), agentLaunchCapabilities);
 const stallDecisions = new PendingDecisionRepository(postgresClient);
 const parentStallNotices = new ParentStallNoticeService({
   jobs: () => agentJobProvider.jobs.liveJobs(),
@@ -294,6 +298,7 @@ export async function listAgentDefinitions(options: AgentDefinitionsListOptions 
     canCall:            a.can_call,
     isBuiltin:          a.is_builtin,
     frontDoor:          a.front_door,
+    agentAwareness:     a.agent_awareness,
     allowedTools:       [...(a.allowed_tools ?? [])],
     skillRefs:          [...(a.skill_refs ?? [])],
     routineRefs:        [...(a.routine_refs ?? [])],
@@ -357,6 +362,7 @@ export function initAgentsIpc(): void {
       costTier:      input.costTier,
       canCall:       input.canCall,
       frontDoor:     input.frontDoor,
+      agentAwareness: input.agentAwareness,
       status:        'production' as const,
       sourceKind:    'local' as const,
       runLocation:   input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,

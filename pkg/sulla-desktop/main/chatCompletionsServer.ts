@@ -13,6 +13,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
+import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -33,6 +34,7 @@ import { ToolDeadlinePolicy } from '../../../packages/runtime-protocol/src/toolD
 import { ApiChatRunFactory, OwnerIdentityUnavailableError } from './ApiChatRunFactory';
 import { getCurrentUserId } from './sullaCloudAuth';
 import { getBackendGraphWebSocketService } from '@pkg/agent/services/BackendGraphWebSocketService';
+import { RemovedObservationCommand } from './RemovedObservationCommand';
 
 const CHAT_COMPLETIONS_PORT = parseInt('3000', 10);
 /** Tried in order when another Mac app already listens on the chat API port. */
@@ -134,6 +136,7 @@ export class ChatCompletionsServer {
     },
   );
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
+  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   /** Grace for in-flight responses before open sockets are cut on stop. */
   static readonly CONNECTION_DRAIN_MS = 1_000;
   /** Upper bound on the agent-container sweep that runs on stop. */
@@ -147,7 +150,11 @@ export class ChatCompletionsServer {
   private taskerUnsubscribe: (() => void) | null = null;
   private apiToken:          string | null = null;
 
-  constructor() {
+  constructor(
+    agentAwarenessPolicy = new AgentAwarenessPolicy(),
+    private readonly removedObservationCommand: RemovedObservationCommand = new RemovedObservationCommand(),
+  ) {
+    this.agentAwarenessPolicy = agentAwarenessPolicy;
     this.initializeTaskerWebSocketListener();
     this.setupMiddleware();
     this.setupRoutes();
@@ -449,6 +456,9 @@ export class ChatCompletionsServer {
         worker.executionContext = ctx;
         if (typeof ctx?.thread_id === 'string') {
           const graph = GraphRegistry.get(ctx.thread_id);
+          if (graph?.state && !this.agentAwarenessPolicy.allowsTool(graph.state.metadata, toolName)) {
+            return res.status(403).json({ success: false, error: { code: 'tool_not_available', message: 'not available to this agent' } });
+          }
           if (graph?.state) worker.setState?.(graph.state);
         }
         const deadline = AbortSignal.timeout(deadlineMs);
@@ -878,8 +888,6 @@ export class ChatCompletionsServer {
       // Individual stateless tools from mixed categories (where the rest of the category uses state).
       // These are tools whose parent category is NOT fully internal — only specific tools are exposed.
       const INTERNAL_INDIVIDUAL_TOOLS = [
-        { toolName: 'add_observational_memory', slug: 'memory' },
-        { toolName: 'remove_observational_memory', slug: 'memory' },
         { toolName: 'check_agent_jobs', slug: 'agents' },
       ];
 
@@ -1133,6 +1141,13 @@ export class ChatCompletionsServer {
 
   // ── CLI help handler ─────────────────────────────────────────────
 
+  /** Tool names the calling session may see; agents with "Sees other agents" off never see launch tools. */
+  private visibleToolNames(req: Request, names: string[]): string[] {
+    const token = req.header('X-Sulla-Tool-Session')?.trim();
+    const session = token ? getMCPServerHost().getToolSession(token) : null;
+    return session ? this.agentAwarenessPolicy.filterToolNames(names, session.state.metadata as AgentAwarenessSetting) : names;
+  }
+
   private async handleHelp(req: Request, res: Response) {
     try {
       const { toolRegistry } = await import('@pkg/agent/tools/registry');
@@ -1140,7 +1155,7 @@ export class ChatCompletionsServer {
 
       if (category) {
         // Category-specific help: list tools with descriptions and parameters
-        const toolNames = toolRegistry.getToolNamesForCategory(category);
+        const toolNames = this.visibleToolNames(req, toolRegistry.getToolNamesForCategory(category));
         if (toolNames.length === 0) {
           return res.status(404).json({ success: false, error: `Unknown category "${ category }"` });
         }
@@ -1202,7 +1217,7 @@ export class ChatCompletionsServer {
         text += `${ '─'.repeat(60) }\n`;
 
         for (const { category: cat, description } of categories) {
-          const toolCount = toolRegistry.getToolNamesForCategory(cat).length;
+          const toolCount = this.visibleToolNames(req, toolRegistry.getToolNamesForCategory(cat)).length;
           text += `  ${ cat.padEnd(22) } (${ toolCount } tools) ${ description.slice(0, 80) }\n`;
         }
 
@@ -1255,7 +1270,7 @@ export class ChatCompletionsServer {
             : '';
           return res.status(404).json({
             success: false,
-            error:   `Internal tool "${ prefixed }" or "${ endpoint }" not found.${ hint }`,
+            error:   this.removedObservationCommand.errorFor(slug, endpoint) || `Internal tool "${ prefixed }" or "${ endpoint }" not found.${ hint }`,
             suggestions,
           });
         }
@@ -1274,7 +1289,10 @@ export class ChatCompletionsServer {
         }
         if (session) {
           const allowed = (session.state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
-          if (!sessionAllowsTool(allowed, toolName)) {
+          if (!this.agentAwarenessPolicy.allowsTool(session.state.metadata, toolName)) {
+            return res.status(403).json({ success: false, error: 'not available to this agent' });
+          }
+          if (!sessionAllowsTool(allowed, toolName, session.state.metadata, this.agentAwarenessPolicy)) {
             return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
           }
           if (session.executionContext && session.executionContext.exp <= Math.floor(Date.now() / 1000)) {

@@ -14,7 +14,7 @@
       <DecisionHolderLine :presentation="routePresentation" />
       <p class="route-requester"><span class="route-requester__avatar">{{ routePresentation.requesterInitial }}</span><span>Approval request from <code>{{ routePresentation.requesterLabel }}</code></span></p>
     </template>
-    <p v-else-if="msg.requestedBy" class="requester">Requested by {{ msg.requestedBy.agentId }}<template v-if="msg.requestedBy.label"> · {{ msg.requestedBy.label }}</template></p>
+    <p v-else-if="msg.requestedBy" class="requester">Requested by {{ requesterName }}<template v-if="requesterLabel"> · {{ requesterLabel }}</template></p>
     <DecisionTrail v-if="routePresentation" :rows="routePresentation.trail" />
     <div :class="{ 'decision-route-body': routePresentation }">
       <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
@@ -43,7 +43,7 @@ import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePrese
 import DecisionHolderLine from './DecisionHolderLine.vue';
 import DecisionTrail from './DecisionTrail.vue';
 
-const props = defineProps<{ msg: ToolApprovalMessage; decision?: DecisionRecord; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void>; showDecideLink?: boolean }>();
+const props = defineProps<{ msg: ToolApprovalMessage; decision?: DecisionRecord; now?: number; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void>; showDecideLink?: boolean }>();
 const controller = useChatController();
 const decisionStore = ChatDecisions.useChatDecisions();
 const routePresenter = useDecisionRoutePresenter({ now: () => decisionStore.now.value });
@@ -52,18 +52,23 @@ const routePresentation = computed(() => {
   return record?.route ? routePresenter.present(record) : undefined;
 });
 const now = ref(Date.now());
+const requesterName = computed(() => props.msg.requestedBy?.agentId || props.msg.requestedBy?.label || 'default agent');
+const requesterLabel = computed(() => {
+  const label = props.msg.requestedBy?.label;
+  return label && label !== requesterName.value ? label : '';
+});
 let expiryTimer: ReturnType<typeof setInterval> | undefined;
-const effectiveDecision = computed(() => props.msg.decision === 'pending' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value
+const effectiveDecision = computed(() => props.msg.decision === 'pending' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= (props.now ?? now.value)
   ? 'timed_out'
   : props.msg.decision);
 const expiresAtLabel = computed(() => props.msg.expiresAt === undefined
   ? undefined
   : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(props.msg.expiresAt)));
-const effectiveStateLabel = computed(() => effectiveDecision.value === 'timed_out' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value
+const effectiveStateLabel = computed(() => effectiveDecision.value === 'timed_out' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= (props.now ?? now.value)
   ? 'Expired'
   : props.stateLabel || 'Timed out');
 onMounted(() => {
-  if (props.msg.expiresAt === undefined) return;
+  if (props.now !== undefined || props.msg.expiresAt === undefined) return;
   expiryTimer = setInterval(() => {
     now.value = Date.now();
     if (props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value && expiryTimer) {

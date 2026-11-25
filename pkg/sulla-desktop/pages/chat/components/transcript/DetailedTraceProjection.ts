@@ -7,7 +7,8 @@ import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMes
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
-import type { TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
+import { SupportingReportResolver } from '../../services/SupportingReportResolver';
+import type { SubAgentTraceStatus, TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
@@ -29,7 +30,13 @@ export class DetailedTraceProjection {
           ...jobRows.map(row => ({ ...row, anchorEntryId }))];
       });
       const usage = this.usage(group);
-      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows, ...(usage ? { usage } : {}) };
+      const agentSummary = SubAgentTraceProjection.summary(rows.flatMap(row => row.subagent ? [row.status as SubAgentTraceStatus] : []));
+      const sourceCount = rows.filter(row => row.kind === 'source').length;
+      // A blocked worker or a pending approval in this turn needs the human.
+      const waitingOnYou = rows.some(row => (row.subagent && row.status === 'blocked') || (row.kind === 'approval' && row.status === 'waiting'));
+      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows,
+        ...(usage ? { usage } : {}), ...(agentSummary ? { agentSummary } : {}),
+        ...(sourceCount ? { sourceCount } : {}), ...(waitingOnYou ? { waitingOnYou } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));
   }
 
@@ -100,6 +107,15 @@ export class DetailedTraceProjection {
     const { input, output, error, desc, meta } = message;
     const payload = new TracePayload([target, message.status, input, output, error, desc, meta], () =>
       this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }));
+    const shell = this.shellCommand(message);
+    if (shell) {
+      // "Ran <command>  <tool> · exit N": the real tool name stays on the line (no-redaction rule).
+      const args = [target, this.exitCode(meta, output)].filter(Boolean).join(' · ');
+      return [{ ...this.row(message.id, 'tool', status === 'running' ? 'Running' : 'Ran', shell, status,
+        anchor, message.createdAt, this.duration(meta), args, payload),
+        // Keep the command's own lines and spacing; only trim the ends.
+        target: shell.trim(), targetIsCode: true }];
+    }
     return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
       anchor, message.createdAt, this.duration(meta), this.serializer.preview(input), payload)];
   }
@@ -118,12 +134,43 @@ export class DetailedTraceProjection {
   }
 
   private rowsForCitation(message: CitationMessage, anchor: string): TraceRow[] {
-    return message.sources.map((source, index) => this.row(`${message.id}:${index}`, 'source', 'Source', source.title, 'ok', anchor, message.createdAt, undefined, source.origin, this.serializer.lazy(source)));
+    // The Read step behind each numbered source, worded like the sources row's own button.
+    return message.sources.map((source, index) => ({
+      ...this.row(`${message.id}:${index}`, 'source', SupportingReportResolver.webUrl(source) ? 'Read source' : 'Read report',
+        source.title, 'ok', anchor, message.createdAt, undefined, source.origin, this.serializer.lazy(source)),
+      cite: source.num,
+    }));
   }
 
   private row(id: string, kind: TraceRowKind, verb: string, target: string, status: TraceRowStatus, anchorEntryId: string, at: number, durationLabel?: string, keyArgs?: string, payload?: TracePayload): TraceRow {
     const safeTarget = this.serializer.summary(target);
     return { id, kind, verb: this.serializer.summary(verb), target: safeTarget, targetIsCode: /(?:[/$\\]|\.(?:ts|js|json|sh)\b|\s--?[a-z])/i.test(safeTarget), status, ...(keyArgs ? { keyArgs: this.serializer.summary(keyArgs) } : {}), ...(durationLabel ? { durationLabel } : {}), ...(payload ? { payload } : {}), anchorEntryId, at };
+  }
+
+  /** The full command of a shell tool call, or undefined for any other tool. */
+  private shellCommand(message: ToolMessage): string | undefined {
+    const name = message.recordedToolName ?? message.tool;
+    if (message.tool !== 'Bash' && !/^(?:bash|exec|exechost|(?:meta\/)?exec(?:host)?)$/i.test(name)) return undefined;
+    const input = message.input?.trim();
+    if (!input) return undefined;
+    try {
+      const parsed = JSON.parse(input) as { command?: unknown };
+      return typeof parsed?.command === 'string' && parsed.command ? parsed.command : undefined;
+    } catch {
+      return input;
+    }
+  }
+
+  /**
+   * The exit code the tool actually recorded: meta like "exit 2" first, then the
+   * output exec ("Command failed with exit code N:") or exechost ("Command exited N:")
+   * writes. No recorded code means none is shown; a successful call is never given
+   * a made-up "exit 0".
+   */
+  private exitCode(meta?: string, output?: string): string | undefined {
+    const code = meta?.match(/\bexit(?:\s+code)?\s*:?\s*(-?\d+)/i)?.[1] ??
+      output?.match(/\b(?:exit(?:ed)?(?:\s+code)?)\s*:?\s*(-?\d+)/i)?.[1];
+    return code !== undefined ? `exit ${ code }` : undefined;
   }
 
   private duration(meta?: string): string | undefined {

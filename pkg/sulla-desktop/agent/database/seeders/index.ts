@@ -8,7 +8,6 @@
 // DatabaseManager imports this to run tracked seeders
 
 import { initialize as firstRunRemoteCredentialsSeeder } from './FirstRunRemoteCredentialsSeeder';
-import { initialize as observationsImportSeeder } from './ObservationsImportSeeder';
 import { initialize as memorySeedSeeder, MEMORY_SEED_VERSION } from './MemorySeedSeeder';
 
 // n8n user and settings seeders have been replaced by the recipe's
@@ -23,10 +22,6 @@ export const seedersRegistry = [
   {
     name: 'firstrun-remote-credentials-seeder',
     run:  firstRunRemoteCredentialsSeeder,
-  },
-  {
-    name: 'observations-import-seeder',
-    run:  observationsImportSeeder,
   },
   // {
   //   name: 'core-data-seed',

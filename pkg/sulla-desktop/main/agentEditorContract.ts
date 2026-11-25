@@ -15,6 +15,7 @@ import type {
   AgentEditorCreateInput,
   AgentEditorPatch,
 } from '../shared/agentEditor';
+import { AgentAwarenessField } from './AgentAwarenessField';
 
 const MAX_SHORT_TEXT = 10_000;
 const MAX_LIST_ITEMS = 256;
@@ -39,6 +40,7 @@ const CREATE_KEYS = new Set([
   'name',
   'description',
   'prompt',
+  'agentAwareness',
   'provider',
   'runLocation',
   'modelSlot',
@@ -111,9 +113,7 @@ function readString(
 
   const value = record[key];
   if (typeof value !== 'string') { throw new AgentEditorValidationError(`${ key } must be a string.`) }
-  if (options.nonEmpty && value.trim().length === 0) {
-    throw new AgentEditorValidationError(`${ key } must not be empty.`);
-  }
+  if (options.nonEmpty && value.trim().length === 0) throw new AgentEditorValidationError(`${ key } must not be empty.`);
   const maxLength = options.unbounded ? undefined : options.maxLength ?? MAX_SHORT_TEXT;
   if (maxLength !== undefined && value.length > maxLength) {
     throw new AgentEditorValidationError(`${ key } is too long.`);
@@ -313,9 +313,7 @@ function readCommonFields(
 ): AgentEditorPatch {
   const name = readString(record, 'name', { required, nonEmpty: required });
   const description = readString(record, 'description');
-  const prompt = has(record, 'prompt')
-    ? readString(record, 'prompt', { unbounded: true })
-    : undefined;
+  const prompt = has(record, 'prompt') ? readString(record, 'prompt', { unbounded: true }) : undefined;
   const provider = readString(record, 'provider');
   const runLocation = readString(record, 'runLocation');
   if (
@@ -348,6 +346,7 @@ function readCommonFields(
     ...(modelSlot === undefined ? {} : { modelSlot }),
     ...(modelChoice === undefined ? {} : { modelChoice }),
     ...(enabled === undefined ? {} : { enabled }),
+    ...new AgentAwarenessField(AgentEditorValidationError).patch(record),
     ...(whenToCall === undefined ? {} : { whenToCall }),
     ...(whenNotToCall === undefined ? {} : { whenNotToCall }),
     ...(send === undefined ? {} : { send }),
@@ -414,6 +413,7 @@ export function validateAgentEditorCreateInput(
       ? {}
       : { runLocation: common.runLocation }),
     enabled:       common.enabled ?? true,
+    ...new AgentAwarenessField(AgentEditorValidationError).create(record),
     whenToCall:    common.whenToCall ?? '',
     whenNotToCall: common.whenNotToCall ?? '',
     send:          common.send ?? '',

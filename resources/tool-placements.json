@@ -2852,66 +2852,6 @@
       "sideEffect": "write",
       "credential": "none"
     },
-    "observation/add_identity_observation": {
-      "category": "observation",
-      "name": "add_identity_observation",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
-      "credential": "none"
-    },
-    "observation/add_observational_memory": {
-      "category": "observation",
-      "name": "add_observational_memory",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
-      "credential": "none"
-    },
-    "observation/list_identity_observations": {
-      "category": "observation",
-      "name": "list_identity_observations",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "observation/list_observations": {
-      "category": "observation",
-      "name": "list_observations",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "observation/remove_identity_observation": {
-      "category": "observation",
-      "name": "remove_identity_observation",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "irreversible",
-      "credential": "none"
-    },
-    "observation/remove_observational_memory": {
-      "category": "observation",
-      "name": "remove_observational_memory",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "irreversible",
-      "credential": "none"
-    },
     "observation/search_conversation_keywords": {
       "category": "observation",
       "name": "search_conversation_keywords",
@@ -2930,36 +2870,6 @@
       ],
       "relayable": false,
       "sideEffect": "read",
-      "credential": "none"
-    },
-    "observation/search_identity_observations": {
-      "category": "observation",
-      "name": "search_identity_observations",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "observation/search_observations": {
-      "category": "observation",
-      "name": "search_observations",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "read",
-      "credential": "none"
-    },
-    "observation/update_identity_section": {
-      "category": "observation",
-      "name": "update_identity_section",
-      "placements": [
-        "desktop"
-      ],
-      "relayable": false,
-      "sideEffect": "write",
       "credential": "none"
     },
     "observation/upsert_conversation_keywords": {

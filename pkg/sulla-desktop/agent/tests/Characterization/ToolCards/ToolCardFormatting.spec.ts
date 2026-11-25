@@ -16,7 +16,7 @@ const knownTools = [
   'exec', 'exechost', 'file_search', 'read_file', 'browser_tab', 'click_element', 'set_field',
   'git_status', 'git_commit', 'github_create_pr', 'docker_build', 'slack_send_message',
   'pg_query', 'redis_get', 'calendar_create', 'execute_workflow', 'install_extension',
-  'spawn_agent', 'send_notification_to_human', 'add_observational_memory', 'create_workspace',
+  'spawn_agent', 'send_notification_to_human', 'create_workspace',
   'create_skill', 'integration_list', 'vault_is_enabled',
 ];
 

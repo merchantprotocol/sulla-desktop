@@ -351,19 +351,33 @@ export class DecisionService {
     entry.busy = true;
     try {
       const route = entry.record.route;
-      const repo = entry.record.kind === 'approval' ? this.decisions : this.pendingDecisions;
-      const expired = route
-        ? await repo.settleAs(id, route.holderIndex, { kind: 'system', threadId: route.chain[route.holderIndex]?.threadId ?? entry.record.conversationId }, 'expired', { status: 'expired' }, [])
-        : (await this.decisions.expirePending(id), (await this.pendingDecisions.findById(id))?.status === 'expired');
-      const current = await this.pendingDecisions.findById(id);
-      if (!expired && current && !['approved', 'denied', 'answered', 'expired'].includes(current.status)) return;
+      let result: DecisionRecord; let expiredNow = false;
+      if (route) {
+        const repo = entry.record.kind === 'approval' ? this.decisions : this.pendingDecisions;
+        expiredNow = await repo.settleAs(id, route.holderIndex, { kind: 'system', threadId: route.chain[route.holderIndex]?.threadId ?? entry.record.conversationId }, 'expired', { status: 'expired' }, []);
+        const current = await this.pendingDecisions.findById(id);
+        if (!expiredNow && current && !['approved', 'denied', 'answered', 'expired'].includes(current.status)) return;
+        result = current ?? { ...entry.record, status: 'expired' };
+      } else {
+        const expired = await this.decisions.expirePending(id);
+        if (expired) { result = expired; expiredNow = true; } else {
+          const current = await this.pendingDecisions.findById?.(id);
+          if (!current) {
+            this.waiting.delete(id);
+            clearTimeout(entry.timer);
+            entry.cleanup();
+            return;
+          }
+          if (!['approved', 'denied', 'answered', 'expired'].includes(current.status)) return;
+          result = current;
+        }
+      }
       this.waiting.delete(id);
       clearTimeout(entry.timer);
       entry.cleanup();
-      const result = current ?? { ...entry.record, status: 'expired' as const };
       entry.record = result;
       entry.settle({ status: result.status, answers: result.answers ?? [], answeredBy: result.answeredBy, ...(result.answeredBy?.note ? { note: result.answeredBy.note } : {}) });
-      this.changed(result);
+      if (expiredNow) this.changed(result);
     } catch { /* Keep the waiter available; the durable sweep retries after database recovery. */ }
     finally { entry.busy = false }
   }

@@ -39,7 +39,7 @@
   <div v-else-if="decisionId && (mainDecisionTranscript || msg.kind === 'tool_approval') && (!inboxRecord || inlineRecord) && (msg.kind === 'tool_approval' || msg.kind === 'tool_question')">
     <ToolApproval
       v-if="msg.kind === 'tool_approval'"
-      :msg="approvalMessage(msg)" :blocked="blocked"
+      :msg="approvalMessage(msg)" :now="decisions.now.value" :blocked="blocked"
       :state-label="decisionLabel" :decide="inlineRecord ? decide : undefined" :show-decide-link="Boolean(inlineRecord)"
     />
     <ToolTask
@@ -59,7 +59,7 @@
     <button v-if="checking && decisions.inlineReadFailed.value" type="button" @click="decisions.refreshInline">Retry loading request</button>
   </div>
   <DecisionReference v-else-if="inboxRecord && (msg.kind === 'tool_question' || msg.kind === 'tool_approval')" :msg="msg" />
-  <ToolApproval v-else-if="msg.kind === 'tool_approval' && !decisionId" :msg="msg" />
+  <ToolApproval v-else-if="msg.kind === 'tool_approval' && !decisionId" :msg="msg" :now="decisions.now.value" />
   <ToolTask v-else-if="TaskAsks.isTask(msg)" :msg="msg" :draft="questionDraft(msg)" />
   <ToolQuestion v-else-if="msg.kind === 'tool_question'" :msg="msg" :draft="questionDraft(msg)" />
   <PatchBlock      v-else-if="msg.kind === 'patch'"     :msg="msg" />
@@ -144,7 +144,7 @@ function approvalMessage(message: ToolApprovalMessage): ToolApprovalMessage {
     reason: presentation?.reason ?? `Approval details for ${ record.toolName || record.title }.`,
     command: presentation?.command ?? record.toolName ?? record.title,
     origin: presentation?.origin,
-    requestedBy: record.requestedBy ? { agentId: record.requestedBy.agentId || record.requestedBy.label || 'default agent', label: record.requestedBy.label } : undefined,
+    requestedBy: record.requestedBy ? { ...(record.requestedBy.agentId ? { agentId: record.requestedBy.agentId } : {}), ...(record.requestedBy.label ? { label: record.requestedBy.label } : {}) } : undefined,
     decision,
     resolutionError: decisions.actionError(record.id),
   };

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentDefinitionTableFake } from '../../Support/AgentDefinitionTableFake';
 
 import type { BuiltinAgentSpec } from '@pkg/agent/builtinAgents/index';
-import { RETIRED_CODING_MANAGER_SLUGS } from '@pkg/agent/builtinAgents/index';
+import { RETIRED_CODING_MANAGER_SLUGS, RETIRED_OBSERVATION_AGENT_SLUGS } from '@pkg/agent/builtinAgents/index';
 import { seedBuiltinAgents } from '@pkg/agent/builtinAgents/seedBuiltinAgents';
 import { AgentDefinitionModel } from '@pkg/agent/database/models/AgentDefinitionModel';
 import { AgentDefinitionService } from '@pkg/agent/services/AgentDefinitionService';
@@ -93,6 +93,18 @@ describe('retired long-tail Coding Managers', () => {
     const primaryAfter = await AgentDefinitionModel.findBySlug('coding-manager');
     expect(primaryAfter).toMatchObject({ enabled: true, status: 'production' });
     expect(primaryAfter!.updated_at).toBe(primaryBefore!.updated_at);
+  });
+
+  it('archives the observation-curator writer on boot and keeps its row', async() => {
+    // risk: the writer for the removed observation memory is re-enabled and keeps writing observations
+    expect(RETIRED_OBSERVATION_AGENT_SLUGS).toEqual(['observation-curator']);
+    await AgentDefinitionModel.create({ slug: 'observation-curator', name: 'Observation Curator', status: 'production', enabled: true, sourceKind: 'filesystem-import' });
+
+    const summary = await seedBuiltinAgents([builtin('coding-manager')]);
+
+    expect(summary.errors).toEqual([]);
+    expect(await AgentDefinitionModel.findBySlug('observation-curator')).toMatchObject({ enabled: false, status: 'archive' });
+    expect(f.table.stored('observation-curator')).toBeDefined(); // retained, not deleted
   });
 
   it('does not seed retired specs and refuses legacy-directory or service re-creation', async() => {

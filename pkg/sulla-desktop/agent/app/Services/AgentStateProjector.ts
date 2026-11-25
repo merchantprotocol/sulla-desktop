@@ -23,6 +23,9 @@ export interface AgentStateTelemetry {
   /** Latest time Sulla's message (its answer) was delivered to each task; a later answer clears a blocker. */
   answeredForJobs?(jobIds: string[]): Promise<Record<string, Record<number, number | null>>>;
 }
+export interface AgentLaunchCapabilityReader {
+  launchableAgentIds(agentIds: readonly string[]): Promise<ReadonlySet<string>>;
+}
 export interface AgentProjectionConfig { quietAfterMs: number; terminalTtlMs: number; }
 const DEFAULT_CONFIG: AgentProjectionConfig = { quietAfterMs: 5 * 60_000, terminalTtlMs: 2 * 60_000 };
 
@@ -35,7 +38,8 @@ export class AgentStateProjector {
     private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, clock, config.quietAfterMs ?? DEFAULT_CONFIG.quietAfterMs),
     private readonly runtime?: Pick<AgentRuntimeLiveness, 'alive'>,
     /** When this process started watching: activity before it (a restart) is unknown, not silence. */
-    private readonly observedSince: number = clock()) { this.config = { ...DEFAULT_CONFIG, ...config }; }
+    private readonly observedSince: number = clock(),
+    private readonly launchCapabilities?: AgentLaunchCapabilityReader) { this.config = { ...DEFAULT_CONFIG, ...config }; }
 
   snapshot(): Promise<AgentStateSnapshot> {
     if (this.inFlight) return this.inFlight;
@@ -54,10 +58,14 @@ export class AgentStateProjector {
     const version = this.states.version;
     const now = this.clock();
     const jobIds = [...new Set(jobs.map(job => job.jobId))];
+    const agentIds = [...new Set(jobs.flatMap(job => job.tasks.map(task => task.agentId).filter(Boolean)))];
     const [latestByJob, answeredByJob] = await Promise.all([
       this.telemetry.latestForJobs ? this.telemetry.latestForJobs(jobIds) : undefined,
       this.telemetry.answeredForJobs ? this.telemetry.answeredForJobs(jobIds).catch(() => undefined) : undefined,
     ]);
+    const launchableAgentIds = this.launchCapabilities
+      ? await this.launchCapabilities.launchableAgentIds(agentIds).catch(() => new Set<string>())
+      : new Set<string>();
     const jobById = new Map(jobs.map(job => [job.jobId, job]));
     const taskByKey = new Map(jobs.flatMap(job => job.tasks.map((task, taskIndex) => [`${ job.jobId }:${ taskIndex }`, task] as const)));
     const waitingByThread = new Map<string, number>();
@@ -83,7 +91,8 @@ export class AgentStateProjector {
       rows.push({ key: `${ job.jobId }:${ taskIndex }`, jobId: job.jobId, taskIndex,
         parentJobId: job.parentJobId ?? null, parentTaskIndex: job.parentTaskIndex ?? null,
         rootThreadId: lineage.rootThreadId, threadId: task.threadId ?? null,
-        depth: lineage.depth, agentId: task.agentId || null, label: task.label || task.agentId,
+        depth: lineage.depth, agentId: task.agentId || null,
+        canLaunchAgents: launchableAgentIds.has(task.agentId), label: task.label || task.agentId,
         taskId:             task.taskId,
         modelStatus:        AgentModelStatusRegistry.get(task.threadId) ?? savedWorkerModelStatus(task.workerModelRoute) ?? (task.model ? { model: task.model, provider: task.provider, effort: task.effort ?? null, source: 'requested' } : undefined),
         visibility: task.visibility === 'tab' || job.visibility === 'tab' ? 'tab' : 'hidden', state,

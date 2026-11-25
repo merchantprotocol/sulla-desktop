@@ -170,7 +170,7 @@ export function wrapWithBlockingWarning(
 
   const warning = [
     `⚠️ **BLOCKING DETECTED: ${ detection.type?.toUpperCase().replace('_', ' ') }** (source: ${ detection.source })`,
-    `[EPHEMERAL — do NOT save this to observational memory or any persistent store. This is a transient, site-specific event.]`,
+    `[EPHEMERAL — do NOT save this to memory. This is a transient, site-specific event.]`,
     ``,
     detection.message,
     ``,

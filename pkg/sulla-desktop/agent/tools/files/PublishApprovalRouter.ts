@@ -31,16 +31,15 @@ type RoutedDecision = Pick<DecisionRecord, 'conversationId' | 'channel' | 'reque
  * from tool input or transcript text.
  */
 export class PublishApprovalRouter {
-  private static readonly UNNAMED_AGENT = 'default agent';
-
   constructor(private readonly tasks: PublishApprovalTaskReader) {}
 
   /** The delegated task that is asking, or undefined for a chat the human talks to directly. */
   async requester(threadId: string): Promise<PublishApprovalRequester | undefined> {
     const task = await this.tasks.taskForThread(threadId);
     if (!task) return undefined;
+    const agentId = task.agentId?.trim();
     return {
-      agentId:   task.agentId || task.label || PublishApprovalRouter.UNNAMED_AGENT,
+      ...(agentId ? { agentId } : {}),
       ...(task.label ? { label: task.label } : {}),
       jobId:     task.jobId,
       taskIndex: task.taskIndex,

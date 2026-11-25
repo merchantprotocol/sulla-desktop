@@ -53,4 +53,11 @@ describe('PublishApprovalRouter', () => {
     await expect(router.requester('child')).resolves.toEqual({ agentId: 'codex-luna-worker', label: 'Publish the agent', jobId: 'job-child', taskIndex: 2 });
     await expect(router.requester('root')).resolves.toBeUndefined();
   });
+
+  it('does not store a task label as an agent id when the task has no agent id', async() => {
+    // risk: user clarity — the requester card shows a task label once without persisting it as a second identity.
+    const router = new PublishApprovalRouter(new JobAncestry().add('child', 'root', { label: 'Publish the agent', taskIndex: 2 }));
+
+    await expect(router.requester('child')).resolves.toEqual({ label: 'Publish the agent', jobId: 'job-child', taskIndex: 2 });
+  });
 });

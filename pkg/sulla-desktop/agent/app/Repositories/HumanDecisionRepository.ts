@@ -71,8 +71,9 @@ export class HumanDecisionRepository {
     return rows.length > 0;
   }
 
-  async expirePending(id: string): Promise<void> {
-    await this.client.query(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
-        WHERE id = $1 AND status IN ('pending', 'deferred')`, [id]);
+  async expirePending(id: string): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
+        WHERE id = $1 AND status IN ('pending', 'deferred') RETURNING record`, [id]);
+    return rows[0]?.record;
   }
 }

@@ -456,7 +456,7 @@ class SullaLogger extends EventEmitter {
 
   /** Start a new conversation — writes an entry to the index. */
   start(meta: ConversationMeta): void {
-    // Subconscious agents (memory-recall, observation writer/recall, summarizer,
+    // Subconscious agents (memory-recall, V7 memory writer, summarizer,
     // tool-result digester) run as ephemeral `subconscious_*` conversations.
     // They are internal machinery, never user-facing history — never record
     // them to the conversation_history DB or the on-disk index/JSONL logs.

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../services/ActiveAgentsRegistry', () => ({
   getActiveAgentsRegistry: () => ({
     buildCompactRoster: async() => 'Jonathon (human): Busy · idle 0m\nagents: Heartbeat@heartbeat (running, 309m) | Coding Manager@coding-manager (running, 0m)',
+    buildHumanPresence: async() => 'Jonathon (human): Busy · idle 0m',
   }),
 }));
 
@@ -22,5 +23,13 @@ describe('per-turn context header', () => {
     expect(context).not.toMatch(/(?:^|\s)(?:agent|channel)=/m);
     expect(context).toContain('Jonathon (human): Busy · idle 0m');
     expect(context).toContain('agents: Heartbeat@heartbeat (running, 309m) | Coding Manager@coding-manager (running, 0m)');
+  });
+
+  it('keeps runtime and human presence but omits the agent roster when awareness is off', async() => {
+    // risk: workers see other agents' activity or lose useful time/presence context.
+    const context = await buildTurnContext({ chatMode: 'text', isHeartbeat: false, agentAwareness: { agent_awareness: false } });
+    expect(context).toMatch(/^<turn_context>\nnow="[^\"]+" tz=\S+$/m);
+    expect(context).toContain('Jonathon (human): Busy · idle 0m');
+    expect(context).not.toContain('agents:');
   });
 });
