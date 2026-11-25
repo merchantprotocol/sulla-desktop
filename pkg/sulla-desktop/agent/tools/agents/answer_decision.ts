@@ -16,11 +16,11 @@ export class AnswerDecisionWorker extends BaseTool {
   description = '';
   schemaDef = {
     decisionId: { type: 'string' as const, description: 'The decision id from the holder notification.' },
-    action: { type: 'enum' as const, enum: ['answer', 'pass', 'deny'], description: 'Answer or pass a plain question; deny or pass an approval.' },
+    action: { type: 'enum' as const, enum: ['answer', 'pass'], description: 'Answer or pass a plain question.' },
     answers: { type: 'array' as const, optional: true, items: { type: 'object' as const, properties: {
       question: { type: 'string' as const }, selected: { type: 'array' as const, items: { type: 'string' as const } },
     } } },
-    note: { type: 'string' as const, optional: true, description: 'A short plain-text pass or denial note (stored up to 500 characters).' },
+    note: { type: 'string' as const, optional: true, description: 'A short plain-text pass note (stored up to 500 characters).' },
   };
 
   private readonly invocationThread = new AsyncLocalStorage<string>();
@@ -61,7 +61,7 @@ export class AnswerDecisionWorker extends BaseTool {
     return {
       successBoolean: outcome.settled,
       responseString: outcome.settled
-        ? action === 'answer' ? 'Decision answered.' : action === 'deny' ? 'Approval denied.' : 'Decision passed to the next holder.'
+        ? action === 'answer' ? 'Decision answered.' : 'Decision passed to the next holder.'
         : outcome.reason ?? 'Decision could not be changed.',
     };
   }

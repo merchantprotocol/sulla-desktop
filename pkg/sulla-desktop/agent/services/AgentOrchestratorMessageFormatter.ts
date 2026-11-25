@@ -5,7 +5,8 @@
 
 /** Preserves the established manager-to-agent framing on delegated wake messages. */
 export class AgentOrchestratorMessageFormatter {
-  format(message: string): string {
+  format(message: string, messageKind?: string): string {
+    if (messageKind === 'decision' || messageKind === 'decision-fyi') return message;
     return `[Message from orchestrator]\n${ message }`;
   }
 }

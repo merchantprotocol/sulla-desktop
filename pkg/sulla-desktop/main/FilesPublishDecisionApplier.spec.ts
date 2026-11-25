@@ -79,7 +79,7 @@ describe('Files publish decision flow', () => {
     const flow = new InlineApprovalFlowHarness();
     try {
       const record = await flow.decide('approved');
-      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
+      expect(record.route).toBeUndefined();
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/approve', {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
       });
@@ -94,7 +94,7 @@ describe('Files publish decision flow', () => {
     const flow = new InlineApprovalFlowHarness();
     try {
       const record = await flow.decide('denied');
-      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
+      expect(record.route).toBeUndefined();
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
       expect(flow.repository.settle).toHaveBeenCalledWith(record.id, 'denied', expect.objectContaining({ status: 'denied', answeredBy: { kind: 'human' } }), expect.any(String));
       expect(flow.request).not.toHaveBeenCalledWith(expect.stringMatching(/\/approve$/), expect.anything());
@@ -107,7 +107,7 @@ describe('Files publish decision flow', () => {
     const flow = new InlineApprovalFlowHarness();
     try {
       const record = await flow.decide('expired');
-      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
+      expect(record.route).toBeUndefined();
       expect(flow.request).toHaveBeenCalledWith('/v1/files/publish-requests/request%2F7/reject', expect.any(Object));
       expect(flow.repository.expirePending).toHaveBeenCalledWith(record.id);
       expect(flow.notifications).toEqual([`[Human decision] The request to publish "Activate agent 'coding-manager' v1.0.0" (decision ${ record.id }) expired: request a fresh publish if still needed.`]);

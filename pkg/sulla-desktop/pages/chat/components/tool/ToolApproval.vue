@@ -24,7 +24,7 @@
           <button class="approve" type="button" :disabled="blocked" @click="settle('approved')">Approve</button>
           <button class="deny"    type="button" :disabled="blocked" @click="settle('denied')">Deny</button>
         </div>
-        <p v-if="routePresentation.turn === 'with-agent'" class="route-hint">You can decide now. {{ routePresentation.holderLabel }} can deny this or pass it up. Only you can approve.</p>
+        <p v-if="routePresentation.turn === 'with-agent'" class="route-hint">Only you can approve or deny this request.</p>
         <button v-if="showDecideLink" class="open-decide" type="button" @click="openDecide">Open in Decide</button>
       </div>
     </template>

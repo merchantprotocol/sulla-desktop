@@ -1,0 +1,229 @@
+/* Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * "Sulla" is a trademark. See TRADEMARK.md.
+ * The qc namespace is unique to ToolQuestion; keeping styles in a separate
+ * file keeps the Vue component focused and below the architecture line limit.
+ */
+
+/* One sans family throughout: the question reads like body text, options like
+   standard radio/checkbox rows. Only theme tokens every theme defines. */
+.qc {
+  margin: 4px 0;
+  padding: 16px 18px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  transition: opacity 0.2s ease;
+}
+.qc-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
+.qc-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-secondary); }
+.qc-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.qc-state.done .qc-state-dot { background: var(--status-success); }
+.qc-state.closed .qc-state-dot { background: var(--text-muted); }
+.qc-countdown { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.qc-countdown.urgent { color: var(--status-warning); font-weight: 600; }
+
+/*
+ * Each question sits in a padded box (pulled out by the same amount, so text
+ * stays aligned with the card) with a transparent border, so the "needs an
+ * answer" state only recolours it and never shifts layout. The legend floats
+ * so the fieldset box starts above the question, not through its middle.
+ */
+.qc-block { position: relative; margin: 0 -14px; padding: 12px 14px 14px; border: 1px solid transparent; border-radius: 10px; min-width: 0; }
+.qc-block + .qc-block { margin-top: 12px; }
+.qc-block + .qc-block::before {
+  content: ''; position: absolute; top: -7px; left: 14px; right: 14px; height: 1px;
+  background: var(--border-subtle, var(--border-default));
+}
+.qc-question { float: left; width: 100%; padding: 0; max-width: 70ch; font-size: 15px; line-height: 1.6; font-weight: 400; color: var(--text-primary); }
+.qc-question + * { clear: both; }
+.qc-topic { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.qc-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--text-muted); }
+
+.qc-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 10px; }
+.qc-option {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%;
+  padding: 11px 14px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border-default); border-radius: 10px;
+  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
+  font: inherit;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.qc-option:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border-default)); }
+.qc-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qc-option.picked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface)); }
+.qc-mark {
+  display: grid; place-items: center; flex: none; width: 18px; height: 18px; margin-top: 1px;
+  border: 1.5px solid var(--text-muted); border-radius: 50%;
+}
+.qc-option.multi .qc-mark { border-radius: 5px; }
+.qc-option.picked .qc-mark { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-surface); }
+.qc-option.multi.picked .qc-mark { box-shadow: none; }
+.qc-mark svg { width: 12px; height: 12px; fill: none; stroke: var(--text-on-accent, #fff); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.qc-option.multi.picked .qc-mark svg { opacity: 1; }
+.qc-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.qc-label { font-size: 14px; font-weight: 600; line-height: 1.4; }
+.qc-desc { font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
+
+.qc-custom { align-items: center; }
+.qc-custom-choice { appearance: none; cursor: pointer; padding: 0; }
+.qc-custom-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.qc-custom-choice:checked { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-surface); }
+.qc-custom-choice[type=checkbox] { appearance: auto; accent-color: var(--accent); }
+.qc-other {
+  min-width: 0; flex: 1; width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px;
+  border: 1px solid var(--border-default); border-radius: 8px;
+  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
+  font: 14px var(--font-body);
+}
+.qc-other::placeholder { color: var(--text-muted); }
+.qc-other:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+
+.qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.qc-actions .qc-hint { margin: 0; }
+.qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--primary-color-text-override, var(--accent)); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.qc-block.qc-open { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.qc-submit {
+  height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
+  background: var(--accent); color: var(--text-on-accent, #fff);
+  font: 600 13.5px var(--font-body);
+}
+.qc-submit:hover { filter: brightness(1.08); }
+.qc-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qc-submit:disabled { cursor: default; filter: none; opacity: 0.45; }
+
+.qc-error { margin: 0 0 12px; font-size: 13px; color: var(--status-error); }
+.qc-note { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
+.qc-late {
+  display: block; margin-top: 8px; padding: 6px 12px; cursor: pointer; pointer-events: auto;
+  border: 1px solid var(--accent); border-radius: 8px; background: transparent;
+  color: var(--text-primary); font: 600 13px var(--font-body);
+}
+
+.qc-answers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px 0; margin: 14px 0 0; font-size: 13px; }
+.qc-answers dt { color: var(--text-secondary); }
+.qc-answers dd { margin: 0 0 8px; font-weight: 600; color: var(--text-primary); }
+/* Answered or expired: quieter and inert, so it never reads as a second open prompt. */
+.qc-settled { opacity: 0.62; background: transparent; }
+.qc-settled .qc-option { cursor: default; }
+/* Only the chosen options stay once answered (picks exist only in the session that answered). */
+.qc-settled:not(.qc-original) .qc-option:not(.picked) { display: none; }
+.qc-settled .qc-option:hover { border-color: var(--border-default); }
+.qc-settled:has(.qc-late) { opacity: 0.9; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qc, .qc-option { transition: none; }
+}
+
+.qc-route {
+  max-width: 640px;
+  min-width: 0;
+  padding: 12px 16px 14px;
+  border-color: var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+
+.qc-route.qc-settled {
+  opacity: 1;
+  border-color: var(--border-default);
+  background: var(--bg-surface);
+}
+
+.qc-route-from {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 20px;
+}
+
+.qc-route-from b {
+  color: var(--text-primary);
+  font: 500 11.5px var(--font-mono);
+}
+
+.qc-route-body {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+.qc-route-body .qc-block {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.qc-route-body .qc-block + .qc-block {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+.qc-route-body .qc-block + .qc-block::before {
+  display: none;
+}
+
+.qc-route-body .qc-question {
+  float: none;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.qc-route-body .qc-options {
+  margin: 10px 0 0;
+}
+
+.qc-route-body .qc-option {
+  padding: 10px 14px;
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+}
+
+.qc-route-body .qc-option-text {
+  gap: 2px;
+}
+
+.qc-route-body .qc-custom {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.qc-route-body .qc-custom-choice {
+  display: none;
+}
+
+.qc-route-body .qc-actions {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+}
+
+.qc-route-body .qc-submit {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.qc-route-hint {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--text-muted);
+  line-height: 18px;
+}
+
+@media (max-width: 600px) {
+  .qc-route {
+    padding: 12px 12px 14px;
+  }
+}

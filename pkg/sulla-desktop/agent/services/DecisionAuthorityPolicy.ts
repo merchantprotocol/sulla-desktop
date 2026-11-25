@@ -5,7 +5,8 @@
 
 import type { DecisionAuthority, DecisionRecord } from '@pkg/shared/decisions';
 
-export type DecisionAgentAction = 'answer' | 'approve' | 'deny' | 'pass';
+export type DecisionAgentAction = 'answer' | 'pass';
+export type DecisionAction = DecisionAgentAction | 'approve' | 'deny';
 
 /** The record-level authority rules shared by decision creation and later agent actions. */
 export class DecisionAuthorityPolicy {
@@ -17,11 +18,11 @@ export class DecisionAuthorityPolicy {
   }
 
   allows(record: Pick<DecisionRecord, 'kind' | 'questions' | 'payload'> & Partial<Pick<DecisionRecord, 'route'>>,
-    action: DecisionAgentAction, actorKind: 'agent' | 'human'): boolean {
+    action: DecisionAction, actorKind: 'agent' | 'human'): boolean {
     if (actorKind === 'human') {
       return record.kind === 'approval' ? action === 'approve' || action === 'deny' : action === 'answer';
     }
-    if (record.kind === 'approval') return action === 'deny' || action === 'pass';
+    if (record.kind === 'approval') return false;
     return (action === 'answer' || action === 'pass') && this.classify(record) === 'any';
   }
 }

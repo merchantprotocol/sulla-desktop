@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { DecisionRecord, DecisionRouteEntry, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import { DecisionRouteResolver } from '../../../services/DecisionRouteResolver';
@@ -21,6 +21,7 @@ class MemoryDecisionStore {
   askerTask?: AgentJobTaskTarget;
   readonly deliveredJobAnswers: Array<{ jobId: string; taskIndex: number; message: string }> = [];
   failOpenRoutedQuestionsOnce = false;
+  refuseNextJobAnswer = false;
   lateChatAnswers: DecisionRecord[] = [];
 
   put(record: DecisionRecord): void { this.records.set(record.id, structuredClone(record)) }
@@ -56,11 +57,18 @@ class MemoryDecisionStore {
     return structuredClone(answered);
   }
   async recordJobAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined> {
+    if (this.refuseNextJobAnswer) { this.refuseNextJobAnswer = false; return undefined }
     const current = this.records.get(record.id);
+    if (!current) return undefined;
     const actor = record.answeredBy ?? { kind: 'human' as const };
-    if (!current || (current.status === 'answered' && (current.answerDelivery || JSON.stringify(current.answers) !== JSON.stringify(answers) || current.answeredBy?.kind !== actor.kind)) ||
-      (!['pending', 'deferred', 'expired', 'answered'].includes(current.status) || current.attention === 'dismissed')) return undefined;
+    const settledRetry = current.status === 'answered' && current.answerDelivery == null &&
+      JSON.stringify(current.answeredBy) === JSON.stringify(actor) && JSON.stringify(current.answers) === JSON.stringify(answers);
+    const statusAllowsAnswer = current.status === 'expired' ||
+      (['pending', 'deferred'].includes(current.status) && current.payload?.answerRoute === 'inbox') || settledRetry;
+    const attentionAllowsAnswer = current.status === 'answered' || !['answered', 'dismissed'].includes(current.attention ?? '');
+    if (!statusAllowsAnswer || !attentionAllowsAnswer) return undefined;
     const route = current.route;
+    if (actor.kind === 'agent' && (!route || route.authority !== 'any' || route.chain[route.holderIndex]?.threadId !== actor.threadId)) return undefined;
     const history: DecisionRouteHistoryEntry = { threadId: actor.kind === 'agent' ? actor.threadId ?? '' : route?.chain.at(-1)?.threadId ?? current.conversationId,
       agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human', action: 'answered', at: this.records.size,
       ...(actor.note ? { note: actor.note.slice(0, 500) } : {}) };
@@ -122,11 +130,13 @@ class RecordingDelivery implements DecisionHolderDelivery {
   queuedForNextBoundary = false;
   throwsOnDelivery = false;
   beforeDeliver?: () => void;
+  deliveryGate?: Promise<void>;
 
   async sendJob(input: { jobId: string; taskIndex: number; message: string }) {
     if (this.throwsOnDelivery) throw new Error('delivery unavailable');
     this.beforeDeliver?.();
     this.delivered.push({ holder: `${ input.jobId }:${ input.taskIndex }`, message: input.message });
+    await this.deliveryGate;
     return { successBoolean: true, responseString: JSON.stringify(this.queuedForNextBoundary ? { deliveredLive: 0, queuedForNextBoundary: 1 } : { deliveredLive: 1 }) };
   }
   enqueueChat(_channel: string, threadId: string, entry: { notice: string }): boolean {
@@ -179,6 +189,8 @@ class EscalationHarness {
       kind: 'question', conversationId: 'asker', channel: 'chat', title: 'Which option?', attention: 'active',
       questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }],
     });
+    request.record.route = { authority: 'any', chain: await this.routeResolver.resolve(), holderIndex: 0, holderSince: this.now, history: [] };
+    this.store.put(request.record);
     await this.escalation.start(request.record);
     return request;
   }
@@ -222,7 +234,7 @@ describe('DecisionEscalationService', () => {
     await Promise.all([harness.escalation.start(record), harness.escalation.start(record)]);
 
     let current = (await harness.store.findById(record.id))!;
-    expect(current.route).toMatchObject({ holderIndex: 0, deliveredAt: 240_100, holderDeadline: 300_100 });
+    expect(current.route).toMatchObject({ holderIndex: 0, deliveredAt: 100, holderDeadline: 180_100 });
     expect(harness.delivery.delivered).toHaveLength(1);
     harness.delivery.beforeDeliver = undefined;
     harness.now = current.route!.holderDeadline!;
@@ -239,6 +251,25 @@ describe('DecisionEscalationService', () => {
       expect.objectContaining({ agentId: 'root-agent', action: 'timeout' }),
     ] });
     expect(harness.delivery.delivered).toHaveLength(2);
+  });
+
+  it('persists the delivery deadline before a parked parent turn finishes', async() => {
+    // risk: liveness — a slow parent turn must not leave the holder without its three/five-minute timeout.
+    const chain = [agent('parent', 'manager', 'parent-job'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    let release!: () => void;
+    harness.delivery.deliveryGate = new Promise<void>(resolve => { release = resolve });
+    const record = question('deadline-before-wake', { authority: 'any', chain, holderIndex: 0, holderSince: harness.now, history: [] });
+    harness.store.put(record);
+
+    const starting = harness.escalation.start(record);
+    await vi.waitFor(() => expect(harness.delivery.delivered).toHaveLength(1));
+    const routeDuringWake = (await harness.store.findById(record.id))?.route;
+    release();
+    await starting;
+
+    expect(routeDuringWake).toMatchObject({ deliveredAt: harness.now,
+      holderDeadline: harness.now + DecisionEscalationService.DELIVERY_WINDOW_MS });
   });
 
   it('skips a finished holder and a parent blocked in a synchronous spawn at once, recording unavailable', async() => {
@@ -354,6 +385,27 @@ describe('DecisionEscalationService', () => {
     expect(harness.delivery.delivered[0].holder).toBe('root-chat');
   });
 
+  it('continues reconciling later decisions after one record throws', async() => {
+    // risk: liveness — one corrupt or temporarily unreadable route must not starve every later decision in the sweep.
+    const chain = [agent('healthy-parent', 'manager', 'healthy-job'), human];
+    const routes = {
+      resolve: async() => chain,
+      liveness: async(holder: DecisionRouteEntry) => {
+        if (holder.threadId === 'broken-parent') throw new Error('temporary repository failure');
+        return 'available' as const;
+      },
+    };
+    const harness = new EscalationHarness(routes);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    harness.store.put(question('broken-record', { authority: 'any', chain: [agent('broken-parent', 'manager', 'broken-job'), human], holderIndex: 0, holderSince: harness.now, history: [] }));
+    harness.store.put(question('healthy-record', { authority: 'any', chain, holderIndex: 0, holderSince: harness.now, history: [] }));
+
+    try {
+      await harness.escalation.reconcile();
+      expect(harness.delivery.delivered.map(delivery => delivery.holder)).toEqual(['healthy-job:0']);
+    } finally { warning.mockRestore() }
+  });
+
   it('settles human answers against the current holder and rejects that holder after settlement or pass', async() => {
     // risk: concurrency — a human answer and a delayed agent response share one waiter and only the first valid transition wins.
     const chain = [agent('parent', 'manager', 'parent-job'), agent('root-chat', 'root-agent'), human];
@@ -413,6 +465,23 @@ describe('DecisionEscalationService', () => {
       .resolves.toMatchObject({ settled: false });
     expect(harness.askerMessages).toHaveLength(1);
     expect(harness.store.settleCalls).toHaveLength(1);
+  });
+
+  it('does not claim a human override was delivered when the asker mailbox rejects it', async() => {
+    // risk: user communication — a settled answer with no durable mailbox row must not be reported as delivered.
+    const chain = [agent('parent', 'manager', 'parent-job'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    harness.store.askerTask = { jobId: 'asker-job', taskIndex: 2, jobStatus: 'running', taskStatus: 'running', threadId: 'asker',
+      parentThreadId: 'parent', parentChannel: 'chat', agentId: 'asker-agent' };
+    const requested = await harness.decisions.requestQuestion({ conversationId: 'asker', channel: 'chat', title: 'Which option?',
+      questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] });
+    harness.store.refuseNextJobAnswer = true;
+
+    await expect(harness.decisions.resolve({ id: requested.record.id, conversationId: 'asker', action: 'answered',
+      answers: [{ question: 'Which?', selected: ['A'] }] }, { kind: 'human' }))
+      .resolves.toMatchObject({ settled: false, reason: 'This request changed. Refresh For You before answering.' });
+    expect((await harness.store.findById(requested.record.id))?.status).toBe('answered');
+    expect(harness.askerMessages).toHaveLength(0);
   });
 
   it('keeps the existing inbox settlement path after a question reaches the human level', async() => {

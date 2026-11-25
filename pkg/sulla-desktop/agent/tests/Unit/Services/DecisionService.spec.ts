@@ -12,6 +12,7 @@ vi.mock('../../../database/PostgresClient', () => ({ postgresClient: db }));
 
 import { DecisionService } from '../../../services/DecisionService';
 import { PublishApprovalCoordinator } from '../../../tools/files/PublishApprovalCoordinator';
+import { LateDecisionAnswerHandler } from '../../../services/LateDecisionAnswerHandler';
 
 describe('DecisionService', () => {
   it('constructs without touching the renderer WebSocket client', () => {
@@ -89,6 +90,39 @@ describe('DecisionService', () => {
     await expect(service.list()).resolves.toEqual([expired]);
     expect(pendingDecisions.expireOpenDecisions).toHaveBeenCalledWith(expect.any(String), expect.any(Number));
     expect(changed).toEqual([expired]);
+  });
+
+  it('requeues a routed human answer whose settlement crashed before mailbox delivery', async() => {
+    // risk: user communication — a process crash between answer settlement and durable mailbox insertion must not strand the asker.
+    let stored: any = {
+      id: 'crash-window-answer', conversationId: 'child-thread', channel: 'sulla-desktop', title: 'Choose?', kind: 'question',
+      status: 'answered', attention: 'answered', createdAt: 1, expiresAt: 10,
+      answeredBy: { kind: 'human' }, answers: [{ question: 'Which?', selected: ['A'] }],
+      questions: [{ question: 'Which?', options: [{ label: 'A' }] }],
+      payload: { answerRoute: 'inbox', askerJobId: 'asker-job', askerTaskIndex: '0' },
+      route: { authority: 'any', holderIndex: 0, chain: [{ threadId: 'parent-thread', channel: 'sulla-desktop', agentId: 'manager', jobId: 'parent-job', taskIndex: 0, kind: 'agent' }, { threadId: 'root', channel: 'sulla-desktop', agentId: 'human', kind: 'human' }], history: [] },
+    };
+    const jobMessages = { send: vi.fn(async() => true) };
+    const pendingDecisions = {
+      expireOpenDecisions: vi.fn(async() => []),
+      answeredRoutedQuestionsWithoutDelivery: vi.fn(async() => [stored]),
+      recordJobAnswer: vi.fn(async() => { stored = { ...stored, answerDelivery: 'queued' }; return stored }),
+      taskForThread: vi.fn(async() => null),
+      markJobAnswerDelivered: vi.fn(async() => { stored = { ...stored, answerDelivery: 'delivered' }; return true }),
+      findById: vi.fn(async() => stored),
+      openRoutedQuestions: vi.fn(async() => []),
+    };
+    const handler = new LateDecisionAnswerHandler(pendingDecisions as any, { find: vi.fn() }, { send: vi.fn() }, jobMessages);
+    const service = new DecisionService(handler, { pendingDecisions: pendingDecisions as any, decisions: { listRecent: vi.fn() } as any });
+    const changed: any[] = [];
+    service.subscribe(record => changed.push(record));
+
+    await service.reconcileExpired();
+
+    expect(pendingDecisions.recordJobAnswer).toHaveBeenCalledOnce();
+    expect(jobMessages.send).toHaveBeenCalledWith('asker-job', 0, expect.any(String));
+    expect(pendingDecisions.markJobAnswerDelivered).toHaveBeenCalledWith('crash-window-answer');
+    expect(changed).toContainEqual(expect.objectContaining({ id: 'crash-window-answer', answerDelivery: 'delivered' }));
   });
 
   it('requires an actor and resolveAs settles the same waiting outcome with attribution', async() => {
@@ -201,6 +235,6 @@ describe('a question whose asker stops waiting', () => {
     const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status = \$2, record = \$3::jsonb/.test(sql))!;
     const saved = JSON.parse(String(update[1]?.[2]));
     expect(saved.answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);
-    expect(saved.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
+    expect(saved.route).toBeUndefined();
   });
 });

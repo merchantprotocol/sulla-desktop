@@ -96,7 +96,7 @@ describe('Files request publish inline approval', () => {
 
       expect(decision).toMatchObject({ request_id: 'files-request-7', status: 'pending' });
       expect(record).toMatchObject({ id: decision.decision_id, kind: 'approval', status: 'pending', conversationId: 'chat-thread', payload: { filesPublishRequestId: 'files-request-7' } });
-      expect(record.route).toMatchObject({ authority: 'human', holderIndex: 0, chain: [{ kind: 'human' }] });
+      expect(record.route).toBeUndefined();
       expect(record.expiresAt - record.createdAt).toBe(7 * 24 * 60 * 60_000);
       expect(record.approvalPresentation).toMatchObject({ reason: 'Publishing this draft will make it available to agents.', command: 'Files draft publication', origin: { kind: 'files_publish' } });
       expect((worker as any).sentMessages).toHaveLength(1);

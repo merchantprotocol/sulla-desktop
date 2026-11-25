@@ -30,7 +30,7 @@ export class DecisionRouteTransitionSqlBuilder {
       sql: `UPDATE human_decisions SET record = record || jsonb_build_object('route',
           (COALESCE(record->'route','{}'::jsonb) || $6::jsonb) || jsonb_build_object('history', COALESCE(record#>'{route,history}','[]'::jsonb) || $7::jsonb)), updated_at=NOW()
         WHERE id=$1 AND record->>'kind'=$2 AND ${this.openPredicate(recordKind)} AND ${this.actorPredicate()}
-          AND ($3 <> 'agent' OR record->>'kind'='approval' OR record#>>'{route,authority}'='any')
+          AND ($3 <> 'agent' OR record#>>'{route,authority}'='any')
           AND ($8::bigint IS NULL OR (record#>>'{route,holderDeadline}')::bigint <= $8)
         RETURNING id`,
       params: [id, recordKind, actor.kind, expectedHolderIndex, actor.threadId ?? '', JSON.stringify(routePatch), JSON.stringify([history]), deadlineNow ?? null],
@@ -61,7 +61,7 @@ export class DecisionRouteTransitionSqlBuilder {
   }
 
   private settlementPredicate(recordKind: DecisionRecord['kind']): string {
-    if (recordKind === 'approval') return "($3='human' OR ($3='system' AND $6='expired') OR ($3='agent' AND $6='denied'))";
+    if (recordKind === 'approval') return "($3='human' OR ($3='system' AND $6='expired'))";
     return "($3='human' OR ($3='system' AND $6='expired') OR ($3='agent' AND $6='answered' AND COALESCE(record#>>'{route,authority}','human')='any'))";
   }
 }

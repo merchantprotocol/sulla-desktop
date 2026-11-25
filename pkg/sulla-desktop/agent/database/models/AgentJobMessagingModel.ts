@@ -19,11 +19,14 @@ export interface AgentJobTaskTarget {
   parentJobId?:    string | null;
 }
 
+export type AgentJobMessageKind = 'orchestrator' | 'decision' | 'decision-fyi';
+
 export interface AgentJobMessage {
   id:         string;
   jobId:      string;
   taskIndex:  number;
   message:    string;
+  messageKind?: AgentJobMessageKind;
   createdAt:  number;
   deliveredAt?:  number;
 }

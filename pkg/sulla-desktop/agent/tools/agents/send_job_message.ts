@@ -5,6 +5,7 @@
 
 import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import { PendingReturnedTaskMessage } from '../../app/Services/PendingReturnedTaskMessage';
+import type { AgentJobMessageKind } from '../../database/models/AgentJobMessagingModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { injectSteer } from '../../utils/steerChannel';
 import { BaseTool, ToolResponse } from '../base';
@@ -16,7 +17,7 @@ import { getJob } from './jobRegistry';
  * child is a desktop chat: the message steers its live turn, or starts a turn
  * when it is idle, through the same inject path the old message_tab used.
  */
-export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string; reviewItems?: string[]; closeReviewItems?: Array<{ id: string; status: 'wont_fix'; reason: string }> }): Promise<ToolResponse> {
+export async function sendJobMessage(input: { jobId: string; taskIndex?: number; message: string; waitForWake?: boolean; messageKind?: 'decision'; reviewItems?: string[]; closeReviewItems?: Array<{ id: string; status: 'wont_fix'; reason: string }> }): Promise<ToolResponse> {
   const { jobId, taskIndex, message } = input;
   if (!jobId || !message) {
     return { successBoolean: false, responseString: 'jobId and a non-empty message are required.' };
@@ -75,9 +76,10 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
   if (unknownClose) return { successBoolean: false, responseString: `Unknown review item "${unknownClose.id}". Valid open ids: ${(await Promise.all(targets.map(target => agentJobProvider.reviewItems.itemsForTask(jobId, target.taskIndex, true)))).flat().map(item => item.id).join(', ') || '(none)'}.` };
 
   const job = await getJob(jobId);
+  const messageKind: AgentJobMessageKind = input.messageKind ?? 'orchestrator';
   const queued = await Promise.all(targets.map(async(target) => ({
     target,
-    record: await AgentJobMessagingModel.queueMessage(target, reviewMessageByTask.get(target.taskIndex) ?? message),
+    record: await AgentJobMessagingModel.queueMessage(target, reviewMessageByTask.get(target.taskIndex) ?? message, messageKind),
   })));
   let deliveredLive = 0;
   const notWoken: Array<{ taskIndex: number; reason: string }> = [];
@@ -89,6 +91,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       taskIndex:          target.taskIndex,
       jobMessageId:       record.id,
       jobMessageThreadId: target.threadId,
+      jobMessageKind:     record.messageKind,
     };
 
     if (job?.visibility === 'tab') {
@@ -120,15 +123,23 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       // or its agent definition went missing) or is left mid-run and declines
       // to dispatch. Either way the message stays queued in agent_job_messages
       // for redelivery — degrade this one target and keep processing the rest.
-      try {
-        // false means the thread is mid-turn right now: wakeParkedAgent
-        // declined to dispatch (so it cannot abort that live run) and the
-        // already-queued message stays pending for the task's next turn.
-        const woken = await getBackendGraphWebSocketService().wakeParkedAgent(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, job?.tasks[target.taskIndex]?.agentId, meta);
-        if (woken) deliveredLive += 1;
-      } catch (err) {
-        console.warn(`[send_job_message] parked wake failed for ${ jobId } task ${ target.taskIndex }:`, (err as Error).message);
-        notWoken.push({ taskIndex: target.taskIndex, reason: (err as Error).message });
+      const wake = getBackendGraphWebSocketService().wakeParkedAgent(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, job?.tasks[target.taskIndex]?.agentId, meta);
+      if (input.waitForWake === false) {
+        // Decision routing only needs the message durably queued and the wake
+        // triggered. Waiting here would hold the question write queue for the
+        // entire parent turn (which may itself ask a question).
+        void wake.catch(err => console.warn(`[send_job_message] parked wake failed for ${ jobId } task ${ target.taskIndex }:`, (err as Error).message));
+      } else {
+        try {
+          // false means the thread is mid-turn right now: wakeParkedAgent
+          // declined to dispatch (so it cannot abort that live run) and the
+          // already-queued message stays pending for the task's next turn.
+          const woken = await wake;
+          if (woken) deliveredLive += 1;
+        } catch (err) {
+          console.warn(`[send_job_message] parked wake failed for ${ jobId } task ${ target.taskIndex }:`, (err as Error).message);
+          notWoken.push({ taskIndex: target.taskIndex, reason: (err as Error).message });
+        }
       }
       continue;
     }
@@ -137,7 +148,7 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
     if (!running) continue;
     const accepted = injectSteer(running.state as any, {
       role:    'user',
-      content: message.startsWith('[Decision from ') ? message : `[Message from orchestrator]\n${ message }`,
+      content: record.messageKind === 'decision' || record.messageKind === 'decision-fyi' ? message : `[Message from orchestrator]\n${ message }`,
       metadata: {
         source:       'orchestrator_job_message',
         inputSource:  'system',

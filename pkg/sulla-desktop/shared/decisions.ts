@@ -12,6 +12,7 @@ export type DecisionRouteEntry = {
   label?: string;
   jobId?: string;
   taskIndex?: number;
+  spawnMode?: 'sync' | 'async';
   kind: 'agent' | 'human';
 };
 export type DecisionRouteHistoryEntry = {

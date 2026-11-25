@@ -130,13 +130,13 @@ export const agentToolManifests: ToolManifest[] = [
   },
   {
     name:        'answer_decision',
-    description: 'Answer or pass a plain question currently held by you, or deny or pass a human-held approval only when you are its authorized holder. Identity is bound to your verified tool session; approval grants are never available to agents.',
+    description: 'Answer or pass a plain question currently held by you. Approvals can only be decided by a human. Identity is bound to your verified tool session.',
     category:    'agents',
     schemaDef:   {
       decisionId: { type: 'string', description: 'The decision id from the holder notification.' },
-      action: { type: 'enum', enum: ['answer', 'pass', 'deny'], description: 'Questions allow answer or pass; approvals allow deny or pass.' },
+      action: { type: 'enum', enum: ['answer', 'pass'], description: 'Answer or pass a plain question currently held by you.' },
       answers: { type: 'array', optional: true, items: { type: 'object', properties: { question: { type: 'string' }, selected: { type: 'array', items: { type: 'string' } } } } },
-      note: { type: 'string', optional: true, description: 'Plain-text pass/denial note, capped at 500 characters.' },
+      note: { type: 'string', optional: true, description: 'Plain-text pass note, capped at 500 characters.' },
     },
     operationTypes: ['update'],
     loader:         () => import('./answer_decision'),

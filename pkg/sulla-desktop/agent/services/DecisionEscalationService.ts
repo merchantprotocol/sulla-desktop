@@ -49,15 +49,15 @@ export class DecisionEscalationService {
     if (!this.authority.allows(record, action, 'agent')) throw new Error(`Agents cannot ${ action } this decision.`);
     const holder = this.currentAgentHolder(record, threadId);
     if (!holder) return { settled: false, reason: 'Only the current holder can act on this decision.' };
-    if (await this.routes.liveness(holder, record.conversationId) !== 'available' || !await this.notifier.canAnswer(record, holder)) {
+    if (await this.holderLiveness(record, holder) !== 'available' || !await this.notifier.canAnswer(record, holder)) {
       await this.advance(decisionId, 'unavailable');
       return { settled: false, reason: 'This holder is no longer available; the decision was passed up.' };
     }
-    const actor: DecisionActor = { kind: 'agent', threadId, agentId: holder.agentId, label: holder.label || holder.agentId, ...(action === 'deny' && note ? { note: note.slice(0, 500) } : {}) };
+    const actor: DecisionActor = { kind: 'agent', threadId, agentId: holder.agentId, label: holder.label || holder.agentId, ...(action === 'pass' && note ? { note: note.slice(0, 500) } : {}) };
     const response: DecisionResponse = {
       id: record.id,
       conversationId: record.conversationId,
-      action: action === 'answer' ? 'answered' : action === 'deny' ? 'denied' : 'passed',
+      action: action === 'answer' ? 'answered' : 'passed',
       ...(answers ? { answers } : {}),
       ...(note ? { note: note.slice(0, 500) } : {}),
     };
@@ -87,17 +87,15 @@ export class DecisionEscalationService {
     const answered = await this.records.findById(record.id) ?? { ...record, ...patch, route: { ...route, history: [...route.history, ...history] } };
     this.changed(answered);
     const receipt = await deliver(answered);
-    return { ...receipt, settled: true, conversationId: answered.conversationId };
+    return { ...receipt, settled: receipt.settled, conversationId: answered.conversationId };
   }
 
   pass(threadId: string, decisionId: string, note?: string) { return this.answerAsAgent(threadId, decisionId, 'pass', undefined, note) }
-  denyAsAgent(threadId: string, decisionId: string, note?: string) { return this.answerAsAgent(threadId, decisionId, 'deny', undefined, note) }
-
   async authorize(record: DecisionRecord, actor: DecisionActor, action: DecisionAgentAction): Promise<boolean> {
     if (actor.kind !== 'agent' || !actor.threadId || !this.authority.allows(record, action, 'agent')) return false;
     const holder = this.currentAgentHolder(record, actor.threadId);
     if (!holder) return false;
-    if (await this.routes.liveness(holder, record.conversationId) !== 'available' || !await this.notifier.canAnswer(record, holder)) {
+    if (await this.holderLiveness(record, holder) !== 'available' || !await this.notifier.canAnswer(record, holder)) {
       await this.advance(record.id, 'unavailable');
       return false;
     }
@@ -144,18 +142,24 @@ export class DecisionEscalationService {
   async reconcile(): Promise<void> {
     const startup = !this.hasReconciled;
     const records = await this.records.openRoutedQuestions();
+    let allRecordsProcessed = true;
     for (const record of records) {
-      const route = record.route;
-      if (!route || route.holderIndex >= route.chain.length - 1) continue;
-      const holder = route.chain[route.holderIndex];
-      if (holder.kind !== 'agent') continue;
-      const now = this.clock();
-      if (route.holderDeadline != null && route.holderDeadline <= now) await this.advance(record.id, 'timeout');
-      else if (await this.routes.liveness(holder, record.conversationId) !== 'available' || !await this.notifier.canAnswer(record, holder)) await this.advance(record.id, 'unavailable');
-      else if (route.deliveredAt == null) await this.deliverCurrent(record);
-      else if (startup && !holder.jobId) await this.redeliverCurrent(record);
+      try {
+        const route = record.route;
+        if (!route || route.holderIndex >= route.chain.length - 1) continue;
+        const holder = route.chain[route.holderIndex];
+        if (holder.kind !== 'agent') continue;
+        const now = this.clock();
+        if (route.holderDeadline != null && route.holderDeadline <= now) await this.advance(record.id, 'timeout');
+        else if (await this.holderLiveness(record, holder) !== 'available' || !await this.notifier.canAnswer(record, holder)) await this.advance(record.id, 'unavailable');
+        else if (route.deliveredAt == null) await this.deliverCurrent(record);
+        else if (startup && !holder.jobId) await this.redeliverCurrent(record);
+      } catch (error) {
+        allRecordsProcessed = false;
+        console.warn(`[DecisionEscalationService] Could not reconcile decision ${ record.id }:`, (error as Error).message);
+      }
     }
-    this.hasReconciled = true;
+    if (allRecordsProcessed) this.hasReconciled = true;
   }
 
   private async deliverCurrent(record: DecisionRecord): Promise<void> {
@@ -169,19 +173,32 @@ export class DecisionEscalationService {
     this.delivering.add(key);
     try {
       let available = false;
-      let delivered = false;
       try {
-        available = await this.routes.liveness(holder, current.conversationId) === 'available' && await this.notifier.canAnswer(current, holder);
-        if (available) delivered = await this.notifier.deliver(current, holder);
+        available = await this.holderLiveness(current, holder) === 'available' && await this.notifier.canAnswer(current, holder);
       } catch { /* An untrustworthy notifier cannot hold a decision indefinitely. */ }
-      if (!available || !delivered) {
+      if (!available) {
         await this.advance(current.id, 'unavailable');
         return;
       }
+
+      // Start the holder's clock before sending. A job wake can dispatch a
+      // complete agent turn, so awaiting delivery here would leave no deadline
+      // while that turn runs (and can deadlock if it asks a follow-up question).
       const deliveredAt = this.clock();
       const holderDeadline = Math.min(deliveredAt + DecisionEscalationService.DELIVERY_WINDOW_MS,
         route.holderSince + DecisionEscalationService.LEVEL_CAP_MS);
       if (!await this.records.claimHolder(current.id, route.holderIndex, { kind: 'system', threadId: holder.threadId }, { deliveredAt, holderDeadline })) return;
+
+      let delivered = false;
+      try {
+        const claimed = await this.records.findById(current.id) ?? { ...current, route: { ...route, deliveredAt, holderDeadline } };
+        delivered = await this.notifier.deliver(claimed, holder);
+      } catch { /* A failed delivery advances rather than holding this holder forever. */ }
+      if (!delivered) {
+        await this.advance(current.id, 'unavailable');
+        return;
+      }
+
       const updated = await this.records.findById(current.id);
       if (updated) this.changed(updated);
     } finally { this.delivering.delete(key) }
@@ -207,6 +224,10 @@ export class DecisionEscalationService {
     if (!route) return undefined;
     const holder = route.chain[route.holderIndex];
     return holder?.kind === 'agent' && holder.threadId === threadId ? holder : undefined;
+  }
+
+  private holderLiveness(record: DecisionRecord, holder: DecisionRouteEntry): Promise<'available' | 'unavailable'> {
+    return this.routes.liveness(holder, record.conversationId, record.route?.chain, record.route?.holderIndex);
   }
 
   private history(holder: DecisionRouteEntry, action: DecisionRouteHistoryEntry['action'], at: number, note?: string): DecisionRouteHistoryEntry {

@@ -24,7 +24,7 @@ export interface PendingCompletion {
   failureReason?: string;
   terminal?: AgentTerminalNotice;
   notice?: string;
-  noticeKind?: 'stall';
+  noticeKind?: 'stall' | 'decision' | 'decision-fyi';
   stall?: { childThread: string; baseline: string; label?: string; hungTool?: string };
   dedupeKey?: string;
 }

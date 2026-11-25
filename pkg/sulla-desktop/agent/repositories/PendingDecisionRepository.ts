@@ -66,6 +66,15 @@ export class PendingDecisionRepository {
     return rows.map(row => row.record);
   }
 
+  /** Recover the human-settlement/send crash window for routed questions. */
+  async answeredRoutedQuestionsWithoutDelivery(): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE record->>'kind'='question' AND status='answered' AND record->>'answerDelivery' IS NULL
+        AND record ? 'route'
+      ORDER BY (record->>'createdAt')::bigint ASC`);
+    return rows.map(row => row.record);
+  }
+
   async ancestry(conversationId: string): Promise<string[]> {
     const rows = await this.client.query<{ id: string }>(`WITH RECURSIVE ancestors(id) AS (
       SELECT $1::text UNION SELECT job.parent_thread_id FROM agent_jobs job
@@ -236,7 +245,7 @@ export class PendingDecisionRepository {
       WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$4
         AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox')
           OR (status='answered' AND record->>'answerDelivery' IS NULL AND record->'answeredBy'=$3::jsonb AND record->'answers'=$2::jsonb))
-        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND (status='answered' OR COALESCE(record->>'attention','') NOT IN ('answered','dismissed'))
         AND ($3::jsonb->>'kind'='human' OR ($5::integer IS NOT NULL AND record#>>'{route,authority}'='any'
           AND (record#>>'{route,holderIndex}')::integer=$5 AND record#>>ARRAY['route','chain',$5::text,'threadId']=$7)) RETURNING record`,
     [record.id, JSON.stringify(answers), JSON.stringify(actor), record.conversationId, expectedHolder, JSON.stringify(history), actor.kind === 'agent' ? actor.threadId : '']);

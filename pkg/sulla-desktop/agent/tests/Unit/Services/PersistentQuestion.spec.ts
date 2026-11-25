@@ -45,6 +45,69 @@ describe('persistent questions', () => {
     expect(new Set(receipts.map(receipt => receipt.record.id)).size).toBe(1);
     expect(f.decisions.insert).toHaveBeenCalledOnce();
   });
+  it('does not hold the global question write queue while a parent turn is running', async() => {
+    // risk: liveness — one parent's long wake turn must not serialize every other agent's question request.
+    const f = fixture();
+    const chain = [
+      { threadId: 'parent-thread', channel: 'sulla-desktop', agentId: 'manager', jobId: 'parent-job', taskIndex: 0, kind: 'agent' as const },
+      { threadId: 'root-thread', channel: 'sulla-desktop', agentId: 'human', kind: 'human' as const },
+    ];
+    let releaseParentTurn!: () => void;
+    const parentTurn = new Promise<void>(resolve => { releaseParentTurn = resolve });
+    const escalation = { start: vi.fn(async(record: any) => { if (record.title === 'slow parent turn') await parentTurn }) };
+    const service = new DecisionService(f.late as any, {
+      decisions: f.decisions as any, pendingDecisions: f.pending as any,
+      routeResolver: { resolve: async() => chain } as any,
+      askerWaiter: { park: async() => undefined, parkQuestionAsker: async() => false } as any,
+      parentFyiNotifier: { notify: async() => undefined } as any,
+      escalation: escalation as any,
+    });
+
+    const slow = service.requestQuestion({ ...input, conversationId: 'first-agent', title: 'slow parent turn' });
+    await vi.waitFor(() => expect(escalation.start).toHaveBeenCalledOnce());
+    const other = service.requestQuestion({ ...input, conversationId: 'second-agent', title: 'other question' });
+    for (let tick = 0; tick < 30 && f.decisions.insert.mock.calls.length < 2; tick++) await Promise.resolve();
+    const secondPersistedBeforeParentFinished = f.decisions.insert.mock.calls.length === 2;
+
+    releaseParentTurn();
+    await Promise.all([slow, other]);
+    expect(secondPersistedBeforeParentFinished).toBe(true);
+  });
+
+  it('lets a woken parent ask a follow-up question without deadlocking the child request', async() => {
+    // risk: liveness — a parent handling a delegated question can itself ask the human while the original request completes.
+    const f = fixture();
+    const chain = [
+      { threadId: 'parent-thread', channel: 'sulla-desktop', agentId: 'manager', jobId: 'parent-job', taskIndex: 0, kind: 'agent' as const },
+      { threadId: 'root-thread', channel: 'sulla-desktop', agentId: 'human', kind: 'human' as const },
+    ];
+    let service!: DecisionService;
+    let parentQuestionId = '';
+    const escalation = { start: vi.fn(async(record: any) => {
+      if (record.title !== 'child question') return;
+      parentQuestionId = (await service.requestQuestion({ ...input, conversationId: 'parent-thread', title: 'parent follow-up' })).record.id;
+    }) };
+    service = new DecisionService(f.late as any, {
+      decisions: f.decisions as any, pendingDecisions: f.pending as any,
+      routeResolver: { resolve: async() => chain } as any,
+      askerWaiter: { park: async() => undefined, parkQuestionAsker: async() => false } as any,
+      parentFyiNotifier: { notify: async() => undefined } as any,
+      escalation: escalation as any,
+    });
+
+    const child = service.requestQuestion({ ...input, conversationId: 'child-thread', title: 'child question' });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const finished = await Promise.race([
+      child.then(() => true),
+      new Promise<boolean>(resolve => { timeout = setTimeout(() => resolve(false), 250) }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+
+    expect(finished).toBe(true);
+    expect(parentQuestionId).toBeTruthy();
+    await child;
+    expect(f.decisions.insert).toHaveBeenCalledTimes(2);
+  });
   it('keeps different questions and conversations separate and allows an intentionally fresh answered question', async() => {
     const f = fixture();
     await f.service.requestQuestion(input);
@@ -73,7 +136,7 @@ describe('persistent questions', () => {
     const service = f.make(new DecisionAskerWaiter({ park } as any));
     const receipt = await service.requestQuestion(input);
     expect(receipt.parked).toBe(true);
-    expect(receipt.record.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
+    expect(receipt.record.route).toBeUndefined();
     expect(f.pending.findById).not.toHaveBeenCalled();
     expect(receipt.record.payload).toMatchObject({ askerJobId: 'job-1', askerTaskIndex: '2' });
     expect(park).toHaveBeenCalledOnce();
@@ -103,7 +166,7 @@ describe('persistent questions', () => {
       askerWaiter: new DecisionAskerWaiter({ park: parking } as any) });
     const request = await service.requestQuestion(input);
 
-    expect(request.record.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
+    expect(request.record.route).toBeUndefined();
     expect(waitReason).toContain(request.record.id);
     await expect(service.resolveAs({ kind: 'human' }, { id: request.record.id, conversationId: 'thread-a', action: 'answered', answers: [{ question: 'Which scope?', selected: ['A'] }] }))
       .resolves.toMatchObject({ settled: true, reason: 'Answer queued in the delegated task mailbox.' });

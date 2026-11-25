@@ -34,6 +34,13 @@ function representedMessageIds(state: any): Set<string> {
     .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0));
 }
 
+class QueuedWorkerMessagePresenter {
+  present(message: AgentJobMessage): string {
+    return message.messageKind === 'decision' || message.messageKind === 'decision-fyi'
+      ? message.message : `[Message from orchestrator]\n${ message.message }`;
+  }
+}
+
 /** Add worker guidance and durable queued messages at a CLI model-call boundary. */
 export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): Promise<string> {
   if (!state?.metadata?.isSubAgent) return basePrompt;
@@ -61,10 +68,8 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
     }
   }
 
-  const orchestratorMessages = fresh.map(message =>
-    message.message.startsWith('[Decision from ') || message.message.startsWith('[FYI from ')
-      ? message.message : `[Message from orchestrator]\n${ message.message}`,
-  ).join('\n\n');
+  const presenter = new QueuedWorkerMessagePresenter();
+  const orchestratorMessages = fresh.map(message => presenter.present(message)).join('\n\n');
 
   return [CHECKIN_GUIDANCE, REVIEW_GUIDANCE, workerGuidance, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');
 }

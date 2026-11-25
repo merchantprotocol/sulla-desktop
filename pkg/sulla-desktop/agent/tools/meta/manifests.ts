@@ -79,7 +79,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'ask_user_question',
-    description: 'Save one or more multiple-choice questions in For You. Your parent agent may answer or pass a plain question; the human may answer at any time. Replies identify who answered. End this turn and wait; do not re-ask or proceed with dependent work.',
+    description: 'Save one or more multiple-choice questions in For You. The human may answer at any time. An agent in the delegation chain may also answer or pass plain questions when one is available; task questions require the human. Replies identify who answered. End this turn and wait; do not re-ask or proceed with dependent work.',
     category:    'meta',
     schemaDef:   {
       questions: {

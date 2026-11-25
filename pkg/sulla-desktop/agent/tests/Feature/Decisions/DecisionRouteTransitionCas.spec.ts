@@ -7,32 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { PendingDecisionRepository } from '../../../repositories/PendingDecisionRepository';
-import { DecisionRouteTransitionSqlBuilder } from '../../../repositories/DecisionRouteTransitionSqlBuilder';
 import { TestDatabase } from '../../Support/TestDatabase';
 import type { DecisionRecord } from '@pkg/shared/decisions';
-
-describe('DecisionRouteTransitionSqlBuilder', () => {
-  it('uses one open-state and holder-checked JSONB merge per transition, including deadline guards', () => {
-    // risk: data integrity — stale holders must not overwrite a later route, and route history must append atomically.
-    const builder = new DecisionRouteTransitionSqlBuilder();
-    const settlement = builder.settleAs('question', 'question-1', 0, { kind: 'agent', threadId: 'parent-thread' }, 'answered', { answeredBy: { kind: 'agent' } });
-    expect(settlement.sql).toContain("COALESCE(record->>'attention','active') NOT IN ('answered','dismissed')");
-    expect(settlement.sql).toContain("COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4");
-    expect(settlement.sql).toContain("record#>>ARRAY['route','chain',$4::text,'threadId']=$5");
-    expect(settlement.sql).toContain("COALESCE(record#>'{route,history}','[]'::jsonb) || $8::jsonb");
-    const timeout = builder.advanceHolder('question', 'question-1', 0, { kind: 'system', threadId: 'parent-thread' }, { holderIndex: 1 }, {
-      threadId: 'parent-thread', agentId: 'parent', action: 'timeout', at: 101,
-    }, 101);
-    expect(timeout.sql).toContain("$3='human' OR (COALESCE((record#>>'{route,holderIndex}')::integer,-1)=$4");
-    expect(timeout.sql).toContain("(record#>>'{route,holderDeadline}')::bigint <= $8");
-    expect(timeout.sql).toContain("($3 <> 'agent' OR record->>'kind'='approval' OR record#>>'{route,authority}'='any')");
-    const humanOnlyAnswer = builder.settleAs('question', 'task-question', 0, { kind: 'agent', threadId: 'parent-thread' }, 'answered', {});
-    expect(humanOnlyAnswer.sql).toContain("COALESCE(record#>>'{route,authority}','human')='any'");
-    const approvalGrant = builder.settleAs('approval', 'approval-1', 0, { kind: 'agent', threadId: 'parent-thread' }, 'approved', {});
-    expect(approvalGrant.sql).toContain("($3='human' OR ($3='system' AND $6='expired') OR ($3='agent' AND $6='denied'))");
-    expect(approvalGrant.sql).not.toContain("($3='agent' AND $6='approved')");
-  });
-});
 
 const postgresSuite = TestDatabase.available() ? describe : describe.skip;
 const database = new TestDatabase();
@@ -84,8 +60,8 @@ postgresSuite('DecisionRouteTransition CAS with real Postgres', () => {
     expect(stored.record.route?.history.length).toBe(outcomes[0] ? 1 : 2);
   });
 
-  it('rejects an agent answer to a human-only question and any agent approval grant', async() => {
-    // risk: authorization — even a future caller that bypasses DecisionAuthorityPolicy cannot pass the persisted SQL guard.
+  it('rejects agent answers to human-only questions and every agent approval action', async() => {
+    // risk: authorization — even a future caller that bypasses DecisionAuthorityPolicy cannot answer human-only questions or deny/pass/approve approvals.
     const questionId = `decision-human-only-${ randomUUID() }`;
     const approvalId = `decision-agent-grant-${ randomUUID() }`;
     const route = (authority: 'human' | 'any') => ({
@@ -106,8 +82,12 @@ postgresSuite('DecisionRouteTransition CAS with real Postgres', () => {
         approvalId, JSON.stringify(makeRecord(approvalId, 'approval', 'human'))]);
 
     await expect(repository.settleAs(questionId, 0, { kind: 'agent', threadId: 'parent-thread' }, 'answered', { status: 'answered', attention: 'answered' } as any)).resolves.toBe(false);
+    await expect(repository.settleAs(approvalId, 0, { kind: 'agent', threadId: 'parent-thread' }, 'denied', { status: 'denied' } as any)).resolves.toBe(false);
     await expect(repository.settleAs(approvalId, 0, { kind: 'agent', threadId: 'parent-thread' }, 'approved', { status: 'approved' } as any)).resolves.toBe(false);
     await expect(repository.advanceHolder(questionId, 0, { kind: 'agent', threadId: 'parent-thread' }, { holderIndex: 1 }, {
+      threadId: 'parent-thread', agentId: 'parent', action: 'passed', at: Date.now(),
+    })).resolves.toBe(false);
+    await expect(repository.advanceHolder(approvalId, 0, { kind: 'agent', threadId: 'parent-thread' }, { holderIndex: 1 }, {
       threadId: 'parent-thread', agentId: 'parent', action: 'passed', at: Date.now(),
     })).resolves.toBe(false);
   });

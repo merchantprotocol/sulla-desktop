@@ -53,7 +53,19 @@ describe('DecisionRouteResolver', () => {
     const chain = await resolver.resolve('child-thread', 'child-channel');
 
     await expect(resolver.liveness(chain[0], 'child-thread')).resolves.toBe('unavailable');
-    await expect(resolver.liveness(chain[1], 'child-thread')).resolves.toBe('available');
+    await expect(resolver.liveness(chain[1], 'child-thread', chain, 1)).resolves.toBe('available');
+  });
+
+  it('skips a grandparent blocked in a synchronous spawn by the child agent below it', async() => {
+    // risk: liveness — every ancestor may be blocked on its own synchronous child, not just the asker's direct parent.
+    const resolver = new DecisionRouteResolver(new TaskMap(new Map([
+      ['child-thread', { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', spawnMode: 'async', parentThreadId: 'manager-thread', parentChannel: 'manager-channel' }],
+      ['manager-thread', { jobId: 'manager-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', spawnMode: 'sync', parentThreadId: 'root-chat', parentChannel: 'root-channel', parentJobId: null }],
+    ])));
+    const chain = await resolver.resolve('child-thread', 'child-channel');
+
+    expect(chain[0].spawnMode).toBe('sync');
+    await expect(resolver.liveness(chain[1], 'child-thread', chain, 1)).resolves.toBe('unavailable');
   });
 
   it('does not mistake a pruned parent job for an agent in the root chat', async() => {
