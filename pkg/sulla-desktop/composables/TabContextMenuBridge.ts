@@ -36,6 +36,18 @@ export class TabContextMenuBridge {
     this.current = request;
   }
 
+  openForTab<T>(id: string, getTab: () => T | undefined, select: (action: string, tab: T) => void, onClosed: () => void): void {
+    this.open({
+      id,
+      select: action => {
+        const tab = getTab();
+
+        if (tab !== undefined) select(action, tab);
+      },
+      onClosed,
+    });
+  }
+
   close(id: string): void {
     this.take(id);
   }
