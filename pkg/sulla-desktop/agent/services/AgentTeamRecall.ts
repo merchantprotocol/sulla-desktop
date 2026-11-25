@@ -8,6 +8,7 @@ import { MAX_SUBAGENT_DEPTH } from '../tools/agents/jobRegistry';
 import type { UseCaseSuggestionQuery } from './UseCaseSuggestionQueryClient';
 import type { AgentDefinition } from '../database/models/AgentDefinitionModel';
 import type { AgentDirectoryCard } from './AgentDirectoryService';
+import { AgentAwarenessPolicy } from './AgentAwarenessPolicy';
 
 export const TEAM_FIT_MAX = 2;
 export const TEAM_DIRECTORY_MAX_CHARS = 3500;
@@ -35,13 +36,14 @@ export class AgentTeamRecallService {
     private readonly findAgent: (slug: string) => Promise<AgentDefinition | null>,
     private readonly listDirectory: (slugs: string[]) => Promise<AgentDirectoryCard[]>,
     private readonly formatCard: (card: AgentDirectoryCard) => string,
+    private readonly awarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy(),
   ) {}
 
   async buildContext(opts: TeamRecallOptions): Promise<string> {
     const slug = opts.agentSlug.trim();
     if (!slug) return '';
     const self = await this.findAgent(slug);
-    if (!self || self.can_call.length === 0) return '';
+    if (!self || !this.awarenessPolicy.canSeeOtherAgents(self) || self.can_call.length === 0) return '';
     const canCall = new Set(self.can_call);
     const wildcard = canCall.has('*');
     // Policy: a callee is eligible when it is not the lead itself and is listed in can_call ('*' allows any slug).

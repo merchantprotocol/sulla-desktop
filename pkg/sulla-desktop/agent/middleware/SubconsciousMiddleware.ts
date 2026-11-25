@@ -28,6 +28,7 @@ import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { MEMORY_CHAR_BUDGET, measureInjectedMemoryBlocks } from '../memory/MemoryBudget';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { latestUserText } from '../utils/latestUserText';
 import { stripTurnContext } from '../prompts/turnContext';
 
@@ -243,12 +244,12 @@ export async function runSubconsciousMiddleware(
     return;
   }
 
+  const canSeeOtherAgents = await new AgentAwarenessPolicy({ findBySlug: async slug => (await import('../services/AgentDefinitionService')).agentDefinitionService.findBySlug(slug) }).refreshAgentAwareness(meta, resolveAgentIdentity(state.metadata));
   const conversationalistVoice = String(meta.agentId || meta.wsChannel || '') === 'conversationalist'
     && (inputSource === 'microphone' || inputSource === 'voice');
   // Conversationalist voice keeps memory/observation recall. It skips only
   // team, skill-catalog and subagent-roster hints; this is an explicit,
   // reversible latency trade-off for Jonathon to veto.
-
   const startTime = Date.now();
   for (const key of ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext']) meta[key] = '';
   meta.teamDirectoryContext = '';
@@ -383,15 +384,14 @@ export async function runSubconsciousMiddleware(
       recallMeta.brainMemoryStats = undefined;
     })));
   }
-
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
   // ranked by the current situation (plus the shared "Calling your team"
   // section when their prompt lacks it), injected as <team_directory>.
   // Keyword ranking over one table read: no LLM call, bounded size. It
   // suggests; the lead agent decides.
   const teamAgentSlug = resolveAgentIdentity(state.metadata);
-  if (teamAgentSlug && conversationalistVoice) skipped.push('team-recall');
-  if (teamAgentSlug && !conversationalistVoice) {
+  if (teamAgentSlug && (!canSeeOtherAgents || conversationalistVoice)) skipped.push('team-recall');
+  if (teamAgentSlug && canSeeOtherAgents && !conversationalistVoice) {
     launched.push('team-recall');
     awaitedTasks.push(timed('team-recall', 'Recalling team', runTeamRecall(recallState, teamAgentSlug)));
   }
@@ -409,8 +409,8 @@ export async function runSubconsciousMiddleware(
   // R11. Subagent directory — any agent with children on this thread sees each
   // child (hidden or tab), its last check-in, stalls and unprocessed results,
   // injected as <subagent_directory>. Job-table read only: no LLM call.
-  if (typeof meta.threadId === 'string' && meta.threadId && conversationalistVoice) skipped.push('subagent-directory');
-  if (typeof meta.threadId === 'string' && meta.threadId && !conversationalistVoice) {
+  if (typeof meta.threadId === 'string' && meta.threadId && (!canSeeOtherAgents || conversationalistVoice)) skipped.push('subagent-directory');
+  if (typeof meta.threadId === 'string' && meta.threadId && canSeeOtherAgents && !conversationalistVoice) {
     launched.push('subagent-directory');
     awaitedTasks.push(timed('subagent-directory', 'Checking subagents', runSubagentDirectory(recallState)));
   }

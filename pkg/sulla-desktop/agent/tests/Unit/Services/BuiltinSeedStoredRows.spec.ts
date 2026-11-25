@@ -9,9 +9,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentDefinitionTableFake } from '../../Support/AgentDefinitionTableFake';
 
 import type { BuiltinAgentSpec, BuiltinManagedContent } from '@pkg/agent/builtinAgents/index';
-import { FRONT_DOOR_CHOSEN_KEY, getBuiltinAgentSpecs, hashManagedContent, renderBuiltinAgent } from '@pkg/agent/builtinAgents/index';
+import { BuiltinAgentHasher, FRONT_DOOR_CHOSEN_KEY, getBuiltinAgentSpecs, renderBuiltinAgent } from '@pkg/agent/builtinAgents/index';
 import { seedBuiltinAgents } from '@pkg/agent/builtinAgents/seedBuiltinAgents';
 import { AgentDefinitionModel } from '@pkg/agent/database/models/AgentDefinitionModel';
+import { AgentAwarenessDefaults } from '@pkg/agent/services/AgentAwarenessDefaults';
 
 const db = vi.hoisted(() => ({ table: null as unknown as AgentDefinitionTableFake }));
 vi.mock('@pkg/agent/database/PostgresClient', () => ({
@@ -103,6 +104,21 @@ async function legacySeeded(bundled: BuiltinAgentSpec, options: { frontDoor?: bo
 beforeEach(() => { db.table = new AgentDefinitionTableFake() });
 
 describe('seeding built-ins against stored rows', () => {
+  it('ships the shared awareness defaults for workers and built-in leads', async() => {
+    // risk: a seed update reintroduces sibling context into workers or hides it from managers.
+    const shipped = getBuiltinAgentSpecs();
+    const result = await seedBuiltinAgents(shipped);
+    expect(result.errors).toEqual([]);
+    expect(AgentAwarenessDefaults.DEFAULT_OFF_AGENT_SLUGS).toEqual([
+      ...AgentAwarenessDefaults.WORKER_AGENT_SLUGS, 'integrator', 'premortem-planner', 'mockup-designer',
+    ]);
+    expect(AgentAwarenessDefaults.DEFAULT_ON_AGENT_SLUGS).toEqual([
+      'project-manager', 'coding-manager', 'director', 'ui-test-manager', 'account-manager', 'conversationalist',
+    ]);
+    for (const slug of AgentAwarenessDefaults.DEFAULT_OFF_AGENT_SLUGS) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(false);
+    for (const slug of AgentAwarenessDefaults.DEFAULT_ON_AGENT_SLUGS) expect((await AgentDefinitionModel.findBySlug(slug))?.agent_awareness, slug).toBe(true);
+  });
+
   it('sees every shipped built-in as unchanged on the boot after it was installed', async() => {
     const shipped = getBuiltinAgentSpecs();
     const first = await seedBuiltinAgents(shipped);
@@ -117,6 +133,20 @@ describe('seeding built-ins against stored rows', () => {
     expect(db.table.updates.length).toBe(writesAfterInstall);
   });
 
+  it('preserves a user-toggled worker awareness value on reseed', async() => {
+    // risk: boot-time seeding must not undo the user's explicit worker visibility choice.
+    const worker = getBuiltinAgentSpecs().find(item => item.slug === 'codex-luna-worker')!;
+    const installed = await seedBuiltinAgents([worker]);
+    expect(installed.inserted).toBe(1);
+    const id = String(db.table.stored(worker.slug)!.id);
+    await AgentDefinitionModel.update(id, { agentAwareness: true }, undefined, publisher);
+
+    const reseeded = await seedBuiltinAgents([worker]);
+
+    expect(reseeded.errors).toEqual([]);
+    expect((await AgentDefinitionModel.findBySlug(worker.slug))?.agent_awareness).toBe(true);
+  });
+
   it('upgrades an untouched built-in prompt and keeps the model class the human chose', async() => {
     await seedBuiltinAgents([spec()]);
     const id = String(db.table.stored('qa-manager')!.id);
@@ -129,7 +159,7 @@ describe('seeding built-ins against stored rows', () => {
     expect(row!.prompt_content).toBe('Version two.');
     expect(row!.model_choice).toEqual({ mode: 'class', class: 'coding' });
     expect(row!.config.modelChoice).toEqual({ mode: 'class', class: 'coding' });
-    expect(row!.builtin_hash).toBe(hashManagedContent(renderBuiltinAgent(spec({ prompt: 'Version two.' }), '/tmp/qa-home', GIT)));
+    expect(row!.builtin_hash).toBe(BuiltinAgentHasher.hashManagedContent(renderBuiltinAgent(spec({ prompt: 'Version two.' }), '/tmp/qa-home', GIT)));
     expect((await seedBuiltinAgents([spec({ prompt: 'Version two.' })])).unchanged).toBe(1);
   });
 
@@ -156,6 +186,19 @@ describe('seeding built-ins against stored rows', () => {
   });
 
   describe('rows hashed by an earlier build', () => {
+    it('refreshes a row with the pre-awareness hash and adopts the current hash', async() => {
+      const originalContent = await legacySeeded(spec());
+      db.table.write('qa-manager', { builtin_hash: BuiltinAgentHasher.hashManagedContentBeforeAgentAwareness(originalContent) });
+      const next = spec({ prompt: 'Version two.' });
+
+      const summary = await seedBuiltinAgents([next]);
+
+      expect(summary.refreshed).toBe(1);
+      const row = db.table.stored('qa-manager')!;
+      expect(row.prompt_content).toBe('Version two.');
+      expect(row.builtin_hash).toBe(BuiltinAgentHasher.hashManagedContent(renderBuiltinAgent(next, '/tmp/qa-home', GIT)));
+    });
+
     it('leaves an older-hash row that differs from the bundle wholly unchanged on every boot, front door included', async() => {
       // Exactly what an earlier build seeded; the bundle has since moved on to a new prompt.
       await legacySeeded(spec());
@@ -182,7 +225,7 @@ describe('seeding built-ins against stored rows', () => {
       const { builtin_hash: restamped, updated_at: _updated, ...rest } = db.table.stored('qa-manager')!;
       const { builtin_hash: _old, updated_at: _before, ...restBefore } = before;
       expect(rest).toEqual(restBefore);
-      expect(restamped).toBe(hashManagedContent(renderBuiltinAgent(spec(), '/tmp/qa-home', GIT)));
+      expect(restamped).toBe(BuiltinAgentHasher.hashManagedContent(renderBuiltinAgent(spec(), '/tmp/qa-home', GIT)));
 
       // Second boot: nothing more to write.
       expect((await seedBuiltinAgents([spec()])).unchanged).toBe(1);

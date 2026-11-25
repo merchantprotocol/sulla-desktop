@@ -6,6 +6,7 @@
   "agents": [
     {
       "slug": "account-manager",
+      "agentAwareness": true,
       "name": "Product Owner",
       "description": "Owner of every conversation with the human, like a Product Owner between the departments and engineering. Does quick favors itself. Triages support tickets: reproduces them in the Sulla browser, resolves how-to and configuration issues itself, and escalates only real bugs with a clean repro. For features it interviews the human, freezes a one-screen Feature Brief with an ACCEPTANCE.md checklist and a break-it charter, gets mockups picked, puts the Coding Manager in charge of the build, has the UI Test Manager try to break it, walks it itself, and hands the human a demo.",
       "card": {
@@ -40,6 +41,7 @@
     },
     {
       "slug": "project-manager",
+      "agentAwareness": true,
       "name": "Project Manager",
       "description": "Plans a project from Charter to a plan anyone can run, for any kind of project. Sets up the project folder in Sulla Files (Projects/<slug>/) with PROJECT.md (Charter, epics, Plan) and TASKS.md (every task with an owner from the agent directory, a \"Done means:\" check, dependencies, priority and budget, plus Verify tasks owned by someone other than the builder). Returns the plan to the product owner: the project folder, a one-screen summary and the human-only asks. It plans only and never launches the Director or workers.",
       "card": {
@@ -72,6 +74,7 @@
     },
     {
       "slug": "director",
+      "agentAwareness": true,
       "name": "Director",
       "description": "Runs a project's TASKS.md in Sulla Files until it's done. Launches the owner of every ready task (in parallel, within machine limits) and pushes each one to done: re-briefs, escalates, relaunches dead work, never accepts a partial result. Brings in an independent reviewer on every finished piece, a browser walkthrough before anything user-facing is called done, and the Verify tasks. Keeps every task's status and outcome lines true and owns progress reporting (the sidebar Playbook plus the project's progress report). For software it runs the full delivery loop: worktrees, sub-PRs into one integration branch, review, merge, deploy with a restore point, and cleanup.",
       "card": {
@@ -115,6 +118,7 @@
     },
     {
       "slug": "integrator",
+      "agentAwareness": false,
       "name": "Integrator",
       "description": "Keeps a long project honest by reading its Sulla Files folder (Charter and Plan in PROJECT.md, tasks and outcome lines in TASKS.md, the progress report): evidence-checked KPI scorecard, budget breakers, decision queue (reversible calls decided and logged with undo; irreversible ones queued with recommendation and cost of waiting), assumption log, drift check, and a one-screen weekly read-ahead for the human. Runs when called.",
       "card": {
@@ -147,6 +151,7 @@
     },
     {
       "slug": "coding-manager",
+      "agentAwareness": true,
       "name": "Coding Manager",
       "description": "Engineering manager for the human's coding goals: plans PR-sized tasks, briefs and launches coding workers, reviews every diff, joins the work into one integration PR, UI-tests it in a local preview, then merges and deploys behind a restore point (no approval gates) and enforces worktree/branch cleanup. Writes no production code itself. Runs on its Preferences model slot via claude-code.",
       "card": {
@@ -187,6 +192,7 @@
     },
     {
       "slug": "premortem-planner",
+      "agentAwareness": false,
       "name": "Pre-mortem Planner",
       "description": "Pre-mortem planner: before a plan runs (or when it's stuck mid-run), probes the real environment, predicts where work will get blocked, and writes prevention steps, workarounds and safeguards so Sulla gets past blocks on its own. Batches only true human dependencies (their login, card, name, signature, mockup pick) into one ask. Never treats merges/deploys as approval gates. Runs on its Preferences model slot via claude-code.",
       "card": {
@@ -217,6 +223,7 @@
     },
     {
       "slug": "ui-test-manager",
+      "agentAwareness": true,
       "name": "UI Test Manager",
       "description": "UI test lead: turns the human's directive into user stories, runs the app locally in the Sulla browser, publishes a Playbook of every major feature and use case, delegates stories to subagents, verifies findings and delivers an issues report. Finds and reports only; never fixes code. Heartbeat on while the Playbook has open work. Runs on its Preferences model slot via claude-code.",
       "card": {
@@ -252,6 +259,7 @@
     },
     {
       "slug": "opus-worker",
+      "agentAwareness": false,
       "name": "Opus Worker",
       "description": "High-capability Claude worker for complex reasoning, deep analysis, multi-step research, architecture, and hard debugging. Routes through claude-code with its Preferences model slot",
       "card": {
@@ -283,6 +291,7 @@
     },
     {
       "slug": "sonnet-worker",
+      "agentAwareness": false,
       "name": "Sonnet Worker",
       "description": "Cost-efficient Claude worker for real implementation work (backend schema/migration, routes, tests, PRs) — the cheaper Claude fallback for coding when Codex sub-agents are unavailable or over quota.",
       "card": {
@@ -314,6 +323,7 @@
     },
     {
       "slug": "haiku-worker",
+      "agentAwareness": false,
       "name": "Haiku Worker",
       "description": "Fast, low-cost Claude worker for light, well-scoped tasks (lookups, small edits, summaries, test runs) when the lead decides Haiku fits or Codex Luna/Sol is unavailable.",
       "card": {
@@ -345,6 +355,7 @@
     },
     {
       "slug": "codex-sol-worker",
+      "agentAwareness": false,
       "name": "Codex SOL Worker",
       "description": "OpenAI Codex SOL implementation worker for high-priority coding tasks.",
       "card": {
@@ -376,6 +387,7 @@
     },
     {
       "slug": "codex-luna-worker",
+      "agentAwareness": false,
       "name": "Codex LUNA Worker",
       "description": "OpenAI Codex LUNA implementation worker for fast focused coding tasks.",
       "card": {
@@ -407,6 +419,7 @@
     },
     {
       "slug": "mockup-designer",
+      "agentAwareness": false,
       "name": "Mockup Designer",
       "description": "Fable-5.1 design agent that produces self-contained static HTML UI mockup variations for review — reads real schema/design tokens and outputs review-ready pages, never wires product code.",
       "card": {
@@ -437,6 +450,7 @@
     },
     {
       "slug": "analytics-worker",
+      "agentAwareness": false,
       "name": "Analytics Worker",
       "description": "Data, analytics and dashboard worker: queries and validates real data, analyzes it, and returns chat-ready dashboard components (KPI tiles, charts, tables) built with the chat-dashboard-components skill. Runs on its Preferences model slot via claude-code.",
       "card": {
@@ -471,6 +485,7 @@
     },
     {
       "slug": "conversationalist",
+      "agentAwareness": true,
       "name": "The Conversationalist",
       "description": "Sulla’s built-in voice agent for Desktop voice mode and Sulla Mobile voice mode and push-to-talk: fast spoken replies on the fast model, with real work handed to workers and reported back by voice.",
       "card": {

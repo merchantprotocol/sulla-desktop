@@ -39,6 +39,7 @@ const CREATE_KEYS = new Set([
   'name',
   'description',
   'prompt',
+  'agentAwareness',
   'provider',
   'runLocation',
   'modelSlot',
@@ -328,6 +329,7 @@ function readCommonFields(
   const modelSlot = readModelSlot(record);
   const modelChoice = readModelChoice(record);
   const enabled = readBoolean(record, 'enabled');
+  const agentAwareness = readBoolean(record, 'agentAwareness');
   const whenToCall = readString(record, 'whenToCall', { unbounded: true });
   const whenNotToCall = readString(record, 'whenNotToCall', { unbounded: true });
   const send = readString(record, 'send', { unbounded: true });
@@ -348,6 +350,7 @@ function readCommonFields(
     ...(modelSlot === undefined ? {} : { modelSlot }),
     ...(modelChoice === undefined ? {} : { modelChoice }),
     ...(enabled === undefined ? {} : { enabled }),
+    ...(agentAwareness === undefined ? {} : { agentAwareness }),
     ...(whenToCall === undefined ? {} : { whenToCall }),
     ...(whenNotToCall === undefined ? {} : { whenNotToCall }),
     ...(send === undefined ? {} : { send }),
@@ -414,6 +417,7 @@ export function validateAgentEditorCreateInput(
       ? {}
       : { runLocation: common.runLocation }),
     enabled:       common.enabled ?? true,
+    agentAwareness: common.agentAwareness ?? true,
     whenToCall:    common.whenToCall ?? '',
     whenNotToCall: common.whenNotToCall ?? '',
     send:          common.send ?? '',
