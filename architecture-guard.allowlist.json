@@ -707,12 +707,6 @@
       },
       "reason": "pre-existing file over the line limit; split into classes"
     },
-    "pkg/sulla-desktop/agent/nodes/InputHandlerNode.ts": {
-      "rules": {
-        "long-file": 427
-      },
-      "reason": "pre-existing file over the line limit; split into classes"
-    },
     "pkg/sulla-desktop/agent/prompts/ProviderContributions.ts": {
       "rules": {
         "mutable-state": 1
@@ -1893,7 +1887,7 @@
     },
     "pkg/sulla-desktop/main/cloud/memorySyncV1/index.ts": {
       "rules": {
-        "raw-sql": 19
+        "raw-sql": 17
       },
       "reason": "pre-existing raw SQL outside a repository; move into app/Repositories"
     },
