@@ -228,15 +228,14 @@
   mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
 }
 .app-titlebar .tab-busy:not(.tab-active):not(.tab-active-native) .tab-label { max-width: 100%; }
-.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native):not(.tab-pinned) {
+.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native) {
   flex: 0 0 36px;
   min-width: 36px;
   max-width: 36px;
   padding: 0 10px;
 }
-.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native):not(.tab-pinned) .tab-label,
-.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native):not(.tab-pinned) .tab-close { display: none; }
-.app-titlebar .tab-pinned:not(.tab-active):not(.tab-active-native) { flex: 0 1 150px; min-width: 64px; max-width: 150px; gap: 6px; }
+.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native) .tab-label,
+.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native) .tab-close { display: none; }
 .app-titlebar .tab-pinned-boundary { margin-left: 12px; }
 .app-titlebar .tab-pinned-boundary::before {
   position: absolute;
@@ -249,6 +248,14 @@
   pointer-events: none;
 }
 .app-titlebar .tab-pin { width: 13px; height: 13px; flex: none; color: var(--accent); }
+.app-titlebar .tab-idle.tab-inactive .tab-pin {
+  position: absolute;
+  top: 3px;
+  inset-inline-end: 3px;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
 .app-titlebar .tab-icon { position: relative; width: 16px; height: 16px; flex: 0 0 16px; }
 .app-titlebar .tab-status { width: 16px; height: 16px; }
 .app-titlebar .tab-status-working svg { display: none; }
