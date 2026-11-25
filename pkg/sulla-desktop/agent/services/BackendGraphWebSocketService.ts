@@ -821,8 +821,8 @@ export class BackendGraphWebSocketService {
     await awaitAgentContainerRuntimeRehydration();
     await this.subscribeToAgentChannels();
     await agentWaitProvider.scheduler.start();
-    // Heartbeat recovery is best-effort: it must never hold up the completion and inbox replay below.
-    await import('../app/Providers/ChatHeartbeatServiceProvider')
+    // Provider import and heartbeat storage can wait on vault/DB initialization; neither may gate job recovery.
+    void import('../app/Providers/ChatHeartbeatServiceProvider')
       .then(({ chatHeartbeatProvider }) => chatHeartbeatProvider.rehydrateJobHeartbeats())
       .catch(error => console.warn('[BackendGraphWS] Job heartbeat recovery failed:', error));
     await recoverPendingAgentCompletions();
