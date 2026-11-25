@@ -26,7 +26,7 @@ export class TabGroupModel {
   private readonly groupOrder: readonly TabGroupId[] = ['chats', 'browser', 'tools'];
 
   groupForMode(mode?: string): TabGroupId {
-    if (mode === 'chat' || mode === 'secretary') return 'chats';
+    if (mode === 'chat' || mode === 'secretary' || mode === 'conversations') return 'chats';
     if (mode === 'browser') return 'browser';
     return 'tools';
   }

@@ -541,27 +541,29 @@ export function useBrowserTabs() {
     tabGroupModel.orderTabIds(ids, tabModesByHeaderId(), pins);
 
   const MODE_TITLES: Record<BrowserTabMode, string> = {
-    welcome:      'New Tab',
-    browser:      'New Tab',
-    chat:         'New Chat',
-    calendar:     'Calendar',
-    integrations: 'Integrations',
-    document:     'Document',
-    secretary:    'Secretary',
-    vault:        'Password Manager',
-    account:      'My Account',
-    history:      'History',
-    routines:     'Routines',
-    marketplace:  'Use Cases',
-    labs:         'Labs',
-    'file-editor': 'Editor',
-    terminal:     'Terminal',
-    files:        'File Manager',
-    paper:        'Paper',
-    decide:       'Decide',
-    preferences:  'Preferences',
-    docker:       'Docker',
-    'capture-studio': 'Capture Studio',
+    welcome:           'New Tab',
+    browser:           'New Tab',
+    chat:              'New Chat',
+    calendar:          'Calendar',
+    integrations:      'Integrations',
+    document:          'Document',
+    secretary:         'Secretary',
+    conversations:     'Conversations',
+    vault:             'Password Manager',
+    account:           'My Account',
+    history:           'History',
+    routines:          'Routines',
+    marketplace:       'Use Cases',
+    labs:              'Labs',
+    'file-editor':     'Editor',
+    terminal:          'Terminal',
+    files:             'File Manager',
+    paper:             'Paper',
+    decide:            'Decide',
+    preferences:       'Preferences',
+    docker:            'Docker',
+    'support-session': 'Support session',
+    'capture-studio':  'Capture Studio',
   };
 
   function createTab(url = 'about:blank', opts?: { mode?: BrowserTabMode; title?: string; initialAgentId?: string; agentChat?: BrowserTab['agentChat']; filesNavigation?: FilesNavigationPayload; documentFile?: BrowserTab['documentFile']; recipeAppSlug?: string; studioSection?: StudioSection; section?: string; supportSession?: BrowserTab['supportSession'] }): BrowserTab {
@@ -835,10 +837,10 @@ export function useBrowserTabs() {
   }
 
   return {
-    tabs:         readonly(tabs),
-    closedTabs:   readonly(closedTabs),
-    previewTabId: readonly(previewTabId),
-    pinnedTabIds: readonly(pinnedTabIds),
+    tabs:                     readonly(tabs),
+    closedTabs:               readonly(closedTabs),
+    previewTabId:             readonly(previewTabId),
+    pinnedTabIds:             readonly(pinnedTabIds),
     tabOrder,
     createTab,
     openInPreviewTab,
@@ -963,34 +965,48 @@ export function applyTransferAdoption(adopt: (descriptor: BrowserTab) => unknown
   acknowledge();
 }
 
-/** Insertion index for a tab dropped at screenX: the first tab whose midpoint is right of the drop, else append. */
-export function transferDropIndex(screenX: number | undefined, tabs: readonly Pick<BrowserTab, 'id'>[]): number {
+export interface TabDropTarget {
+  id:    string;
+  left:  number;
+  width: number;
+}
+
+/** Return the insertion position in the destination's visual tab order. */
+export function tabDropIndexInVisualOrder(localX: number, visualOrder: readonly string[], targets: readonly TabDropTarget[]): number {
+  for (const target of targets) {
+    if (localX < target.left + target.width / 2) {
+      const index = visualOrder.indexOf(target.id);
+      if (index >= 0) return index;
+    }
+  }
+  return visualOrder.length;
+}
+
+/** Insertion index for a screen coordinate, resolved against the displayed grouped order. */
+export function transferDropIndex(screenX: number | undefined, visualOrder: readonly string[]): number {
   const tabEls = Array.from(document.querySelectorAll<HTMLElement>('.tab-item')).filter(el => {
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
     return style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
   });
-  if (tabEls.length === 0) return tabs.length;
+  if (tabEls.length === 0) return visualOrder.length;
   const localX = (screenX ?? window.screenX) - window.screenX;
-  for (const el of tabEls) {
+  const targets = tabEls.flatMap(el => {
     const rect = el.getBoundingClientRect();
-    if (localX < rect.left + rect.width / 2) {
-      const tabId = el.getAttribute('href')?.match(/\/Browser\/([^/?#]+)/)?.[1];
-      const index = tabs.findIndex(tab => tab.id === tabId);
-      if (index >= 0) return index;
-    }
-  }
-  return tabs.length;
+    const headerId = el.dataset.tabId || `browser-${ el.getAttribute('href')?.match(/\/Browser\/([^/?#]+)/)?.[1] || '' }`;
+    return headerId && visualOrder.includes(headerId) ? [{ id: headerId, left: rect.left, width: rect.width }] : [];
+  });
+  return tabDropIndexInVisualOrder(localX, visualOrder, targets);
 }
 
 /** Adopt a dropped tab at its drop position. Works before the UI is mounted (no DOM tabs means append). */
 export function adoptTransferredTab(
-  store: Pick<ReturnType<typeof useBrowserTabs>, 'tabs' | 'adoptTab'>,
+  store: Pick<ReturnType<typeof useBrowserTabs>, 'tabs' | 'tabOrder' | 'adoptTab'>,
   descriptor: BrowserTab,
   transient: Record<string, unknown> | undefined,
   screenX: number | undefined,
 ): BrowserTab {
-  return store.adoptTab(descriptor, transferDropIndex(screenX, store.tabs), transient);
+  return store.adoptTab(descriptor, transferDropIndex(screenX, store.tabOrder.value), transient);
 }
 
 /**
