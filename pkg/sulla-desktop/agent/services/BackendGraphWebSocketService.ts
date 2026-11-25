@@ -217,9 +217,16 @@ content: this.orchestratorMessageFormatter.format(message, String(messageMeta.jo
 timestamp: Date.now(),
       metadata: { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
     };
-    if (agentJobLifecycle.deliver(threadId, steer)) return true;
     const parked = await parkedAgentRehydrator.resolve(threadId);
-    if (agentJobLifecycle.deliver(threadId, steer)) return true;
+    if (!parked && agentJobLifecycle.liveState(threadId)) {
+      // A child may already have resumed the task while its timer was claimed.
+      // A terminal/missing job is not that race and cannot accept another wake.
+      const job = await agentJobProvider.jobs.findByTaskThread(threadId);
+      if (job && !['stopped', 'completed', 'failed'].includes(job.status)
+        && job.tasks.some(task => task.threadId === threadId && task.status === 'running')
+        && agentJobLifecycle.deliver(threadId, steer)) return true;
+    }
+    if (parked && agentJobLifecycle.deliver(threadId, steer)) return true;
     if (!parked) throw new Error(`Thread ${ threadId } is not a parked agent job.`);
     const delegated = GraphRegistry.get(threadId);
     if (agentJobLifecycle.hasLiveWaiter(threadId) || delegated?.state.metadata?.delegatedRunActive) {
@@ -1093,10 +1100,12 @@ timestamp: Date.now(),
     if (target) {
       const policy = new SupportSessionPolicy();
       const requested = policy.sessionForTurn(undefined, data.metadata?.supportSessionId);
-      const names = policy.remoteToolNames(SUPPORT_TOOL_NAMES);
-      // Resolve cached tool schemas before taking a recipient; a stored support
-      // scope also applies when the renderer omits the session id.
-      const tools = await Promise.all(names.map(name => toolRegistry.convertToolToLLM(name)));
+      const recipient = () => agentJobLifecycle.liveState(target) ?? GraphRegistry.get(target)?.state;
+      const scoped = policy.sessionForTurn(recipient()?.metadata.supportSessionId, requested);
+      const names = scoped ? policy.remoteToolNames(SUPPORT_TOOL_NAMES) : [];
+      // No await on ordinary ingress. For scoped input re-read the recipient
+      // below, after preparation, and apply that recipient's current scope.
+      const tools = scoped ? await Promise.all(names.map(name => toolRegistry.convertToolToLLM(name))) : [];
       const live = agentJobLifecycle.liveState(target);
       const state = live ?? GraphRegistry.get(target)?.state;
       const waiter = agentJobLifecycle.hasLiveWaiter(target);
