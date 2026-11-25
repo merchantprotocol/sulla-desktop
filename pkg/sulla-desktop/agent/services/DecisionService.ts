@@ -18,11 +18,9 @@ import { DecisionRouteResolver } from './DecisionRouteResolver';
 import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './DecisionAskerWaiter';
 import { DecisionEscalationService } from './DecisionEscalationService';
 import { DecisionHolderNotifier } from './DecisionHolderNotifier';
-import type { DecisionAgentAction, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
+import { DecisionParentFyiNotifier } from './DecisionParentFyiNotifier';
+import type { DecisionActor, DecisionAgentAction, DecisionOutcome, DecisionRecord, DecisionResponse, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import type { DecisionSettlementStatus, DecisionTransitionActor } from '../repositories/DecisionRouteTransitionSqlBuilder';
-import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
-
-import type { DecisionActor, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
 /** Durable human requests retain their context after execution waiters expire.
  * Late question answers enter the original chat mailbox; expired approvals fail closed.
@@ -36,6 +34,7 @@ export class DecisionService {
   private readonly authorityPolicy: DecisionAuthorityPolicy;
   private readonly routeResolver: DecisionRouteResolver;
   private readonly askerWaiter: DecisionQuestionAskerWaiter;
+  private readonly parentFyiNotifier: DecisionParentFyiNotifier;
   private readonly escalation: Pick<DecisionEscalationService, 'start' | 'reconcile' | 'answerAsAgent' | 'authorize' | 'passFromResolveAs' | 'historyForAction'>;
 
   constructor(
@@ -49,6 +48,7 @@ export class DecisionService {
       askerWaiter?: DecisionQuestionAskerWaiter;
       escalation?: DecisionService['escalation'];
       holderNotifier?: DecisionHolderNotifier;
+      parentFyiNotifier?: DecisionParentFyiNotifier;
     } = {},
   ) {
     this.pendingDecisions = repositories.pendingDecisions ?? new PendingDecisionRepository(postgresClient);
@@ -57,6 +57,7 @@ export class DecisionService {
     this.authorityPolicy = repositories.authorityPolicy ?? new DecisionAuthorityPolicy();
     this.routeResolver = repositories.routeResolver ?? new DecisionRouteResolver(this.pendingDecisions);
     this.askerWaiter = repositories.askerWaiter ?? new DecisionAskerWaiter();
+    this.parentFyiNotifier = repositories.parentFyiNotifier ?? new DecisionParentFyiNotifier(undefined, this.authorityPolicy);
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
       { find: conversationId => this.pendingDecisions.findConversation(conversationId) },
@@ -89,12 +90,6 @@ export class DecisionService {
 
   private questionWrites = Promise.resolve();
 
-  private async parkQuestionAsker(asker: AgentJobTaskTarget | null | undefined, decisionId: string): Promise<boolean> {
-    if (!asker || !['running', 'parked'].includes(asker.jobStatus) || !['running', 'parked'].includes(asker.taskStatus)) return false;
-    try { await this.askerWaiter.park(asker.jobId, asker.taskIndex, decisionId); return true }
-    catch (error) { console.warn('[DecisionService] Could not park asker for question:', error); return false }
-  }
-
   /** Human questions outlive tool transports; answers always use the durable mailbox. */
   requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean; parked?: boolean }> {
     const operation = this.questionWrites.then(async() => {
@@ -103,7 +98,7 @@ export class DecisionService {
       const asker = await this.pendingDecisions.taskForThread?.(input.conversationId);
       const existing = await this.pendingDecisions.findOpenQuestion(input);
       if (existing) {
-        const parked = existing.attention !== 'answered' && await this.parkQuestionAsker(asker, existing.id);
+        const parked = existing.attention !== 'answered' && await this.askerWaiter.parkQuestionAsker(asker, existing.id);
         let current = existing;
         if (existing.kind === 'question' && existing.route?.authority === 'any' && existing.route.chain[existing.route.holderIndex]?.kind === 'agent') {
           await this.escalation.start(existing);
@@ -132,7 +127,8 @@ export class DecisionService {
         },
       };
       await this.decisions.insert(record, this.session);
-      const parked = await this.parkQuestionAsker(asker, record.id);
+      await this.parentFyiNotifier.notify(record);
+      const parked = await this.askerWaiter.parkQuestionAsker(asker, record.id);
       let current = record;
       if (record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent') {
         await this.escalation.start(record);
@@ -158,6 +154,7 @@ export class DecisionService {
       id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs,
     };
     await this.decisions.insert(record, this.session);
+    await this.parentFyiNotifier.notify(record);
     let settle!: (value: DecisionOutcome) => void;
     const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
     const timer = setTimeout(() => { this.expire(record.id) }, timeoutMs);

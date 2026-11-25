@@ -27,7 +27,7 @@ import {
 
 export class AskUserQuestionWorker extends BaseTool {
   name = 'ask_user_question';
-  description = 'Save persistent questions in For You and return a receipt immediately. Chat askers receive answers through the chat inbox; delegated tasks are durably parked and receive answers through their job mailbox. End the current turn; do not infer consent or ask again while the decision is pending. Resume dependent work only after the answer arrives.';
+  description = 'Save persistent questions in For You and return a receipt. Your parent agent may answer or pass a plain question; your human may answer at any time. Replies identify who answered. End this turn and wait; do not re-ask, infer consent, or continue dependent work.';
 
   schemaDef: InputSchemaDef = {
     questions: {
@@ -74,6 +74,6 @@ export class AskUserQuestionWorker extends BaseTool {
       channel: this.state?.metadata?.wsChannel || '',
     }, this.state?.metadata?.options?.abort?.signal);
     if (!reused) await this.emitMessage('', 'tool_question', { toolQuestion: { questionId: record.id, questions } });
-    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked) };
+    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, record.route?.authority === 'any') };
   }
 }
