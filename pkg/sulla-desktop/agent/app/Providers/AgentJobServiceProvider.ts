@@ -52,6 +52,7 @@ export class AgentJobServiceProvider {
   readonly reviewGate: ReviewObligationGate;
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
+  readonly failureLogger = new AgentJobFailureLogger({ error: message => Logging.background.error(message) });
   readonly states: AgentStateService;
   readonly fleet: AgentFleetProjectionService;
   readonly activity: AgentTaskActivityProjector;
@@ -74,7 +75,7 @@ export class AgentJobServiceProvider {
     this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
-    this.states = new AgentStateService(this.jobs, this.runtime, Date.now, new AgentJobMutationQueue(), new AgentJobFailureLogger({ error: message => Logging.background.error(message) }));
+    this.states = new AgentStateService(this.jobs, this.runtime, Date.now, new AgentJobMutationQueue(), this.failureLogger);
     this.activity = new AgentTaskActivityProjector(runActivity);
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);

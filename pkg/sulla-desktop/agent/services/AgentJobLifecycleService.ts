@@ -34,9 +34,15 @@ export class AgentJobLifecycleService {
     this.runners.set(threadId, state);
     return () => {
       if (this.runners.get(threadId) !== state) return;
+      state.metadata.delegatedRunActive = false;
       this.runners.delete(threadId);
       this.pendingWakes.delete(threadId);
     };
+  }
+
+  async withRunner<T>(threadId: string, state: AgentGraphState, run: () => Promise<T>): Promise<T> {
+    const release = this.registerRunner(threadId, state);
+    try { return await run() } finally { release() }
   }
 
   liveState(threadId: string): AgentGraphState | undefined { return this.runners.get(threadId) }
