@@ -99,7 +99,8 @@ import { useChatController } from '../../controller/useChatController';
 import { LineTimes } from '../../messages/lineTime';
 import { isOpenDecision } from '../../messages/sideDock';
 import { ChatDecisions } from '../../composables/useChatDecisions';
-import { DecisionRoutePresenter, type DecisionRouteTurn } from '../../decisions/DecisionRoutePresenter';
+import type { DecisionRouteTurn } from '../../decisions/DecisionRoutePresenter';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
 import DecisionHolderLine from '../tool/DecisionHolderLine.vue';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
@@ -107,7 +108,7 @@ import type { DecisionRecord } from '@pkg/shared/decisions';
 const props = defineProps<{ decisions: readonly DecisionRecord[] }>();
 const controller = useChatController();
 const store = ChatDecisions.useChatDecisions();
-const routePresenter = new DecisionRoutePresenter({ now: () => store.now.value });
+const routePresenter = useDecisionRoutePresenter({ now: () => store.now.value });
 const routeGroups = computed(() => routePresenter.group(props.decisions));
 const routeCount = computed(() => routeGroups.value.yourTurn.length + routeGroups.value.withAgent.length + routeGroups.value.settled.length);
 const routeSections = computed(() => [

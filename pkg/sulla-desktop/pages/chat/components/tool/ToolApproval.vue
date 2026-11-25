@@ -39,14 +39,14 @@ import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { ToolApprovalMessage } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
 import { ChatDecisions } from '../../composables/useChatDecisions';
-import { DecisionRoutePresenter } from '../../decisions/DecisionRoutePresenter';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
 import DecisionHolderLine from './DecisionHolderLine.vue';
 import DecisionTrail from './DecisionTrail.vue';
 
 const props = defineProps<{ msg: ToolApprovalMessage; decision?: DecisionRecord; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void>; showDecideLink?: boolean }>();
 const controller = useChatController();
 const decisionStore = ChatDecisions.useChatDecisions();
-const routePresenter = new DecisionRoutePresenter({ now: () => decisionStore.now.value });
+const routePresenter = useDecisionRoutePresenter({ now: () => decisionStore.now.value });
 const routePresentation = computed(() => {
   const record = props.decision ?? (props.msg.approvalId ? decisionStore.inlineRecord(props.msg.approvalId, 'approval') : undefined);
   return record?.route ? routePresenter.present(record) : undefined;

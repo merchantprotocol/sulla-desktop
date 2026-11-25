@@ -170,13 +170,15 @@ import { useRouter } from 'vue-router';
 
 import { useDecisions } from '@pkg/composables/useDecisions';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
-import { DecisionRoutePresenter } from '@pkg/pages/chat/decisions/DecisionRoutePresenter';
+import { DecisionConversationTargetResolver } from '@pkg/pages/chat/decisions/DecisionConversationTargetResolver';
+import { useDecisionRoutePresenter } from '@pkg/pages/chat/decisions/useDecisionRoutePresenter';
 import DecisionHolderLine from '@pkg/pages/chat/components/tool/DecisionHolderLine.vue';
 import type { DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 import type { DecisionRouteTurn } from '@pkg/pages/chat/decisions/DecisionRoutePresenter';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const { records, pending, error, refresh } = useDecisions();
-const routePresenter = new DecisionRoutePresenter({ now: () => Date.now() });
+const routePresenter = useDecisionRoutePresenter({ now: () => Date.now() });
+const conversationTarget = new DecisionConversationTargetResolver();
 const routeGroups = computed(() => routePresenter.group(records.value));
 const routeCount = computed(() => routeGroups.value.yourTurn.length + routeGroups.value.withAgent.length + routeGroups.value.settled.length);
 const routeSections = computed(() => [
@@ -212,7 +214,8 @@ async function setPolicy(policy: Policy, required: boolean) {
   try { await ipcRenderer.invoke('decisions:set-policy', policy.name, required); policy.required = required; actionError.value = '' } catch (e) { actionError.value = `Policy was not saved: ${ reason(e) }` } finally { busy.value = '' }
 }
 function openConversation(item: DecisionRecord) {
-  const tab = restoreChatFromHistory({ id: item.conversationId, thread_id: item.conversationId, type: 'graph', title: item.title });
+  const rootConversationId = conversationTarget.resolve(item);
+  const tab = restoreChatFromHistory({ id: rootConversationId, thread_id: rootConversationId, type: 'graph', title: item.title });
   router.push(`/Browser/${ tab.id }`).catch(() => { actionError.value = 'Could not open the original conversation.' });
 }
 async function answer(item: DecisionRecord, action: DecisionResponse['action']) {

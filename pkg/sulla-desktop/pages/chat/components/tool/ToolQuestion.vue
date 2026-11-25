@@ -217,14 +217,14 @@ import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/M
 import { useChatController } from '../../controller/useChatController';
 import { answerSelection } from '../../messages/questionAnswer';
 import { ChatDecisions } from '../../composables/useChatDecisions';
-import { DecisionRoutePresenter } from '../../decisions/DecisionRoutePresenter';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
 import DecisionHolderLine from './DecisionHolderLine.vue';
 import DecisionTrail from './DecisionTrail.vue';
 
 const props = defineProps<{ msg: ToolQuestionMessage; decision?: DecisionRecord; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
 const decisionStore = ChatDecisions.useChatDecisions();
-const routePresenter = new DecisionRoutePresenter({ now: () => decisionStore.now.value });
+const routePresenter = useDecisionRoutePresenter({ now: () => decisionStore.now.value });
 const routePresentation = computed(() => { const record = props.decision ?? (props.msg.questionId ? decisionStore.inlineRecord(props.msg.questionId, 'question') : undefined); return record?.route ? routePresenter.present(record) : undefined });
 const currentStep = ref(0);
 // Per-question selected option labels and free-text. Index-aligned with

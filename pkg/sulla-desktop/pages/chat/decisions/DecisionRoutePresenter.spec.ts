@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
+import { DecisionConversationTargetResolver } from './DecisionConversationTargetResolver';
 import { DecisionRoutePresenter } from './DecisionRoutePresenter';
 
 const now = Date.UTC(2026, 10, 25, 15, 0);
@@ -83,6 +84,27 @@ describe('DecisionRoutePresenter', () => {
     expect(presenter.present(human).answeredByLabel).toBe('Answered by you');
   });
 
+  it('uses the signed-in human name for initials and falls back to You with Y', () => {
+    // risk: actor attribution — human-held and human-history rows must identify the signed-in user without a hardcoded person.
+    const namedPresenter = new DecisionRoutePresenter({ now: () => now }, () => 'Jonathon Byrdziak');
+    const humanAction = record({ route: {
+      ...record().route!,
+      holderIndex: 2,
+      history: [{ threadId: 'root', agentId: 'human', action: 'passed', at: deadline }],
+    } });
+    const namedView = namedPresenter.present(humanAction);
+    expect(namedView.holderInitial).toBe('J');
+    expect(namedView.trail[1]).toMatchObject({ actorLabel: 'Jonathon Byrdziak', actorInitial: 'J' });
+
+    const fallbackView = presenter.present(record({ route: {
+      ...record().route!,
+      holderIndex: 2,
+      history: [{ threadId: 'root', agentId: 'human', action: 'passed', at: deadline }],
+    } }));
+    expect(fallbackView.holderInitial).toBe('Y');
+    expect(fallbackView.trail[1]).toMatchObject({ actorLabel: 'You', actorInitial: 'Y' });
+  });
+
   it('sanitizes untrusted history notes to plain text without markdown or links', () => {
     // risk: untrusted input — agent notes must not render markdown, links, or HTML in a decision card.
     const routed = record({
@@ -92,5 +114,36 @@ describe('DecisionRoutePresenter', () => {
       }] },
     });
     expect(presenter.present(routed).trail[1]).toMatchObject({ time: '3:25 PM', actorLabel: 'Coding Manager', actorInitial: 'C', actionLabel: 'passed it up after 1h 6m', note: 'See details and move ahead' });
+  });
+});
+
+describe('DecisionConversationTargetResolver', () => {
+  const resolver = new DecisionConversationTargetResolver();
+
+  it('opens the human root chat for a decision raised in a hidden sub-agent thread', () => {
+    // risk: answerability — the visible root transcript must load the actionable decision card, not the hidden requester thread.
+    const routed = record({
+      conversationId: 'hidden-subagent',
+      relatedConversationIds: ['hidden-subagent'],
+      route: { ...record().route!, chain: [
+        { threadId: 'parent-agent', channel: 'codex', agentId: 'coding-manager', kind: 'agent' },
+        { threadId: 'root', channel: 'sulla', agentId: 'human', kind: 'human' },
+      ] },
+    });
+    expect(resolver.resolve(routed)).toBe('root');
+  });
+
+  it('uses a related root when an older routed record has no human chain entry', () => {
+    // risk: answerability — related conversations keep escalated records reachable when route metadata is partial.
+    const partialRoute = record({ conversationId: 'hidden-subagent', route: {
+      ...record().route!,
+      chain: [{ threadId: 'parent-agent', channel: 'codex', agentId: 'coding-manager', kind: 'agent' }],
+    } });
+    expect(resolver.resolve({ ...partialRoute, relatedConversationIds: ['hidden-subagent', 'root'] })).toBe('root');
+  });
+
+  it('keeps the original target for legacy records with no route ancestry', () => {
+    // risk: compatibility — old records without escalation metadata still open their original conversation.
+    expect(resolver.resolve(record({ conversationId: 'legacy-conversation', route: undefined, relatedConversationIds: undefined }))).toBe('legacy-conversation');
   });
 });

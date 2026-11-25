@@ -42,11 +42,16 @@ export interface DecisionRouteClock {
   now(): number;
 }
 
+export type DecisionRouteHumanName = () => string;
+
 interface LabeledRouteEntry extends DecisionRouteEntry { label?: string }
 
 /** Converts persisted escalation state to neutral renderer copy; it never mutates records. */
 export class DecisionRoutePresenter {
-  constructor(private readonly clock: DecisionRouteClock) {}
+  constructor(
+    private readonly clock: DecisionRouteClock,
+    private readonly readHumanName: DecisionRouteHumanName = () => '',
+  ) {}
 
   present(record: DecisionRecord): DecisionRoutePresentation {
     const now = this.clock.now();
@@ -70,7 +75,7 @@ export class DecisionRoutePresenter {
         'agent',
         turn === 'with-agent' ? holder?.agentId : answererEntry?.agentId || (answerer?.kind === 'agent' ? answerer.agentId : undefined),
       )
-      : 'J';
+      : this.humanInitial();
     const tail = holder && route ? this.tailLabel(route.chain, route.holderIndex) : '';
     const answeredByLabel = this.answererLabel(record);
     const line = this.holderLine(record, turn, holderLabel, deadline, answeredByLabel, expired);
@@ -171,7 +176,7 @@ export class DecisionRoutePresenter {
       rows.push({
         key: `current-${record.id}`,
         time: 'now',
-        actorLabel: isHuman ? 'You' : holderLabel || 'An agent',
+        actorLabel: isHuman ? this.humanLabel() : holderLabel || 'An agent',
         actorKind: isHuman ? 'human' : 'agent',
         actionLabel: isHuman ? `Your turn until ${deadline}` : `With ${holderLabel || 'an agent'} until ${deadline}`,
         current: true,
@@ -179,7 +184,7 @@ export class DecisionRoutePresenter {
     } else if (expired || record.status === 'expired') {
       const holder = route.chain[route.holderIndex];
       const actorKind = holder?.kind ?? 'human';
-      const actorLabel = actorKind === 'human' ? 'You' : this.entryLabel(holder);
+      const actorLabel = actorKind === 'human' ? this.humanLabel() : this.entryLabel(holder);
       rows.push({
         key: `expired-${record.id}`,
         time: this.formatTime(record.expiresAt),
@@ -197,7 +202,7 @@ export class DecisionRoutePresenter {
     const entry = chain.find(candidate => candidate.threadId === item.threadId && candidate.agentId === item.agentId)
       ?? chain.find(candidate => candidate.agentId === item.agentId);
     const actorKind = entry?.kind ?? (item.agentId === 'human' ? 'human' : 'agent');
-    const actorLabel = actorKind === 'human' ? 'You' : this.entryLabel(entry, item.agentId);
+    const actorLabel = actorKind === 'human' ? this.humanLabel() : this.entryLabel(entry, item.agentId);
     const actionLabel = item.action === 'passed' ? `passed it up after ${this.formatDuration(heldMs)}`
       : item.action === 'timeout' ? `ran out of time after ${this.formatDuration(heldMs)}; moved up with no note`
       : item.action === 'unavailable' ? `was unavailable after ${this.formatDuration(heldMs)}; moved up with no note`
@@ -236,9 +241,17 @@ export class DecisionRoutePresenter {
   }
 
   private actorInitial(label: string, kind: 'agent' | 'human', agentId?: string): string {
-    if (kind === 'human') return 'J';
+    if (kind === 'human') return this.humanInitial();
     const parts = (agentId || label).split(/[-_\s]+/).filter(Boolean);
     return (parts[0] === 'codex' ? parts[1] : parts[0])?.[0]?.toUpperCase() || 'A';
+  }
+
+  private humanLabel(): string {
+    return this.readHumanName().trim() || 'You';
+  }
+
+  private humanInitial(): string {
+    return this.humanLabel().split(/\s+/).find(Boolean)?.[0]?.toUpperCase() || 'Y';
   }
 
   private formatTime(timestamp: number): string {
