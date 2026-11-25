@@ -92,7 +92,7 @@ export class DelegatedFreshTurnRunner {
           try { await ports.repairInput?.() } catch { /* keep parked; the next repair or PO can supply input */ }
         }
       }
-      if (ports.signal?.aborted) return { finalState: currentState, returned: undefined };
+      if (ports.signal?.aborted) return this.interrupted(currentState);
       await ports.resume(jobId, taskIndex);
       await ports.updateJobTask(jobId, taskIndex, { waitReason: undefined, wakeAt: undefined });
     }
@@ -162,6 +162,14 @@ outputTokens: usage?.outputTokens,
     } catch { /* diagnostics must not change settlement */ }
   }
 
+  private interrupted(finalState: any): DelegatedFreshTurnResult {
+    // spawn_agent's interruption handler honors a committed return first.
+    if (this.ports.state.metadata?.runtimeInterrupted) {
+      throw Object.assign(new Error('Agent execution interrupted'), { name: 'AbortError', runtimeInterrupted: true });
+    }
+    return { finalState, returned: undefined };
+  }
+
   private async executeOnce(): Promise<any> {
     this.ports.prepare(this.ports.state);
     return await this.ports.execute();
@@ -194,7 +202,7 @@ outputTokens: usage?.outputTokens,
       await ports.updateJobTask(jobId, taskIndex, { emptyWakeCount, waitReason: this.policy.reason(liveChildren) });
       await ports.endWakeTurn(jobId, taskIndex);
       await ports.waitForWake(threadId, ports.signal);
-      if (ports.signal?.aborted) return { finalState: currentState, returned: undefined };
+      if (ports.signal?.aborted) return this.interrupted(currentState);
       await ports.resume(jobId, taskIndex);
       // Unsettled terminal entries remain owned across another park, even if
       // the next handoff is advisory-only or the graph trimmed the old prompt.
