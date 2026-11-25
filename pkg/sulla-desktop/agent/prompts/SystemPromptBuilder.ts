@@ -66,6 +66,8 @@ export interface PromptBuildContext {
   wsChannel:             string;
   /** Whether this agent may see other agents and team-operation instructions. */
   agentAwareness?:       boolean;
+  /** Shared policy instance injected by SystemPromptBuilder for section factories. */
+  agentAwarenessPolicy?: AgentAwarenessPolicy;
   /** Tool exposure mode: 'slim' pushes only the minimal native set + catalog discovery; 'full' pushes resolved schemas */
   toolMode?:             'slim' | 'full';
   /** Template variables for {{placeholder}} substitution */
@@ -178,7 +180,7 @@ interface RegisteredSection {
 
 class SystemPromptBuilderImpl {
   private sections = new Map<string, RegisteredSection>();
-  private readonly agentAwarenessPolicy = new AgentAwarenessPolicy();
+  constructor(private readonly agentAwarenessPolicy = new AgentAwarenessPolicy()) {}
   // Stable sections can still read state outside ctx (DB agent prompts, tool catalog,
   // installed skills), so a cached section also expires after a short TTL.
   private static readonly STABLE_SECTION_TTL_MS = 60_000;
@@ -248,7 +250,7 @@ class SystemPromptBuilderImpl {
       if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilderImpl.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
       const started = Date.now();
       try {
-        const section = await reg.factory(ctx);
+        const section = await reg.factory({ ...ctx, agentAwarenessPolicy: this.agentAwarenessPolicy });
         const elapsed = Date.now() - started;
         if (section?.cacheStability === 'stable') this.stableSectionCache.set(id, { key: cacheKey, section, at: Date.now() });
         return { id, reg, section, elapsed, error: undefined as unknown };

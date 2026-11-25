@@ -68,9 +68,7 @@ export interface AgentDefinition {
   /** Agent slugs this agent may call. Empty means it calls no one. */
   can_call:                string[];
   /** This agent may be selected for a new chat. NULL = not set. */
-  front_door:              boolean | null;
-  /** Whether this agent sees other running agents, team context and launch tools. */
-  agent_awareness:         boolean;
+  front_door:              boolean | null; agent_awareness: boolean;
   /** Seeded from the bundled built-in catalog (agent/builtinAgents). */
   is_builtin:              boolean;
   /** Hash of the managed content the built-in seeder last wrote. */
@@ -117,8 +115,7 @@ export interface AgentDefinitionInput {
   returns?:               string;
   costTier?:              AgentCostTier | null;
   canCall?:               string[];
-  frontDoor?:             boolean | null;
-  agentAwareness?:        boolean;
+  frontDoor?:             boolean | null; agentAwareness?: boolean;
   isBuiltin?:             boolean;
   builtinHash?:           string | null;
   runLocation?:           AgentRunLocation;
@@ -157,8 +154,7 @@ export interface AgentDefinitionPatch {
   returns?:               string;
   costTier?:              AgentCostTier | null;
   canCall?:               string[];
-  frontDoor?:             boolean | null;
-  agentAwareness?:        boolean;
+  frontDoor?:             boolean | null; agentAwareness?: boolean;
   isBuiltin?:             boolean;
   builtinHash?:           string | null;
   runLocation?:           AgentRunLocation;
@@ -216,8 +212,7 @@ function rowToDefinition(row: any): AgentDefinition {
     returns:                 String(row.returns ?? ''),
     cost_tier:               toCostTier(row.cost_tier),
     can_call:                toStringArray(row.can_call),
-    front_door:              typeof row.front_door === 'boolean' ? row.front_door : null,
-    agent_awareness:         row.agent_awareness !== false,
+    front_door:              typeof row.front_door === 'boolean' ? row.front_door : null, agent_awareness: row.agent_awareness !== false,
     is_builtin:              row.is_builtin === true,
     builtin_hash:            row.builtin_hash == null ? null : String(row.builtin_hash),
     run_location:            row.run_location === 'vm' ? 'vm' : DEFAULT_AGENT_RUN_LOCATION,
@@ -314,8 +309,7 @@ export class AgentDefinitionModel {
       input.marketplaceVersion ?? null, input.marketplaceAuthor ?? null,
       input.whenToCall ?? '', input.whenNotToCall ?? '', input.send ?? '', input.returns ?? '',
       toCostTier(input.costTier), toStringArray(input.canCall), input.isBuiltin === true, input.builtinHash ?? null,
-      typeof input.frontDoor === 'boolean' ? input.frontDoor : null,
-      input.agentAwareness !== false,
+      typeof input.frontDoor === 'boolean' ? input.frontDoor : null, input.agentAwareness !== false,
       input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,
     ]);
     if (!row) throw new Error(`Failed to create agent definition ${ slug }.`);
@@ -384,8 +378,7 @@ export class AgentDefinitionModel {
     if (patch.returns !== undefined) add('returns', patch.returns);
     if (patch.costTier !== undefined) add('cost_tier', toCostTier(patch.costTier));
     if (patch.canCall !== undefined) add('can_call', toStringArray(patch.canCall));
-    if (patch.frontDoor !== undefined) add('front_door', typeof patch.frontDoor === 'boolean' ? patch.frontDoor : null);
-    if (patch.agentAwareness !== undefined) add('agent_awareness', patch.agentAwareness);
+    if (patch.frontDoor !== undefined) add('front_door', typeof patch.frontDoor === 'boolean' ? patch.frontDoor : null); if (patch.agentAwareness !== undefined) add('agent_awareness', patch.agentAwareness);
     if (patch.isBuiltin !== undefined) add('is_builtin', patch.isBuiltin);
     if (patch.builtinHash !== undefined) add('builtin_hash', patch.builtinHash);
     if (patch.runLocation !== undefined) add('run_location', patch.runLocation === 'container' ? 'container' : 'vm');

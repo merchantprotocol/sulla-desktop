@@ -10,10 +10,16 @@ export interface AgentAwarenessSetting {
   agentAwareness?:  boolean | null;
 }
 
+export interface AgentAwarenessDefinitionLookup {
+  findBySlug(slug: string): Promise<AgentAwarenessSetting | null>;
+}
+
 /** One policy for prompt context and direct agent-launch tool exposure. */
 export class AgentAwarenessPolicy {
   static readonly WORKER_AGENT_SLUGS = AgentAwarenessDefaults.WORKER_AGENT_SLUGS;
   static readonly DEFAULT_OFF_AGENT_SLUGS = AgentAwarenessDefaults.DEFAULT_OFF_AGENT_SLUGS;
+
+  constructor(private readonly definitions?: AgentAwarenessDefinitionLookup) {}
 
   private readonly launchingToolNames = new Set([
     'spawn_agent',
@@ -34,6 +40,34 @@ export class AgentAwarenessPolicy {
       ? setting.agent_awareness
       : setting?.agentAwareness;
     return value !== false;
+  }
+
+  async canSeeOtherAgentsForAgent(agentId: string | null, fallback?: AgentAwarenessSetting | null): Promise<boolean> {
+    if (agentId && this.definitions) {
+      try {
+        return this.canSeeOtherAgents(await this.definitions.findBySlug(agentId));
+      } catch { /* a failed refresh may use the last known value; otherwise default visible */ }
+    }
+    return this.canSeeOtherAgents(fallback);
+  }
+
+  async refreshAgentAwareness(metadata: { agentAwareness?: boolean }, agentId: string | null): Promise<boolean> {
+    return metadata.agentAwareness = await this.canSeeOtherAgentsForAgent(agentId, { agent_awareness: metadata.agentAwareness });
+  }
+
+  agentNetworkStatement(setting?: AgentAwarenessSetting | null): string {
+    return this.canSeeOtherAgents(setting) ? 'You are part of a live multi-agent network — Heartbeat and other agents are active and messageable' : '';
+  }
+
+  agentNetworkDirective(setting?: AgentAwarenessSetting | null): string {
+    const statement = this.agentNetworkStatement(setting);
+    return statement ? `- ${ statement }` : '';
+  }
+
+  agentBackgroundWorkDirective(setting?: AgentAwarenessSetting | null): string {
+    return this.canSeeOtherAgents(setting)
+      ? '- Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later'
+      : '';
   }
 
   allowsTool(metadata: unknown, toolName: string): boolean {
@@ -69,6 +103,27 @@ export class AgentAwarenessPolicy {
     }
 
     return output.join('');
+  }
+
+  filterHistoricalMessages<T extends { content: unknown }>(messages: readonly T[], setting?: AgentAwarenessSetting | null): T[] {
+    if (this.canSeeOtherAgents(setting)) return [...messages];
+    return messages.map(message => ({ ...message, content: this.filterHistoricalContent(message.content, setting) }));
+  }
+
+  filterContextFields<T extends readonly [string, unknown]>(fields: readonly T[], setting?: AgentAwarenessSetting | null, supportSessionId?: string): T[] {
+    const visible = this.canSeeOtherAgents(setting)
+      ? fields
+      : fields.filter(([tag]) => tag !== 'team_directory' && tag !== 'subagent_directory');
+    return (supportSessionId ? visible.filter(([tag]) => tag === 'support_context') : visible) as T[];
+  }
+
+  private filterHistoricalContent(content: unknown, setting?: AgentAwarenessSetting | null): unknown {
+    if (typeof content === 'string') return this.filterTurnContext(content, setting);
+    if (!Array.isArray(content)) return content;
+    return content.map(block => block && typeof block === 'object' && 'type' in block && block.type === 'text'
+      && 'text' in block && typeof block.text === 'string'
+      ? { ...block, text: this.filterTurnContext(block.text, setting) }
+      : block);
   }
 
   private removeRosterLines(context: string): string {

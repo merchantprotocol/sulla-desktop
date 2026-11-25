@@ -254,6 +254,7 @@ export function resumeSessionUnusable(stderr: string): boolean {
 
 export class ClaudeCodeService extends BaseLanguageModel {
   private readonly toolPolicy: ClaudeToolPolicy;
+  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -489,9 +490,10 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor(toolPolicy = new ClaudeToolPolicy()) {
+  constructor(toolPolicy = new ClaudeToolPolicy(), agentAwarenessPolicy = new AgentAwarenessPolicy()) {
     super({ id: 'claude-code', model: 'claude-code', baseUrl: 'local-vm' });
     this.toolPolicy = toolPolicy;
+    this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
 
   /** Non-streaming chat — buffers the whole response and returns it. */
@@ -747,6 +749,8 @@ export class ClaudeCodeService extends BaseLanguageModel {
     opts: { convId: string; isNewSession: boolean },
   ): Promise<string> {
     const stableParts: string[] = [];
+    const agentNetworkDirective = this.agentAwarenessPolicy.agentNetworkDirective(state?.metadata);
+    const agentBackgroundWorkDirective = this.agentAwarenessPolicy.agentBackgroundWorkDirective(state?.metadata);
 
     stableParts.push(`<platform_context>
 You are operating inside Sulla Desktop — an autonomous agentic platform built by Jonathon Byrdziak. You are not a chatbot or a brain being asked questions. You are an agent with real tools and real execution capability.
@@ -770,9 +774,9 @@ Rules that apply on every turn:
 - Browser → \`sulla browser/tab\` with action \`upsert\` or \`remove\` only
 - Recurring tasks become workflows, not one-off commands
 - Files: /mnt/sulla-files is your Human's own versioned file system, not your workspace. Save only finished work there, in the right existing folder, updated in place. Scratch goes in /mnt/worktrees/_scratch (or /tmp for throwaway files, which is on disk); the VM root and home don't survive a restart
-- You are part of a live multi-agent network — Heartbeat and other agents are active
+${ agentNetworkDirective }
 - Durable agent memory lives in Files under \`Memory/\` (provider-specific subfolders). Record durable facts there and ALSO call the observational-memory tool so recall stays current; never rely on the VM's ephemeral home directory.
-- Background work (Bash run_in_background, Monitor): if it finishes after your turn ends, Sulla wakes this conversation with the completion so you can act on it. Sub-agent and workflow-worker runs are NOT woken after they return — there, wait for the result inside the same turn (bounded loop) instead of promising to report back later
+${ agentBackgroundWorkDirective }
 </platform_context>`);
 
     stableParts.push(`<environment>
@@ -811,8 +815,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     //     conversation's baseline from the install-global hash instead of
     //     force-sending. Only send if the global hash is missing/stale (first
     //     call, Redis down, or the content genuinely changed) — a safe fallback.
-    const promptPolicy = new AgentAwarenessPolicy();
-    const stableText = promptPolicy.filterRuntimeContext(stableParts, state?.metadata as any).join('\n\n');
+    const stableText = stableParts.join('\n\n');
     const stableHash = crypto.createHash('sha1').update(stableText).digest('hex');
 
     let lastHash = this.lastStableContextHash.get(opts.convId);

@@ -504,17 +504,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   private currentNodeRunContext: NodeRunContext | null = null;
   private _chatController:       ChatController | null = null;
   private _toolExecutor:         ToolExecutor | null = null;
-  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
 
   /** Subclasses set true to run batched tool calls concurrently (results are
    *  still appended in call order). See ToolExecutorContext.parallelToolCalls. */
   protected parallelToolCalls = false;
   private routingCandidates: ModelCandidate[] = [];
 
-  constructor(id: string, name: string, agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy()) {
+  constructor(id: string, name: string, private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy()) {
     this.id = id;
     this.name = name;
-    this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
 
   /** Resolve the provider that owns this graph turn. */
@@ -674,7 +672,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // These independent reads dominate prompt setup on cold turns. Start them
     // together; their results are still applied in the original order below.
-    const [templateVars, agentData, llm, toolModeSetting, promptSectionRows, definition] = await Promise.all([
+    const [templateVars, agentData, llm, toolModeSetting, promptSectionRows] = await Promise.all([
       templateVarsPromise,
       agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID
         ? measured('loadAgentPromptData', loadAgentPromptData(agentId, templateVarsPromise, definitionPromise))
@@ -685,10 +683,8 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         console.warn('[BaseNode] Could not load system prompt sections from DB; using baked factories:', err);
         return [];
       })),
-      definitionPromise ?? Promise.resolve(null),
     ]);
-    const agentAwareness = this.agentAwarenessPolicy.canSeeOtherAgents(definition);
-    (state.metadata as any).agentAwareness = agentAwareness;
+    (state.metadata as any).agentAwareness = this.agentAwarenessPolicy.canSeeOtherAgents(await definitionPromise);
     templateVars['{{agent_name}}'] = agentMeta?.name || agentId || templateVars['{{botName}}'];
     templateVars['{{agent_id}}'] = agentId;
     templateVars['{{agent_dir}}'] = '';
@@ -793,8 +789,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       trustLevel,
       isSubAgent:           !!(state.metadata as any).isSubAgent,
       isHeartbeat:          options.isHeartbeat || false,
-      wsChannel:            String(state.metadata.wsChannel || 'sulla-desktop'),
-      agentAwareness,
+      wsChannel:            String(state.metadata.wsChannel || 'sulla-desktop'), agentAwareness: (state.metadata as any).agentAwareness,
       toolMode,
       templateVars,
       agentSectionOverrides,
@@ -848,9 +843,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   ): Promise<void> {
     try {
       const { buildTurnContext, stripTurnContext, hasTurnContext } = await import('../prompts/turnContext');
-
-      this.filterHistoricalAgentRoster(state);
-
+      state.messages = this.agentAwarenessPolicy.filterHistoricalMessages(state.messages, { agent_awareness: (state.metadata as any).agentAwareness });
       // Find the latest user message
       let userIdx = -1;
       for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -860,7 +853,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         }
       }
       if (userIdx === -1) return;
-
       const msg = state.messages[userIdx];
       const isFinalMessage = userIdx === state.messages.length - 1;
 
@@ -876,13 +868,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
       const block = await buildTurnContext({
         chatMode:    options.chatMode || 'text',
-        isHeartbeat: options.isHeartbeat || false,
-        agentAwareness: typeof (state.metadata as any).agentAwareness === 'boolean'
-          ? { agent_awareness: (state.metadata as any).agentAwareness }
-          : undefined,
+        isHeartbeat: options.isHeartbeat || false, agentAwareness: { agent_awareness: (state.metadata as any).agentAwareness },
       });
       if (!block) return;
-
       if (typeof msg.content === 'string') {
         const base = stripTurnContext(msg.content);
         msg.content = base ? `${ base }\n\n${ block }` : block;
@@ -901,22 +889,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     } catch (err) {
       // Non-fatal — the agent just misses this turn's context block
       console.warn(`[${ this.name }] Failed to inject turn context:`, err);
-    }
-  }
-
-  /** Remove roster lines previously stored in history after an agent opts out. */
-  private filterHistoricalAgentRoster(state: BaseThreadState): void {
-    const setting = { agent_awareness: (state.metadata as any).agentAwareness };
-    for (const message of state.messages) {
-      if (typeof message.content === 'string') {
-        message.content = this.agentAwarenessPolicy.filterTurnContext(message.content, setting);
-      } else if (Array.isArray(message.content)) {
-        for (const block of message.content as any[]) {
-          if (block?.type === 'text' && typeof block.text === 'string') {
-            block.text = this.agentAwarenessPolicy.filterTurnContext(block.text, setting);
-          }
-        }
-      }
     }
   }
 
@@ -971,7 +943,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     this.stripInjectedContextBlocks(state);
 
     const metadata = state.metadata as any;
-    const includeAgentContext = this.agentAwarenessPolicy.canSeeOtherAgents({ agent_awareness: metadata.agentAwareness });
     const observations = typeof metadata.observationalMemoryContext === 'string' ? metadata.observationalMemoryContext : '';
     let brain = typeof metadata.brainMemoryContext === 'string' ? metadata.brainMemoryContext : '';
     let latestUserIndex = -1;
@@ -1027,10 +998,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       ['subagent_directory', 'subagentDirectoryContext'],
       ['brain_memory', 'brainMemoryContext'],
     ];
-    const visibleFields = includeAgentContext
-      ? fields
-      : fields.filter(([tag]) => tag !== 'team_directory' && tag !== 'subagent_directory');
-    const blocks = (metadata.supportSessionId ? visibleFields.filter(([tag]) => tag === 'support_context') : visibleFields).flatMap(([tag, key]) => {
+    const blocks = this.agentAwarenessPolicy.filterContextFields(fields, { agent_awareness: metadata.agentAwareness }, metadata.supportSessionId).flatMap(([tag, key]) => {
       const value = metadata[key];
       return typeof value === 'string' && value.trim()
         ? [`<${ tag }>\n${ value.trim() }\n</${ tag }>`]
@@ -1325,11 +1293,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       }
     }
 
-    llmTools = this.agentAwarenessPolicy.filterTools(llmTools, {
-      agent_awareness: (state.metadata as any).agentAwareness,
-    });
-
-    const previousToolAccessPolicy = (state.metadata as any).__toolAccessPolicy;
+    llmTools = this.agentAwarenessPolicy.filterTools(llmTools, { agent_awareness: (state.metadata as any).agentAwareness }); const previousToolAccessPolicy = (state.metadata as any).__toolAccessPolicy;
     (state.metadata as any).__toolAccessPolicy = callToolAccessPolicy;
 
     const conversationId = typeof state.metadata.threadId === 'string' ? state.metadata.threadId : undefined;

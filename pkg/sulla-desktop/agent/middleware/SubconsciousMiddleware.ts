@@ -28,7 +28,7 @@ import { recallV7SubjectMemory } from '../memory/V7SubjectMemory';
 import { MEMORY_CHAR_BUDGET, measureInjectedMemoryBlocks } from '../memory/MemoryBudget';
 import { GraphRegistry, type DigestibleToolResult } from '../services/GraphRegistry';
 import { resolveAgentIdentity } from '../utils/agentIdentity';
-import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '../services/AgentAwarenessPolicy';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { latestUserText } from '../utils/latestUserText';
 import { stripTurnContext } from '../prompts/turnContext';
 
@@ -244,24 +244,12 @@ export async function runSubconsciousMiddleware(
     return;
   }
 
-  let awarenessSetting: AgentAwarenessSetting | null | undefined =
-    typeof meta.agentAwareness === 'boolean' ? { agent_awareness: meta.agentAwareness } : undefined;
-  const awarenessAgentId = resolveAgentIdentity(state.metadata);
-  if (awarenessAgentId) {
-    try {
-      const { agentDefinitionService } = await import('../services/AgentDefinitionService');
-      awarenessSetting = await agentDefinitionService.findBySlug(awarenessAgentId);
-    } catch { /* a failed refresh may use the last known value; otherwise default visible */ }
-  }
-  const canSeeOtherAgents = new AgentAwarenessPolicy().canSeeOtherAgents(awarenessSetting);
-  meta.agentAwareness = canSeeOtherAgents;
-
+  const canSeeOtherAgents = await new AgentAwarenessPolicy({ findBySlug: async slug => (await import('../services/AgentDefinitionService')).agentDefinitionService.findBySlug(slug) }).refreshAgentAwareness(meta, resolveAgentIdentity(state.metadata));
   const conversationalistVoice = String(meta.agentId || meta.wsChannel || '') === 'conversationalist'
     && (inputSource === 'microphone' || inputSource === 'voice');
   // Conversationalist voice keeps memory/observation recall. It skips only
   // team, skill-catalog and subagent-roster hints; this is an explicit,
   // reversible latency trade-off for Jonathon to veto.
-
   const startTime = Date.now();
   for (const key of ['observationContext', 'userObservationContext', 'selfObservationContext', 'businessObservationContext', 'environmentObservationContext', 'projectsObservationContext', 'worldObservationContext', 'skillsObservationContext']) meta[key] = '';
   meta.teamDirectoryContext = '';
@@ -396,7 +384,6 @@ export async function runSubconsciousMiddleware(
       recallMeta.brainMemoryStats = undefined;
     })));
   }
-
   // R10. Team recall — lead agents (non-empty can_call) get a Team directory
   // ranked by the current situation (plus the shared "Calling your team"
   // section when their prompt lacks it), injected as <team_directory>.

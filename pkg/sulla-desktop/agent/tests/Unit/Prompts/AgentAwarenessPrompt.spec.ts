@@ -21,6 +21,7 @@ vi.mock('../../../services/ActiveAgentsRegistry', () => ({
 import { getBuiltinAgentSpecs, renderBuiltinAgent } from '../../../builtinAgents';
 import { BaseNode } from '../../../nodes/BaseNode';
 import { SystemPromptBuilder, type PromptBuildContext } from '../../../prompts/SystemPromptBuilder';
+import { SOUL_CONTENT } from '../../../prompts/sections/soul';
 import { buildTurnContext } from '../../../prompts/turnContext';
 import { WorkerPromptBuilder } from '../../../tools/agents/workerMessaging';
 
@@ -44,6 +45,7 @@ function promptContext(spec: typeof worker, aware: boolean): PromptBuildContext 
     wsChannel: 'sulla-desktop', agentAwareness: aware, templateVars: {}, agentSectionOverrides: new Map(),
     // observational_memory reads Postgres; every other registered section builds for real.
     excludeSections: new Set(['observational_memory']), basePrompt: '',
+    dbSections: new Map([['soul', { content: SOUL_CONTENT, priority: 20, cacheStability: 'stable' as const, isGenerated: true }]]),
   };
 }
 
@@ -80,12 +82,14 @@ describe('per-agent prompt awareness', () => {
     console.info(`[AgentAwarenessMeasure] codex-luna-worker before=${ before.length } after=${ after.length }`);
     expect(after.length).toBeLessThan(before.length);
     expect(before).toContain('agents: sibling@worker');
+    expect(before).toContain('live multi-agent network');
     expect(after).toContain('now="');
     expect(after).toContain('tz=');
     expect(after).toContain('Jonathon (human): Busy');
     expect(after).toContain('Job: job-42 (task 2)');
     expect(after).toContain('Task: implement the assigned change.');
     expect(after).not.toContain('agents: sibling@worker');
+    expect(after).not.toContain('live multi-agent network');
     expect(after).not.toContain('<agent_team>');
     expect(after).not.toContain('<subagent_directory>');
     expect(after).not.toContain('Calling your team');
