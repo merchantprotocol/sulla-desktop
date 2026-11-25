@@ -201,6 +201,6 @@ describe('a question whose asker stops waiting', () => {
     const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status = \$2, record = \$3::jsonb/.test(sql))!;
     const saved = JSON.parse(String(update[1]?.[2]));
     expect(saved.answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);
-    expect(saved.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
+    expect(saved.route).toBeUndefined();
   });
 });

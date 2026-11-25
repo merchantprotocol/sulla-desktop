@@ -111,14 +111,16 @@ export class DecisionService {
       if (signal?.aborted) throw new Error('Request cancelled');
       const now = Date.now();
       const candidate = { ...input, kind: 'question' as const };
-      const chain = await this.routeResolver.resolve(input.conversationId, input.channel);
       const authority = this.authorityPolicy.classify(candidate);
-      const route = { authority, chain, holderIndex: authority === 'human' ? chain.length - 1 : 0, holderSince: now, history: [] };
+      const chain = authority === 'any' ? await this.routeResolver.resolve(input.conversationId, input.channel) : [];
+      const route = authority === 'any' && chain.some(entry => entry.kind === 'agent')
+        ? { authority, chain, holderIndex: 0, holderSince: now, history: [] }
+        : undefined;
       const record: DecisionRecord = {
         ...input,
         ...(asker ? { requestedBy: { agentId: asker.agentId || asker.label || 'agent', label: asker.label, jobId: asker.jobId, taskIndex: asker.taskIndex } } : {}),
         relatedConversationIds,
-        route,
+        ...(route ? { route } : {}),
         kind: 'question', id: randomUUID(), status: 'pending', attention: 'active', createdAt: now,
         expiresAt: now + 30 * 60_000, payload: {
           ...input.payload,
@@ -146,11 +148,8 @@ export class DecisionService {
     if (!input.conversationId || !input.channel) throw new Error('Approval requires the original conversation. No action was executed.');
     const now = Date.now();
     const relatedConversationIds = await this.pendingDecisions.ancestry(input.conversationId);
-    const chain = await this.routeResolver.resolve(input.conversationId, input.channel);
-    const authority = this.authorityPolicy.classify(input);
     const record: DecisionRecord = {
       ...input, relatedConversationIds,
-      route: { authority, chain, holderIndex: authority === 'human' ? chain.length - 1 : 0, holderSince: now, history: [] },
       id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs,
     };
     await this.decisions.insert(record, this.session);
