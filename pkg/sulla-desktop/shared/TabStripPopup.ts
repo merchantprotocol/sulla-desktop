@@ -16,7 +16,6 @@ export interface TabAttentionRow {
 }
 
 export interface TabAttentionMenu {
-  id:      string;
   anchor:  { x: number; y: number };
   palette: TabStripPopupPalette;
 }
@@ -25,12 +24,12 @@ export type TabContextMenuRequest = {
   screenX:    number;
   screenY:    number;
   items:      string[];
-  tabData:    Record<string, unknown>;
+  requestId:  string;
   attention?: never;
   update?:    never;
 } | {
   items:     TabAttentionRow[];
-  tabData:   Record<string, unknown>;
+  requestId: string;
   attention: TabAttentionMenu;
   update:    boolean;
 };

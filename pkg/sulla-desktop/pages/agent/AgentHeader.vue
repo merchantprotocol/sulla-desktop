@@ -386,7 +386,7 @@ import { isTabCloseable } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { TabAttentionMenuOwner } from '@pkg/composables/TabAttentionMenuOwner';
+import { tabContextMenuBridge } from '@pkg/composables/TabContextMenuBridge';
 import { TabDragAutoScroll } from '@pkg/composables/TabDragAutoScroll';
 import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
 import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
@@ -413,33 +413,21 @@ const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
 // tab strip per page. They share a single scroll offset so switching tabs
 // never resets the strip back to the left.
 let sharedTabScrollLeft = 0;
-const attentionOwner = new TabAttentionMenuOwner();
 </script>
 
 <script setup lang="ts">
 // Module-level state: shared across all AgentHeader instances (one per keep-alive'd page)
 const knownAssetIds = ref(new Set<string>());
 
-// Module-level IPC listeners — registered once regardless of how many
-// AgentHeader instances are mounted (each page has its own instance).
-// Action callbacks are set by the active (most recent) instance.
+// More-menu callbacks (separate from the window-owned tab context menu).
 let _ipcMountCount = 0;
-let _onTabCtxAction:  ((...args: any[]) => void) | null = null;
 let _onMoreAction:    ((...args: any[]) => void) | null = null;
 let _onMoreFetchHist: ((...args: any[]) => void) | null = null;
-function _tabCtxBridge(event: Electron.IpcRendererEvent, action: string, data: Record<string, unknown>) {
-  if (action.startsWith('attention:')) attentionOwner.select(data.attentionMenuId, action.slice('attention:'.length));
-  else _onTabCtxAction?.(event, action, data);
-}
-
-function _attentionClosedBridge(_event: Electron.IpcRendererEvent, id: string) { attentionOwner.close(id) }
 function _moreBridge(...args: any[]) { _onMoreAction?.(...args) }
 function _moreHistBridge(...args: any[]) { _onMoreFetchHist?.(...args) }
 
 function _mountIpcListeners() {
   if (_ipcMountCount++ === 0) {
-    ipcRenderer.on('tab-context-menu:selected', _tabCtxBridge);
-    ipcRenderer.on('tab-context-menu:attention-closed', _attentionClosedBridge);
     ipcRenderer.on('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.on('more-menu:fetch-history' as any, _moreHistBridge as any);
   }
@@ -448,11 +436,8 @@ function _mountIpcListeners() {
 function _unmountIpcListeners() {
   if (--_ipcMountCount <= 0) {
     _ipcMountCount = 0;
-    ipcRenderer.removeListener('tab-context-menu:selected', _tabCtxBridge);
-    ipcRenderer.removeListener('tab-context-menu:attention-closed', _attentionClosedBridge);
     ipcRenderer.removeListener('more-menu:selected' as any, _moreBridge as any);
     ipcRenderer.removeListener('more-menu:fetch-history' as any, _moreHistBridge as any);
-    _onTabCtxAction = null;
     _onMoreAction = null;
     _onMoreFetchHist = null;
   }
@@ -528,6 +513,9 @@ function openUsageTab(): void {
 // ── Phase 7: Keyboard shortcuts ──
 
 function handleKeyboardShortcuts(e: KeyboardEvent): void {
+  const strip = getScrollEl();
+
+  if (e.defaultPrevented || !strip || !isStripVisible(strip)) return;
   const meta = e.metaKey || e.ctrlKey;
 
   // Cmd+T: new tab
@@ -658,9 +646,10 @@ const hover = new TabHoverController(
 );
 const needsYouButton = ref<HTMLButtonElement | null>(null);
 const attentionMenuId = ref<string>();
+let contextMenuId: string | undefined;
 
 function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
-  if (dragState.value?.active || attentionMenuId.value || event.pointerType === 'touch') return;
+  if (dragState.value?.active || contextMenuId || event.pointerType === 'touch') return;
   const anchor = event.currentTarget as HTMLElement;
 
   hover.schedule(() => {
@@ -689,7 +678,7 @@ function hideTabHover(): void {
 
 function openAttentionMenu(): void {
   if (attentionMenuId.value) {
-    hideAttentionMenu();
+    hideTabContextMenu();
     return;
   }
   hideTabHover();
@@ -701,40 +690,49 @@ function publishAttentionMenu(id: string, update: boolean): void {
   const position = button && popupAnchor.locate(button);
 
   if (!position || !needsYouRows.value.length) {
-    hideAttentionMenu();
+    hideTabContextMenu();
     return;
   }
   if (!update) {
-    attentionOwner.open({
-      id,
-      select: tabId => {
-        if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
-      },
-      onClosed: () => {
-        if (attentionMenuId.value === id) attentionMenuId.value = undefined;
-      },
+    claimContextMenu(id, action => {
+      if (!action.startsWith('attention:')) return;
+      const tabId = action.slice('attention:'.length);
+
+      if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
     });
+    attentionMenuId.value = id;
   }
-  attentionMenuId.value = id;
   ipcRenderer.send('tab-context-menu:show', {
+    requestId: id,
     items:     needsYouRows.value,
-    tabData:   { attentionMenuId: id },
-    attention: { ...position, id },
+    attention: position,
     update,
   });
 }
 
-function hideAttentionMenu(): void {
-  const id = attentionMenuId.value;
+function claimContextMenu(id: string, select: (action: string) => void): void {
+  tabContextMenuBridge.open({
+    id,
+    select,
+    onClosed: () => {
+      if (contextMenuId === id) contextMenuId = undefined;
+      if (attentionMenuId.value === id) attentionMenuId.value = undefined;
+    },
+  });
+  contextMenuId = id;
+}
+
+function hideTabContextMenu(): void {
+  const id = contextMenuId;
 
   if (!id) return;
-  attentionOwner.close(id);
-  ipcRenderer.send('tab-context-menu:hide-attention', id);
+  tabContextMenuBridge.close(id);
+  ipcRenderer.send('tab-context-menu:hide', id);
 }
 
 function hideStripPopups(): void {
   hideTabHover();
-  hideAttentionMenu();
+  hideTabContextMenu();
 }
 
 function onStripVisibilityChange(): void {
@@ -749,7 +747,6 @@ onMounted(() => {
 
   // Point the module-level IPC bridges at THIS instance's handlers.
   // The last-mounted instance wins — which is the currently visible page.
-  _onTabCtxAction = handleTabContextMenuAction;
   _onMoreAction = handleMoreMenuAction;
   _onMoreFetchHist = handleMoreMenuFetchHistory;
   _mountIpcListeners();
@@ -1455,9 +1452,8 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 
 // ── Tab context menu (popup window via IPC) ──
 
-function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
+function onTabContextMenu(event: MouseEvent, tab: HeaderTab) {
   hideStripPopups();
-  _onTabCtxAction = handleTabContextMenuAction;
   // Build the list of menu items for this tab
   const items: string[] = [tab.pinned ? 'unpin' : 'pin'];
 
@@ -1476,18 +1472,14 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab, index: number) {
     items.push('reload', 'copyUrl');
   }
 
+  const requestId = crypto.randomUUID();
+
+  claimContextMenu(requestId, action => handleTabContextMenuAction(action, tab.id));
   ipcRenderer.send('tab-context-menu:show', {
-    screenX:  event.screenX,
-    screenY:  event.screenY,
+    requestId,
+    screenX: event.screenX,
+    screenY: event.screenY,
     items,
-    tabData:  {
-      id:        tab.id,
-      browserId: tab.browserId || null,
-      route:     tab.route,
-      closeable: tab.closeable || false,
-      pinned:    tab.pinned,
-      index,
-    },
   });
 }
 
@@ -1525,18 +1517,12 @@ function cancelRename(): void {
 }
 
 /** Handle a context-menu action forwarded back from the popup window via IPC. */
-function handleTabContextMenuAction(
-  _event: Electron.IpcRendererEvent,
-  action: string,
-  tabData: Record<string, unknown>,
-): void {
-  const tabId = tabData.id as string;
-  const browserId = tabData.browserId as string | null;
-  const tabRoute = tabData.route as string;
-
+function handleTabContextMenuAction(action: string, tabId: string): void {
   // Resolve the full HeaderTab from orderedTabs (it may have changed since the menu was opened)
   const headerTab = orderedTabs.value.find(t => t.id === tabId);
   const index = orderedTabs.value.findIndex(t => t.id === tabId);
+  const browserId = headerTab?.browserId;
+  const tabRoute = headerTab?.route;
 
   switch (action) {
   case 'pin':
@@ -1582,7 +1568,6 @@ function handleTabContextMenuAction(
       router.push(`/Browser/${ newTab.id }`);
     } else {
       if (headerTab) activateTab(headerTab);
-      else router.push(tabRoute);
     }
     break;
 
@@ -1614,7 +1599,7 @@ function handleTabContextMenuAction(
   }
 
   case 'reload':
-    if (browserId) {
+    if (browserId && tabRoute) {
       router.push('/Chat').then(() => router.push(tabRoute));
     }
     break;
