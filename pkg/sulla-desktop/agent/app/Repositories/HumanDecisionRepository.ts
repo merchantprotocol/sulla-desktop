@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
+import { DecisionRouteTransitionSqlBuilder, type DecisionRoutePatch, type DecisionSettlementStatus, type DecisionTransitionActor } from '../../repositories/DecisionRouteTransitionSqlBuilder';
 
 export interface HumanDecisionQueryClient {
   query<T = any>(sql: string, params?: any[]): Promise<T[]>;
@@ -11,7 +12,7 @@ export interface HumanDecisionQueryClient {
 
 /** Persistence for the durable human-decision inbox (`human_decisions`). */
 export class HumanDecisionRepository {
-  constructor(private readonly client: HumanDecisionQueryClient) {}
+  constructor(private readonly client: HumanDecisionQueryClient, private readonly transitions = new DecisionRouteTransitionSqlBuilder()) {}
 
   async insert(record: DecisionRecord, sessionId: string): Promise<void> {
     await this.client.query('INSERT INTO human_decisions (id, session_id, status, record) VALUES ($1, $2, $3, $4::jsonb)',
@@ -38,6 +39,23 @@ export class HumanDecisionRepository {
         WHERE id = $1 AND status IN ('pending', 'deferred') AND session_id = $4 RETURNING id`,
     [id, status, JSON.stringify(next), sessionId]);
     return rows.length > 0;
+  }
+
+  async claimHolder(id: string, expectedHolderIndex: number, actor: DecisionTransitionActor, routePatch: DecisionRoutePatch): Promise<boolean> {
+    const query = this.transitions.claimHolder('approval', id, expectedHolderIndex, actor, routePatch);
+    return (await this.client.query(query.sql, query.params)).length > 0;
+  }
+
+  async advanceHolder(id: string, expectedHolderIndex: number, actor: DecisionTransitionActor, routePatch: DecisionRoutePatch,
+    history: NonNullable<DecisionRecord['route']>['history'][number], deadlineNow?: number): Promise<boolean> {
+    const query = this.transitions.advanceHolder('approval', id, expectedHolderIndex, actor, routePatch, history, deadlineNow);
+    return (await this.client.query(query.sql, query.params)).length > 0;
+  }
+
+  async settleAs(id: string, expectedHolderIndex: number, actor: DecisionTransitionActor, status: DecisionSettlementStatus,
+    patch: Partial<Omit<DecisionRecord, 'route'>>, history: NonNullable<DecisionRecord['route']>['history'] = []): Promise<boolean> {
+    const query = this.transitions.settleAs('approval', id, expectedHolderIndex, actor, status, { ...patch, status }, history);
+    return (await this.client.query(query.sql, query.params)).length > 0;
   }
 
   /**

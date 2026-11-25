@@ -216,4 +216,28 @@ describe('Files publish decision flow', () => {
       expect(request).toHaveBeenCalledTimes(1);
     } finally { publisher.dispose() }
   });
+
+  it('refuses a non-human actor but keeps legacy pre-actor approvals compatible', async() => {
+    // risk: irreversible side effects — a future agent answer must never publish a Files draft, while legacy human decisions still complete.
+    let listener: ((record: DecisionRecord) => void) | undefined;
+    const request = vi.fn(async() => ({ ok: true, status: 200 }));
+    const publisher = new FilesPublishDecisionApplier(
+      { subscribe: (next) => { listener = next; return () => { listener = undefined } } },
+      async() => ({ request }), () => undefined,
+    );
+    const decision = (id: string): DecisionRecord => ({
+      id, conversationId: 'chat-thread', channel: 'chat-channel', kind: 'approval', status: 'approved',
+      title: 'Publish?', toolName: 'files_request_publish', createdAt: 100, expiresAt: 200,
+      payload: { filesPublishRequestId: id },
+    });
+    publisher.start();
+    try {
+      listener?.({ ...decision('agent-approval'), answeredBy: { kind: 'agent', agentId: 'codex-worker' } });
+      await Promise.resolve();
+      expect(request).not.toHaveBeenCalled();
+      listener?.(decision('legacy-human-approval'));
+      await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+      expect(request).toHaveBeenCalledWith('/v1/files/publish-requests/legacy-human-approval/approve', expect.any(Object));
+    } finally { publisher.dispose() }
+  });
 });

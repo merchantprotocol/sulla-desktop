@@ -31,7 +31,8 @@ export class FilesPublishDecisionApplier {
 
   private async apply(record: DecisionRecord): Promise<void> {
     const requestId = record.payload?.filesPublishRequestId;
-    if (!requestId || record.kind !== 'approval' || !['approved', 'denied', 'expired'].includes(record.status) || this.handled.has(record.id)) return;
+    if (!requestId || record.kind !== 'approval' || !['approved', 'denied', 'expired'].includes(record.status) ||
+        (record.answeredBy && record.answeredBy.kind !== 'human') || this.handled.has(record.id)) return;
     this.handled.add(record.id);
     const action = record.status === 'approved' ? 'approve' : 'reject';
     try {

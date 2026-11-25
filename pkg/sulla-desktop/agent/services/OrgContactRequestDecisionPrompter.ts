@@ -94,6 +94,7 @@ export class OrgContactRequestDecisionPrompter implements OrgContactRequestPromp
       questions,
       channel: this.channel,
       conversationId: first.data.conversationId,
+      payload: { decisionAuthority: 'human' },
     }, this.timeoutMs);
     const shown = await this.cards.emit(this.channel, first.data.conversationId, record.id, questions);
     if (!shown) {
