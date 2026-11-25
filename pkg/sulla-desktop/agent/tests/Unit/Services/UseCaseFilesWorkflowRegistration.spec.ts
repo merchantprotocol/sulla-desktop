@@ -29,6 +29,7 @@ vi.mock('@pkg/main/marketplace/databaseArtifacts', () => ({ readDatabaseArtifact
 vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: { pendingPublicationBindings: vi.fn(async() => []) } }));
 
 import { SullaUseCaseFiles, type WorkflowScheduleRefresher } from '@pkg/main/sullaUseCaseFiles';
+import { DESKTOP_WORKFLOW_OWNER_IDENTITY } from '../../../../../../packages/workflow-engine/src/ownerIdentity.js';
 
 const SCHEMA = `
   CREATE TABLE use_case_files_state (singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton), initial_export_completed_at TIMESTAMPTZ, last_scan_at TIMESTAMPTZ, last_error TEXT);
@@ -36,7 +37,8 @@ const SCHEMA = `
   CREATE TABLE agent_definitions (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, enabled BOOLEAN NOT NULL DEFAULT TRUE, status TEXT NOT NULL DEFAULT 'draft', use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE skill_definitions (slug TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT TRUE, deleted_at TIMESTAMPTZ, frontmatter JSONB NOT NULL DEFAULT '{}'::jsonb, use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', version TEXT, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','production','archive')),
-    definition JSONB NOT NULL DEFAULT '{}'::jsonb, enabled BOOLEAN NOT NULL DEFAULT TRUE, source_kind TEXT NOT NULL DEFAULT 'user', use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    definition JSONB NOT NULL DEFAULT '{}'::jsonb, enabled BOOLEAN NOT NULL DEFAULT TRUE, source_kind TEXT NOT NULL DEFAULT 'user', location TEXT NOT NULL DEFAULT 'desktop',
+    owner_issuer TEXT, owner_subject TEXT, authority_id UUID, organization_id UUID, use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE function_definitions (slug TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT TRUE, use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
   CREATE TABLE recipe_definitions (slug TEXT PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT TRUE, use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 `;
@@ -107,9 +109,23 @@ describe('published workflow registration while the Use Cases migration is pendi
     await scanner.scan();
 
     const registered = await workflow();
-    expect(registered).toMatchObject({ status: 'production', enabled: true, source_kind: 'user', use_case_file_id: FILE, use_case_version_id: V1, name: 'Facebook group approvals (all groups)' });
+    expect(registered).toMatchObject({ status: 'production', enabled: true, source_kind: 'user', owner_issuer: DESKTOP_WORKFLOW_OWNER_IDENTITY.issuer,
+      owner_subject: DESKTOP_WORKFLOW_OWNER_IDENTITY.subject, authority_id: null, organization_id: null, location: 'desktop',
+      use_case_file_id: FILE, use_case_version_id: V1, name: 'Facebook group approvals (all groups)' });
     expect(registered.definition.nodes).toHaveLength(2);
     expect(registered.definition.edges).toEqual([{ id: 'e1', source: 'trigger', target: 'sync' }]);
+    // This is the manager's owner-scoped Desktop schedule eligibility predicate, executed against
+    // the real PGlite row rather than inferred from the inserted identity columns alone.
+    const eligible = await f.db.query(`SELECT id FROM workflows
+      WHERE status='production' AND enabled=TRUE AND location='desktop' AND owner_issuer IS NOT NULL AND owner_subject IS NOT NULL
+        AND owner_issuer=$1 AND owner_subject=$2 AND authority_id IS NOT DISTINCT FROM $3::uuid AND organization_id IS NOT DISTINCT FROM $4::uuid`,
+    [DESKTOP_WORKFLOW_OWNER_IDENTITY.issuer, DESKTOP_WORKFLOW_OWNER_IDENTITY.subject, null, null]);
+    expect(eligible.rows.map((row: { id:string }) => row.id)).toEqual([SLUG]);
+    const foreignOwner = await f.db.query(`SELECT id FROM workflows
+      WHERE status='production' AND enabled=TRUE AND location='desktop' AND owner_issuer IS NOT NULL AND owner_subject IS NOT NULL
+        AND owner_issuer=$1 AND owner_subject=$2 AND authority_id IS NOT DISTINCT FROM $3::uuid AND organization_id IS NOT DISTINCT FROM $4::uuid`,
+    ['urn:example:other', 'other-owner', null, null]);
+    expect(foreignOwner.rows).toEqual([]);
     expect(refreshes).toBe(1);
     // A fresh service (restart) sees the same indexed version: no rewrite and no second refresh.
     await service().scan();
@@ -134,11 +150,16 @@ describe('published workflow registration while the Use Cases migration is pendi
     expect(refreshes).toBe(0);
   });
 
-  it('leaves an existing workflow row byte for byte, even with an approved new version', async() => {
-    await f.db.query(`INSERT INTO workflows(id,name,status,enabled,definition) VALUES ($1,'Owner copy','production',FALSE,'{"nodes":[],"edges":[]}')`, [SLUG]);
+  it('leaves an existing linked workflow untouched when its Files root disappears before migration', async() => {
+    await f.db.query(`INSERT INTO workflows(id,name,status,enabled,definition,owner_issuer,owner_subject,use_case_file_id,use_case_version_id)
+      VALUES ($1,'Owner copy','production',TRUE,'{"nodes":[],"edges":[]}',$2,$3,$4,$5)`,
+    [SLUG, DESKTOP_WORKFLOW_OWNER_IDENTITY.issuer, DESKTOP_WORKFLOW_OWNER_IDENTITY.subject, FILE, V1]);
     const before = await allWorkflows();
+    const scanner = service();
     publishApproved();
-    await service().scan();
+    await scanner.scan();
+    rows = [];
+    await scanner.scan();
     expect(await allWorkflows()).toEqual(before);
     expect(refreshes).toBe(0);
   });
@@ -171,6 +192,19 @@ describe('published workflow registration while the Use Cases migration is pendi
 });
 
 describe('published workflow index after the migration', () => {
+  it("preserves an existing workflow owner's identity while a newer approved version updates the row", async() => {
+    await completeMigration();
+    await f.db.query(`INSERT INTO workflows(id,name,status,enabled,definition,owner_issuer,owner_subject,use_case_file_id,use_case_version_id)
+      VALUES ($1,'Owner copy','production',TRUE,'{"nodes":[],"edges":[]}','urn:example:existing','existing-owner',$2,$3)`, [SLUG, FILE, V1]);
+    publishApproved(manifest(), V2);
+
+    await service().scan();
+
+    expect(await workflow()).toMatchObject({ status: 'production', enabled: true, use_case_file_id: FILE, use_case_version_id: V2,
+      owner_issuer: 'urn:example:existing', owner_subject: 'existing-owner' });
+    expect(refreshes).toBe(1);
+  });
+
   it("keeps the owner's pause across rescans of the same version, and re-arms only when something changed", async() => {
     await completeMigration();
     publishApproved();
