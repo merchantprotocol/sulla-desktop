@@ -236,7 +236,7 @@ export class PendingDecisionRepository {
       WHERE id=$1 AND record->>'kind'='question' AND record->>'conversationId'=$4
         AND (status='expired' OR (status IN ('pending','deferred') AND record#>>'{payload,answerRoute}'='inbox')
           OR (status='answered' AND record->>'answerDelivery' IS NULL AND record->'answeredBy'=$3::jsonb AND record->'answers'=$2::jsonb))
-        AND COALESCE(record->>'attention','') NOT IN ('answered','dismissed')
+        AND (status='answered' OR COALESCE(record->>'attention','') NOT IN ('answered','dismissed'))
         AND ($3::jsonb->>'kind'='human' OR ($5::integer IS NOT NULL AND record#>>'{route,authority}'='any'
           AND (record#>>'{route,holderIndex}')::integer=$5 AND record#>>ARRAY['route','chain',$5::text,'threadId']=$7)) RETURNING record`,
     [record.id, JSON.stringify(answers), JSON.stringify(actor), record.conversationId, expectedHolder, JSON.stringify(history), actor.kind === 'agent' ? actor.threadId : '']);

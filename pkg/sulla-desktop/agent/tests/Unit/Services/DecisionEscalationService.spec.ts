@@ -21,6 +21,7 @@ class MemoryDecisionStore {
   askerTask?: AgentJobTaskTarget;
   readonly deliveredJobAnswers: Array<{ jobId: string; taskIndex: number; message: string }> = [];
   failOpenRoutedQuestionsOnce = false;
+  refuseNextJobAnswer = false;
   lateChatAnswers: DecisionRecord[] = [];
 
   put(record: DecisionRecord): void { this.records.set(record.id, structuredClone(record)) }
@@ -56,11 +57,18 @@ class MemoryDecisionStore {
     return structuredClone(answered);
   }
   async recordJobAnswer(record: DecisionRecord, answers: { question: string; selected: string[] }[]): Promise<DecisionRecord | undefined> {
+    if (this.refuseNextJobAnswer) { this.refuseNextJobAnswer = false; return undefined }
     const current = this.records.get(record.id);
+    if (!current) return undefined;
     const actor = record.answeredBy ?? { kind: 'human' as const };
-    if (!current || (current.status === 'answered' && (current.answerDelivery || JSON.stringify(current.answers) !== JSON.stringify(answers) || current.answeredBy?.kind !== actor.kind)) ||
-      (!['pending', 'deferred', 'expired', 'answered'].includes(current.status) || current.attention === 'dismissed')) return undefined;
+    const settledRetry = current.status === 'answered' && current.answerDelivery == null &&
+      JSON.stringify(current.answeredBy) === JSON.stringify(actor) && JSON.stringify(current.answers) === JSON.stringify(answers);
+    const statusAllowsAnswer = current.status === 'expired' ||
+      (['pending', 'deferred'].includes(current.status) && current.payload?.answerRoute === 'inbox') || settledRetry;
+    const attentionAllowsAnswer = current.status === 'answered' || !['answered', 'dismissed'].includes(current.attention ?? '');
+    if (!statusAllowsAnswer || !attentionAllowsAnswer) return undefined;
     const route = current.route;
+    if (actor.kind === 'agent' && (!route || route.authority !== 'any' || route.chain[route.holderIndex]?.threadId !== actor.threadId)) return undefined;
     const history: DecisionRouteHistoryEntry = { threadId: actor.kind === 'agent' ? actor.threadId ?? '' : route?.chain.at(-1)?.threadId ?? current.conversationId,
       agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human', action: 'answered', at: this.records.size,
       ...(actor.note ? { note: actor.note.slice(0, 500) } : {}) };
@@ -179,6 +187,8 @@ class EscalationHarness {
       kind: 'question', conversationId: 'asker', channel: 'chat', title: 'Which option?', attention: 'active',
       questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }],
     });
+    request.record.route = { authority: 'any', chain: await this.routeResolver.resolve(), holderIndex: 0, holderSince: this.now, history: [] };
+    this.store.put(request.record);
     await this.escalation.start(request.record);
     return request;
   }
@@ -413,6 +423,23 @@ describe('DecisionEscalationService', () => {
       .resolves.toMatchObject({ settled: false });
     expect(harness.askerMessages).toHaveLength(1);
     expect(harness.store.settleCalls).toHaveLength(1);
+  });
+
+  it('does not claim a human override was delivered when the asker mailbox rejects it', async() => {
+    // risk: user communication — a settled answer with no durable mailbox row must not be reported as delivered.
+    const chain = [agent('parent', 'manager', 'parent-job'), human];
+    const harness = new EscalationHarness(new FixedRouteResolver(chain));
+    harness.store.askerTask = { jobId: 'asker-job', taskIndex: 2, jobStatus: 'running', taskStatus: 'running', threadId: 'asker',
+      parentThreadId: 'parent', parentChannel: 'chat', agentId: 'asker-agent' };
+    const requested = await harness.decisions.requestQuestion({ conversationId: 'asker', channel: 'chat', title: 'Which option?',
+      questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] });
+    harness.store.refuseNextJobAnswer = true;
+
+    await expect(harness.decisions.resolve({ id: requested.record.id, conversationId: 'asker', action: 'answered',
+      answers: [{ question: 'Which?', selected: ['A'] }] }, { kind: 'human' }))
+      .resolves.toMatchObject({ settled: false, reason: 'This request changed. Refresh For You before answering.' });
+    expect((await harness.store.findById(requested.record.id))?.status).toBe('answered');
+    expect(harness.askerMessages).toHaveLength(0);
   });
 
   it('keeps the existing inbox settlement path after a question reaches the human level', async() => {

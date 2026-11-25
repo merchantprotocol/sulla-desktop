@@ -2,8 +2,11 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PendingDecisionRepository } from '../../../repositories/PendingDecisionRepository';
+import { TestDatabase } from '../../Support/TestDatabase';
+
+import type { DecisionRecord } from '@pkg/shared/decisions';
 
 describe('PendingDecisionRepository', () => {
   it('selects spawn mode and parent job id for escalation route decisions', async() => {
@@ -111,5 +114,43 @@ describe('PendingDecisionRepository', () => {
     expect(sql).toContain("jsonb_set(record,'{answerDelivery}','\"delivered\"')");
     expect(sql).toContain("record->>'answerDelivery'='queued'");
     expect(params).toEqual(['decision-1']);
+  });
+});
+
+const databaseDescribe = TestDatabase.available() ? describe : describe.skip;
+databaseDescribe('PendingDecisionRepository human override delivery against PostgreSQL', () => {
+  const database = new TestDatabase();
+  const repository = new PendingDecisionRepository({ query: (sql, params) => database.query(sql, params) as any });
+
+  beforeAll(async() => { await database.initialize() });
+  afterAll(async() => { await database.dispose() });
+
+  it('queues the asker delivery after the human has settled the routed question', async() => {
+    // risk: user communication — the PostgreSQL predicate must permit one durable delivery after the answer CAS already marked attention answered.
+    const record: DecisionRecord = {
+      id: 'human-override-postgres', conversationId: 'human-override-asker', channel: 'chat', title: 'Which option?',
+      kind: 'question', status: 'pending', attention: 'active', createdAt: 1, expiresAt: 1_000_000,
+      payload: { answerRoute: 'inbox', askerJobId: 'asker-job', askerTaskIndex: '2' },
+      questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }],
+      route: { authority: 'any', chain: [
+        { threadId: 'parent-thread', channel: 'chat', agentId: 'manager', jobId: 'parent-job', taskIndex: 0, kind: 'agent' },
+        { threadId: 'root-thread', channel: 'chat', agentId: 'human', kind: 'human' },
+      ], holderIndex: 0, holderSince: 1, history: [] },
+    };
+    await database.query('INSERT INTO human_decisions(id,session_id,status,record) VALUES($1,$2,$3,$4::jsonb)',
+      [record.id, 'human-override-session', record.status, JSON.stringify(record)]);
+    const answers = [{ question: 'Which?', selected: ['A'] }];
+    const history = [{ threadId: 'root-thread', agentId: 'human', action: 'answered' as const, at: 2 }];
+
+    expect(await repository.settleAs(record.id, 0, { kind: 'human' }, 'answered', {
+      status: 'answered', attention: 'answered', answeredBy: { kind: 'human' }, answers,
+    }, history)).toBe(true);
+    const settled = await repository.findById(record.id);
+    expect(settled).toMatchObject({ status: 'answered', attention: 'answered', answeredBy: { kind: 'human' }, answers });
+    expect(settled?.answerDelivery).toBeUndefined();
+
+    await expect(repository.recordJobAnswer(settled!, answers)).resolves.toMatchObject({
+      status: 'answered', attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers,
+    });
   });
 });

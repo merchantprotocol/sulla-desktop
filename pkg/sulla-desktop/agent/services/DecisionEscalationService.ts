@@ -87,7 +87,7 @@ export class DecisionEscalationService {
     const answered = await this.records.findById(record.id) ?? { ...record, ...patch, route: { ...route, history: [...route.history, ...history] } };
     this.changed(answered);
     const receipt = await deliver(answered);
-    return { ...receipt, settled: true, conversationId: answered.conversationId };
+    return { ...receipt, settled: receipt.settled, conversationId: answered.conversationId };
   }
 
   pass(threadId: string, decisionId: string, note?: string) { return this.answerAsAgent(threadId, decisionId, 'pass', undefined, note) }
