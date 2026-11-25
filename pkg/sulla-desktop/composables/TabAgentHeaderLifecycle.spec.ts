@@ -4,15 +4,14 @@
 import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createApp, h, nextTick, onUnmounted, ref } from 'vue';
+import { createApp, h, nextTick, onUnmounted, provide, ref } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 
-import { tabContextMenuBridge } from './TabContextMenuBridge';
+import { WindowTabStripState, windowTabStripKey } from './WindowTabStripState';
 import { useBrowserTabs } from './useBrowserTabs';
 
 import AgentHeader from '@pkg/pages/agent/AgentHeader.vue';
 import TabStripTab from '@pkg/pages/agent/TabStripTab.vue';
-import { chatActivityStore } from '@pkg/pages/chat/messages/chatActivityStore';
 
 const ipc = vi.hoisted(() => ({
   send:   vi.fn(),
@@ -50,8 +49,11 @@ async function mountShell(count = 1) {
   const tabProps = new Map<string, InstanceType<typeof TabStripTab>['$props']>();
   const app = createApp({
     setup: () => {
-      onUnmounted(chatActivityStore.connect(window, ipc.events!));
-      onUnmounted(tabContextMenuBridge.connect(ipc.events!));
+      const state = new WindowTabStripState(window, ipc.events!);
+
+      provide(windowTabStripKey, state);
+      state.connect();
+      onUnmounted(() => state.dispose());
       return () => Array.from({ length: count }, (_, header) => h(AgentHeader, {
         key:         `${ header }:${ generation.value }`,
         isDark:      true,
@@ -91,7 +93,6 @@ describe('window tab state with real AgentHeaders', () => {
   afterEach(() => {
     shells.splice(0).forEach(unmount => unmount());
     for (const tab of [...store.tabs]) store.releaseTab(tab.id);
-    chatActivityStore.snapshots.clear();
     vi.unstubAllGlobals();
   });
 

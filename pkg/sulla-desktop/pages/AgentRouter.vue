@@ -109,7 +109,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
+import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AgentHeader from './agent/AgentHeader.vue';
@@ -124,14 +124,13 @@ import { ConversationShellPolicy } from './conversations/ConversationShellPolicy
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
-import { tabContextMenuBridge } from '@pkg/composables/TabContextMenuBridge';
 import { TabGroupModel } from '@pkg/composables/TabGroupModel';
 import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
 import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
+import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId, type BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
-import { chatActivityStore } from '@pkg/pages/chat/messages/chatActivityStore';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
@@ -152,8 +151,11 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 const route = useRoute();
 const router = useRouter();
 
-onUnmounted(chatActivityStore.connect(window, ipcRenderer));
-onUnmounted(tabContextMenuBridge.connect(ipcRenderer));
+const windowTabStrip = new WindowTabStripState(window, ipcRenderer);
+
+provide(windowTabStripKey, windowTabStrip);
+windowTabStrip.connect();
+onUnmounted(() => windowTabStrip.dispose());
 const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabStripLayoutStorageKey, isTabPinned } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
