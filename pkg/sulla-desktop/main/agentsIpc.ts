@@ -144,6 +144,7 @@ export interface AgentDefinitionResponse {
   canCall:            string[];
   isBuiltin:          boolean;
   frontDoor:          boolean | null;
+  agentAwareness:     boolean;
   allowedTools:       string[];
   skillRefs:          string[];
   routineRefs:        string[];
@@ -294,6 +295,7 @@ export async function listAgentDefinitions(options: AgentDefinitionsListOptions 
     canCall:            a.can_call,
     isBuiltin:          a.is_builtin,
     frontDoor:          a.front_door,
+    agentAwareness:     a.agent_awareness,
     allowedTools:       [...(a.allowed_tools ?? [])],
     skillRefs:          [...(a.skill_refs ?? [])],
     routineRefs:        [...(a.routine_refs ?? [])],
@@ -357,6 +359,7 @@ export function initAgentsIpc(): void {
       costTier:      input.costTier,
       canCall:       input.canCall,
       frontDoor:     input.frontDoor,
+      agentAwareness: input.agentAwareness,
       status:        'production' as const,
       sourceKind:    'local' as const,
       runLocation:   input.runLocation ?? DEFAULT_AGENT_RUN_LOCATION,

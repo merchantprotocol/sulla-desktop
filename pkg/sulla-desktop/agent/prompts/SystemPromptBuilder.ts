@@ -18,6 +18,7 @@
  */
 
 import { checkHeartbeatPromptInvariants, type HeartbeatInvariantResult } from './heartbeatInvariants';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 
 import type { ChatMode } from '../controllers/ChatController';
 
@@ -63,6 +64,10 @@ export interface PromptBuildContext {
   isHeartbeat:           boolean;
   /** WebSocket channel name */
   wsChannel:             string;
+  /** Whether this agent may see other agents and team-operation instructions. */
+  agentAwareness?:       boolean;
+  /** Shared policy instance injected by SystemPromptBuilder for section factories. */
+  agentAwarenessPolicy?: AgentAwarenessPolicy;
   /** Tool exposure mode: 'slim' pushes only the minimal native set + catalog discovery; 'full' pushes resolved schemas */
   toolMode?:             'slim' | 'full';
   /** Template variables for {{placeholder}} substitution */
@@ -169,6 +174,7 @@ interface RegisteredSection {
 
 class SystemPromptBuilderImpl {
   private sections = new Map<string, RegisteredSection>();
+  constructor(private readonly agentAwarenessPolicy = new AgentAwarenessPolicy()) {}
   // Stable sections can still read state outside ctx (DB agent prompts, tool catalog,
   // installed skills), so a cached section also expires after a short TTL.
   private static readonly STABLE_SECTION_TTL_MS = 60_000;
@@ -200,6 +206,7 @@ class SystemPromptBuilderImpl {
    * Build the complete system prompt from registered sections.
    */
   async build(ctx: PromptBuildContext): Promise<BuiltPrompt> {
+    const includeAgentAwareness = this.agentAwarenessPolicy.canSeeOtherAgents({ agent_awareness: ctx.agentAwareness });
     // Mode 'none' — just return the base prompt, no sections
     if (ctx.mode === 'none') {
       return {
@@ -220,13 +227,15 @@ class SystemPromptBuilderImpl {
     const factoryResults = await Promise.all(registrations.map(async ([id, reg]) => {
       if (!reg.modes.has(ctx.mode)) return { id, reg, section: null, elapsed: 0, error: undefined as unknown };
       const frozenHeartbeat = ctx.isHeartbeat && id === 'heartbeat';
-      if ((ctx.isHeartbeat && id === 'agent_prompt') || (ctx.excludeSections.has(id) && !frozenHeartbeat)) {
+      if ((ctx.isHeartbeat && id === 'agent_prompt') || (ctx.excludeSections.has(id) && !frozenHeartbeat) ||
+          (id === 'channel_awareness' && !includeAgentAwareness)) {
         return { id, reg, section: null, elapsed: 0, error: undefined as unknown };
       }
       const cacheKey = JSON.stringify({
         mode: ctx.mode, agentId: ctx.agentId, agentConfig: ctx.agentConfig,
         provider: ctx.provider, chatMode: ctx.chatMode, trustLevel: ctx.trustLevel,
         isSubAgent: ctx.isSubAgent, isHeartbeat: ctx.isHeartbeat, wsChannel: ctx.wsChannel,
+        agentAwareness: ctx.agentAwareness,
         toolMode: ctx.toolMode, templateVars: ctx.templateVars,
         overrides: [...ctx.agentSectionOverrides.entries()], excluded: [...ctx.excludeSections].sort(),
         db: ctx.dbSections ? [...ctx.dbSections.entries()] : [], basePrompt: ctx.basePrompt,
@@ -235,7 +244,7 @@ class SystemPromptBuilderImpl {
       if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilderImpl.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
       const started = Date.now();
       try {
-        const section = await reg.factory(ctx);
+        const section = await reg.factory({ ...ctx, agentAwarenessPolicy: this.agentAwarenessPolicy });
         const elapsed = Date.now() - started;
         if (section?.cacheStability === 'stable') this.stableSectionCache.set(id, { key: cacheKey, section, at: Date.now() });
         return { id, reg, section, elapsed, error: undefined as unknown };
@@ -248,6 +257,7 @@ class SystemPromptBuilderImpl {
     for (const [id, reg] of registrations) {
       // Skip if mode doesn't match
       if (!reg.modes.has(ctx.mode)) continue;
+      if (id === 'channel_awareness' && !includeAgentAwareness) continue;
 
       // Heartbeat's operator contract is frozen and DB-backed. Legacy files in
       // ~/sulla/agents/heartbeat previously leaked in through two paths:
@@ -310,14 +320,14 @@ class SystemPromptBuilderImpl {
       if (!section) continue;
 
       // Layer 2: DB row content replaces the baked factory content, keeping the
-      // factory's priority/cacheStability. Generated sections (isGenerated) are
-      // left as-is — their factory already composed the DB static preamble with
-      // the live runtime tail (it reads ctx.dbSections directly).
+      // factory's priority/cacheStability. Generated sections and soul stay
+      // factory-owned — soul normalizes legacy rows before policy is applied.
+      // Other generated sections compose DB content with their live runtime tails.
       // The compiled Heartbeat contract is replace-only from source control.
       // A DB row is install-local state just like an agent markdown override;
       // accepting it here would silently bypass the frozen section guard above.
       const dbRow = isFrozenHeartbeatSection ? undefined : ctx.dbSections?.get(id);
-      const content = dbRow && !dbRow.isGenerated && dbRow.content?.trim()
+      const content = id !== 'soul' && dbRow && !dbRow.isGenerated && dbRow.content?.trim()
         ? dbRow.content
         : section.content;
       if (content?.trim()) {

@@ -20,6 +20,7 @@ export interface AgentEditorFormState {
   name:          string;
   description:   string;
   prompt:        string;
+  agentAwareness: boolean;
   modelSlot:     'primary' | 'secondary' | 'subconscious';
   enabled:       boolean;
   whenToCall:    string;
@@ -40,6 +41,7 @@ export function emptyAgentEditorForm(): AgentEditorFormState {
     name:        '',
     description: '',
     prompt:      '',
+    agentAwareness: true,
     modelSlot:   'secondary',
     enabled:     true,
     ...cloneAgentEditorRouting(undefined),
@@ -55,6 +57,7 @@ export function editorFormFromAgent(
     name:        agent.name,
     description: agent.description ?? '',
     prompt:      agent.prompt ?? '',
+    agentAwareness: agent.agentAwareness !== false,
     modelSlot:   agent.modelSlot ?? 'secondary',
     enabled:     agent.enabled !== false,
     ...cloneAgentEditorRouting(agent),
@@ -69,6 +72,7 @@ export function editorPatchFromForm(
     name:          form.name,
     description:   form.description,
     prompt:        form.prompt,
+    agentAwareness: form.agentAwareness,
     modelSlot:     form.modelSlot,
     enabled:       form.enabled,
     whenToCall:    form.whenToCall,

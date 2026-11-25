@@ -148,6 +148,7 @@ import type { SubAgentConversationTarget } from './components/subagent/subAgentC
 import { restoreChatFromHistory } from './services/historyRestore';
 
 import { AgentModelSelectorController } from '@pkg/pages/agent/AgentModelSelectorController';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 
 import { ChatController }        from './controller/ChatController';
 import { ThreadRegistry }        from './controller/ThreadRegistry';
@@ -487,6 +488,7 @@ const threadAgentActivity = useThreadAgentActivity({
     const named = agentId ? modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.name : '';
     return named || modelSelector.chatDefaultAgentName.value || 'Sulla';
   }),
+  traceHistory: (parentThreadId, jobId, taskIndex) => ipcRenderer.invoke('agents:trace-history', parentThreadId, jobId, taskIndex) as Promise<AgentTraceHistoryData | null>,
 });
 const chartRoot = threadAgentActivity.chartRoot;
 provide(THREAD_AGENT_ACTIVITY_KEY, threadAgentActivity);

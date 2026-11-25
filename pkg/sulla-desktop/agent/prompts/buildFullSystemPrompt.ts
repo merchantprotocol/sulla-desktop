@@ -33,6 +33,8 @@ export interface BuildFullSystemPromptOptions {
   trustLevel?: 'trusted' | 'verify' | 'untrusted';
   /** Override provider name for sections that vary by provider. Defaults to the active primary provider, or 'anthropic'. */
   provider?:   string;
+  /** Per-agent gate for the roster, team directory and agent communication section. */
+  agentAwareness?: boolean;
   /** Base prompt appended at the end of the built sections. */
   basePrompt?: string;
 }
@@ -107,6 +109,7 @@ export async function buildFullSystemPrompt(
     isSubAgent:            false,
     isHeartbeat:           false,
     wsChannel:             'sulla-desktop',
+    agentAwareness:        options.agentAwareness,
     toolMode,
     templateVars,
     agentSectionOverrides,
