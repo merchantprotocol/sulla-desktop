@@ -18,7 +18,9 @@
         @click="toggle"
       ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
     </div>
-    <p v-if="row.note" class="dtr-note"><time v-if="noteTime" class="dtr-when">{{ noteTime }}</time>{{ row.note }}</p>
+    <p v-if="row.note || row.subagent.followUpOf" class="dtr-note">
+      <time v-if="noteTime" class="dtr-when">{{ noteTime }}</time><span v-if="row.subagent.followUpOf">Follow-up of job {{ row.subagent.followUpOf.jobId }} task {{ row.subagent.followUpOf.taskIndex }}.{{ row.note ? ' ' : '' }}</span>{{ row.note }}
+    </p>
     <div class="dtr-agent-meta">
       <span v-if="agentMeta">{{ agentMeta }}</span>
       <button v-if="row.subagent.conversationId && openConversation" type="button" @click="openAgent">Open agent</button>
@@ -112,7 +114,7 @@ const payloadSource = computed<{ id: string; payload?: TraceRowModel['payload'] 
   return { id, payload };
 });
 // Only the open disclosure reads this computed.
-const payloadText = computed(() => payloadSource.value.payload?.serialize(history.value?.checkins));
+const payloadText = computed(() => payloadSource.value.payload?.serialize(history.value?.checkins, history.value?.messages));
 const statusLabel = computed(() => SubAgentTraceProjection.statusLabel(props.row.status as SubAgentTraceStatus));
 const agentMeta = computed(() => {
   const agent = props.row.subagent;

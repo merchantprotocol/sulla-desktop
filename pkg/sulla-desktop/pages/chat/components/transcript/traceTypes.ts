@@ -25,7 +25,10 @@ export interface SubAgentTraceDetails {
   report: string;
   startedAt?: number;
   endedAt?: number;
+  durationMs?: number;
   noteAt?: number;
+  /** The job this one relaunches or continues, from result tracking. */
+  followUpOf?: { jobId: string; taskIndex: number };
 }
 
 export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'running';
@@ -55,4 +58,8 @@ export interface TraceTurn {
   usage?: { model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; durationLabel?: string };
   /** "2 agents: 1 returned, 1 working" when the turn launched sub-agents. */
   agentSummary?: string;
+  /** Sources the turn's reply cites. */
+  sourceCount?: number;
+  /** A worker in this turn is blocked or a decision here is pending. */
+  waitingOnYou?: boolean;
 }

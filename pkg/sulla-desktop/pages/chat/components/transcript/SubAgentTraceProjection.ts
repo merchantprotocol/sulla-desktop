@@ -7,6 +7,7 @@ import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
 import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { AgentRowState, AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { AgentJobCheckin } from '@pkg/agent/database/models/AgentJobMessagingModel';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import type { Message, ProactiveMessage, SubAgentExchangeMessage, SubAgentMessage } from '../../models/Message';
@@ -165,6 +166,9 @@ export class SubAgentTraceProjection {
       model: modelStatus ? AgentModelStatus.label(modelStatus) : result?.model,
       runLocation: result?.runLocation, isReviewer: result?.purpose === 'review',
       startedAt, endedAt, noteAt: settled || ended ? undefined : lastCheckinAt,
+      durationMs: !reopened && result?.durationMs !== undefined ? result.durationMs
+        : endedAt !== undefined && startedAt !== undefined ? endedAt - startedAt : undefined,
+      followUpOf: this.followUp(live?.followUpOf ?? result?.followUpOf),
       brief: launch?.detail, briefAt: launch?.createdAt,
       checkinAt: lastCheckinAt, checkinSummary: live?.lastCheckinSummary ?? undefined,
       report: report || legacy?.body || native?.steps.map(step => `${ step.tag }  ${ step.text }`).join('\n') ||
@@ -173,31 +177,48 @@ export class SubAgentTraceProjection {
     return { id: `subagent:${ job.key }`, kind: 'subagent', verb: '', target: label, targetIsCode: false, status,
       at: first.createdAt, anchorEntryId: '', note,
       payload: new TracePayload([status, details.brief, details.briefAt, details.checkinAt, details.checkinSummary,
-        details.endedAt, details.report], history => this.disclosure(details, status, history)),
+        details.endedAt, details.report], (history, messages) => this.disclosure(details, status, history, messages)),
       durationLabel: !reopened && result?.durationMs !== undefined ? this.duration(result.durationMs) : undefined,
       subagent: details,
     };
   }
 
-  disclosure(details: SubAgentTraceDetails, status: SubAgentTraceStatus, history: readonly AgentJobCheckin[] = []): string {
+  disclosure(details: SubAgentTraceDetails, status: SubAgentTraceStatus, history: readonly AgentJobCheckin[] = [],
+    messages: AgentTraceHistoryData['messages'] = []): string {
     const checkins = [...history];
     const { checkinAt, checkinSummary, briefAt, brief, endedAt } = details;
     if (checkinAt !== undefined && checkinSummary && !history.some(entry => entry.createdAt === checkinAt && entry.summary === checkinSummary)) {
       checkins.push({ createdAt: checkinAt, summary: checkinSummary, step: '', blockers: [], filesTouched: [] });
     }
-    checkins.sort((a, b) => a.createdAt - b.createdAt);
-    const formattedCheckins = checkins.map(entry => [
-      `${ this.timeLabel(entry.createdAt) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
-      ...(entry.step ? [entry.step] : []), ...entry.blockers, ...entry.filesTouched,
-    ].join('\n')).join('\n');
+    // Check-ins and messages sent to the worker, interleaved by time, word for word.
+    const timeline = [
+      ...checkins.map(entry => ({ at: entry.createdAt, text: [
+        `${ this.timeLabel(entry.createdAt) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
+        ...(entry.step ? [entry.step] : []), ...entry.blockers, ...entry.filesTouched,
+      ].join('\n') })),
+      ...messages.map(entry => ({ at: entry.createdAt, text: `${ this.timeLabel(entry.createdAt) }  ← Sulla: ${ entry.message }` })),
+    ].sort((a, b) => a.at - b.at);
+    const formattedCheckins = timeline.map(entry => entry.text).join('\n');
     return [
       brief && `BRIEF${ briefAt !== undefined ? ` · sent ${ this.timeLabel(briefAt) }` : '' }
 ${ brief }`,
       `CHECK-INS
 ${ formattedCheckins || 'None recorded.' }`,
-      `REPORT${ endedAt !== undefined ? ` · ${ status } ${ this.timeLabel(endedAt) }` : '' }
+      `REPORT${ endedAt !== undefined ? ` · ${ this.reportHeader(details, status, endedAt) }` : '' }
 ${ details.report }`,
     ].filter(Boolean).join('\n\n');
+  }
+
+  /** "completed 1:07:52 PM · 3m 40s". Results record no token count, so none is shown. */
+  private reportHeader(details: SubAgentTraceDetails, status: SubAgentTraceStatus, endedAt: number): string {
+    const word = status === 'returned' ? 'completed' : statusLabels[status];
+    return [`${ word } ${ this.timeLabel(endedAt) }`, details.durationMs !== undefined ? this.duration(details.durationMs) : undefined]
+      .filter(Boolean).join(' · ');
+  }
+
+  private followUp(ref?: { jobId?: unknown; taskIndex?: unknown } | null): SubAgentTraceDetails['followUpOf'] {
+    return ref && typeof ref.jobId === 'string' && ref.jobId && Number.isInteger(ref.taskIndex)
+      ? { jobId: ref.jobId, taskIndex: ref.taskIndex as number } : undefined;
   }
 
   duration(ms: number): string {

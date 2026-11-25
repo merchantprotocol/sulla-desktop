@@ -124,6 +124,20 @@ describe('Option A Detailed sub-agent row', () => {
     expect(row.subagent?.marker).toBe('CL');
   });
 
+  it('falls back to the chart key for the marker when the agent id is missing', () => {
+    // risk: an unnamed agent getting a different marker in the trace than in the chart.
+    const unnamed = { ...launch, agentId: undefined };
+    const [row] = rows([unnamed, reply], [{ ...live('working'), agentId: null }]);
+    expect(row.subagent?.marker).toBe(ThreadAgentActivityPresenter.initials(null, 'job-1:0'));
+  });
+
+  it('names the job a relaunch follows and heads the report with outcome and run time', () => {
+    // risk: losing which failed job a relaunch replaces, or a wrong total run time.
+    const [row] = rows([launch, reply, card(result('completed', { startedAt: 2_000, durationMs: 220_000, followUpOf: { jobId: 'job-0', taskIndex: 1 } }))]);
+    expect(row.subagent?.followUpOf).toEqual({ jobId: 'job-0', taskIndex: 1 });
+    expect(row.payload!.serialize()).toMatch(/REPORT · completed .+ · 3m 40s\n/);
+  });
+
   it('summarizes the turn sub-agents by status word', () => {
     // risk: the turn header miscounting returned versus working jobs.
     const second = { ...launch, id: asMessageId('launch-2'), taskIndex: 1, conversationId: 'child-2', createdAt: 2_100 };
@@ -131,6 +145,9 @@ describe('Option A Detailed sub-agent row', () => {
     const [turn] = projection.project(messages, reporting.standardEntries(messages, 'info'), { agents: [] });
     expect(turn.agentSummary).toBe('2 agents: 1 returned, 1 starting');
     expect(SubAgentTraceProjection.summary([])).toBeUndefined();
+    expect(turn.waitingOnYou).toBeUndefined();
+    const blocked = [launch, reply, card(result('blocked', { problem: 'Needs a decision' }))];
+    expect(projection.project(blocked, reporting.standardEntries(blocked, 'info'))[0].waitingOnYou).toBe(true);
   });
 
   it('numbers each Read step on the trace to match the reply sources', () => {
@@ -142,6 +159,7 @@ describe('Option A Detailed sub-agent row', () => {
     const messages = [cited, reply];
     const reads = projection.project(messages, reporting.standardEntries(messages, 'info')).flatMap(turn => turn.rows).filter(row => row.kind === 'source');
     expect(reads.map(row => [row.cite, row.verb, row.target])).toEqual([[1, 'Read report', 'plan-review.md'], [2, 'Read source', 'Vue docs']]);
+    expect(projection.project(messages, reporting.standardEntries(messages, 'info'))[0].sourceCount).toBe(2);
   });
 });
 

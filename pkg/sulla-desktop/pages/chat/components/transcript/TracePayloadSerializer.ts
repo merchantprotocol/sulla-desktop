@@ -4,12 +4,13 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { AgentJobCheckin } from '@pkg/agent/database/models/AgentJobMessagingModel';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 
 /** A disclosure source. Equal inputs let a mounted row reuse its cached serialization. */
 export class TracePayload {
   constructor(
     private readonly inputs: readonly unknown[],
-    readonly serialize: (history?: readonly AgentJobCheckin[]) => string,
+    readonly serialize: (history?: readonly AgentJobCheckin[], messages?: AgentTraceHistoryData['messages']) => string,
   ) {}
 
   matches(other: TracePayload): boolean {

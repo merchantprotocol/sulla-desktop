@@ -38,4 +38,12 @@ describe('DetailedTraceProjection', () => {
     expect(turn.rows[0].payload!.serialize()).toContain('vault output');
     expect(turn.rows[0].payload!.serialize()).toContain('vault error');
   });
+  it('shows a shell call as Ran with its full command, tool name and exit code', () => {
+    // risk: a shell step that hides the command it ran or the tool that ran it.
+    const tool = { kind: 'tool', id: '1_tool_exec', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'ok',
+      meta: 'exit 2 · 94ms', input: JSON.stringify({ command: 'git grep -n "overwrite" AgentSeeder.ts' }), output: 'two hits' } as const;
+    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+    expect(row).toMatchObject({ verb: 'Ran', target: 'git grep -n "overwrite" AgentSeeder.ts', keyArgs: 'exec · exit 2', durationLabel: '94ms' });
+    expect(row.payload!.serialize()).toContain('two hits');
+  });
 });
