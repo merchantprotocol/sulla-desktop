@@ -8,43 +8,56 @@
 <template>
   <div
     ref="rootElement"
-    v-if="displayItem || (pinned && historyItems.length)"
+    v-if="displayItem || trailItems.length || (pinned && historyItems.length)"
     class="status-rollup"
     :class="{ 'is-pinned': pinned, 'is-reduced-motion': reducedMotion, 'is-document-hidden': !documentVisible }"
     @mouseenter="hovered = true"
     @mouseleave="hovered = false"
   >
-    <Transition name="rollup-flight" mode="out-in">
-      <button
-        v-if="displayItem"
-        :key="`${ displayItem.key }:${ displayItem.agentId }:${ displayItem.text }`"
-        type="button"
-        class="status-rollup__line"
-        :data-urgency="displayItem.urgency"
-        :aria-label="`${ displayItem.agentName }${ displayItem.lane ? ` · ${ displayItem.lane }` : '' }: ${ displayItem.text }`"
-        aria-haspopup="true"
-        :aria-expanded="pinned"
-        @click="togglePinned"
+    <TransitionGroup v-if="trailItems.length" name="rollup-trail" tag="div" class="status-rollup__trail" aria-hidden="true">
+      <div
+        v-for="(item, index) in trailItems"
+        :key="item.key"
+        class="status-rollup__trail-item"
+        :class="index === 0 ? 'is-older' : 'is-newer'"
       >
-        <span
-          class="status-rollup__marker"
-          :data-role="displayItem.role"
-          :data-urgency="displayItem.urgency"
-          aria-hidden="true"
-        >{{ displayItem.agentName.slice(0, 1).toLocaleUpperCase() }}</span>
-        <span class="status-rollup__who">{{ displayItem.agentName }}</span>
-        <span v-if="displayItem.lane" class="status-rollup__lane">{{ displayItem.lane }}</span>
-        <span class="status-rollup__separator" aria-hidden="true">·</span>
-        <span class="status-rollup__text">{{ displayItem.text }}</span>
-        <span
-          v-if="displayItem.urgency === 'needs-you' || displayItem.urgency === 'failed'"
-          class="status-rollup__urgency"
-          :data-urgency="displayItem.urgency"
-          aria-hidden="true"
-        >{{ displayItem.urgency === 'failed' ? '×' : '!' }}</span>
-        <span class="status-rollup__pin" aria-hidden="true">{{ pinned ? '⌄' : '⌃' }}</span>
-      </button>
-    </Transition>
+        <span class="status-rollup__dot" :data-role="item.role" />
+        <span class="status-rollup__who">{{ item.agentName }}</span>
+        <span class="status-rollup__kind">{{ item.kind || 'agent' }}</span>
+        <span class="status-rollup__separator">·</span>
+        <span class="status-rollup__text">{{ item.text }}</span>
+      </div>
+    </TransitionGroup>
+
+    <button
+      v-if="displayItem"
+      type="button"
+      class="status-rollup__line"
+      :data-urgency="displayItem.urgency"
+      :aria-label="`${ displayItem.agentName } · ${ displayItem.kind || 'agent' }: ${ displayItem.text }`"
+      aria-haspopup="true"
+      :aria-expanded="pinned"
+      @click="togglePinned"
+    >
+      <span
+        class="status-rollup__dot"
+        :class="{ 'is-popping': dotPopping }"
+        :data-role="displayItem.role"
+        :data-urgency="displayItem.urgency"
+        aria-hidden="true"
+      />
+      <span class="status-rollup__who">{{ displayItem.agentName }}</span>
+      <span class="status-rollup__kind">{{ displayItem.kind || 'agent' }}</span>
+      <span class="status-rollup__separator" aria-hidden="true">·</span>
+      <span class="status-rollup__text" aria-live="polite">{{ typedText }}</span>
+      <span
+        v-if="displayItem.urgency === 'needs-you' || displayItem.urgency === 'failed'"
+        class="status-rollup__urgency"
+        :data-urgency="displayItem.urgency"
+        aria-hidden="true"
+      >{{ displayItem.urgency === 'failed' ? '×' : '!' }}</span>
+      <span class="status-rollup__pin" aria-hidden="true">{{ pinned ? '⌄' : '⌃' }}</span>
+    </button>
 
     <Transition name="rollup-history">
       <section
@@ -92,14 +105,19 @@ const emit = defineEmits<{ shown: [payload: StatusRollupShownEvent] }>();
 const queue = new StatusRollupQueue();
 const rootElement = ref<HTMLElement | null>(null);
 const currentItem = ref<StatusRollupItem | null>(null);
+const trailItems = ref<StatusRollupItem[]>([]);
 const historyItems = ref<readonly StatusRollupItem[]>([]);
 const hovered = ref(false);
 const pinned = ref(false);
 const documentVisible = ref(true);
 const reducedMotion = ref(false);
 const mounted = ref(false);
+const typedText = ref('');
+const dotPopping = ref(false);
 let activeThreadId = '';
 let timer: number | undefined;
+let typingTimer: number | undefined;
+let dotTimer: number | undefined;
 let motionQuery: MediaQueryList | undefined;
 
 const isPaused = computed(() => hovered.value || pinned.value || !documentVisible.value);
@@ -108,11 +126,65 @@ const fallbackItem = computed(() => props.rootFallback
   : null);
 const displayItem = computed(() => currentItem.value ?? fallbackItem.value);
 
+const emitShown = (item: StatusRollupItem): void => {
+  emit('shown', {
+    key: item.key,
+    agentId: item.agentId,
+    threadId: item.threadId,
+    role: item.role,
+    kind: item.kind,
+    phase: item.phase,
+    correlationId: item.correlationId,
+  });
+};
+
+const typeText = (item: StatusRollupItem, animate: boolean): void => {
+  if (typingTimer !== undefined) window.clearTimeout(typingTimer);
+  typingTimer = undefined;
+  if (!animate || reducedMotion.value || !documentVisible.value) {
+    typedText.value = item.text;
+    return;
+  }
+  typedText.value = '';
+  const characters = Array.from(item.text);
+  let count = 0;
+  const typeNext = (): void => {
+    count = Math.min(characters.length, count + 1);
+    typedText.value = characters.slice(0, count).join('');
+    if (count < characters.length) typingTimer = window.setTimeout(typeNext, 13);
+    else typingTimer = undefined;
+  };
+  typeNext();
+};
+
+const showItem = (item: StatusRollupItem | null, fromQueue = false): void => {
+  const previous = currentItem.value;
+  if (previous?.key === item?.key) {
+    if (item && previous.text !== item.text) { currentItem.value = item; typeText(item, fromQueue); }
+    return;
+  }
+  if (previous && item) {
+    const newestFirst = [previous, ...trailItems.value.slice().reverse()].slice(0, 2);
+    trailItems.value = newestFirst.reverse();
+  }
+  currentItem.value = item;
+  if (item) {
+    typeText(item, fromQueue);
+    if (dotTimer !== undefined) window.clearTimeout(dotTimer);
+    dotPopping.value = fromQueue && !reducedMotion.value;
+    dotTimer = window.setTimeout(() => { dotPopping.value = false; dotTimer = undefined; }, 160);
+    if (fromQueue) emitShown(item);
+  } else {
+    typedText.value = '';
+    dotPopping.value = false;
+  }
+};
+
 const refresh = (): void => {
   const now = Date.now();
   const shown = queue.pump(now, isPaused.value);
-  if (shown) emit('shown', { key: shown.key, agentId: shown.agentId, threadId: shown.threadId });
-  currentItem.value = queue.current ?? fallbackItem.value;
+  if (shown) showItem(shown, true);
+  else showItem(queue.current ?? fallbackItem.value);
   historyItems.value = queue.history;
 };
 
@@ -121,7 +193,8 @@ const syncInput = (): void => {
   if (activeThreadId !== props.threadId) {
     activeThreadId = props.threadId;
     queue.reset(activeThreadId);
-    currentItem.value = null;
+    showItem(null);
+    trailItems.value = [];
     historyItems.value = [];
     pinned.value = false;
     hovered.value = false;
@@ -129,8 +202,6 @@ const syncInput = (): void => {
 
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
   queue.observe(props.checkIns, props.threadId, now, visible);
-  queue.seed(props.checkIns, props.threadId, now);
-  currentItem.value = queue.current ?? fallbackItem.value;
   historyItems.value = queue.history;
   if (mounted.value) refresh();
 };
@@ -153,6 +224,12 @@ const syncVisibility = (): void => {
 
 const syncReducedMotion = (event?: MediaQueryListEvent): void => {
   reducedMotion.value = event?.matches ?? motionQuery?.matches ?? false;
+  if (reducedMotion.value && currentItem.value) {
+    if (typingTimer !== undefined) window.clearTimeout(typingTimer);
+    typingTimer = undefined;
+    typedText.value = currentItem.value.text;
+    dotPopping.value = false;
+  }
 };
 
 watch(
@@ -178,6 +255,8 @@ onBeforeUnmount(() => {
   mounted.value = false;
   hovered.value = false;
   if (timer !== undefined) window.clearInterval(timer);
+  if (typingTimer !== undefined) window.clearTimeout(typingTimer);
+  if (dotTimer !== undefined) window.clearTimeout(dotTimer);
   document.removeEventListener('visibilitychange', syncVisibility);
   motionQuery?.removeEventListener('change', syncReducedMotion);
 });
@@ -252,8 +331,22 @@ onBeforeUnmount(() => {
   color: var(--text-on-accent);
 }
 
+.status-rollup__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  transition: transform 160ms ease;
+}
+
+.status-rollup__dot[data-role='reviewer'] { background: var(--text-secondary); }
+.status-rollup__dot[data-urgency='needs-you'] { background: var(--status-warning); }
+.status-rollup__dot[data-urgency='failed'] { background: var(--status-error); }
+.status-rollup__dot.is-popping { transform: scale(1.5); }
+
 .status-rollup__who,
-.status-rollup__lane,
+.status-rollup__kind,
 .status-rollup__separator,
 .status-rollup__urgency,
 .status-rollup__pin {
@@ -269,16 +362,17 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.status-rollup__lane,
+.status-rollup__kind,
 .status-rollup__separator,
 .status-rollup__pin {
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.status-rollup__lane {
-  max-width: 100px;
+.status-rollup__kind {
+  max-width: 56px;
   overflow: hidden;
+  text-transform: lowercase;
   text-overflow: ellipsis;
 }
 
@@ -300,6 +394,34 @@ onBeforeUnmount(() => {
 .status-rollup__line[data-urgency='failed'] .status-rollup__who {
   color: var(--status-error);
 }
+
+.status-rollup__trail {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(470px, 100%);
+  height: 44px;
+  overflow: hidden;
+}
+
+.status-rollup__trail-item {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 7px;
+  height: 22px;
+  min-width: 0;
+  line-height: 22px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.status-rollup__trail-item.is-older { opacity: .3; }
+.status-rollup__trail-item.is-newer { opacity: .6; }
+.status-rollup__trail-item .status-rollup__who { max-width: 105px; font-size: 12.5px; }
+.status-rollup__trail-item .status-rollup__kind,
+.status-rollup__trail-item .status-rollup__separator { font-size: 11px; }
+.status-rollup__trail-item .status-rollup__text { font-size: 12.5px; }
 
 .status-rollup__urgency {
   margin-left: auto;
@@ -366,20 +488,18 @@ onBeforeUnmount(() => {
 .status-rollup__history-text { flex: 1; min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .status-rollup__history time { flex: none; padding-left: 4px; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 
-.rollup-flight-enter-active,
-.rollup-flight-leave-active {
-  transition: opacity 180ms ease, transform 240ms cubic-bezier(.22, 1, .36, 1);
+.rollup-trail-move {
+  transition: transform 420ms cubic-bezier(.22, 1, .36, 1), opacity 700ms cubic-bezier(.22, 1, .36, 1);
 }
 
-.rollup-flight-enter-from {
-  opacity: 0;
-  transform: translateY(5px);
+.rollup-trail-enter-active,
+.rollup-trail-leave-active {
+  transition: transform 420ms cubic-bezier(.22, 1, .36, 1), opacity 700ms cubic-bezier(.22, 1, .36, 1);
 }
 
-.rollup-flight-leave-to {
-  opacity: 0;
-  transform: translateY(-7px);
-}
+.rollup-trail-enter-from,
+.rollup-trail-leave-to { opacity: 0; transform: translateY(-22px); }
+.rollup-trail-leave-active { position: absolute; left: 0; right: 0; }
 
 .rollup-history-enter-active,
 .rollup-history-leave-active {
@@ -392,34 +512,37 @@ onBeforeUnmount(() => {
   transform: translateY(5px);
 }
 
-.is-document-hidden .rollup-flight-enter-active,
-.is-document-hidden .rollup-flight-leave-active,
+.is-document-hidden .rollup-trail-move,
+.is-document-hidden .rollup-trail-enter-active,
+.is-document-hidden .rollup-trail-leave-active,
 .is-document-hidden .rollup-history-enter-active,
 .is-document-hidden .rollup-history-leave-active {
   transition: none;
 }
 
-.is-reduced-motion .rollup-flight-enter-active,
-.is-reduced-motion .rollup-flight-leave-active,
+.is-reduced-motion .rollup-trail-move,
+.is-reduced-motion .rollup-trail-enter-active,
+.is-reduced-motion .rollup-trail-leave-active,
 .is-reduced-motion .rollup-history-enter-active,
 .is-reduced-motion .rollup-history-leave-active {
   transition: opacity 160ms ease;
 }
 
-.is-reduced-motion .rollup-flight-enter-from,
-.is-reduced-motion .rollup-flight-leave-to,
+.is-reduced-motion .rollup-trail-enter-from,
+.is-reduced-motion .rollup-trail-leave-to,
 .is-reduced-motion .rollup-history-enter-from,
 .is-reduced-motion .rollup-history-leave-to {
   transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rollup-flight-enter-active,
-  .rollup-flight-leave-active,
+  .rollup-trail-move,
+  .rollup-trail-enter-active,
+  .rollup-trail-leave-active,
   .rollup-history-enter-active,
   .rollup-history-leave-active { transition: opacity 160ms ease; }
-  .rollup-flight-enter-from,
-  .rollup-flight-leave-to,
+  .rollup-trail-enter-from,
+  .rollup-trail-leave-to,
   .rollup-history-enter-from,
   .rollup-history-leave-to { transform: none; }
 }

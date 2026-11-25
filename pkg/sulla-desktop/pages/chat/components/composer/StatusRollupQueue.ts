@@ -7,6 +7,8 @@
 
 export type StatusRollupUrgency = 'normal' | 'needs-you' | 'failed';
 export type StatusRollupAgentRole = 'root' | 'manager' | 'worker' | 'reviewer';
+export type StatusRollupKind = 'read' | 'edit' | 'run' | 'agent' | 'status' | 'thought' | 'reply' | 'tool';
+export type StatusRollupPhase = 'start' | 'result';
 
 /** A plain-text, already thread-scoped check-in supplied by the chat presenter. */
 export interface StatusRollupItem {
@@ -15,6 +17,11 @@ export interface StatusRollupItem {
   readonly agentId: string;
   readonly agentName: string;
   readonly lane?: string;
+  /** Short action label shown between the agent name and the activity text. */
+  readonly kind?: StatusRollupKind;
+  /** Start/result pairing for glow depth tracking; never used as rendered content. */
+  readonly phase?: StatusRollupPhase;
+  readonly correlationId?: string;
   readonly text: string;
   /** Unix epoch milliseconds. */
   readonly observedAt: number;
@@ -26,6 +33,10 @@ export interface StatusRollupShownEvent {
   readonly key: string;
   readonly agentId: string;
   readonly threadId: string;
+  readonly role?: StatusRollupAgentRole;
+  readonly kind?: StatusRollupKind;
+  readonly phase?: StatusRollupPhase;
+  readonly correlationId?: string;
 }
 
 interface QueuedStatusRollupItem {
@@ -35,7 +46,7 @@ interface QueuedStatusRollupItem {
 
 interface VisibleStatusRollupItem {
   readonly item: StatusRollupItem;
-  readonly replaceableAt: number;
+  readonly holdUntil: number;
 }
 
 /**
@@ -43,13 +54,11 @@ interface VisibleStatusRollupItem {
  * can be verified deterministically without timers or a browser environment.
  */
 export class StatusRollupQueue {
-  static readonly capacity = 5;
-  static readonly minGapMs = 1_000;
-  static readonly nonUrgentExpiryMs = 6_000;
-  static readonly normalHoldMs = 750;
+  static readonly quietGapMs = 1_200;
+  static readonly busyGapMs = 250;
+  static readonly maximumDrainMs = 3_000;
   static readonly urgentHoldMs = 2_600;
   static readonly historyLimit = 6;
-  private static readonly processedKeyLimit = 256;
   private static readonly textLimit = 180;
   private static readonly labelLimit = 80;
 
@@ -57,6 +66,7 @@ export class StatusRollupQueue {
   private queued: QueuedStatusRollupItem[] = [];
   private visible: VisibleStatusRollupItem | null = null;
   private lastShownAt: number | null = null;
+  private burstGapMs: number | null = null;
   private sequence = 0;
   private historyItems: StatusRollupItem[] = [];
   private processedKeys: string[] = [];
@@ -79,6 +89,7 @@ export class StatusRollupQueue {
     this.queued = [];
     this.visible = null;
     this.lastShownAt = null;
+    this.burstGapMs = null;
     this.sequence = 0;
     this.historyItems = [];
     this.processedKeys = [];
@@ -106,9 +117,8 @@ export class StatusRollupQueue {
   }
 
   /**
-   * Tracks unique observed check-ins and queues eligible snippets. If all five
-   * slots are urgent, new arrivals are dropped; urgent overflow drops the newest
-   * urgent arrival to preserve FIFO.
+   * Tracks unique observed events and queues every eligible item. The queue is
+   * intentionally lossless: only repeated stable keys are collapsed.
    */
   observe(
     items: readonly StatusRollupItem[],
@@ -117,8 +127,7 @@ export class StatusRollupQueue {
     displayedItem: StatusRollupItem | null = null,
   ): void {
     if (threadId !== this.threadId) this.reset(threadId);
-    this.expireQueued(now);
-
+    const startingLength = this.queued.length;
     const ordered = [...items]
       .filter(item => item.threadId === threadId)
       .sort((left, right) => left.observedAt - right.observedAt);
@@ -133,82 +142,53 @@ export class StatusRollupQueue {
       this.historyItems = this.historyItems.slice(0, StatusRollupQueue.historyLimit);
 
       const shown = this.visible?.item ?? displayedItem;
-      if (shown && this.sameVisibleSnippet(shown, item)) continue;
-      if (item.urgency === 'normal' && now - item.observedAt > StatusRollupQueue.nonUrgentExpiryMs) continue;
-
-      this.queued = this.queued.filter(entry => entry.item.agentId !== item.agentId);
-      if (!this.makeRoomFor()) continue;
-
+      if (shown?.key === item.key) continue;
       this.queued.push({ item, sequence: ++this.sequence });
+    }
+    const added = this.queued.length - startingLength;
+    if (added > 0 && this.queued.length > 1) {
+      const paceForBurst = Math.min(StatusRollupQueue.busyGapMs,
+        StatusRollupQueue.maximumDrainMs / this.queued.length);
+      this.burstGapMs = Math.min(this.burstGapMs ?? paceForBurst, paceForBurst);
     }
   }
 
   /** Seeds an idle/thread-switched roll-up from its newest scoped check-in, regardless of age. */
   seed(items: readonly StatusRollupItem[], threadId: string, now: number): StatusRollupItem | null {
-    if (this.visible || !threadId) return this.current;
+    if (this.visible || !threadId || this.queued.length) return this.current;
     const newest = [...items]
       .filter(item => item.threadId === threadId)
       .sort((left, right) => right.observedAt - left.observedAt)[0];
     const item = this.present(newest, threadId, now);
     if (!item) return null;
     this.queued = this.queued.filter(entry => entry.item.key !== item.key);
-    const holdMs = this.isUrgent(item) ? StatusRollupQueue.urgentHoldMs : StatusRollupQueue.normalHoldMs;
-    this.visible = { item, replaceableAt: now + holdMs };
+    const holdMs = this.isUrgent(item) ? StatusRollupQueue.urgentHoldMs : 0;
+    this.visible = { item, holdUntil: now + holdMs };
     this.lastShownAt = now;
     return item;
   }
 
   /**
-   * Advances the queue by fakeable epoch time. The displayed item persists;
-   * its hold only gates replacement, and pausing freezes replacement.
+   * Advances the queue by fakeable epoch time. Quiet updates have a relaxed
+   * cadence; a burst drains at a pace calculated to fit in roughly three seconds.
+   * Urgent items jump ahead of normal work and keep their full reading hold.
    */
   pump(now: number, paused = false): StatusRollupItem | null {
-    this.expireQueued(now);
     if (paused) return null;
-    if (this.visible && now < this.visible.replaceableAt) return null;
     if (this.queued.length === 0) return null;
-    if (this.lastShownAt !== null && now - this.lastShownAt < StatusRollupQueue.minGapMs) return null;
-
     const urgentIndex = this.queued.findIndex(entry => this.isUrgent(entry.item));
+    const currentUrgent = this.visible && this.isUrgent(this.visible.item);
+    if (currentUrgent && now < this.visible!.holdUntil) return null;
+    if (urgentIndex < 0 && this.lastShownAt !== null && now - this.lastShownAt < (this.burstGapMs ?? StatusRollupQueue.quietGapMs)) return null;
+
     const next = this.queued.splice(urgentIndex >= 0 ? urgentIndex : 0, 1)[0];
     if (!next) return null;
 
-    const holdMs = this.isUrgent(next.item) ? StatusRollupQueue.urgentHoldMs : StatusRollupQueue.normalHoldMs;
-    this.visible = { item: next.item, replaceableAt: now + holdMs };
+    const holdMs = this.isUrgent(next.item) ? StatusRollupQueue.urgentHoldMs : 0;
+    this.visible = { item: next.item, holdUntil: now + holdMs };
     this.lastShownAt = now;
+    if (this.queued.length === 0) this.burstGapMs = null;
     return next.item;
-  }
-
-  private expireQueued(now: number): void {
-    this.queued = this.queued.filter(entry =>
-      this.isUrgent(entry.item) || now - entry.item.observedAt <= StatusRollupQueue.nonUrgentExpiryMs,
-    );
-  }
-
-  private makeRoomFor(): boolean {
-    if (this.queued.length < StatusRollupQueue.capacity) return true;
-
-    // Evict the oldest nonurgent item first, regardless of the arriving item's priority.
-    let oldestNonUrgentIndex = -1;
-    let oldestSequence = Number.POSITIVE_INFINITY;
-    this.queued.forEach((entry, index) => {
-      if (!this.isUrgent(entry.item) && entry.sequence < oldestSequence) {
-        oldestSequence = entry.sequence;
-        oldestNonUrgentIndex = index;
-      }
-    });
-
-    if (oldestNonUrgentIndex >= 0) {
-      this.queued.splice(oldestNonUrgentIndex, 1);
-      return true;
-    }
-
-    // All existing slots are urgent. Keep the queue bounded and preserve urgent FIFO.
-    return false;
-  }
-
-  private sameVisibleSnippet(left: StatusRollupItem, right: StatusRollupItem): boolean {
-    return left.agentId === right.agentId && this.cleanText(left.text) === this.cleanText(right.text);
   }
 
   private isUrgent(item: StatusRollupItem): boolean {
@@ -216,11 +196,9 @@ export class StatusRollupQueue {
   }
 
   private rememberProcessedKey(key: string): void {
+    if (this.processedKeySet.has(key)) return;
     this.processedKeys.push(key);
     this.processedKeySet.add(key);
-    if (this.processedKeys.length <= StatusRollupQueue.processedKeyLimit) return;
-    const oldest = this.processedKeys.shift();
-    if (oldest) this.processedKeySet.delete(oldest);
   }
 
   private cleanText(value: string): string {

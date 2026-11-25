@@ -44,6 +44,7 @@
               :thread-id="statusThreadId"
               :check-ins="statusCheckIns"
               :root-fallback="statusRootFallback"
+              @shown="onStatusItemShown"
             />
             <span class="dock-divider" aria-hidden="true" />
             <button
@@ -180,6 +181,7 @@
           :class="glowClasses"
           :data-glow-level="glow.state.level"
         >
+          <div class="composer-halo composer-halo--breathing" aria-hidden="true" />
           <div class="composer-halo" aria-hidden="true" />
           <div class="composer-halo composer-halo--stalled" aria-hidden="true" />
           <div
@@ -250,6 +252,7 @@ import QueueStrip         from './QueueStrip.vue';
 import ShelfPanel         from './ShelfPanel.vue';
 import StatusRollup       from './StatusRollup.vue';
 import ThreadStatusLine   from './ThreadStatusLine.vue';
+import type { StatusRollupShownEvent } from './StatusRollupQueue';
 
 import { FIRST_RUN_STARTER_PROMPT_KEY } from '../../../firstRunStarter';
 import { useArtifactMentions } from '../../composables/useArtifactMentions';
@@ -260,7 +263,7 @@ import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActiv
 import { useUseCaseSuggestions } from '../../composables/useUseCaseSuggestions';
 import { ChatController } from '../../controller/ChatController';
 import { LocalStoragePersister } from '../../services/LocalStoragePersister';
-import { asThreadId, type MessageId } from '../../types/chat';
+import { asThreadId } from '../../types/chat';
 import { useChatController } from '../../controller/useChatController';
 import { composeReply, replyExcerpt } from '../../messages/replyQuote';
 import { ShelfNotes, type ShelfRequest } from '../../messages/shelfNote';
@@ -339,53 +342,19 @@ watch(isRunActive, (active) => {
   glow.setActive(active, !active && finished);
 }, { immediate: true });
 watch(() => isDocumentHidden.value || tabActive?.value === false, paused => glow.setPaused(paused), { immediate: true });
-function isStreamingText(messageId: MessageId): boolean {
-  const recent = controller.messages.value;
-  for (let i = recent.length - 1, seen = 0; i >= 0 && seen < 20; i--, seen++) {
-    if (recent[i].id === messageId) return recent[i].kind === 'streaming' || recent[i].kind === 'sulla';
-  }
-  return false;
+function onStatusItemShown(item: StatusRollupShownEvent): void {
+  if (item.threadId !== statusThreadId.value) return;
+  if (item.role !== 'root') { glow.checkIn(); return; }
+  if (item.phase === 'start' && item.correlationId) { glow.toolStarted(item.correlationId); return; }
+  if (item.phase === 'result' && item.correlationId) { glow.toolFinished(item.correlationId); return; }
+  glow.action();
 }
 const glowSubscriptions = [
   controller.on('runStateChanged', ({ from, to }) => {
     if (to.phase === 'streaming') glow.setStreaming(true);
     else if (from.phase === 'streaming') glow.setStreaming(false);
   }),
-  controller.on('messageAppended', ({ message }) => {
-    switch (message.kind) {
-    case 'tool':
-      if (message.status === 'running') glow.toolStarted(String(message.id));
-      else glow.action();
-      break;
-    case 'thinking': case 'patch': case 'tool_approval': case 'tool_question':
-      glow.action();
-      break;
-    case 'subagent': case 'subagent_exchange':
-      glow.checkIn();
-      break;
-    case 'streaming':
-      glow.streamed();
-      break;
-    default:
-      break;
-    }
-  }),
-  controller.on('messageUpdated', ({ messageId, patch }) => {
-    const status = (patch as { status?: string }).status;
-    if (status && status !== 'running') glow.toolFinished(String(messageId));
-    if (patch.kind === 'streaming' || ('text' in patch && isStreamingText(messageId))) glow.streamed();
-  }),
 ];
-// Sub-agent check-ins. Root items mirror this chat's own transcript, already counted above.
-const seenCheckIns = new Set<string>();
-watch(() => threadActivity?.checkIns.value ?? [], (items) => {
-  const fresh = Date.now() - ComposerGlow.windowMs;
-  for (const item of items) {
-    if (seenCheckIns.has(item.key)) continue;
-    seenCheckIns.add(item.key);
-    if (item.role !== 'root' && item.observedAt >= fresh) glow.checkIn();
-  }
-}, { immediate: true });
 const modelKey = (model: RemoteModel) => JSON.stringify([model.providerId, model.modelId]);
 const remoteModelKey = computed(() => remoteChat.model.value ? modelKey(remoteChat.model.value) : '');
 const remoteDevices = remoteChat.pickerDevices;
@@ -976,12 +945,12 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
 /* Breathing glow: pre-painted layers; only opacity and transform change (ComposerGlow.ts drives the classes). */
 .composer-capsule {
-  --glow-o: .2; --glow-c: var(--accent);
+  --glow-o: .45; --glow-c: var(--accent);
   --glow-ease: cubic-bezier(.22, 1, .36, 1); --glow-ease-in: cubic-bezier(.16, 1, .3, 1);
 }
-.composer-capsule[data-glow-level="1"] { --glow-o: .36; }
-.composer-capsule[data-glow-level="2"] { --glow-o: .52; }
-.composer-capsule[data-glow-level="3"] { --glow-o: .66; }
+.composer-capsule[data-glow-level="1"] { --glow-o: .54; }
+.composer-capsule[data-glow-level="2"] { --glow-o: .67; }
+.composer-capsule[data-glow-level="3"] { --glow-o: .76; }
 .composer-capsule.glow-stream { --glow-o: .62; }
 .composer-capsule.glow-deep { --glow-o: .56; }
 .composer-halo {
@@ -990,17 +959,27 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   opacity: 0; transform: none; transition: opacity 2600ms var(--glow-ease), transform 2600ms var(--glow-ease); will-change: opacity, transform;
 }
 .composer-halo--stalled { --glow-c: var(--status-warning, #f0a020); }
-.composer-capsule.glow-on .composer-halo { opacity: var(--glow-o); transition-duration: 1600ms; }
+.composer-capsule.glow-on .composer-halo--breathing {
+  opacity: var(--glow-o);
+  animation: composer-glow-breathe 3.8s ease-in-out infinite;
+  transition-duration: 1600ms;
+}
+.composer-capsule.glow-on .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: var(--glow-o); transition-duration: 1600ms; }
 .composer-capsule.glow-on .composer-halo--stalled { opacity: 0; }
-.composer-capsule.glow-soft .composer-halo:not(.composer-halo--stalled) { opacity: .72; transition-duration: 280ms; }
-.composer-capsule.glow-tick .composer-halo:not(.composer-halo--stalled) { opacity: .88; transition-duration: 110ms; }
-.composer-capsule.glow-hit .composer-halo:not(.composer-halo--stalled) {
+.composer-capsule.glow-soft .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: .72; transition-duration: 280ms; }
+.composer-capsule.glow-tick .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: .88; transition-duration: 110ms; }
+.composer-capsule.glow-hit .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) {
   opacity: 1; transform: scale(1.03, 1.2); transition-duration: 200ms; transition-timing-function: var(--glow-ease-in);
 }
-.composer-capsule.glow-stalled .composer-halo { opacity: 0; }
+.composer-capsule.glow-stalled .composer-halo:not(.composer-halo--breathing) { opacity: 0; }
+.composer-capsule.glow-stalled .composer-halo--breathing { --glow-c: var(--status-warning, #f0a020); --glow-o: .55; }
 .composer-capsule.glow-stalled .composer-halo--stalled { opacity: .55; transition-duration: 1600ms; }
-.composer-capsule.glow-settle .composer-halo:not(.composer-halo--stalled) { opacity: 1; transform: scale(1.03, 1.2); transition-duration: 320ms; }
+.composer-capsule.glow-settle .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 1; transform: scale(1.03, 1.2); transition-duration: 320ms; }
 .composer-capsule.document-hidden .composer-halo { visibility: hidden; transition: none; }
+@keyframes composer-glow-breathe {
+  0%, 100% { opacity: var(--glow-o); transform: scale(.98, 1.02); }
+  50% { opacity: min(.8, calc(var(--glow-o) + .12)); transform: scale(1.04, 1.12); }
+}
 .composer {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
   min-height: 64px; height: auto; padding: 0 10px; border: 0; border-radius: 32px; background: var(--bg-surface);
@@ -1041,8 +1020,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 @media (prefers-reduced-motion: reduce) {
   /* Steady glow at the activity level: no pulses, no scale. */
-  .composer-capsule .composer-halo { transform: none !important; transition: opacity .6s linear !important; }
+  .composer-capsule .composer-halo { transform: none !important; animation: none !important; transition: opacity .6s linear !important; }
   .composer-capsule.glow-on:not(.glow-stalled) .composer-halo:not(.composer-halo--stalled) { opacity: var(--glow-o) !important; }
+  .composer-capsule.glow-on.glow-stalled .composer-halo--breathing { opacity: .55 !important; }
   .composer-capsule.glow-settle:not(.glow-on) .composer-halo { opacity: 0 !important; }
 }
 @keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
