@@ -400,7 +400,7 @@ async function submit(): Promise<void> {
 
 .qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .qc-actions .qc-hint { margin: 0; }
-.qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--primary-color-text-override, var(--accent)); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .qc-block.qc-open { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .qc-submit {
   height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;

@@ -179,7 +179,7 @@ function pickAgent(agent: AgentOption): void {
 .mhead {
   padding: 12px 18px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   border-bottom: 1px solid var(--accent-dim);
   display: flex; align-items: center; gap: 12px;
 }
@@ -218,13 +218,13 @@ function pickAgent(agent: AgentOption): void {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.2em;
   text-transform: uppercase;
 }
-.mgroup-head .provider { flex: 1; min-width: 0; color: var(--accent-hover); font-weight: 600; }
+.mgroup-head .provider { flex: 1; min-width: 0; color: var(--primary-color-text-override, var(--accent-hover)); font-weight: 600; }
 .mgroup-head .access-label {
   max-width: 170px; color: var(--text-muted); font-size: 8.5px; letter-spacing: 0.08em;
   line-height: 1.2; text-align: right; white-space: normal; text-transform: none; font-weight: 400;
 }
 .mgroup-head .primary-pill {
-  color: var(--accent-hover);
+  color: var(--primary-color-text-override, var(--accent-hover));
   background: var(--accent-dim);
   border: 1px solid var(--accent-dim);
   padding: 1px 7px; border-radius: 3px;
@@ -260,7 +260,7 @@ function pickAgent(agent: AgentOption): void {
 }
 .mitem .tier {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   padding: 1px 7px; border-radius: 3px;
   background: var(--accent-dim);
   border: 1px solid var(--accent-dim);
@@ -272,7 +272,7 @@ function pickAgent(agent: AgentOption): void {
   border-color: var(--status-success-soft);
 }
 .mitem.active { background: var(--accent-dim); }
-.mitem.active::before { content: "◆"; color: var(--accent-hover); margin-right: -4px; }
+.mitem.active::before { content: "◆"; color: var(--primary-color-text-override, var(--accent-hover)); margin-right: -4px; }
 
 .veil-enter-active, .veil-leave-active { transition: opacity 0.18s ease; }
 .veil-enter-from,   .veil-leave-to    { opacity: 0; }

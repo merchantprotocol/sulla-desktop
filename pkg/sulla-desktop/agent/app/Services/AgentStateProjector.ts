@@ -6,6 +6,7 @@ import { AgentTaskActivityProjector } from './AgentTaskActivityProjector';
 import { resultTracking } from '../../../shared/agentResults/AgentResultCard';
 import { savedWorkerModelStatus } from '../../languagemodels/workerModelBindings';
 import { AgentModelStatusRegistry } from '../../services/AgentModelStatusRegistry';
+import { describeHungTool } from '../../services/RunLivenessClock';
 
 import type { AgentRuntimeLiveness } from './AgentRuntimeLiveness';
 import type { AgentStateService } from './AgentStateService';
@@ -107,12 +108,15 @@ export class AgentStateProjector {
     // The same boot grace and probe freshness apply to the UI and parent notices.
     const state = (projected === 'quiet' && now - Math.max(lastActivityAt, this.observedSince) < this.config.quietAfterMs
       ? 'working' : projected) as AgentViewStatus;
-    return { state, lastActivityAt, runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null };
+    const tool = this.activity.toolInFlight(job.jobId, taskIndex);
+    return { state, lastActivityAt, runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null,
+      // Only a tool past the ceiling can sit under a quiet task: name it so alerts say "tool still running", not "dead".
+      hungTool: state === 'quiet' && tool ? describeHungTool(tool, now) : null };
   }
 
   private reason(state: AgentViewStatus, job: AgentJob, task: AgentJobTask, checkin: AgentTaskCheckin | null): string | null {
     if (state === 'blocked') return checkin?.blockers.join('; ') || task.summary || 'Blocked';
-    if (state === 'quiet') return 'No recent check-in';
+    if (state === 'quiet') return 'No recent activity (no output, tool calls or check-ins)';
     if (state === 'parked' && task.wakeAt !== undefined && task.wakeAt > this.clock()) return 'scheduled wake-up';
     if (['failed', 'lost', 'stopped'].includes(state)) return job.error || task.summary || state;
     return null;

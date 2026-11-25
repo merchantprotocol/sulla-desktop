@@ -75,7 +75,7 @@ const connectionTitle = computed(() => {
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 .badge.model {
-  color: var(--accent-hover); cursor: pointer;
+  color: var(--primary-color-text-override, var(--accent-hover)); cursor: pointer;
 }
 .badge.model:hover { color: var(--text-secondary); border-color: var(--accent-hover); }
 .badge .dot {

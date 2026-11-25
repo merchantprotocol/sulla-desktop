@@ -85,8 +85,8 @@ async function onCheckboxChange(event: Event): Promise<void> {
 .markdown-artifact :deep(h1),
 .markdown-artifact :deep(h2),
 .markdown-artifact :deep(h3) { color: var(--text-primary); }
-.markdown-artifact :deep(a) { color: var(--accent, var(--accent)); }
-.markdown-artifact :deep(a) { color: var(--accent-hover); }
+.markdown-artifact :deep(a) { color: var(--primary-color-text-override, var(--accent, var(--accent))); }
+.markdown-artifact :deep(a) { color: var(--primary-color-text-override, var(--accent-hover)); }
 .markdown-artifact :deep(pre),
 .markdown-artifact :deep(code) { font-family: var(--font-mono); }
 .markdown-artifact :deep(pre) {

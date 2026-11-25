@@ -7,6 +7,7 @@ import { ref, computed, onMounted, watch, type Ref } from 'vue';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { startTypography } from '@pkg/composables/useTypography';
+import { setPrimaryColorMode, startPrimaryColor } from '@pkg/composables/usePrimaryColor';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -226,6 +227,7 @@ export function useTheme() {
   // Apply theme class to document.documentElement whenever theme changes
   watch(currentTheme, (theme) => {
     store.applyThemeClass(theme);
+    setPrimaryColorMode(availableThemes.find(candidate => candidate.id === theme)?.isDark ? 'dark' : 'light');
   });
 
   onMounted(async() => {
@@ -235,6 +237,8 @@ export function useTheme() {
     }
     // Apply on mount in case the watch didn't fire (value unchanged)
     store.applyThemeClass(currentTheme.value);
+    // Each renderer applies its persisted primary override after the theme baseline.
+    startPrimaryColor(availableThemes.find(candidate => candidate.id === currentTheme.value)?.isDark ? 'dark' : 'light');
     // Every window mounts useTheme, so per-section typography loads here too.
     startTypography();
   });

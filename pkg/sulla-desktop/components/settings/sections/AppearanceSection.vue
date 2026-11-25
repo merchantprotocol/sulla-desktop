@@ -11,6 +11,7 @@ import { computed } from 'vue';
 import PrefCard from '../PrefCard.vue';
 import PrefIcon from '../PrefIcon.vue';
 import PrefRow from '../PrefRow.vue';
+import PrimaryColorCard from './PrimaryColorCard.vue';
 import TypographyCard from './TypographyCard.vue';
 
 import { useTheme, availableThemes, type ThemeScheme } from '@pkg/composables/useTheme';
@@ -107,6 +108,7 @@ function setMode(target: 'light' | 'dark') {
       </PrefRow>
     </PrefCard>
 
+    <PrimaryColorCard />
     <TypographyCard />
   </div>
 </template>

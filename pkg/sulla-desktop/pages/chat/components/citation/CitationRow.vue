@@ -84,7 +84,7 @@ async function open(source: CitationMessage['sources'][number], index: number): 
   color: var(--text-secondary); font: 13px var(--font-body);
 }
 .report-row { display: flex; align-items: center; gap: 8px; min-height: 34px; min-width: 0; }
-.report-number { flex: none; width: 14px; color: var(--accent); font: 11.5px var(--font-mono); }
+.report-number { flex: none; width: 14px; color: var(--primary-color-text-override, var(--accent)); font: 11.5px var(--font-mono); }
 .report-icon { width: 16px; height: 18px; flex: none; color: var(--text-muted); }
 .report-copy { min-width: 0; flex: 1; display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 8px; }
 .report-copy b, .report-copy small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

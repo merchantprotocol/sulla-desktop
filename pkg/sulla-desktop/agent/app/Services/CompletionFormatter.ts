@@ -12,7 +12,9 @@ export class CompletionFormatter extends Service {
 
   format(entries: PendingCompletion[]): string {
     return entries.map(entry => {
-      const content = entry.noticeKind === 'stall' && entry.stall
+      const content = entry.noticeKind === 'stall' && entry.stall?.hungTool
+        ? `[Tool still running in ${ entry.stall.label ?? entry.stall.childThread } (job ${ entry.jobId } task ${ entry.taskIndex })] ${ entry.stall.hungTool }, with no other activity. The agent is waiting on that tool, not dead. Check whether the tool is hung before deciding what to do.`
+        : entry.noticeKind === 'stall' && entry.stall
         ? `[No progress from ${ entry.stall.label ?? entry.stall.childThread } (job ${ entry.jobId } task ${ entry.taskIndex })] No recent activity and the runtime is not confirmed alive. This does not mean the task has failed or stopped. Check its status before deciding what to do.`
         : entry.notice ?? this.buildWakeContent(entry);
       if (content.length <= this.resultLimit) return content;

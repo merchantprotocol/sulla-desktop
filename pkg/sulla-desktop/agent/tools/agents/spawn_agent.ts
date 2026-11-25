@@ -502,10 +502,11 @@ export class SpawnAgentWorker extends BaseTool {
 
     // A tab waiting on its human is idle, not dead: only a turn in flight that
     // has gone silent counts as a dead run.
-    const stopWatch = watchForDeadRun(job.jobId, async(reason) => {
-      if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) !== 'stopped') return;
+    const stopWatch = watchForDeadRun(job.jobId, async(reason, kind) => {
+      const label = kind === 'tool_hung' ? 'hung tool' : 'dead run';
+      if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `${ label }: ${ reason }`) !== 'stopped') return;
       releaseJobWatcher(job.jobId);
-      const message = `dead run: ${ reason }; tab job stopped`;
+      const message = `${ label }: ${ reason }; tab job stopped`;
       console.warn(`[spawn_agent] Tab job ${ job.jobId } ${ message }`);
       await stopAgentTab(childThreadId, `No agent activity while working (${ reason }). The parent was told and can relaunch.`);
       await safeFinishDelegationByRef(job.jobId, { outcome: 'failed', detail: message });
@@ -1076,10 +1077,11 @@ export class SpawnAgentWorker extends BaseTool {
       // back any task it owns) and tell the parent, instead of waiting forever
       // on a provider call that will never return.
       let stoppedAsDead = false;
-      const stopDeadRunWatch = watchForDeadRun(job.jobId, async(reason) => {
-        if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) !== 'stopped') return;
+      const stopDeadRunWatch = watchForDeadRun(job.jobId, async(reason, kind) => {
+        const label = kind === 'tool_hung' ? 'hung tool' : 'dead run';
+        if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `${ label }: ${ reason }`) !== 'stopped') return;
         stoppedAsDead = true;
-        const message = `dead run: ${ reason }; job stopped`;
+        const message = `${ label }: ${ reason }; job stopped`;
         console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
         const stoppedJob = await getJob(job.jobId);
         if (stoppedJob) await deliverJobCompletion(stoppedJob, [], -1, message);
@@ -1146,8 +1148,9 @@ export class SpawnAgentWorker extends BaseTool {
     activityJobId = jobId;
     for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(jobId, index)!;
     // Stopping a dead job hands its tasks back even if the hung call never returns.
-    stopDeadRunWatch = watchForDeadRun(jobId, (reason) => {
-      if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `dead run: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } dead run: ${ reason }; job stopped`);
+    stopDeadRunWatch = watchForDeadRun(jobId, (reason, kind) => {
+      const label = kind === 'tool_hung' ? 'hung tool' : 'dead run';
+      if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `${ label }: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } ${ label }: ${ reason }; job stopped`);
     }, async() => false, { createdAt: syncJob.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(jobId)).some(item => item.latestCheckin !== null) });
     let results: AgentJobResult[];
     try {

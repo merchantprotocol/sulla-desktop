@@ -38,7 +38,7 @@ const interval = computed(() => `${ props.msg.intervalMinutes } min`);
   font-family: var(--font-body); font-size: 12px;
 }
 .heartbeat-meta { display: flex; align-items: center; gap: 8px; }
-.heartbeat-meta > span:first-child, .heartbeat-meta strong { color: var(--accent); }
+.heartbeat-meta > span:first-child, .heartbeat-meta strong { color: var(--primary-color-text-override, var(--accent)); }
 .heartbeat-meta time { margin-left: auto; }
 details { margin-top: 6px; }
 summary { cursor: pointer; color: var(--text-muted); }

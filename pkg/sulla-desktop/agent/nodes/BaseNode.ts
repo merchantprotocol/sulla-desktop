@@ -30,6 +30,7 @@ import { agentExecutionReadiness } from '../services/AgentExecutionReadiness';
 import { AgentModelStatusRegistry } from '../services/AgentModelStatusRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { RunActivity } from '../services/RunActivity';
+import { TurnToolActivity } from '../services/TurnToolActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
@@ -1859,16 +1860,27 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       console.log(`[${ this.name }] ${ event.provider } compacted its CLI-managed context (${ event.source })`);
     };
 
+    // Provider-run tool calls (Codex items, Claude Code tool_use) are agent
+    // activity for the job: a start, a result and a call still running all
+    // keep the dead-run reaper and No-progress alerts from calling it silent.
+    const toolActivity = new TurnToolActivity(state.metadata);
+    // Any stream event (reasoning, turn events, relayed model output) is activity too.
+    const onLiveness = (): void => {
+      state.metadata.lastActivityMs = Date.now();
+      RunActivity.touch(state.metadata);
+    };
     const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
       providerToolStarted = true;
+      toolActivity.finished(event.toolUseId);
       new TurnOutputCounter(state.metadata as any).record();
       this.logConversationToolCall(state, event.toolName, event.input, {
         chars: event.resultChars,
         error: event.isError || undefined,
       });
     };
-    const onToolStarted = (): void => {
+    const onToolStarted = (event?: { toolUseId: string; toolName: string }): void => {
       providerToolStarted = true;
+      toolActivity.started(event?.toolUseId, event?.toolName);
       new TurnOutputCounter(state.metadata as any).record();
     };
 
@@ -1904,7 +1916,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
-      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted }, { ...options, state, executionContext });
+      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness }, { ...options, state, executionContext });
       TurnHopTiming.mark(state, 'provider.chatStream.end');
     } catch (error) {
       // Once a provider-owned tool began, replaying this call could repeat a side effect,
@@ -1912,6 +1924,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (providerToolStarted && error && typeof error === 'object') (error as any).unsafeToFallback = true;
       throw error;
     } finally {
+      toolActivity.close();
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while
       // the model is still producing activity; a stream that ends naturally

@@ -31,16 +31,16 @@ const timeLabel = computed(() => {
   border-left: 1px dashed var(--accent-glow);
   position: relative;
   font-family: var(--font-mono); font-size: 11px;
-  color: var(--accent-hover); font-style: italic;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-style: italic;
   display: flex; align-items: center; gap: 10px;
 }
 .memory-note::before {
   content: "◈"; position: absolute; left: -4px; top: 4px;
-  color: var(--accent-hover); font-style: normal;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-style: normal;
   font-size: 11px;
 }
 .memory-note .id {
-  font-style: normal; color: var(--accent-hover);
+  font-style: normal; color: var(--primary-color-text-override, var(--accent-hover));
   padding: 1px 6px; border-radius: 3px;
   background: var(--accent-dim);
   border: 1px solid var(--accent-dim);
