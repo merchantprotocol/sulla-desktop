@@ -246,14 +246,12 @@ export async function runSubconsciousMiddleware(
 
   let awarenessSetting: AgentAwarenessSetting | null | undefined =
     typeof meta.agentAwareness === 'boolean' ? { agent_awareness: meta.agentAwareness } : undefined;
-  if (!awarenessSetting) {
-    const awarenessAgentId = resolveAgentIdentity(state.metadata);
-    if (awarenessAgentId) {
-      try {
-        const { agentDefinitionService } = await import('../services/AgentDefinitionService');
-        awarenessSetting = await agentDefinitionService.findBySlug(awarenessAgentId);
-      } catch { /* absent definitions keep the visible-by-default behavior */ }
-    }
+  const awarenessAgentId = resolveAgentIdentity(state.metadata);
+  if (awarenessAgentId) {
+    try {
+      const { agentDefinitionService } = await import('../services/AgentDefinitionService');
+      awarenessSetting = await agentDefinitionService.findBySlug(awarenessAgentId);
+    } catch { /* a failed refresh may use the last known value; otherwise default visible */ }
   }
   const canSeeOtherAgents = new AgentAwarenessPolicy().canSeeOtherAgents(awarenessSetting);
   meta.agentAwareness = canSeeOtherAgents;
