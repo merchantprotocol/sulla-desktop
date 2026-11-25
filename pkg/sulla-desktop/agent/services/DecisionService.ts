@@ -19,11 +19,9 @@ import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './Decisio
 import { DecisionEscalationService } from './DecisionEscalationService';
 import { DecisionHolderNotifier } from './DecisionHolderNotifier';
 import { DecisionParentFyiNotifier } from './DecisionParentFyiNotifier';
-import type { DecisionAgentAction, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
+import type { DecisionActor, DecisionAgentAction, DecisionOutcome, DecisionRecord, DecisionResponse, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import type { DecisionSettlementStatus, DecisionTransitionActor } from '../repositories/DecisionRouteTransitionSqlBuilder';
 import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
-
-import type { DecisionActor, DecisionOutcome, DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
 
 /** Durable human requests retain their context after execution waiters expire.
  * Late question answers enter the original chat mailbox; expired approvals fail closed.
