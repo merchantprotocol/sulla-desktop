@@ -1,6 +1,7 @@
 // Sulla Desktop · https://sulladesktop.com
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatHeartbeatScheduler } from '../../../services/ChatHeartbeatScheduler';
@@ -12,19 +13,28 @@ const START = Date.UTC(2026, 10, 24, 20, 0, 0);
 
 function schedulerHarness(
   hasPendingWait?: (target: { jobId: string; taskIndex: number }) => Promise<boolean>,
-  deliver = vi.fn(async() => true),
+  deliver: any = vi.fn(async() => true),
 ) {
   const beats: any[] = [];
   const configs: any[] = [];
   const statuses: any[] = [];
+  const jobHeartbeatChanged = vi.fn();
   const scheduler = new ChatHeartbeatScheduler({
     now:         () => Date.now(), // Injected clock; Vitest advances it with the timers.
     isGraphBusy: () => false,
     deliver,
     noticeBuilder: new HeartbeatNoticeBuilder('America/Los_Angeles'),
     hasPendingWait,
+    jobHeartbeatChanged,
   });
-  return { scheduler, deliver, beats, configs, statuses };
+  return { scheduler, deliver, beats, configs, statuses, jobHeartbeatChanged };
+}
+
+/** A delivery that stays in flight until released, like a job beat awaiting the whole woken turn. */
+function heldDelivery() {
+  const releases: Array<(result: any) => void> = [];
+  const deliver = vi.fn(() => new Promise<any>((resolve) => { releases.push(resolve) }));
+  return { deliver, release: (result: any = { delivered: true }) => releases.shift()?.(result) };
 }
 
 describe('ChatHeartbeatScheduler lifecycle', () => {
@@ -51,8 +61,8 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
     expect(beats[0]?.message).toBe(delivered);
   });
 
-  it('keeps an existing agents/wait timer and explains that it remains pending', async() => {
-    // risk: agents/wait can be silently lost or misrepresented when a heartbeat wakes a parked job.
+  it('tells a woken job that its own agents/wait timer is still pending', async() => {
+    // risk: an agent woken by a beat believes its wait was consumed and schedules a duplicate.
     const hasPendingWait = vi.fn(async() => true);
     const { scheduler, deliver } = schedulerHarness(hasPendingWait);
     scheduler.register({
@@ -175,5 +185,140 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
 
     expect(scheduler.has('job-thread')).toBe(false);
     expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it('stops for good when switched off while a beat is still being delivered', async() => {
+    // risk: irreversible side effect — a heartbeat that ignores "off" keeps waking the agent and burning tokens forever.
+    // A job beat's delivery awaits the whole woken turn, and that turn is where the agent turns the heartbeat off.
+    const held = heldDelivery();
+    const { scheduler } = schedulerHarness(undefined, held.deliver);
+    const registration = {
+      threadId: 'off-mid-beat', channel: 'sulla-desktop', jobId: 'off-job', taskIndex: 0,
+      config: { intervalMinutes: 5, message: 'Keep working.' },
+    };
+    scheduler.register(registration);
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    expect(held.deliver).toHaveBeenCalledTimes(1);
+
+    // Mid-delivery: the thread is registered again (a tab re-attaching, or the tool binding its job) and switched off.
+    scheduler.register({ ...registration, config: scheduler.status('off-mid-beat')! });
+    scheduler.configure('off-mid-beat', { intervalMinutes: null, message: 'Keep working.' });
+    held.release();
+    await vi.advanceTimersByTimeAsync(SIX_HOURS_MS);
+
+    expect(held.deliver).toHaveBeenCalledTimes(1);
+    expect(scheduler.status('off-mid-beat')).toMatchObject({ enabled: false, nextAt: null, pending: false });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('never revives a heartbeat that was unregistered and registered again during a delivery', async() => {
+    // risk: an orphaned runtime keeps its own timer that no unregister, configure or auto-off can reach.
+    const held = heldDelivery();
+    const { scheduler } = schedulerHarness(undefined, held.deliver);
+    scheduler.register({ threadId: 'replaced', channel: 'sulla-desktop', config: { intervalMinutes: 5, message: 'Check.' } });
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+    expect(held.deliver).toHaveBeenCalledTimes(1);
+
+    scheduler.unregister('replaced');
+    scheduler.register({ threadId: 'replaced', channel: 'sulla-desktop', config: { intervalMinutes: null, message: 'Check.' } });
+    held.release(true);
+    await vi.advanceTimersByTimeAsync(SIX_HOURS_MS);
+
+    expect(held.deliver).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps a delegated job heartbeat when its tab closes, and drops a plain chat heartbeat', async() => {
+    // risk: closing a tab silently cancels the heartbeat a hidden job is relying on to be woken.
+    const { scheduler, deliver, statuses } = schedulerHarness();
+    scheduler.register({
+      threadId: 'tabbed-job', channel: 'sulla-desktop', jobId: 'tab-job', taskIndex: 1,
+      config: { intervalMinutes: 5, message: 'Keep working.' }, onStatus: status => statuses.push(status),
+    });
+    scheduler.register({ threadId: 'plain-chat', channel: 'sulla-desktop', config: { intervalMinutes: 5, message: 'Check.' } });
+
+    scheduler.unregisterFromUi('tabbed-job');
+    scheduler.unregisterFromUi('plain-chat');
+    const seenByClosedTab = statuses.length;
+    await vi.advanceTimersByTimeAsync(5 * MINUTE);
+
+    expect(scheduler.has('plain-chat')).toBe(false);
+    expect(scheduler.status('tabbed-job')).toMatchObject({ enabled: true, intervalMinutes: 5 });
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0]?.[1]).toBe('tabbed-job');
+    expect(deliver.mock.calls[0]?.[4]).toEqual({ jobId: 'tab-job', taskIndex: 1 });
+    // The closed tab's listeners are gone; nothing is sent to a destroyed renderer.
+    expect(statuses).toHaveLength(seenByClosedTab);
+  });
+
+  it('keeps the job binding and the original deadline when a tab registers the thread again', async() => {
+    // risk: a tab re-attach turns a job heartbeat into a chat heartbeat, or grants it a fresh six hours.
+    const { scheduler, deliver } = schedulerHarness();
+    scheduler.register({
+      threadId: 'reattach', channel: 'sulla-desktop', jobId: 'reattach-job', taskIndex: 2,
+      config: { intervalMinutes: 10, message: 'Keep working.', setBy: 'agent' },
+    });
+    const original = scheduler.status('reattach')!;
+
+    await vi.advanceTimersByTimeAsync(3 * 60 * MINUTE);
+    const beatsBefore = deliver.mock.calls.length;
+    // The renderer knows no jobId and offers its own saved config with a later window.
+    scheduler.register({
+      threadId: 'reattach', channel: 'sulla-desktop',
+      config: { intervalMinutes: 1, message: 'Tab copy.', startedAt: Date.now(), expiresAt: Date.now() + SIX_HOURS_MS },
+    });
+
+    expect(scheduler.jobTarget('reattach')).toEqual({ jobId: 'reattach-job', taskIndex: 2 });
+    expect(scheduler.status('reattach')).toMatchObject({
+      intervalMinutes: 10, message: 'Keep working.', setBy: 'agent',
+      startedAt: original.startedAt, expiresAt: original.expiresAt,
+    });
+    await vi.advanceTimersByTimeAsync(3 * 60 * MINUTE);
+    expect(scheduler.status('reattach')?.enabled).toBe(false);
+    expect(deliver.mock.calls.length).toBeGreaterThan(beatsBefore);
+    expect(deliver.mock.calls.at(-1)?.[5]).toEqual({ final: true });
+  });
+
+  it('enforces the five-minute minimum on any job-bound heartbeat, however it was set', async() => {
+    // risk: a composer-set one-minute heartbeat on a delegated job wakes a whole agent turn every minute.
+    const { scheduler } = schedulerHarness();
+    scheduler.register({
+      threadId: 'min-job', channel: 'sulla-desktop', jobId: 'min-job-id', taskIndex: 0,
+      config: { intervalMinutes: 1, message: 'Check.' },
+    });
+    expect(scheduler.status('min-job')?.intervalMinutes).toBe(5);
+    expect(scheduler.configure('min-job', { intervalMinutes: 2, message: 'Check.' })?.intervalMinutes).toBe(5);
+    expect(scheduler.configure('min-job', { intervalMinutes: 30, message: 'Check.' })?.intervalMinutes).toBe(30);
+
+    scheduler.register({ threadId: 'min-chat', channel: 'sulla-desktop', config: { intervalMinutes: 1, message: 'Check.' } });
+    expect(scheduler.status('min-chat')?.intervalMinutes).toBe(1);
+    scheduler.bindJob('min-chat', { jobId: 'late-bound', taskIndex: 0 });
+    expect(scheduler.configure('min-chat', { intervalMinutes: 1, message: 'Check.' })?.intervalMinutes).toBe(5);
+  });
+
+  it('reports a job heartbeat change when it is set and again the moment it auto-expires', async() => {
+    // risk: an expired heartbeat's durable record survives and is restored by the next restart.
+    const { scheduler, deliver, jobHeartbeatChanged } = schedulerHarness();
+    scheduler.register({
+      threadId: 'durable-job', channel: 'sulla-desktop', jobId: 'durable', taskIndex: 0,
+      config: { intervalMinutes: null, message: 'Check.' },
+    });
+    scheduler.configure('durable-job', { intervalMinutes: 60, message: 'Check.' });
+    expect(jobHeartbeatChanged).toHaveBeenCalledTimes(1);
+
+    let recordAtExpiryCall: unknown = 'not-called';
+    jobHeartbeatChanged.mockImplementation(() => { recordAtExpiryCall = scheduler.jobHeartbeatRecord('durable-job') });
+    await vi.advanceTimersByTimeAsync(SIX_HOURS_MS);
+
+    expect(jobHeartbeatChanged).toHaveBeenCalledTimes(2);
+    expect(jobHeartbeatChanged).toHaveBeenLastCalledWith('durable-job');
+    // Already off when reported, so the provider deletes the row rather than re-saving it.
+    expect(recordAtExpiryCall).toBeNull();
+    expect(deliver.mock.calls.at(-1)?.[5]).toEqual({ final: true });
+
+    // A chat heartbeat has no durable record to keep in step.
+    scheduler.register({ threadId: 'plain', channel: 'sulla-desktop', config: { intervalMinutes: null, message: 'Check.' } });
+    scheduler.configure('plain', { intervalMinutes: 60, message: 'Check.' });
+    expect(jobHeartbeatChanged).toHaveBeenCalledTimes(2);
   });
 });
