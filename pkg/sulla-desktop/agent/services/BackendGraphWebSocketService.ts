@@ -427,15 +427,16 @@ timestamp: Date.now(),
 
   private async wakeInbox(target: AgentInboxTarget, batch: string, entries: AgentInboxEntry[]): Promise<AgentInboxDeliveryReceipt> {
     const human = entries.every(entry => entry.envelope.kind === 'human');
-    const metadata = {
+    const inboxMetadata = () => ({
       source:                    'agent_inbox',
       workerMappingNewHumanTurn: human,
       inboxMessageIds:           entries.map(entry => entry.envelope.ids.messageId),
       relayed:                   entries.some(entry => entry.envelope.ids.relayed === true),
-    };
+    });
     if (!human && target.threadId && !entries.some(entry => entry.envelope.kind === 'decision')) {
       const owner = agentJobLifecycle.liveState(target.threadId);
       if (owner) {
+        const metadata = inboxMetadata();
         // Tighten the owner's tool scope before a synchronous CLI listener sees the input.
         if (metadata.relayed) (owner.metadata as any).relayed = true;
         // Like main's cache-hit steer, ACK on injection can lose input if the runner
@@ -450,6 +451,7 @@ timestamp: Date.now(),
       }
     }
     if (this.inboxThread(target) || (human && target.threadId && this.decisionThreadOwned(target.channel, target.threadId))) return 'deferred';
+    const metadata = inboxMetadata();
     const threadId = target.threadId || this.inboxThread(target);
     if (human && threadId) this.deliveringDecisionThreads.add(threadId);
     try {
