@@ -209,11 +209,9 @@ export class InternalTabViewManager {
   setVisible(owner: Electron.BrowserWindow, tabId: string, visible: boolean): void {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.owner !== owner) return;
-    const wasVisible = tab.visible;
     tab.visible = visible;
     if (visible) {
       if (this.chromeReadyOwners.has(owner.id)) this.attach(tab);
-      if (!wasVisible && !tab.crashed) tab.view.webContents.focus();
     } else owner.contentView.removeChildView(tab.view);
   }
 
