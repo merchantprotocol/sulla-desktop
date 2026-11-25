@@ -22,7 +22,7 @@
         'tab-pointer-dragging': dragging,
         'tab-preview': tab.preview,
         'tab-busy': tab.working || (tab.activity && tab.activity !== 'idle'),
-        'tab-idle': !tab.working && (!tab.activity || tab.activity === 'idle'),
+        'tab-idle': !renaming && !tab.working && (!tab.activity || tab.activity === 'idle'),
       },
     ]"
     :aria-label="accessibleLabel"
