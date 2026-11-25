@@ -1,10 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 
-import { TabGroupModel } from './TabGroupModel';
+import { calculateTabStripLayout, TabGroupModel, type TabStripLayoutGroup } from './TabGroupModel';
 
 describe('TabGroupModel', () => {
   const model = new TabGroupModel();
+
+  const layoutGroup = (id: TabStripLayoutGroup['id'], tabs: TabStripLayoutGroup['tabs'], baseWidth = 80): TabStripLayoutGroup => ({
+    id,
+    tabs,
+    baseWidth,
+    foldedWidth: baseWidth - 10,
+  });
 
   it('maps chat, legacy secretary and Secretary conversations to Chats, browser to Browser, and all other modes to Tools', () => {
     expect(model.groupForMode('chat')).toBe('chats');
@@ -97,5 +104,123 @@ describe('TabGroupModel', () => {
     expect(model.needsYouCount([
       { activity: 'working' }, { activity: 'waiting' }, { activity: 'you' }, { activity: 'stalled' }, { activity: 'idle' },
     ])).toBe(1);
+  });
+
+  it('leaves every group expanded when the content-sized layout fits', () => {
+    const layout = calculateTabStripLayout({
+      groups: [
+        layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]),
+        layoutGroup('browser', [{ id: 'browser', width: 90 }]),
+        layoutGroup('tools', [{ id: 'tools', width: 100 }]),
+      ],
+      activeGroup: 'chats',
+      availableWidth: 570,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'expanded', 'expanded']);
+    expect(layout.map(group => group.width)).toEqual([190, 170, 180]);
+  });
+
+  it('compacts the non-active capsules first while preserving every compact tab icon when they fit', () => {
+    const layout = calculateTabStripLayout({
+      groups: [
+        layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]),
+        layoutGroup('browser', [{ id: 'browser', width: 90 }]),
+        layoutGroup('tools', [{ id: 'tools', width: 100 }]),
+      ],
+      activeGroup: 'chats',
+      availableWidth: 420,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'compact', 'compact']);
+    expect(layout.map(group => group.visibleTabIds)).toEqual([['chat'], ['browser'], ['tools']]);
+    expect(layout.reduce((total, group) => total + group.width, 0) + 16).toBeLessThanOrEqual(420);
+  });
+
+  it('keeps two non-active groups compact when each has several tabs', () => {
+    const layout = calculateTabStripLayout({
+      groups: [
+        layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]),
+        layoutGroup('browser', [{ id: 'b1', width: 80 }, { id: 'b2', width: 90 }]),
+        layoutGroup('tools', [{ id: 't1', width: 70 }, { id: 't2', width: 100 }]),
+      ],
+      activeGroup: 'chats',
+      availableWidth: 475,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'compact', 'compact']);
+    expect(layout[1].visibleTabIds).toEqual(['b1', 'b2']);
+    expect(layout[2].visibleTabIds).toEqual(['t1', 't2']);
+    expect(layout[1].overflowCount).toBe(0);
+    expect(layout[2].overflowCount).toBe(0);
+  });
+
+  it('caps compact icons and returns a +N overflow count without pushing the active group offscreen', () => {
+    const manyTabs = (prefix: string) => Array.from({ length: 10 }, (_, index) => ({ id: `${ prefix }${ index }`, width: 80 }));
+    const layout = calculateTabStripLayout({
+      groups: [
+        layoutGroup('chats', [{ id: 'chat', width: 120, active: true }], 90),
+        layoutGroup('browser', manyTabs('b'), 90),
+        layoutGroup('tools', manyTabs('t'), 90),
+      ],
+      activeGroup: 'chats',
+      availableWidth: 520,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'compact', 'compact']);
+    expect(layout[1].visibleTabIds.length).toBeLessThan(10);
+    expect(layout[2].visibleTabIds.length).toBeLessThan(10);
+    expect(layout[1].overflowCount).toBe(10 - layout[1].visibleTabIds.length);
+    expect(layout[2].overflowCount).toBe(10 - layout[2].visibleTabIds.length);
+    expect(layout.reduce((total, group) => total + group.width, 0) + 16).toBeLessThanOrEqual(520);
+  });
+
+  it('takes width from the widest tabs before truncating shorter titles', () => {
+    const layout = calculateTabStripLayout({
+      groups: [
+        layoutGroup('chats', [
+          { id: 'long', width: 300 },
+          { id: 'busy', width: 180, busy: true },
+          { id: 'short', width: 90 },
+          { id: 'active', width: 220, active: true },
+        ], 100),
+        layoutGroup('browser', [{ id: 'browser', width: 80 }], 60),
+        layoutGroup('tools', [{ id: 'tools', width: 80 }], 60),
+      ],
+      activeGroup: 'chats',
+      availableWidth: 880,
+    });
+
+    expect(layout[0].tabWidths.get('long')).toBe(100);
+    expect(layout[0].tabWidths.get('busy')).toBe(180);
+    expect(layout[0].tabWidths.get('short')).toBe(90);
+    expect(layout[0].tabWidths.get('active')).toBe(220);
+  });
+
+  it('switches the expanded group and compacts the previous active capsule', () => {
+    const groups = [
+      layoutGroup('chats', [{ id: 'chat', width: 100, active: true }]),
+      layoutGroup('browser', [{ id: 'browser', width: 100 }]),
+    ];
+    const chatActive = calculateTabStripLayout({ groups, activeGroup: 'chats', availableWidth: 300 });
+    const browserActive = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 300 });
+
+    expect(chatActive.map(group => group.presentation)).toEqual(['expanded', 'compact']);
+    expect(browserActive.map(group => group.presentation)).toEqual(['compact', 'expanded']);
+  });
+
+  it('keeps a user-folded chip folded while other capsules compact automatically', () => {
+    const layout = calculateTabStripLayout({
+      groups: [
+        { ...layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]), folded: true },
+        layoutGroup('browser', [{ id: 'browser', width: 90 }]),
+        layoutGroup('tools', [{ id: 'tools', width: 100 }]),
+      ],
+      activeGroup: 'chats',
+      availableWidth: 320,
+    });
+
+    expect(layout.map(group => group.presentation)).toEqual(['folded', 'compact', 'compact']);
+    expect(layout[0].visibleTabIds).toEqual([]);
   });
 });
