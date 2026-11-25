@@ -21,6 +21,21 @@ describe('private decision mailbox ownership', () => {
     expect(service.dispatchToAgent).not.toHaveBeenCalled();
     expect(await service.executeReadyTurn('test', 'sulla-desktop', 'saved answer', 'hidden', undefined, undefined, undefined, {}, [{ id: 'answer', attempt: 'attempt', body: 'saved' }])).toBe('deferred');
   });
+  it('defers a human answer to a live runner whose graph was evicted instead of dispatching a second run', async() => {
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const { GraphRegistry } = await import('../../../services/GraphRegistry');
+    const { agentJobLifecycle } = await import('../../../services/AgentJobLifecycleService');
+    vi.spyOn(GraphRegistry, 'get').mockReturnValue(undefined);
+    vi.spyOn(agentJobLifecycle, 'hasLiveWaiter').mockReturnValue(false);
+    const state:any = { metadata: {}, messages: [] };
+    const release = agentJobLifecycle.registerRunner('evicted-live', state);
+    try {
+      const service:any = Object.create(BackendGraphWebSocketService.prototype);
+      service.hasActiveRun = () => false; service.inboxThread = () => undefined; service.dispatchToAgent = vi.fn();
+      expect(await service.wakeInbox({ channel: 'test', threadId: 'evicted-live' }, 'saved answer', [{ envelope: { kind: 'human', ids: { messageId: 'm1' } } }])).toBe('deferred');
+      expect(service.dispatchToAgent).not.toHaveBeenCalled();
+    } finally { release() }
+  });
 });
 
 async function answerTurnFixture(parked = false) {
