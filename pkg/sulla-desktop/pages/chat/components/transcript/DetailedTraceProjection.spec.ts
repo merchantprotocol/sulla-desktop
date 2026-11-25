@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DetailedTraceProjection } from './DetailedTraceProjection';
 import { TranscriptReporting } from './toolGroups';
+import { TracePayloadSerializer } from './TracePayloadSerializer';
+import { ToolPayloadRepository } from '../../services/ToolPayloadRepository';
 import type { Message } from '../../models/Message';
 import { asMessageId } from '../../types/chat';
+
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn() } }));
 
 describe('DetailedTraceProjection', () => {
   it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
@@ -37,5 +41,35 @@ describe('DetailedTraceProjection', () => {
     expect(turn.rows[0].payload!.serialize()).toContain('Bearer FAKE');
     expect(turn.rows[0].payload!.serialize()).toContain('vault output');
     expect(turn.rows[0].payload!.serialize()).toContain('vault error');
+  });
+
+  it('loads the durable full tool event through its pointer when the Detailed payload expands', async() => {
+    // risk: data loss — expanding a compacted row must retrieve the complete durable event by thread and tool id.
+    const result = `COMPLETE_OUTPUT:${ 'x'.repeat(5_000) }:END`;
+    const invoke = vi.fn(async(_channel: string, reference: { threadId: string; toolRunId: string }) => ({
+      success: true,
+      data: { type: 'tool_call', toolCallId: reference.toolRunId, result },
+    }));
+    const repository = new ToolPayloadRepository({ invoke } as any);
+    const messages: Message[] = [
+      { id: asMessageId('pointer-user'), kind: 'user', createdAt: 1, text: 'inspect' },
+      { id: asMessageId('pointer-tool'), kind: 'tool', createdAt: 2, tool: 'Exec', recordedToolName: 'exec', status: 'ok', toolPayloadRef: { threadId: 'thread-pointer', toolRunId: 'run-pointer' } },
+      { id: asMessageId('pointer-reply'), kind: 'sulla', createdAt: 3, text: 'done' },
+    ];
+    const [turn] = new DetailedTraceProjection(undefined, undefined, undefined, repository)
+      .project(messages, new TranscriptReporting().entries(messages, 'info'));
+
+    await expect(turn.rows[0].payload!.load!()).resolves.toMatchObject({ toolCallId: 'run-pointer', result });
+    expect(invoke).toHaveBeenCalledWith('chat-messages:tool-payload', { threadId: 'thread-pointer', toolRunId: 'run-pointer' });
+  });
+
+  it('presents inline image bytes as an image resource, never as visible base64 text', () => {
+    // risk: image visibility — screenshots must render as images while remaining non-text payloads in the expanded trace.
+    const image = 'SYNTHETIC_IMAGE_BYTES';
+    const presentation = new TracePayloadSerializer().present({ screenshotBase64: image, screenshotMediaType: 'image/png' });
+
+    expect(presentation.images).toEqual([{ src: `data:image/png;base64,${ image }`, alt: 'Tool image 1' }]);
+    expect(presentation.text).toContain('[Image reference 1]');
+    expect(presentation.text).not.toContain(image);
   });
 });

@@ -44,7 +44,7 @@ export class ProviderToolTranscriptSink implements ProviderToolTranscriptSinkPor
     return this.emitResultEvent(this.scopedId(toolUseId), success, error, result);
   }
 
-  log(toolUseId: string, toolName: string, input: unknown, result: unknown): void {
+  log(toolName: string, input: unknown, result: unknown, toolUseId: string): void {
     this.logEvent(toolName, input, result, this.scopedId(toolUseId));
   }
 

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, it, vi } from 'vitest';
 
-import { ConversationToolPayloadStore } from './conversationToolPayloadStore';
+import { ConversationToolPayloadStore } from '@pkg/main/conversationToolPayloadStore';
 
 // risk: data accuracy — expanding a large Detailed tool row must recover every character from its durable JSONL event.
 it('loads the complete 5 MB tool result by thread and tool id, without reading outside the log directory', async() => {

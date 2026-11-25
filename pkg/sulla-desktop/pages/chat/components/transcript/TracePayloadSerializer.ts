@@ -40,12 +40,15 @@ export class TracePayloadSerializer {
 
   present(value: unknown): TracePayloadPresentation {
     let parsed = value;
+    let originalText: string | undefined;
     if (typeof value === 'string') {
+      originalText = value;
       try { parsed = JSON.parse(value) }
       catch { return { text: value, images: [] } }
     }
     const images: TraceImageReference[] = [];
-    return { text: this.serialize(this.imageReferences(parsed, images)), images };
+    const referenced = this.imageReferences(parsed, images);
+    return { text: images.length === 0 && originalText !== undefined ? originalText : this.serialize(referenced), images };
   }
 
   private imageReferences(value: unknown, images: TraceImageReference[], depth = 0, mediaType = 'image/png'): unknown {

@@ -45,5 +45,5 @@ it('preserves stdout and stderr together when Codex has no aggregate output', ()
   const streams = { stdout: 'FULL_STDOUT', stderr: 'FULL_STDERR' };
   let event: unknown;
   emitter.emit('item.completed', { item_type: 'command_execution', id: 'streams', ...streams, exit_code: 1 }, value => { event = value });
-  expect(event).toMatchObject({ result: streams, error: 'FULL_STDERR', isError: true, resultChars: JSON.stringify(streams, null, 2).length });
+  expect(event).toMatchObject({ result: streams, error: 'FULL_STDERR', isError: true, resultChars: JSON.stringify(streams).length });
 });

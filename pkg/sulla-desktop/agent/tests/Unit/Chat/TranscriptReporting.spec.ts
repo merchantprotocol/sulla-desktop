@@ -149,7 +149,6 @@ it('projects full tool activity without leaking untyped reasoning before and aft
   expect(live.entries('info')).toContainEqual({ ...debug[3], level: 'info', text: 'Shell · Failed' });
   expect(live.entries('fatal')).toEqual([]);
   expect(JSON.stringify(settled)).not.toMatch(/withheld/i);
-
   const reopened = new ReportingFixture(new ChatController({ hydrateFrom: JSON.parse(JSON.stringify(live.chat.serialize())) }));
   expect(reopened.entries('debug')).toEqual(settled);
   reopened.chat.prependOlder([...reopened.chat.messages.value, {

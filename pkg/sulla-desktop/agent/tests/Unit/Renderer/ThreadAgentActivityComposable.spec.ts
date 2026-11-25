@@ -60,7 +60,10 @@ describe('useThreadAgentActivity', () => {
     const threadId = ref<string | undefined>('thread-a');
     // Each chat's transcript belongs to its own controller; switching threads swaps the transcript too.
     const transcripts: Record<string, Message[]> = {
-      'thread-a': [{ id: 'tool-a' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:45.000Z'), tool: 'Read', desc: 'Reading ChatPage.vue', status: 'running', input: '{"path":"secret-a"}' } as Message],
+      'thread-a': [
+        { id: 'tool-a' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:45.000Z'), tool: 'Read', desc: 'Reading ChatPage.vue', status: 'running', input: '{"path":"secret-a"}' } as Message,
+        { id: 'provider-tool-a' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:46.000Z'), providerTool: true, tool: 'Command Execution', desc: '$ private provider heredoc', status: 'running', input: 'PRIVATE_PROVIDER_INPUT' } as Message,
+      ],
       'thread-b': [{ id: 'tool-b' as Message['id'], kind: 'tool', createdAt: Date.parse('2026-11-23T17:01:50.000Z'), tool: 'Edit', desc: 'Editing thread-b file', status: 'running' } as Message],
     };
     const transcript = ref<readonly Message[]>(transcripts['thread-a']);
@@ -74,6 +77,8 @@ describe('useThreadAgentActivity', () => {
     // risk: privacy — the primary agent's tool step shows with its readable description, never raw input.
     const primary = activity.checkIns.value.filter(item => item.role === 'root');
     expect(primary.map(item => [item.agentName, item.text])).toEqual([['Sulla', 'Reading ChatPage.vue']]);
+    expect(texts()).not.toContain('$ private provider heredoc');
+    expect(texts().some(text => text.includes('PRIVATE_PROVIDER_INPUT'))).toBe(false);
     expect(texts().some(text => text.includes('secret-a'))).toBe(false);
     expect(texts()).not.toContain('Editing thread-b file');
     expect(activity.rootFallback.value?.key).toBe('job-a:0:fallback');
