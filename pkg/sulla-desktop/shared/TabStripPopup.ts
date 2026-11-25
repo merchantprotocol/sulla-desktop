@@ -11,13 +11,14 @@ export interface TabAttentionRow {
   id:        string;
   title:     string;
   reason:    string;
-  state:     'you' | 'stalled';
+  state:     'you' | 'stalled' | 'working' | 'waiting' | 'quiet' | 'idle';
   iconPath?: string;
 }
 
 export interface TabAttentionMenu {
   anchor:  { x: number; y: number };
   palette: TabStripPopupPalette;
+  title?:  string;
 }
 
 export type TabContextMenuRequest = {

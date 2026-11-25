@@ -330,7 +330,7 @@
           }
           const heading = document.createElement("div");
           heading.className = "attention-heading";
-          heading.textContent = "Waiting on you";
+          heading.textContent = attention.title || "Waiting on you";
           menu.appendChild(heading);
         }
 
