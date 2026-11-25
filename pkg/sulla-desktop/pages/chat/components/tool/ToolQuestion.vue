@@ -227,7 +227,6 @@ const decisionStore = ChatDecisions.useChatDecisions();
 const routePresenter = new DecisionRoutePresenter({ now: () => decisionStore.now.value });
 const routePresentation = computed(() => { const record = props.decision ?? (props.msg.questionId ? decisionStore.inlineRecord(props.msg.questionId, 'question') : undefined); return record?.route ? routePresenter.present(record) : undefined });
 const currentStep = ref(0);
-
 // Per-question selected option labels and free-text. Index-aligned with
 // msg.questions. reactive so the template updates on toggle.
 const picks = reactive<string[][]>(props.draft?.picks ?? props.msg.questions.map(() => []));
