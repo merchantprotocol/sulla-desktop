@@ -392,7 +392,7 @@ const items: readonly ModeItem[] = Object.freeze([
   justify-content: center;
   border: none;
   border-radius: 8px;
-  color: var(--accent);
+  color: var(--primary-color-text-override, var(--accent));
   background: transparent;
   cursor: pointer;
   transition: color .2s ease, background .2s ease;

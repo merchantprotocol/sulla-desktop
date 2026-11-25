@@ -678,7 +678,7 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
   height: 18px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--accent-primary, var(--accent)) 15%, var(--bg-surface));
-  color: var(--accent-primary, var(--accent));
+  color: var(--primary-color-text-override, var(--accent-primary, var(--accent)));
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
@@ -777,7 +777,7 @@ function sparklinePointY(sample: NonNullable<WorkerChartAgent['activity']>[numbe
 .worker-chart__popover-title strong { font-size: 13px; font-weight: 600; }
 .worker-chart__popover-title span { color: var(--text-muted); font-size: 11px; }
 .worker-chart__state-label { flex: none; padding: 3px 6px; border-radius: 99px; background: color-mix(in srgb, var(--text-secondary) 9%, transparent); color: var(--text-secondary); font-size: 10px; }
-.worker-chart__state-label[data-state="working"] { color: var(--accent-primary, var(--accent)); }
+.worker-chart__state-label[data-state="working"] { color: var(--primary-color-text-override, var(--accent-primary, var(--accent))); }
 .worker-chart__state-label[data-state="needs-you"] { color: var(--status-warning); }
 .worker-chart__state-label[data-state="failed"] { color: var(--status-error); }
 .worker-chart__details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 12px; margin: 0 0 10px; font-size: 11px; }

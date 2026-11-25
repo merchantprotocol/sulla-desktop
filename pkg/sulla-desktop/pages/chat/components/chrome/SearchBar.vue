@@ -56,7 +56,7 @@ const resultsCount = computed(() => {
   box-shadow: 0 14px 30px var(--bg-overlay), 0 0 24px var(--accent-dim);
   display: flex; align-items: center; gap: 12px;
 }
-.ic { color: var(--accent-hover); font-size: 14px; }
+.ic { color: var(--primary-color-text-override, var(--accent-hover)); font-size: 14px; }
 input {
   flex: 1; background: transparent; border: none; outline: none;
   font-family: var(--font-display); font-style: italic; font-size: 16px;

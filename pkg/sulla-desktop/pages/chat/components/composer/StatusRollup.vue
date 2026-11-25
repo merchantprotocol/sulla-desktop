@@ -221,7 +221,7 @@ onBeforeUnmount(() => {
   aspect-ratio: 1;
   border-radius: 50%;
   background: color-mix(in srgb, var(--accent-primary) 16%, var(--surface-1));
-  color: var(--accent-primary);
+  color: var(--primary-color-text-override, var(--accent-primary));
   font-size: 11px;
   font-weight: 650;
   line-height: 1;
@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
 
 .status-rollup__marker[data-role='manager'] {
   background: color-mix(in srgb, var(--accent-primary) 20%, var(--surface-1));
-  color: var(--accent-primary);
+  color: var(--primary-color-text-override, var(--accent-primary));
 }
 
 .status-rollup__marker[data-role='reviewer'] {

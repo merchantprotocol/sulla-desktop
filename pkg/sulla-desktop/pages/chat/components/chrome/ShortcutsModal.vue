@@ -62,7 +62,7 @@ const open = computed(() => controller.modals.value.which === 'shortcuts');
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px 40px; }
 .sec {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.25em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   margin-bottom: 10px; padding-bottom: 8px;
   border-bottom: 1px solid var(--accent-dim);
 }

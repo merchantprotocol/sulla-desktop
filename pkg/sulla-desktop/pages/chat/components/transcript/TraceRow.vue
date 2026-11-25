@@ -159,7 +159,7 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 .dtr-agent-label { color: var(--text-primary); font-weight: 500; }
 .dtr-agent-id, .dtr-agent-time, .dtr-agent .dtr-duration { color: var(--text-muted); font: 11.5px var(--font-mono); }
 .dtr-agent .dtr-status { white-space: nowrap; }
-.dtr-status-working { color: var(--accent); }
+.dtr-status-working { color: var(--primary-color-text-override, var(--accent)); }
 .dtr-status-working::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin: 0 6px 1px 0; animation: dtr-agent-breath 1.9s ease-in-out infinite; }
 .dtr-status-blocked, .dtr-status-quiet { color: var(--status-warning); }
 .dtr-status-returned { color: var(--status-success); }

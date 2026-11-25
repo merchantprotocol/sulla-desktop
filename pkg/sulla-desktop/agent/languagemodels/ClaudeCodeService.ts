@@ -49,6 +49,7 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
 import { TurnHopTiming } from '../utils/turnHopTiming';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
@@ -1109,16 +1110,15 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // Tool activities and model thinking will provide feedback
           }, 3000);
 
-          lastStreamActivityAt = Date.now();
+          liveness.start();
           stallTimer = setInterval(() => {
-            const silentMs = Date.now() - lastStreamActivityAt;
-            if (toolStarts.size > 0) {
-              const tools = [...toolStarts.values()];
-              if (tools.some(tool => /ask_user_question|approval|permission/i.test(tool.name) && Date.now() - tool.startedAt < 2 * 60 * 60_000)) return;
-              if (tools.every(tool => Date.now() - tool.startedAt < 30 * 60_000)) return;
+            const verdict = liveness.verdict();
+            if (verdict.kind === 'alive') return;
+            const silentMs = verdict.silentMs;
+            if (verdict.kind === 'tool_hung') {
               unresolvedTool = true;
+              hungTool = verdict.tool;
             }
-            if (silentMs < STALL_TIMEOUT_MS) return;
             stalled = true;
             stopStallWatchdog();
             cleanupMcp();
@@ -1127,7 +1127,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             scheduleForcedSettlement(() => new CliFaultError(
               'stall',
               unresolvedTool
-                ? 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+                ? hungToolMessage()
                 : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
               undefined,
               !unresolvedTool,
@@ -1223,6 +1223,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const noteToolStart = (id?: string, name?: string, input?: unknown) => {
           if (!id || toolStarts.has(id)) return;
           toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
+          liveness.toolStarted(id, name ?? 'tool');
           callbacks.onToolStarted?.({ toolUseId: id, toolName: name ?? 'tool', input });
         };
         const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
@@ -1230,6 +1231,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const started = toolStarts.get(id);
           if (!started) return;
           toolStarts.delete(id);
+          liveness.toolFinished(id);
           const ms = Date.now() - started.startedAt;
           const agg = toolTotals.get(started.name) ?? { count: 0, ms: 0 };
           agg.count += 1;
@@ -1279,12 +1281,18 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // from even delivering their prompt — the whole backend goes dark.
         // Watchdog scope is THIS CLI child process only, never agent-level
         // execution: recall agents and long runs are unbounded by design.
-        // Liveness = any stdout/stderr byte, so extended thinking and long
-        // in-CLI tool runs (10 min Bash default) reset the clock; only a
-        // completely dead stream trips the kill.
+        // Liveness is the whole loop (Jonathon, 2026-11-24): any stdout/stderr
+        // byte (stream-json events, thinking and text deltas), a steer, a
+        // tool_use starting, a tool_result arriving, and any tool_use still
+        // pending. A pending tool holds the run alive up to
+        // LONG_TOOL_CEILING_MS; past that it is reported as a hung tool.
         const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
         const STALL_CHECK_MS = 30 * 1_000;
-        let lastStreamActivityAt = Date.now();
+        const liveness = new RunLivenessClock(STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS);
+        let hungTool: RunToolInFlight | undefined;
+        const hungToolMessage = () => hungTool
+          ? `Claude Code ${ describeHungTool(hungTool) }, with no other activity. Recovery was not attempted because replay could duplicate side effects.`
+          : 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.';
         let stalled = false;
         let stallTimer: NodeJS.Timeout | null = null;
         const stopStallWatchdog = () => {
@@ -1481,7 +1489,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             return false;
           }
           steersInFlight.push({ content, message });
-          lastStreamActivityAt = Date.now();
+          liveness.touch();
           emitActivity('Steering Claude with your message…', 'status');
           log.log(`[ClaudeCodeService] steer written to running turn convId=${ convId } chars=${ content.length }`);
           return true;
@@ -1747,7 +1755,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
         const onStdoutData = (chunk: Buffer) => {
           if (settled && !holding) return;
-          lastStreamActivityAt = Date.now();
+          liveness.touch();
+          try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
           stdoutBuffer += chunk.toString('utf-8');
           const lines = stdoutBuffer.split('\n');
           stdoutBuffer = lines.pop() ?? '';
@@ -1757,7 +1766,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
         const onStderrData = (chunk: Buffer) => {
           if (settled) return;
-          lastStreamActivityAt = Date.now();
+          liveness.touch();
           const text = chunk.toString('utf-8');
           stderrBuffer += text;
           const trimmed = text.trim();
@@ -1940,7 +1949,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             reject(new CliFaultError(
               'stall',
               unresolvedTool
-                ? 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.'
+                ? hungToolMessage()
                 : `Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
               undefined,
               !unresolvedTool,

@@ -23,7 +23,7 @@ defineProps<{ msg: InterimMessage }>();
 
 <style scoped>
 .chat-turn.interim { opacity: 0.8; }
-.chat-turn.interim .chat-role { color: var(--accent-hover); }
+.chat-turn.interim .chat-role { color: var(--primary-color-text-override, var(--accent-hover)); }
 .chat-turn.interim .chat-role::before {
   content: ""; display: inline-block;
   width: 6px; height: 6px; border-radius: 50%;

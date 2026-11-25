@@ -128,7 +128,7 @@ function fmtNumber(n: number): string {
 .mhead {
   padding: 12px 18px;
   font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   border-bottom: 1px solid var(--accent-dim);
   display: flex; align-items: center; gap: 12px;
 }
@@ -163,7 +163,7 @@ function fmtNumber(n: number): string {
 .stat .lbl {
   font-family: var(--font-mono); font-size: 9.5px;
   letter-spacing: 0.22em; text-transform: uppercase;
-  color: var(--accent-hover);
+  color: var(--primary-color-text-override, var(--accent-hover));
   margin-top: 6px;
 }
 .stat .sub {

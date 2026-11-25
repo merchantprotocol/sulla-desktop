@@ -24,7 +24,7 @@
   --text-primary: #e3f2fd;
   --text-secondary: #90caf9;
   --text-muted: #64b5f6;
-  --text-link: #4fc3f7;
+  --text-link: var(--accent-primary);
   --text-on-accent: #ffffff;
   --text-success: #4ade80;
   --text-error: #f87171;
@@ -56,8 +56,8 @@
   --border-error: rgba(248, 113, 113, 0.4);
   --border-warning: rgba(251, 191, 36, 0.4);
   --border-info: rgba(79, 195, 247, 0.4);
-  --border-accent: rgba(79, 195, 247, 0.5);
-  --border-focus: rgba(79, 195, 247, 0.5);
+  --border-accent: color-mix(in srgb, var(--accent-primary) 50%, transparent);
+  --border-focus: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Status */
   --status-success: #4ade80;
@@ -67,7 +67,7 @@
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
-  --ring-color: rgba(79, 195, 247, 0.5);
+  --ring-color: color-mix(in srgb, var(--accent-primary) 50%, transparent);
 
   /* Editor */
   --editor-bg: #0d2137;
@@ -79,8 +79,8 @@
   /* Terminal */
   --terminal-bg: #132f4c;
   --terminal-fg: #b3e5fc;
-  --terminal-cursor: #4fc3f7;
-  --terminal-selection-bg: rgba(79, 195, 247, 0.3);
+  --terminal-cursor: var(--accent-primary);
+  --terminal-selection-bg: color-mix(in srgb, var(--accent-primary) 30%, transparent);
   --terminal-selection-fg: #ffffff;
   
   /* Sortable Table */
@@ -135,10 +135,10 @@
 
   /* Nav */
   --nav-bg: #0a1929;
-  --nav-active: rgba(79, 195, 247, 0.15);
+  --nav-active: color-mix(in srgb, var(--accent-primary) 15%, transparent);
   --nav-border: #1a3a5c;
   --nav-hover: #224870;
-  --nav-expander-hover: rgba(79, 195, 247, 0.08);
+  --nav-expander-hover: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 
   /* Top Menu */
   --topmenu-bg: #0a1929;
@@ -148,8 +148,8 @@
   --topmost-light-hover: #1a3a5c;
 
   /* Accent Button */
-  --accent-btn: rgba(79, 195, 247, 0.12);
-  --accent-btn-hover: #4fc3f7;
+  --accent-btn: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  --accent-btn-hover: var(--accent-primary);
   --accent-btn-hover-text: #0a1929;
 
   /* Modal */
@@ -165,7 +165,7 @@
   --checkbox-disabled-bg: #1a3a5c;
   --checkbox-tick-locked: #0a1929;
   --checkbox-locked-bg: #90caf9;
-  --checkbox-ticked-bg: #4fc3f7;
+  --checkbox-ticked-bg: var(--accent-primary);
   --checkbox-locked-border: #90caf9;
   --checkbox-locked-shadow: #90caf9;
 
@@ -173,11 +173,11 @@
   --dropdown-bg: #1a3a5c;
   --dropdown-border: #64b5f6;
   --dropdown-divider: #64b5f6;
-  --dropdown-text: #4fc3f7;
+  --dropdown-text: var(--accent-primary);
   --dropdown-active-text: #e3f2fd;
   --dropdown-active-bg: #0277bd;
   --dropdown-hover-text: #e3f2fd;
-  --dropdown-hover-bg: #4fc3f7;
+  --dropdown-hover-bg: var(--accent-primary);
   --dropdown-disabled-bg: #132f4c;
   --dropdown-disabled-text: #64b5f6;
   --dropdown-locked-text: #e3f2fd;
@@ -274,7 +274,7 @@
   --simple-box-shadow: rgba(0, 0, 0, 0.15);
 
   /* Terminal (additional) */
-  --terminal-selection: #4fc3f7;
+  --terminal-selection: var(--accent-primary);
   --terminal-text: var(--body-text);
 
   /* Logs */
@@ -379,7 +379,7 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #4fc3f7;
+  background: var(--accent-primary);
 }
 
 /* Firefox scrollbar */
