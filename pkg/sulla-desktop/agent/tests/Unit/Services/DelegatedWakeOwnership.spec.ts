@@ -59,7 +59,7 @@ function harness() {
     acknowledgeCompletions: noop,
     alertRoot:              (deadline, missing) => rootNotice.send('worker-job', 0, taskThread, deadline, missing),
     repairInput:            noop,
-    logWake:                facts => logger.wake({ ...facts, cacheHit: false, graphCache: 'live_runner' }),
+    logWake:                facts => logger.wake({ ...facts, ...lifecycle.wakeFacts(taskThread, state, facts.cacheHit) }),
   };
   const run = () => lifecycle.withRunner(taskThread, state, () => new DelegatedFreshTurnRunner(ports).run(state));
   return { state, task, abort, lifecycle, ports, run, execute, inbox, lines };
@@ -240,6 +240,31 @@ describe('live delegated wake ownership', () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(h.execute).toHaveBeenCalledTimes(handback ? 1 : 0);
     } finally { h.abort.abort(); await run }
+  });
+
+  it('logs cache hit and miss independently of the live owner without refreshing the cache', async() => {
+    vi.useFakeTimers();
+    const h = harness();
+    const cache = new ThreadGraphCache(noop, () => false, () => Date.now(), 10);
+    const { GraphRegistry } = await import('../../../services/GraphRegistry');
+    const sample = vi.spyOn(GraphRegistry, 'containsState').mockImplementation((id, recipient) => cache.containsState(id, recipient));
+    try {
+      await h.lifecycle.withRunner(taskThread, h.state, async() => {
+        cache.set(taskThread, { graph: {} as any, state: h.state });
+        await vi.advanceTimersByTimeAsync(9);
+        h.lifecycle.deliver(taskThread, timer());
+        await vi.advanceTimersByTimeAsync(2);
+        await cache.evictIdle();
+        expect(cache.has(taskThread)).toBe(false);
+        h.ports.execute = () => Promise.reject(new Error('provider unavailable'));
+        const fresh = new DelegatedFreshTurnRunner(h.ports);
+        await expect(fresh.run(h.state)).rejects.toThrow();
+        h.lifecycle.deliver(taskThread, { ...timer(), metadata: { wakeId: 'miss' } });
+        await expect(fresh.run(h.state)).rejects.toThrow();
+        const facts = h.lines.map(line => JSON.parse(line.slice(line.indexOf('{'))));
+        expect(facts.map(f => [f.graphCache, f.cacheHit])).toEqual([['live_runner', true], ['live_runner', false]]);
+      });
+    } finally { sample.mockRestore(); cache.clear() }
   });
 
   it('records the throwing provider boundary and never echoes prompt text, arbitrary source or supplied ID', async() => {

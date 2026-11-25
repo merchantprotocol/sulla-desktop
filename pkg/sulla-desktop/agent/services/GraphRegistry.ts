@@ -273,6 +273,7 @@ export interface DigestibleToolResult {
 }
 
 export const GraphRegistry = {
+  containsState: (id: string, state: BaseThreadState) => registry.containsState(id, state),
   /**
    * Get existing graph for thread, or create new if not found.
    */

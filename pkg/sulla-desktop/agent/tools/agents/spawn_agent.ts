@@ -806,11 +806,8 @@ content: `[Message from orchestrator]\n${ row.message }`,
           alertRoot: (deadline, stillMissing) => new DelegatedWakeRepairNotice(id => agentJobProvider.jobs.findByTaskThread(id), completionInboxStore)
             .send(activityJobId!, index, threadId, deadline, stillMissing),
           logWake: facts => agentJobProvider.failureLogger.wake({
- ...facts,
-graphCache: agentJobLifecycle.liveState(threadId) === subState
-? 'live_runner'
-            : GraphRegistry.get(threadId)?.state === subState ? 'registry' : 'miss',
-}),
+            ...facts, ...agentJobLifecycle.wakeFacts(threadId, subState, facts.cacheHit),
+          }),
           resume:                 (jobId, taskIndex) => agentJobLifecycle.resume(jobId, taskIndex),
           rerouteCompletions:     (manager, taskIndex, reason, entries) => failedManagerCompletionRerouter.route(manager, taskIndex, reason, entries),
           acknowledgeCompletions: entries => Promise.all(entries.map(entry =>

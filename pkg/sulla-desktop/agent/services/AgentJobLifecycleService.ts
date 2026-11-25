@@ -4,6 +4,7 @@
 
 import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
+import { GraphRegistry } from './GraphRegistry';
 import { ReturnedTaskSettlement } from './ReturnedTaskSettlement';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
 import { deliverJobCompletion, returnedJobResult } from '../tools/agents/jobDelivery';
@@ -62,6 +63,11 @@ export class AgentJobLifecycleService {
     return runner?.accepting ? runner.state : undefined;
   }
 
+  wakeFacts(threadId: string, state: AgentGraphState, cacheHit = GraphRegistry.containsState(threadId, state)) {
+    const graphCache = this.liveState(threadId) === state ? 'live_runner' : cacheHit ? 'registry' : 'miss';
+    return { cacheHit, graphCache } as const;
+  }
+
   /** Lookup, deduplication, injection and release share a single JS turn. */
   deliver(threadId: string, message: ChatMessage): boolean {
     const state = this.liveState(threadId);
@@ -69,6 +75,7 @@ export class AgentJobLifecycleService {
     const { wakeId, jobMessageId } = message.metadata ?? {};
     if (!state.messages.some(previous => (wakeId && wakeId === previous.metadata?.wakeId) ||
       (jobMessageId && jobMessageId === previous.metadata?.jobMessageId) || (message.id && message.id === previous.id))) {
+      message.metadata = { ...message.metadata, wakeCacheHit: GraphRegistry.containsState(threadId, state) };
       if (!injectSteer(state, message)) this.wake(threadId);
     }
     return true;
