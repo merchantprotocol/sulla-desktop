@@ -67,6 +67,17 @@ describe('DecisionRouteResolver', () => {
     ]);
   });
 
+  it('does not infer a root-chat agent when parentJobId is missing', async() => {
+    // risk: authorization — incomplete legacy task data must not manufacture an agent holder.
+    const resolver = new DecisionRouteResolver(new TaskMap(new Map([
+      ['child-thread', { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', parentThreadId: 'root-chat', parentChannel: 'root-channel' }],
+    ])));
+
+    await expect(resolver.resolve('child-thread', 'child-channel')).resolves.toEqual([
+      { threadId: 'root-chat', channel: 'root-channel', agentId: 'human', kind: 'human' },
+    ]);
+  });
+
   it('stops a corrupt ancestry cycle at the last distinct ancestor and retains a human fallback', async() => {
     // risk: routing — a corrupt parent loop must not return the decision to the asker or loop indefinitely.
     const resolver = new DecisionRouteResolver(new TaskMap(new Map([

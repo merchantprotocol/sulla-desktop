@@ -95,7 +95,7 @@ describe('DecisionService', () => {
     // risk: authorization — an implicit human actor would let a future agent answer be misattributed or bypass the caller path.
     let release!: () => void;
     const settling = new Promise<void>(resolve => { release = resolve });
-    const decisions = { insert: vi.fn(async() => undefined), settleAs: vi.fn(async() => { await settling; return true }) };
+    const decisions = { insert: vi.fn(async() => undefined), settle: vi.fn(async() => { await settling; return true }) };
     const pendingDecisions = { ancestry: vi.fn(async() => []), taskForThread: vi.fn(async() => null), findById: vi.fn(async() => undefined) };
     const service = new DecisionService(undefined, { decisions: decisions as any, pendingDecisions: pendingDecisions as any });
     const { record, result } = await service.request({ kind: 'approval', title: 'Run?', toolName: 'write', conversationId: 'asker', channel: 'chat' }, 60_000);
@@ -104,12 +104,12 @@ describe('DecisionService', () => {
 
     await expect((service.resolve as any)({ ...response, id: 'missing' })).rejects.toThrow('decision actor is required');
     const first = service.resolveAs(actor, response);
-    await vi.waitFor(() => expect(decisions.settleAs).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(decisions.settle).toHaveBeenCalledOnce());
     await expect(service.resolveAs({ kind: 'human' }, response)).resolves.toMatchObject({ settled: false });
     release();
     await expect(first).resolves.toMatchObject({ settled: true });
     await expect(result).resolves.toMatchObject({ status: 'denied', answeredBy: actor });
-    expect(decisions.settleAs).toHaveBeenCalledOnce();
+    expect(decisions.settle).toHaveBeenCalledOnce();
   });
 
   it('does not announce an expiry when a durable publish approval already settled', async() => {
@@ -187,7 +187,7 @@ describe('a question whose asker stops waiting', () => {
     caller.abort();
 
     await expect(result).resolves.toMatchObject({ status: 'expired' });
-    expect(db.query.mock.calls.some(([sql, params]) => /SET status=\$6/.test(sql) && params?.[0] === record.id && params?.[5] === 'expired')).toBe(true);
+    expect(db.query.mock.calls.some(([sql, params]) => /SET status = 'expired'/.test(sql) && params?.[0] === record.id)).toBe(true);
   });
 
   // risk: data loss. Only the status was stored, so answers could not be recovered.
@@ -198,8 +198,9 @@ describe('a question whose asker stops waiting', () => {
 
     await service.resolve({ id: record.id, conversationId: 'thread-1', action: 'answered', answers: [{ question: 'Color?', selected: ['Blue'] }] }, { kind: 'human' });
 
-    const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status=\$6/.test(sql))!;
-    expect(JSON.parse(String(update[1]?.[6])).answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);
-    expect(update[0]).toContain("COALESCE(record#>'{route,history}','[]'::jsonb) || $8::jsonb");
+    const update = db.query.mock.calls.find(([sql]) => /UPDATE human_decisions SET status = \$2, record = \$3::jsonb/.test(sql))!;
+    const saved = JSON.parse(String(update[1]?.[2]));
+    expect(saved.answers).toEqual([{ question: 'Color?', selected: ['Blue'] }]);
+    expect(saved.route).toMatchObject({ authority: 'any', holderIndex: 0, chain: [{ kind: 'human' }] });
   });
 });

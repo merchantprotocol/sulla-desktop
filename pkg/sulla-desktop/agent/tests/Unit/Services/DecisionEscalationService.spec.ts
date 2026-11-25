@@ -21,6 +21,12 @@ class MemoryDecisionStore {
 
   put(record: DecisionRecord): void { this.records.set(record.id, structuredClone(record)) }
   async insert(record: DecisionRecord): Promise<void> { this.put(record) }
+  async settle(id: string, status: string, record: DecisionRecord): Promise<boolean> {
+    const previous = this.records.get(id);
+    if (!previous || !['pending', 'deferred'].includes(previous.status)) return false;
+    this.put({ ...record, status: status as DecisionRecord['status'] });
+    return true;
+  }
   async findById(id: string): Promise<DecisionRecord | undefined> { const record = this.records.get(id); return record && structuredClone(record) }
   async findOpenQuestion(): Promise<undefined> { return undefined }
   async ancestry(): Promise<string[]> { return [] }
@@ -322,13 +328,19 @@ describe('DecisionEscalationService', () => {
     const requested = await harness.askQuestion();
     await expect(harness.decisions.answerAsAgent('root-chat', requested.record.id, 'answer', [{ question: 'Choose?', selected: ['B'] }]))
       .resolves.toMatchObject({ settled: false });
-    await expect(harness.decisions.resolveAs({ kind: 'human' }, {
+    const humanAnswer = {
       id: requested.record.id, conversationId: 'asker', action: 'answered', answers: [{ question: 'Which?', selected: ['A'] }],
-    })).resolves.toMatchObject({ settled: true });
+    } as const;
+    await expect(harness.decisions.resolveAs({ kind: 'human' }, humanAnswer)).resolves.toMatchObject({ settled: false });
+    await expect(harness.decisions.answerAsAgent('parent', requested.record.id, 'pass')).resolves.toMatchObject({ settled: true });
+    await expect(harness.decisions.answerAsAgent('root-chat', requested.record.id, 'pass')).resolves.toMatchObject({ settled: true });
+    await expect(harness.decisions.resolveAs({ kind: 'human' }, humanAnswer)).resolves.toMatchObject({ settled: true });
     await expect(harness.decisions.answerAsAgent('parent', requested.record.id, 'answer', [{ question: 'Choose?', selected: ['B'] }]))
       .resolves.toMatchObject({ settled: false });
     await expect(requested.result).resolves.toMatchObject({ status: 'answered', answeredBy: { kind: 'human' } });
     expect((await harness.store.findById(requested.record.id))!.route?.history).toEqual([
+      expect.objectContaining({ threadId: 'parent', agentId: 'manager', action: 'passed' }),
+      expect.objectContaining({ threadId: 'root-chat', agentId: 'root-agent', action: 'passed' }),
       expect.objectContaining({ threadId: 'root-chat', agentId: 'human', action: 'answered' }),
     ]);
 
@@ -339,6 +351,7 @@ describe('DecisionEscalationService', () => {
     expect(afterPass.route).toMatchObject({ holderIndex: 1, history: [expect.objectContaining({ action: 'passed', note: 'x'.repeat(500) })] });
     await expect(harness.decisions.answerAsAgent('parent', passed.record.id, 'answer', [{ question: 'Choose?', selected: ['A'] }]))
       .resolves.toMatchObject({ settled: false });
+    await expect(harness.decisions.answerAsAgent('root-chat', passed.record.id, 'pass')).resolves.toMatchObject({ settled: true });
     await harness.decisions.resolveAs({ kind: 'human' }, {
       id: passed.record.id, conversationId: 'asker', action: 'answered', answers: [{ question: 'Which?', selected: ['A'] }],
     });

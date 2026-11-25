@@ -32,7 +32,7 @@ export class DecisionRouteResolver {
       if (!parent) {
         // A top-level chat has an agent and a human at the same thread. A
         // pruned parent job, in contrast, is not a live agent holder.
-        if (current.parentJobId == null) {
+        if (current.parentJobId === null) {
           chain.push({ threadId: parentThreadId, channel: parentChannel, agentId: parentChannel || DecisionRouteResolver.UNNAMED_AGENT, kind: 'agent' });
         }
         chain.push(this.humanEntry(parentThreadId, parentChannel));

@@ -24,7 +24,12 @@ describe('decision route creation', () => {
     };
     const decisions = {
       insert: vi.fn(async(record: DecisionRecord) => { stored.push(record) }),
-      settleAs: vi.fn(async() => true),
+      settle: vi.fn(async(id: string, status: string, record: DecisionRecord) => {
+        const index = stored.findIndex(existing => existing.id === id);
+        if (index < 0) return false;
+        stored[index] = record;
+        return status === record.status;
+      }),
     };
     const routeResolver = { resolve: vi.fn(async() => chain) };
     const escalation = {
@@ -51,7 +56,7 @@ describe('decision route creation', () => {
     const resultPromise = approval.result;
     await expect(service.resolve({ id: approval.record.id, conversationId: 'asker-thread', action: 'approved' }, { kind: 'human' })).resolves.toMatchObject({ settled: true });
     await expect(resultPromise).resolves.toMatchObject({ status: 'approved', answeredBy: { kind: 'human' } });
-    expect(decisions.settleAs).toHaveBeenCalledWith(approval.record.id, 1, { kind: 'human' }, 'approved', expect.objectContaining({ answeredBy: { kind: 'human' } }), []);
+    expect(decisions.settle).toHaveBeenCalledWith(approval.record.id, 'approved', expect.objectContaining({ answeredBy: { kind: 'human' } }), expect.any(String));
     expect(routeResolver.resolve).toHaveBeenCalledTimes(4);
   });
 });
