@@ -177,9 +177,9 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 
 import ThreadAgentActions from './ThreadAgentActions.vue';
 import { useChatController } from '../../controller/useChatController';
-import { chatActivityByTab } from '../../messages/chatActivityStore';
 import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
 
+import { windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
@@ -193,6 +193,7 @@ const NUDGE = 'Status check from the user: report your progress, or what is bloc
 const LIVE = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
 
 const controller = useChatController();
+const windowTabStrip = inject(windowTabStripKey, null);
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
@@ -312,7 +313,7 @@ function jumpTo(messageId: string): void {
 
 function reportTabActivity(snapshot: ChatTabActivitySnapshot): void {
   if (!context.tabId) return;
-  chatActivityByTab.set(context.tabId, snapshot);
+  windowTabStrip?.setSnapshot(context.tabId, snapshot);
   window.dispatchEvent(new CustomEvent('sulla:chat-activity', {
     detail: { tabId: context.tabId, ...snapshot },
   }));
@@ -339,7 +340,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('click', clearConfirm);
   if (context.tabId) {
     reportTabActivity({ state: 'idle', detail: 'nothing running or scheduled' });
-    chatActivityByTab.delete(context.tabId);
+    windowTabStrip?.clearSnapshot(context.tabId);
   }
 });
 </script>

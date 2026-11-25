@@ -6,13 +6,15 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp, h } from 'vue';
 
-import { TabContextMenuBridge } from './TabContextMenuBridge';
+import { WindowTabStripState } from './WindowTabStripState';
 
 describe('window tab context menu bridge', () => {
   it.each(['duplicate', 'attention:folded-chat'])('delivers %s once, only to the opener with two mounted headers', (action) => {
-    const bridge = new TabContextMenuBridge();
     const ipc = new EventEmitter();
-    const disconnect = bridge.connect(ipc);
+    const bridge = new WindowTabStripState(window, ipc);
+
+    bridge.connect();
+    bridge.connect();
     const mountHeader = (id: string) => {
       const select = vi.fn();
       const onClosed = vi.fn();
@@ -41,7 +43,39 @@ describe('window tab context menu bridge', () => {
     expect(current.onClosed).toHaveBeenCalledOnce();
     parked.unmount();
     current.unmount();
-    disconnect();
+    bridge.dispose();
     expect(ipc.listenerCount('tab-context-menu:selected')).toBe(0);
+    expect(ipc.listenerCount('internal-tab-view:chat-running')).toBe(0);
+    expect(ipc.listenerCount('tab-context-menu:closed')).toBe(0);
+  });
+
+  it('scopes activity and requests to each shell and releases both on disposal', () => {
+    const events = new EventTarget();
+    const firstIpc = new EventEmitter();
+    const otherIpc = new EventEmitter();
+    const first = new WindowTabStripState(events, firstIpc);
+    const other = new WindowTabStripState(new EventTarget(), otherIpc);
+    const selectFirst = vi.fn();
+    const selectOther = vi.fn();
+    const closeFirst = vi.fn();
+
+    first.connect();
+    other.connect();
+    first.open({ id: 'menu', select: selectFirst, onClosed: closeFirst });
+    other.open({ id: 'menu', select: selectOther, onClosed: vi.fn() });
+    firstIpc.emit('internal-tab-view:chat-running', {}, 'chat', false, { state: 'you' });
+    events.dispatchEvent(new CustomEvent('sulla:chat-running', { detail: { tabId: 'chat', running: true } }));
+    expect(first.readActivity('chat')).toEqual({ working: true, snapshot: { state: 'you' } });
+    expect(other.readActivity('chat')).toEqual({ working: false, snapshot: undefined });
+
+    first.dispose();
+    expect(closeFirst).toHaveBeenCalledOnce();
+    events.dispatchEvent(new CustomEvent('sulla:chat-running', { detail: { tabId: 'chat', running: true } }));
+    expect(first.readActivity('chat')).toEqual({ working: false, snapshot: undefined });
+    firstIpc.emit('tab-context-menu:selected', {}, 'menu', 'close');
+    otherIpc.emit('tab-context-menu:selected', {}, 'menu', 'pin');
+    expect(selectFirst).not.toHaveBeenCalled();
+    expect(selectOther).toHaveBeenCalledExactlyOnceWith('pin');
+    other.dispose();
   });
 });
