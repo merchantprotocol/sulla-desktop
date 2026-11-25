@@ -159,7 +159,7 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 .dtr-what { grid-column: 2; grid-row: 1; min-width: 0; padding: 2px 0; color: var(--text-secondary); font: 13px/20px var(--font-body); overflow-wrap: anywhere; }
 .dtr-verb { color: var(--text-primary); font-weight: 500; margin-right: 4px; }
 .dtr-tg { color: var(--text-primary); }
-code.dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface); font: 12.5px var(--font-mono, ui-monospace, monospace); }
+code.dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface); font: 12.5px var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dtr-args { margin-left: 6px; color: var(--text-muted); font: 11.5px var(--font-mono, ui-monospace, monospace); }
 .dtr-cite { margin-right: 6px; color: var(--primary-color-text-override, var(--accent)); font: 11.5px var(--font-mono, ui-monospace, monospace); }
 .dtr-m { grid-column: 3; grid-row: 1; display: flex; gap: 10px; font-size: 12px; line-height: 24px; font-variant-numeric: tabular-nums; white-space: nowrap; }

@@ -6,7 +6,7 @@
 import type { TracePayload } from './TracePayloadSerializer';
 
 export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
-export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'waiting' | 'blocked' | 'returned' | 'failed' | 'stopped';
+export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'blocked' | 'returned' | 'failed' | 'stopped';
 
 export interface SubAgentTraceDetails {
   agentId?: string;

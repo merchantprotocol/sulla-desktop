@@ -33,8 +33,10 @@ describe('AgentTraceHistory', () => {
     expect(rendered.split(checkins[4].summary)).toHaveLength(2);
     expect(rendered).toContain('Full\nbrief');
     expect(rendered).toContain('Full\nreport');
-    // risk: hiding or reordering what Sulla told the worker mid-run.
-    const sent = rendered.indexOf('← Sulla: Use the published version id,\nnot updatedAt.');
+    // risk: hiding or reordering what the worker was told mid-run, or naming a sender
+    // agent_job_messages never recorded.
+    const sent = rendered.indexOf('← message: Use the published version id,\nnot updatedAt.');
+    expect(rendered).not.toContain('← Sulla:');
     expect(sent).toBeGreaterThan(rendered.indexOf(checkins[2].summary));
     expect(sent).toBeLessThan(rendered.indexOf(checkins[3].summary));
   });

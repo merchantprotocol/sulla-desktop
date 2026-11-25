@@ -44,7 +44,7 @@ const exchangeStates: Record<SubAgentExchangeMessage['status'], SubAgentTraceSta
 const legacyStates: Record<string, SubAgentTraceStatus> = { Done: 'returned', Failed: 'failed', Blocked: 'blocked', Stopped: 'stopped' };
 
 const statusLabels: Record<SubAgentTraceStatus, string> = {
-  starting: 'starting', working: 'working', quiet: 'no check-in', waiting: 'working', blocked: 'blocked',
+  starting: 'starting', working: 'working', quiet: 'no check-in', blocked: 'blocked',
   returned: 'returned', failed: 'failed', stopped: 'stopped',
 };
 
@@ -191,12 +191,13 @@ export class SubAgentTraceProjection {
       checkins.push({ createdAt: checkinAt, summary: checkinSummary, step: '', blockers: [], filesTouched: [] });
     }
     // Check-ins and messages sent to the worker, interleaved by time, word for word.
+    // agent_job_messages records no sender, so a message is labelled as a message, not as Sulla's.
     const timeline = [
       ...checkins.map(entry => ({ at: entry.createdAt, text: [
         `${ this.timeLabel(entry.createdAt) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
         ...(entry.step ? [entry.step] : []), ...entry.blockers, ...entry.filesTouched,
       ].join('\n') })),
-      ...messages.map(entry => ({ at: entry.createdAt, text: `${ this.timeLabel(entry.createdAt) }  ← Sulla: ${ entry.message }` })),
+      ...messages.map(entry => ({ at: entry.createdAt, text: `${ this.timeLabel(entry.createdAt) }  ← message: ${ entry.message }` })),
     ].sort((a, b) => a.at - b.at);
     const formattedCheckins = timeline.map(entry => entry.text).join('\n');
     return [

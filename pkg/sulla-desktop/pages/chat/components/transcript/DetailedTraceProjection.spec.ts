@@ -41,9 +41,32 @@ describe('DetailedTraceProjection', () => {
   it('shows a shell call as Ran with its full command, tool name and exit code', () => {
     // risk: a shell step that hides the command it ran or the tool that ran it.
     const tool = { kind: 'tool', id: '1_tool_exec', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'ok',
-      meta: 'exit 2 · 94ms', input: JSON.stringify({ command: 'git grep -n "overwrite" AgentSeeder.ts' }), output: 'two hits' } as const;
+      meta: '94ms', input: JSON.stringify({ command: 'git grep -n "overwrite" AgentSeeder.ts' }), output: 'Command failed with exit code 2:\ntwo hits' } as const;
     const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
     expect(row).toMatchObject({ verb: 'Ran', target: 'git grep -n "overwrite" AgentSeeder.ts', keyArgs: 'exec · exit 2', durationLabel: '94ms' });
     expect(row.payload!.serialize()).toContain('two hits');
+  });
+  it('reads the exit code exechost writes into its output', () => {
+    // risk: a failed host command shown without the code it exited with.
+    const tool = { kind: 'tool', id: '1_tool_exechost', createdAt: 1, recordedToolName: 'exechost', tool: 'Bash', desc: 'Running command', status: 'error',
+      meta: '1.2s', input: JSON.stringify({ command: 'ls /missing' }), output: 'Command exited 1:\nls: /missing: No such file or directory' } as const;
+    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+    expect(row).toMatchObject({ verb: 'Ran', target: 'ls /missing', keyArgs: 'exechost · exit 1', status: 'failed', durationLabel: '1.2s' });
+  });
+  it('shows no exit code for a successful call that recorded none', () => {
+    // risk: inventing an "exit 0" the tool never reported.
+    const tool = { kind: 'tool', id: '1_tool_ok', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'ok',
+      meta: '40ms', input: JSON.stringify({ command: 'echo hi' }), output: 'hi' } as const;
+    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+    expect(row).toMatchObject({ verb: 'Ran', target: 'echo hi', keyArgs: 'exec', status: 'ok' });
+    expect(row.keyArgs).not.toMatch(/exit/);
+  });
+  it('keeps a multi-line shell command on its own lines', () => {
+    // risk: a multi-line command flattened into one line that is not what ran.
+    const command = 'cd /repo &&\n  git status\nprintf "a  b"';
+    const tool = { kind: 'tool', id: '1_tool_multi', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'ok',
+      input: JSON.stringify({ command }), output: '' } as const;
+    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+    expect(row.target).toBe(command);
   });
 });

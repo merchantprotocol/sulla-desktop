@@ -112,7 +112,9 @@ export class DetailedTraceProjection {
       // "Ran <command>  <tool> · exit N": the real tool name stays on the line (no-redaction rule).
       const args = [target, this.exitCode(meta, output)].filter(Boolean).join(' · ');
       return [{ ...this.row(message.id, 'tool', status === 'running' ? 'Running' : 'Ran', shell, status,
-        anchor, message.createdAt, this.duration(meta), args, payload), targetIsCode: true }];
+        anchor, message.createdAt, this.duration(meta), args, payload),
+        // Keep the command's own lines and spacing; only trim the ends.
+        target: shell.trim(), targetIsCode: true }];
     }
     return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
       anchor, message.createdAt, this.duration(meta), this.serializer.preview(input), payload)];
@@ -159,8 +161,15 @@ export class DetailedTraceProjection {
     }
   }
 
+  /**
+   * The exit code the tool actually recorded: meta like "exit 2" first, then the
+   * output exec ("Command failed with exit code N:") or exechost ("Command exited N:")
+   * writes. No recorded code means none is shown; a successful call is never given
+   * a made-up "exit 0".
+   */
   private exitCode(meta?: string, output?: string): string | undefined {
-    const code = meta?.match(/\bexit(?:\s+code)?\s*:?\s*(-?\d+)/i)?.[1] ?? output?.match(/^exit(?:\s+code)?\s*:?\s*(-?\d+)\b/im)?.[1];
+    const code = meta?.match(/\bexit(?:\s+code)?\s*:?\s*(-?\d+)/i)?.[1] ??
+      output?.match(/\b(?:exit(?:ed)?(?:\s+code)?)\s*:?\s*(-?\d+)/i)?.[1];
     return code !== undefined ? `exit ${ code }` : undefined;
   }
 
