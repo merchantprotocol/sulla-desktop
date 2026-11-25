@@ -44,6 +44,8 @@
               :thread-id="statusThreadId"
               :check-ins="statusCheckIns"
               :root-fallback="statusRootFallback"
+              @consumer-attached="threadActivity?.attachConsumer()"
+              @consumer-detached="threadActivity?.detachConsumer()"
               @consumed="threadActivity.consumeCheckIns()"
             />
             <span class="dock-divider" aria-hidden="true" />
