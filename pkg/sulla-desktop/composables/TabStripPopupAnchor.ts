@@ -28,6 +28,6 @@ export class TabStripPopupAnchor {
 
       if (value) palette[token] = value;
     }
-    return { anchor: { x, y: bounds.bottom + 6 }, palette };
+    return { anchor: { x, y: bounds.bottom + 6, aboveY: bounds.top - 6 }, palette };
   }
 }
