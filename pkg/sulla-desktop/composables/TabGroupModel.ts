@@ -128,6 +128,6 @@ export class TabGroupModel {
   }
 
   needsYouCount(tabs: readonly { activity?: string }[]): number {
-    return tabs.filter(tab => tab.activity === 'you' || tab.activity === 'stalled').length;
+    return tabs.filter(tab => tab.activity === 'you').length;
   }
 }

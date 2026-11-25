@@ -963,7 +963,7 @@ interface TabStripSection {
 const needsYouRows = computed<TabAttentionRow[]>(() => orderedTabs.value.flatMap(tab => {
   const state = tab.activity;
 
-  if (state !== 'you' && state !== 'stalled') return [];
+  if (state !== 'you') return [];
   return [{ id: tab.id, title: tab.label, state, iconPath: tab.iconPath, reason: [ACTIVITY_LABEL[state], tab.statusLine].filter(Boolean).join(' · ') }];
 }));
 

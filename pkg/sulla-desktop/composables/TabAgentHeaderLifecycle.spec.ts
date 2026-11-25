@@ -143,6 +143,10 @@ describe('window tab state with real AgentHeaders', () => {
 
     tab.scrollIntoView = vi.fn();
 
+    ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, false, { state: 'stalled' });
+    await nextTick();
+    expect(root.querySelector('[aria-haspopup="menu"]')).toBeNull();
+
     ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, true, { state: 'you' });
     await nextTick();
     const button = root.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
