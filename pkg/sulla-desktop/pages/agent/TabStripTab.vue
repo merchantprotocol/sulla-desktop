@@ -21,8 +21,8 @@
         'tab-working': tab.working || tab.activity === 'working',
         'tab-pointer-dragging': dragging,
         'tab-preview': tab.preview,
-        'tab-busy': tab.activity && tab.activity !== 'idle',
-        'tab-idle': !tab.activity || tab.activity === 'idle',
+        'tab-busy': tab.working || (tab.activity && tab.activity !== 'idle'),
+        'tab-idle': !tab.working && (!tab.activity || tab.activity === 'idle'),
       },
     ]"
     :aria-label="accessibleLabel"
@@ -53,7 +53,7 @@
     </svg>
     <span class="tab-icon">
       <span
-        v-if="tab.activity === 'working'"
+        v-if="tab.working || tab.activity === 'working'"
         class="tab-status tab-status-working tab-icon-meter"
         role="img"
         :aria-label="activityLabels.working"
