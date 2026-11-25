@@ -19,12 +19,15 @@
  */
 
 import type { ChatMode } from '../controllers/ChatController';
+import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '../services/AgentAwarenessPolicy';
 
 export interface TurnContextOptions {
   /** Current chat mode — non-text modes add a condensed voice directive */
   chatMode:    ChatMode;
   /** Whether this is the heartbeat (autonomous) agent */
   isHeartbeat: boolean;
+  /** Missing means legacy/default-visible; false keeps presence but hides the roster. */
+  agentAwareness?: AgentAwarenessSetting | null;
 }
 
 /** Matches a previously injected <turn_context> block (for idempotent replace). */
@@ -86,6 +89,7 @@ function voiceDirectiveFor(chatMode: ChatMode): string | null {
  */
 export async function buildTurnContext(opts: TurnContextOptions): Promise<string> {
   const lines: string[] = [];
+  const includeAgentRoster = new AgentAwarenessPolicy().canSeeOtherAgents(opts.agentAwareness);
 
   // Runtime line — replaces the former 'runtime' prompt section.
   const now = new Date();
@@ -111,7 +115,8 @@ export async function buildTurnContext(opts: TurnContextOptions): Promise<string
   // section. The static messaging instructions stay in the stable prompt.
   try {
     const { getActiveAgentsRegistry } = await import('../services/ActiveAgentsRegistry');
-    const roster = await getActiveAgentsRegistry().buildCompactRoster();
+    const registry = getActiveAgentsRegistry();
+    const roster = includeAgentRoster ? await registry.buildCompactRoster() : await registry.buildHumanPresence();
     if (roster) lines.push(roster);
   } catch { /* registry unavailable — runtime line still goes out */ }
 

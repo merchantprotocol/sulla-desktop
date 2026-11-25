@@ -5,6 +5,7 @@ const f = vi.hoisted(() => ({
   storedAgent: undefined as { id:string; source_kind:string; use_case_file_id:string|null } | undefined,
   failRegistrations: 1,
   insertParams: [] as any[][],
+  insertSql: [] as string[],
   initializedRoutes: [] as any[][],
   routeCreated: false,
   removedRoutes: [] as any[][],
@@ -20,6 +21,7 @@ vi.mock('@pkg/agent/database/PostgresClient', () => ({ postgresClient: {
   transaction: vi.fn(async(work: (client: any) => Promise<unknown>) => work({ query: async(sql: string, params: any[] = []) => {
     if (!sql.includes('INSERT INTO agent_definitions')) return { rows: [] };
     f.insertParams.push(params);
+    f.insertSql.push(sql);
     if (f.failRegistrations > 0) {
       f.failRegistrations--;
       throw new Error('temporary projection failure');
@@ -51,15 +53,20 @@ vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
 
 import { SullaUseCaseFiles } from '@pkg/main/sullaUseCaseFiles';
 
-const packageRows = [{ id: 'grok-file', path: 'Use Cases/agents/grok-pr-reviewer/agent.yaml', published_version_id: 'published-v1' }];
-const packageText = `slug: grok-pr-reviewer\nname: Grok PR Reviewer\nprovider: grok\nmodel: grok-4.7\nsystemPrompt: Review the approved pull request head.\n`;
+const packageRows = [{ id: 'grok-file', path: 'Use Cases/agents/grok-pr-reviewer/agent.json', published_version_id: 'published-v1' }];
+const packageText = JSON.stringify({
+  apiVersion: 'sulla/v3', kind: 'Agent', manifestVersion: 1,
+  metadata: { slug: 'grok-pr-reviewer', title: 'Grok PR Reviewer', description: 'Reviews PRs.', version: '1.0.0' },
+  spec: { agentAwareness: false, provider: 'grok', model: 'grok-4.7', prompt: 'Review the approved pull request head.', tools: [], skills: [], routines: [], config: {}, promptFiles: {} },
+});
+let currentPackageText = packageText;
 
 function response(value: unknown): Response { return new Response(JSON.stringify(value), { status: 200 }); }
 
 function request(endpoint: string): Promise<Response> {
   if (endpoint === '/v1/local/system-areas') return Promise.resolve(response([{ id: 'home', systemArea: 'sulla' }]));
   if (endpoint.startsWith('/v1/files?')) return Promise.resolve(response(packageRows));
-  if (endpoint.startsWith('/v1/files/grok-file/preview')) return Promise.resolve(new Response(packageText, { status: 200 }));
+  if (endpoint.startsWith('/v1/files/grok-file/preview')) return Promise.resolve(new Response(currentPackageText, { status: 200 }));
   if (endpoint === '/v1/local/system-areas/audit') return Promise.resolve(response({ ok: true }));
   throw new Error(`Unexpected Files request ${ endpoint }`);
 }
@@ -69,6 +76,8 @@ describe('published legacy agent registration retry', () => {
     f.storedAgent = undefined;
     f.failRegistrations = 1;
     f.insertParams = [];
+    f.insertSql = [];
+    currentPackageText = packageText;
     f.initializedRoutes = [];
     f.routeCreated = false;
     f.removedRoutes = [];
@@ -84,6 +93,7 @@ describe('published legacy agent registration retry', () => {
     expect(f.initializedRoutes[0][1]).toBe(f.insertParams[0][0]);
     expect(f.insertParams[0][1]).toBe('grok-pr-reviewer');
     expect(f.insertParams[0][12]).toBe('grok');
+    expect(f.insertParams[0][23]).toBe(false);
     // The rollback carries the exact identity it created, never just the agent id.
     expect(f.removedRoutes).toEqual([[ 'grok-pr-reviewer', f.insertParams[0][0], { editToken: 'created-token', revision: 1 } ]]);
     expect(f.storedAgent).toBeUndefined();
@@ -97,5 +107,22 @@ describe('published legacy agent registration retry', () => {
 
     await service.scan();
     expect(f.insertParams).toHaveLength(2);
+  });
+
+  it('leaves omitted awareness unset so SQL defaults new agents and preserves existing user settings', async() => {
+    // risk: every package rescan runs the upsert, which can silently undo a user's opt-out.
+    currentPackageText = JSON.stringify({
+      apiVersion: 'sulla/v3', kind: 'Agent', manifestVersion: 1,
+      metadata: { slug: 'grok-pr-reviewer', title: 'Grok PR Reviewer', description: 'Reviews PRs.', version: '1.0.0' },
+      spec: { provider: 'grok', model: 'grok-4.7', prompt: 'Review the approved pull request head.', tools: [], skills: [], routines: [], config: {}, promptFiles: {} },
+    });
+    f.failRegistrations = 0;
+
+    await new SullaUseCaseFiles(request).scan();
+
+    expect(f.insertParams).toHaveLength(1);
+    expect(f.insertParams[0][23]).toBeNull();
+    expect(f.insertSql[0]).toContain('COALESCE($24,TRUE)');
+    expect(f.insertSql[0]).toContain('agent_awareness=COALESCE($24,agent_definitions.agent_awareness)');
   });
 });

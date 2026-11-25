@@ -53,6 +53,7 @@ function baseAgent(patch: Record<string, unknown> = {}) {
     canCall:            [],
     isBuiltin:          false,
     frontDoor:          null,
+    agentAwareness:     true,
     updatedAt:          T1,
     type:               'worker',
     allowedTools:       [],
@@ -76,7 +77,7 @@ beforeEach(() => {
     }
     if (name === 'model-routing:get') return structuredClone(f.routing);
     if (name === 'agent-definitions:export') return { spec: { skills: [] } };
-    if (name === 'agent-definitions:update') return { id: args[0], slug: f.agent.slug, enabled: args[1].enabled, updated_at: nextStamp() };
+    if (name === 'agent-definitions:update') { f.agent = { ...f.agent, ...args[1], updatedAt: nextStamp() }; return { id: args[0], slug: f.agent.slug, enabled: f.agent.enabled, updated_at: f.agent.updatedAt }; }
     if (name === 'model-routing:worker-set') {
       const change = args[0];
       if (change.candidates === null) delete f.routing.workerBindings[change.slug];
@@ -136,6 +137,26 @@ describe('Try opens a chat on the saved agent slug', () => {
   });
 });
 
+describe('Sees other agents editor toggle', () => {
+  it('saves the awareness opt-out and reloads it from the saved definition', async() => {
+    // risk: workers' opt-out is not persisted and their next prompt grows again.
+    const wrapper = await openEditor();
+    await button(wrapper, 'Capabilities').trigger('click');
+    const toggle = wrapper.find('[role="switch"][aria-label="Sees other agents"]');
+    expect(toggle.attributes('aria-checked')).toBe('true');
+    await toggle.trigger('click');
+    await button(wrapper, 'Save').trigger('click');
+    await flushPromises();
+    expect(updates().at(-1)?.[2]?.agentAwareness).toBe(false);
+    wrapper.unmount();
+
+    const reloaded = await openEditor();
+    await button(reloaded, 'Capabilities').trigger('click');
+    expect(reloaded.find('[role="switch"][aria-label="Sees other agents"]').attributes('aria-checked')).toBe('false');
+    reloaded.unmount();
+  });
+});
+
 describe('saved timestamp and baseline after a profile save', () => {
   it('second save after a failed readback uses the first save timestamp, and an unedited saved form can be tried', async() => {
     const wrapper = await openEditor();
@@ -178,7 +199,7 @@ describe('saved timestamp and baseline after a profile save', () => {
     const original = f.invoke.getMockImplementation()!;
     f.invoke.mockImplementation((name: string, ...args: any[]) => name === 'model-routing:worker-set' ? Promise.reject(new Error('Mapping store unavailable')) : original(name, ...args));
     const wrapper = await openEditor();
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     expect(updates()).toHaveLength(1);
     expect(wrapper.text()).toContain('Profile was saved; model settings could not be saved. Mapping store unavailable');
@@ -192,7 +213,7 @@ describe('disabled agent model settings', () => {
     f.agent = baseAgent({ enabled: false });
     f.routing.workers = []; // the runnable workers list excludes disabled definitions
     const wrapper = await openEditor();
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
     await wrapper.find('[aria-label="Reasoning effort"]').setValue('high');
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
@@ -299,10 +320,10 @@ describe('unpinning clears hidden fallbacks', () => {
     await button(wrapper, '＋ New agent').trigger('click');
     const fields = wrapper.findAll('.frow input');
     await fields[0].setValue('Unpinned'); await fields[1].setValue('unpinned');
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
     await button(wrapper, 'Add fallback').trigger('click');
     await wrapper.find('[aria-label="Fallback provider 1"]').setValue('claude-code');
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     const create = f.invoke.mock.calls.find(call => call[0] === 'agent-definitions:create')!;
     expect(create[1]).toMatchObject({ modelChoice: { mode: 'list' }, modelFallbacks: [] });
@@ -318,10 +339,10 @@ describe('model class pin restores the latest unpinned class', () => {
     const select = () => wrapper.find('[aria-label="Model class"]').element as HTMLSelectElement;
     expect(select().value).toBe('fast');
     await wrapper.find('[aria-label="Model class"]').setValue('coding');
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
     expect(select().disabled).toBe(true);
     expect(select().value).toBe('coding');
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
     expect(select().disabled).toBe(false);
     expect(select().value).toBe('coding');
     await button(wrapper, 'Save').trigger('click');
@@ -423,7 +444,8 @@ describe('owner binding recovery after a create whose list readback failed', () 
     await button(wrapper, '＋ New agent').trigger('click');
     const fields = wrapper.findAll('.frow input');
     await fields[0].setValue('QA created reviewer'); await fields[1].setValue('qa-created');
-    await wrapper.find('[role="switch"]').trigger('click');
+    await wrapper.find('[role="switch"][aria-label="Pin a specific model"]').trigger('click');
+    await wrapper.find('[aria-label="Pinned provider"]').setValue('codex');
     await wrapper.find('[aria-label="Pinned model"]').setValue('gpt-6-luna');
     await wrapper.find('[aria-label="Reasoning effort"]').setValue('max');
     await button(wrapper, 'Add fallback').trigger('click');

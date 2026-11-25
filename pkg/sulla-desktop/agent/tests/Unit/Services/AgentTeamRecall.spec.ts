@@ -86,4 +86,21 @@ describe('AgentTeamRecallService', () => {
     );
     expect(await service.buildContext({ agentSlug: 'lead', text: 'anything' })).toBe('');
   });
+
+  it('suppresses the team directory and calling instructions for agents with awareness off', async() => {
+    // risk: a worker gets instructions and a directory for launching other agents.
+    const query = vi.fn(async() => [
+      { type: 'agent' as const, slug: 'worker', title: 'Worker', description: 'Worker', score: 1, reason: 'match' },
+    ]);
+    const service = new AgentTeamRecallService(
+      { query },
+      async() => ({ slug: 'worker', can_call: ['*'], agent_awareness: false, prompt_content: '', system_prompt: '', prompt_files: {} } as any),
+      async() => [card('other')],
+      candidate => `- ${ candidate.slug }`,
+    );
+    const context = await service.buildContext({ agentSlug: 'worker', text: 'need help' });
+    expect(context).toBe('');
+    expect(query).not.toHaveBeenCalled();
+    expect(context).not.toMatch(/Calling your team|Team directory|<agent_team>|spawn_agent/);
+  });
 });

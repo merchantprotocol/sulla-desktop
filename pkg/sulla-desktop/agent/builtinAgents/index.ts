@@ -48,6 +48,8 @@ export interface BuiltinAgentCard {
 /** One entry of builtin-agents.json. */
 export interface BuiltinAgentSpec {
   slug:              string;
+  /** Defaults to visible for older bundles; worker bundles explicitly set false. */
+  agentAwareness?:   boolean;
   name:              string;
   description:       string;
   provider:          string | null;
@@ -92,6 +94,7 @@ export interface BuiltinManagedContent {
   returns:          string;
   cost_tier:        AgentCostTier | null;
   can_call:         string[];
+  agent_awareness:  boolean;
 }
 
 export const BUILTIN_HOME_TOKEN = '{{USER_HOME}}';
@@ -125,7 +128,7 @@ export function isRetiredCodingManagerSlug(slug: string): boolean {
 const MANAGED_FIELDS: (keyof BuiltinManagedContent)[] = [
   'name', 'description', 'system_prompt', 'prompt_content', 'soul_content', 'goals_content', 'prompt_files',
   'allowed_tools', 'skill_refs', 'routine_refs', 'model_priority', 'provider', 'model', 'model_slot', 'config',
-  ...BUILTIN_CARD_FIELDS,
+  ...BUILTIN_CARD_FIELDS, 'agent_awareness',
 ];
 
 export function getBuiltinAgentSpecs(): BuiltinAgentSpec[] {
@@ -223,15 +226,8 @@ export function renderBuiltinAgent(spec: BuiltinAgentSpec, home = os.homedir(), 
     returns:          s.card?.returns ?? '',
     cost_tier:        s.card?.costTier ?? null,
     can_call:         s.card?.canCall ?? [],
+    agent_awareness:  s.agentAwareness !== false,
   };
-}
-
-function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${ value.map(canonicalJson).join(',') }]`;
-  if (value && typeof value === 'object') {
-    return `{${ Object.keys(value).sort().map(key => `${ JSON.stringify(key) }:${ canonicalJson((value as any)[key]) }`).join(',') }}`;
-  }
-  return JSON.stringify(value ?? null);
 }
 
 /**
@@ -250,31 +246,36 @@ const POLICY_REWRITTEN_FIELDS = new Set<string>(['provider', 'model', 'model_slo
  */
 const MANAGED_HASH_PREFIX = 'sha256-v2:';
 
-function sha256(picked: Record<string, unknown>): string {
-  return createHash('sha256').update(canonicalJson(picked)).digest('hex');
-}
-
-/** config as the definition model stores it, without the policy's modelChoice or the front-door marker. */
-function managedConfig(config: unknown): Record<string, unknown> {
-  const base = config && typeof config === 'object' && !Array.isArray(config) ? config as Record<string, unknown> : {};
-  const stored = new AgentModelCategoryPolicy().config(base, { mode: 'class', class: 'standard' });
-  // modelChoice is the agent's model, not managed content. A null-only front-door
-  // edit must keep hashing as the bundled row, so prompt upgrades still run.
-  const { modelChoice: _modelChoice, [FRONT_DOOR_CHOSEN_KEY]: _frontDoorChoice, ...rest } = stored;
-  return rest;
-}
-
-/**
- * Stable hash of the managed content of a rendered spec or a live DB row. Both sides
- * are reduced to what AgentDefinitionModel actually stores, so an untouched seeded
- * row hashes exactly like the bundle content it was created from.
- */
-export function hashManagedContent(content: BuiltinManagedContent | AgentDefinition): string {
-  const picked: Record<string, unknown> = {};
-  for (const field of MANAGED_FIELDS) {
-    if (POLICY_REWRITTEN_FIELDS.has(field)) continue;
-    const value = (content as any)[field];
-    picked[field] = field === 'config' ? managedConfig(value) : field === 'cost_tier' ? (value || null) : value;
+/** Hashes the persisted form of bundled agent content, including older format rows. */
+export class BuiltinAgentHasher {
+  static hashManagedContent(content: BuiltinManagedContent | AgentDefinition): string {
+    return this.hashFields(content, MANAGED_FIELDS);
   }
-  return `${ MANAGED_HASH_PREFIX }${ sha256(picked) }`;
+
+  static hashManagedContentBeforeAgentAwareness(content: BuiltinManagedContent | AgentDefinition): string {
+    return this.hashFields(content, MANAGED_FIELDS.filter(field => field !== 'agent_awareness'));
+  }
+
+  private static hashFields(content: BuiltinManagedContent | AgentDefinition, fields: readonly (keyof BuiltinManagedContent)[]): string {
+    const picked: Record<string, unknown> = {};
+    for (const field of fields) {
+      if (POLICY_REWRITTEN_FIELDS.has(field)) continue;
+      const value = (content as any)[field];
+      picked[field] = field === 'config' ? this.managedConfig(value) : field === 'cost_tier' ? (value || null) : value;
+    }
+    return `${ MANAGED_HASH_PREFIX }${ createHash('sha256').update(this.canonicalJson(picked)).digest('hex') }`;
+  }
+
+  private static managedConfig(config: unknown): Record<string, unknown> {
+    const base = config && typeof config === 'object' && !Array.isArray(config) ? config as Record<string, unknown> : {};
+    const stored = new AgentModelCategoryPolicy().config(base, { mode: 'class', class: 'standard' });
+    const { modelChoice: _modelChoice, [FRONT_DOOR_CHOSEN_KEY]: _frontDoorChoice, ...rest } = stored;
+    return rest;
+  }
+
+  private static canonicalJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${ value.map(item => this.canonicalJson(item)).join(',') }]`;
+    if (value && typeof value === 'object') return `{${ Object.keys(value).sort().map(key => `${ JSON.stringify(key) }:${ this.canonicalJson((value as any)[key]) }`).join(',') }}`;
+    return JSON.stringify(value ?? null);
+  }
 }

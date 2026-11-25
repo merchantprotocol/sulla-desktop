@@ -34,6 +34,8 @@
       </button>
     </div>
 
+    <PrefRow title="Sees other agents" subtitle="Show this agent the running agents, the agents it can launch and its sub-agents. Turn off for workers to keep their prompt short."><PrefToggle :model-value="props.agentAwareness" label="Sees other agents" @update:model-value="emit('update:agentAwareness', $event)" /></PrefRow>
+
     <div class="grid gap-5 lg:grid-cols-2">
       <div class="rounded border border-edge p-3">
         <div class="mb-2 flex items-baseline justify-between gap-3">
@@ -203,6 +205,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import PrefRow from '../settings/PrefRow.vue';
+import PrefToggle from '../settings/PrefToggle.vue';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -217,12 +221,14 @@ const props = defineProps<{
   allowedTools: string[];
   skillRefs:    string[];
   routineRefs:  string[];
+  agentAwareness: boolean;
 }>();
 
 const emit = defineEmits<{
   'update:allowedTools': [value: string[]];
   'update:skillRefs':    [value: string[]];
   'update:routineRefs':  [value: string[]];
+  'update:agentAwareness': [value: boolean];
 }>();
 
 const skills = ref<SkillOption[]>([]);
