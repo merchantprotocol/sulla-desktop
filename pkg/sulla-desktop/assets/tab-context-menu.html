@@ -282,7 +282,9 @@
         },
       };
 
-      function attentionRow(row) {
+      let renderedRequestId;
+
+      function attentionRow(row, requestId) {
         const btn = document.createElement("button");
         const dot = document.createElement("span");
         const copy = document.createElement("span");
@@ -312,11 +314,11 @@
           btn.appendChild(dot);
         }
         btn.appendChild(copy);
-        btn.addEventListener("click", () => ipcRenderer.send("tab-context-menu:action", btn.dataset.action));
+        btn.addEventListener("click", () => ipcRenderer.send("tab-context-menu:action", requestId, btn.dataset.action));
         return btn;
       }
 
-      function buildMenu(items, attention) {
+      function buildMenu(items, attention, requestId) {
         const menu = document.getElementById("menu");
         const focused = document.activeElement?.dataset.action;
         const scrollTop = menu.scrollTop;
@@ -341,7 +343,7 @@
           }
 
           if (attention && typeof entry === "object" && entry) {
-            menu.appendChild(attentionRow(entry));
+            menu.appendChild(attentionRow(entry, requestId));
             return;
           }
           if (typeof entry !== "string" || !Object.hasOwn(ALL_ITEMS, entry)) return;
@@ -356,7 +358,7 @@
             "</svg>" +
             def.label;
           btn.addEventListener("click", () => {
-            ipcRenderer.send("tab-context-menu:action", entry);
+            ipcRenderer.send("tab-context-menu:action", requestId, entry);
           });
           menu.appendChild(btn);
         });
@@ -368,7 +370,8 @@
       }
 
       ipcRenderer.on("tab-context-menu:data", (_event, data) => {
-        buildMenu(data.items || [], data.attention);
+        buildMenu(data.items || [], data.attention, data.requestId);
+        renderedRequestId = data.requestId;
         [...document.documentElement.classList]
           .filter((name) => name.startsWith("theme-"))
           .forEach((name) => document.documentElement.classList.remove(name));
@@ -383,7 +386,7 @@
       // Dismiss on Escape
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
-          ipcRenderer.send("tab-context-menu:dismiss");
+          if (renderedRequestId) ipcRenderer.send("tab-context-menu:dismiss", renderedRequestId);
         } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && document.querySelector(".attention")) {
           const rows = [...document.querySelectorAll(".attention button")];
           const current = rows.indexOf(document.activeElement);
