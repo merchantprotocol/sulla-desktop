@@ -69,6 +69,11 @@ export class TabGroupModel {
     return [...grouped.pinned, ...grouped.groups.flatMap(group => group.tabs)];
   }
 
+  shortcutTab<T extends GroupableTab>(orderedTabs: readonly T[], digit: string): T | undefined {
+    if (!/^[1-9]$/.test(digit)) return undefined;
+    return orderedTabs[digit === '9' ? orderedTabs.length - 1 : Number(digit) - 1];
+  }
+
   orderTabIds(ids: readonly string[], modes: ReadonlyMap<string, string | undefined>, pinnedIds: readonly string[]): string[] {
     const pinned = new Set(pinnedIds);
     const tabs = ids.map(id => ({ id, mode: modes.get(id), pinned: pinned.has(id) }));

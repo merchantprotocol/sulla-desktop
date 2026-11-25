@@ -236,7 +236,7 @@
 }
 .app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native):not(.tab-pinned) .tab-label,
 .app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native):not(.tab-pinned) .tab-close { display: none; }
-.app-titlebar .tab-pinned { flex: 0 1 150px; min-width: 64px; max-width: 150px; gap: 6px; }
+.app-titlebar .tab-pinned:not(.tab-active):not(.tab-active-native) { flex: 0 1 150px; min-width: 64px; max-width: 150px; gap: 6px; }
 .app-titlebar .tab-pinned-boundary { margin-left: 12px; }
 .app-titlebar .tab-pinned-boundary::before {
   position: absolute;

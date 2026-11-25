@@ -127,6 +127,9 @@ import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioS
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
+import { TabGroupModel } from '@pkg/composables/TabGroupModel';
+import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
+import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
@@ -146,7 +149,7 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
-const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabStripLayoutStorageKey, isTabPinned } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
   statusResolved: vaultStatusResolved.value,
@@ -278,6 +281,26 @@ const hasTitlebar = computed(() => isBrowserRoute.value || [
   'AgentIntegrationDetail',
   'ExtensionView',
 ].includes(String(route.name)));
+
+// This shell outlives both the hosted and native-browser headers. Remember
+// the restored selection so reopening the window preserves a manual fold.
+const tabGroupReveal = new TabGroupReveal(
+  new TabGroupModel(),
+  new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey),
+  getPersistedActiveTabId() ?? undefined,
+);
+watch(() => {
+  const id = /^\/Browser\/(.+)$/.exec(route.path)?.[1];
+  if (id) {
+    const tab = browserTabs.find(candidate => candidate.id === id);
+
+    return tab && { id, mode: tab.mode, pinned: isTabPinned(`browser-${ id }`) };
+  }
+
+  return route.path.startsWith('/Extension/') ? { id: `ext-${ route.path }`, pinned: isTabPinned(`ext-${ route.path }`) } : null;
+}, active => {
+  if (active !== undefined) tabGroupReveal.select(active);
+}, { immediate: route.path !== '/' && route.path !== '' });
 
 // Persist active tab ID whenever the route changes so restarts can resume it
 watch(() => route.path, (path) => {
