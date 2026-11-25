@@ -134,12 +134,12 @@ const kind = computed(() => {
 </script>
 
 <style scoped>
-.file-glyph { width:30px;height:30px;border-radius:7px;display:grid;place-items:center;flex:none;color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 13%,transparent) }
+.file-glyph { width:30px;height:30px;border-radius:7px;display:grid;place-items:center;flex:none;color:var(--primary-color-text-override, var(--accent-hover));background:color-mix(in srgb,var(--accent) 13%,transparent) }
 .file-glyph svg { width:17px;height:17px }
-.file-glyph.image { color:var(--accent);background:var(--accent-dim) }
+.file-glyph.image { color:var(--primary-color-text-override, var(--accent));background:var(--accent-dim) }
 .file-glyph.video,.file-glyph.pdf { color:var(--status-warning);background:var(--status-error-soft) }
 .file-glyph.audio { color:var(--status-success);background:var(--status-success-soft) }
 .file-glyph.code { color:var(--text-secondary);background:var(--bg-surface-alt) }
 .file-glyph.archive { color:var(--text-muted);background:var(--bg-surface-alt) }
-.file-glyph.folder { color:var(--accent-hover);background:color-mix(in srgb,var(--accent) 15%,transparent) }
+.file-glyph.folder { color:var(--primary-color-text-override, var(--accent-hover));background:color-mix(in srgb,var(--accent) 15%,transparent) }
 </style>

@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { throwIfAborted } from '../services/AbortService';
 import { RunActivity } from '../services/RunActivity';
+import { TurnToolActivity } from '../services/TurnToolActivity';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { BaseTool } from '../tools/base';
 import { toolRegistry } from '../tools/registry';
@@ -267,7 +268,12 @@ export class ToolExecutor {
           }
 
           const invokeStart = Date.now();
-          const result = await tool.invoke(args);
+          // A long tool (a build, a wait) is the agent working, not a silent agent.
+          const toolActivity = new TurnToolActivity(state.metadata);
+          toolActivity.started(toolRunId, toolName);
+          const result = await Promise.resolve()
+            .then(() => tool.invoke(args))
+            .finally(() => toolActivity.finished(toolRunId));
           const invokeMs = Date.now() - invokeStart;
           // Perf: how long this in-process tool actually took to run. node=
           // tells subconscious recall (SubconsciousAgentNode) apart from the
@@ -441,14 +447,18 @@ export class ToolExecutor {
       }
 
       const started = Date.now();
+      const toolActivity = new TurnToolActivity(state.metadata);
+      toolActivity.started(toolRunId, toolName);
       launched.push({
         toolRunId,
         toolName,
         args,
         started,
-        outcome: Promise.resolve(tool.invoke(args))
+        outcome: Promise.resolve()
+          .then(() => tool.invoke(args))
           .then((result: ToolResult) => ({ result }))
-          .catch((err: any) => ({ error: err?.message || String(err) })),
+          .catch((err: any) => ({ error: err?.message || String(err) }))
+          .finally(() => toolActivity.finished(toolRunId)),
       });
     }
 

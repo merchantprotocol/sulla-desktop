@@ -249,7 +249,7 @@ defineExpose({ show, hide });
 
 .chat-ctx-item:hover:not(.disabled) {
   background: var(--bg-surface-hover);
-  color: var(--accent);
+  color: var(--primary-color-text-override, var(--accent));
 }
 
 .chat-ctx-item:hover:not(.disabled) svg {

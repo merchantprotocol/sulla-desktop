@@ -323,7 +323,7 @@ onBeforeUnmount(() => {
 .heartbeat-heart[data-tip]:is(:hover, :focus-visible)::after { opacity: 1; transform: translate(-50%, 0); transition-delay: .25s; }
 /* --accent-hover is a faint hover tint in some themes; the on state needs a solid colour. */
 .heartbeat-heart.enabled {
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--primary-color-text-override, var(--accent)); background: color-mix(in srgb, var(--accent) 16%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
   text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 60%, transparent);
   animation: noir-heartbeat 1.4s cubic-bezier(.22, 1, .36, 1) infinite;
@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
   display: inline-flex; align-items: center; gap: 8px; padding: 2px 0;
   border: 0; background: transparent; color: var(--text-muted); font: inherit; cursor: pointer;
 }
-.heartbeat-switch.enabled { color: var(--accent); }
+.heartbeat-switch.enabled { color: var(--primary-color-text-override, var(--accent)); }
 /* Off must read as a switch too: visible track edge and a light thumb, not surface-on-surface. */
 .track {
   position: relative; width: 34px; height: 20px; border-radius: 999px; box-sizing: border-box;

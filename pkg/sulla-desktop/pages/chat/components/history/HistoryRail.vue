@@ -178,7 +178,7 @@ const grouped = computed(() => {
 }
 .history-panel-title {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
 }
 .history-close {
   background: none; border: none; cursor: pointer;
@@ -192,7 +192,7 @@ const grouped = computed(() => {
 .history-head {
   padding: 22px 18px 12px;
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.28em;
-  text-transform: uppercase; color: var(--accent-hover);
+  text-transform: uppercase; color: var(--primary-color-text-override, var(--accent-hover));
   display: flex; align-items: center; gap: 10px;
 }
 .history-head::before {
@@ -246,7 +246,7 @@ const grouped = computed(() => {
   border-left-color: var(--accent-hover);
 }
 .pin-icon {
-  color: var(--accent-hover); font-size: 12px;
+  color: var(--primary-color-text-override, var(--accent-hover)); font-size: 12px;
   margin-top: 1px; flex-shrink: 0;
 }
 .pin-body {
