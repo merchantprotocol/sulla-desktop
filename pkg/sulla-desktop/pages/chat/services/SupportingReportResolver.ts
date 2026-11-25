@@ -9,7 +9,10 @@ interface FilesIpc { invoke(channel: string, input?: unknown): Promise<any>; }
 export class SupportingReportResolver {
   constructor(private readonly ipc: FilesIpc) {}
 
-  webUrl(source: Source): string | undefined {
+  webUrl(source: Source): string | undefined { return SupportingReportResolver.webUrl(source); }
+
+  /** A cited http(s) page, or undefined for a Files report. Pure, so trace projections can share it. */
+  static webUrl(source: Source): string | undefined {
     try {
       const url = new URL(source.url || source.origin);
       return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined;

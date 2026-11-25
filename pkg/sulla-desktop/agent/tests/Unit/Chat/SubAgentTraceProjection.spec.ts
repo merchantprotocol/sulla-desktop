@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
 import { TranscriptReporting } from '@pkg/pages/chat/components/transcript/toolGroups';
 import { ReplyCitationProjection } from '@pkg/pages/chat/components/transcript/ReplyCitationProjection';
+import { SubAgentTraceProjection } from '@pkg/pages/chat/components/transcript/SubAgentTraceProjection';
+import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { Message } from '@pkg/pages/chat/models/Message';
 import { asMessageId } from '@pkg/pages/chat/types/chat';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -89,6 +91,75 @@ describe('Option A transcript policy', () => {
     const exchange = { ...launch, id: asMessageId('thread-only'), jobId: undefined, direction: 'from_agent', status: 'done' } as const;
     const other = result('error', { taskIndex: 1, threadId: 'child-2' });
     expect(rows([launch, exchange, card(result('completed'), other)]).map(row => row.status)).toEqual(['returned', 'failed']);
+  });
+});
+
+describe('Option A Detailed sub-agent row', () => {
+  it('keeps one row per job that changes in place from starting through parked, no check-in and returned', () => {
+    // risk: a second card per job or a status word outside the approved seven.
+    const base = [launch, reply] as const;
+    const ids = new Set<string>();
+    const seen: string[] = [];
+    for (const agents of [[], [live('working')], [{ ...live('parked'), waitReason: 'CI running' }], [live('quiet')]]) {
+      const projected = rows(base, agents);
+      expect(projected).toHaveLength(1);
+      ids.add(projected[0].id);
+      seen.push(projected[0].status);
+    }
+    const settled = rows([...base, card(result('completed'))], [live('working')]);
+    expect(settled).toHaveLength(1);
+    ids.add(settled[0].id);
+    seen.push(settled[0].status);
+    expect(ids.size).toBe(1);
+    expect(seen).toEqual(['starting', 'working', 'working', 'quiet', 'returned']);
+    // A parked worker's second line is its latest check-in, like any working row.
+    expect(rows(base, [{ ...live('parked'), waitReason: 'CI running' }])[0].note).toBe('Latest update');
+  });
+
+  it('marks the row with the same initials the worker chart draws for that agent', () => {
+    // risk: the trace row and the worker chart pointing at different agents.
+    const luna = { ...launch, agentId: 'codex-luna-worker' };
+    const [row] = rows([luna, reply], [{ ...live('working'), agentId: 'codex-luna-worker' }]);
+    expect(row.subagent?.marker).toBe(ThreadAgentActivityPresenter.initials('codex-luna-worker', row.id));
+    expect(row.subagent?.marker).toBe('CL');
+  });
+
+  it('falls back to the chart key for the marker when the agent id is missing', () => {
+    // risk: an unnamed agent getting a different marker in the trace than in the chart.
+    const unnamed = { ...launch, agentId: undefined };
+    const [row] = rows([unnamed, reply], [{ ...live('working'), agentId: null }]);
+    expect(row.subagent?.marker).toBe(ThreadAgentActivityPresenter.initials(null, 'job-1:0'));
+  });
+
+  it('names the job a relaunch follows and heads the report with outcome and run time', () => {
+    // risk: losing which failed job a relaunch replaces, or a wrong total run time.
+    const [row] = rows([launch, reply, card(result('completed', { startedAt: 2_000, durationMs: 220_000, followUpOf: { jobId: 'job-0', taskIndex: 1 } }))]);
+    expect(row.subagent?.followUpOf).toEqual({ jobId: 'job-0', taskIndex: 1 });
+    expect(row.payload!.serialize()).toMatch(/REPORT · completed .+ · 3m 40s\n/);
+  });
+
+  it('summarizes the turn sub-agents by status word', () => {
+    // risk: the turn header miscounting returned versus working jobs.
+    const second = { ...launch, id: asMessageId('launch-2'), taskIndex: 1, conversationId: 'child-2', createdAt: 2_100 };
+    const messages = [launch, second, reply, card(result('completed'))];
+    const [turn] = projection.project(messages, reporting.standardEntries(messages, 'info'), { agents: [] });
+    expect(turn.agentSummary).toBe('2 agents: 1 returned, 1 starting');
+    expect(SubAgentTraceProjection.summary([])).toBeUndefined();
+    expect(turn.waitingOnYou).toBeUndefined();
+    const blocked = [launch, reply, card(result('blocked', { problem: 'Needs a decision' }))];
+    expect(projection.project(blocked, reporting.standardEntries(blocked, 'info'))[0].waitingOnYou).toBe(true);
+  });
+
+  it('numbers each Read step on the trace to match the reply sources', () => {
+    // risk: [n] in the reply pointing at a different source than the trace step.
+    const cited = { kind: 'citation', id: asMessageId('cites'), createdAt: 2_900, sources: [
+      { num: 1, title: 'plan-review.md', origin: 'Projects/sulla-desktop/plan-review.md' },
+      { num: 2, title: 'Vue docs', origin: 'vuejs.org', url: 'https://vuejs.org/guide' },
+    ] } as const;
+    const messages = [cited, reply];
+    const reads = projection.project(messages, reporting.standardEntries(messages, 'info')).flatMap(turn => turn.rows).filter(row => row.kind === 'source');
+    expect(reads.map(row => [row.cite, row.verb, row.target])).toEqual([[1, 'Read report', 'plan-review.md'], [2, 'Read source', 'Vue docs']]);
+    expect(projection.project(messages, reporting.standardEntries(messages, 'info'))[0].sourceCount).toBe(2);
   });
 });
 
