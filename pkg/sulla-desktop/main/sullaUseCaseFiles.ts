@@ -21,6 +21,7 @@ import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactM
 import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
 import { FilesListingPager } from '../agent/files/FilesListingPager';
 import { explicitAgentPackageModel, readAgentPackage } from './marketplace/agentPackageManifest';
+import { DESKTOP_WORKFLOW_OWNER_IDENTITY } from '../../../packages/workflow-engine/src/ownerIdentity.js';
 
 const USE_CASE_ROW_LIMIT = 20_000;
 const USE_CASE_REQUEST_TIMEOUT_MS = 120_000;
@@ -321,10 +322,11 @@ export class SullaUseCaseFiles {
         const declaredEnabled = manifest.enabled !== false;
         const prior = (await client.query('SELECT enabled,status,use_case_file_id,use_case_version_id FROM workflows WHERE id=$1', [slug])).rows[0] as { enabled:boolean; status:string; use_case_file_id:string|null; use_case_version_id:string|null } | undefined;
         if (pending && prior) throw new Error(`workflows/${ slug } already has a definition; it was preserved until the Use Cases migration runs`);
-        const written = await client.query(`INSERT INTO workflows(id,name,description,version,status,definition,enabled,source_kind,use_case_file_id,use_case_version_id) VALUES($1,$2,$3,$4,'production',$5,$8,'user',$6,$7)
+        const written = await client.query(`INSERT INTO workflows(id,name,description,version,status,definition,enabled,source_kind,use_case_file_id,use_case_version_id,owner_issuer,owner_subject)
+          VALUES($1,$2,$3,$4,'production',$5,$8,'user',$6,$7,$9,$10)
           ${ pending ? 'ON CONFLICT DO NOTHING' : `ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,version=EXCLUDED.version,status='production',definition=EXCLUDED.definition,enabled=CASE WHEN workflows.status='production' AND workflows.use_case_version_id IS NOT DISTINCT FROM EXCLUDED.use_case_version_id THEN workflows.enabled ELSE EXCLUDED.enabled END,use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,updated_at=NOW()` }
           RETURNING enabled`,
-        [slug,manifest.name??slug,manifest.description??'',manifest.version??'1.0.0',json(manifest),anchor.id,versionId,declaredEnabled]);
+        [slug,manifest.name??slug,manifest.description??'',manifest.version??'1.0.0',json(manifest),anchor.id,versionId,declaredEnabled,DESKTOP_WORKFLOW_OWNER_IDENTITY.issuer,DESKTOP_WORKFLOW_OWNER_IDENTITY.subject]);
         if (pending && !written.rows.length) throw new Error(`workflows/${ slug } was registered concurrently; that definition was preserved`);
         const enabled = Boolean(written.rows[0]?.enabled);
         workflowChanged = !prior || prior.status !== 'production' || prior.enabled !== enabled || prior.use_case_file_id !== anchor.id || prior.use_case_version_id !== versionId;
@@ -413,7 +415,10 @@ export class SullaUseCaseFiles {
    * Before the one-time migration has run, Files cannot yet be authoritative for the whole catalog:
    * register only brand-new agents and workflows whose exact root anchor version a human approved.
    * Nothing is exported, moved, published, disabled or reconciled, no other package type or memory
-   * pack is touched, and the migration timestamp stays unset. Everything else waits for the migration.
+   * pack is touched, and the migration timestamp stays unset. Existing workflows remain untouched,
+   * even if their linked Files package disappears; a cross-service snapshot cannot prove withdrawal
+   * safely enough to disable a valid schedule. That residual is left for the migration to reconcile.
+   * Everything else waits for the migration.
    */
   /**
    * Settle every durably marked pending-registration mapping against its definition row. The row
