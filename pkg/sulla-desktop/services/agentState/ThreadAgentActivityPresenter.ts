@@ -29,9 +29,15 @@ export interface ThreadAgentActivityProjection {
 
 /** Projects the shared live-agent snapshot into only the current thread's proven tree. */
 export class ThreadAgentActivityPresenter {
-  static readonly activityWindowMs = 150_000;
+  static readonly activityWindowMs = 154_000;
   static readonly maxCheckinsPerAgent = 6;
   static readonly maxActivityPerAgent = 30;
+
+  /** The marker the worker chart draws for an agent; the Detailed trace reuses it so both point at the same agent. */
+  static initials(agentId: string | null | undefined, fallback: string): string {
+    const stableName = agentId?.trim() || fallback;
+    return stableName.split(/[\s._/-]+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join('') || 'S';
+  }
 
   private acceptedVersion = -1;
   private lastSnapshot?: AgentStateSnapshot;
@@ -140,8 +146,7 @@ export class ThreadAgentActivityPresenter {
   }
 
   private present(row: AgentStateRow, hasPendingDecision: boolean): PresentedThreadAgent {
-    const stableName = row.agentId?.trim() || row.key;
-    const initials = stableName.split(/[\s._/-]+/).filter(Boolean).slice(0, 2).map(part => part[0].toUpperCase()).join('') || 'S';
+    const initials = ThreadAgentActivityPresenter.initials(row.agentId, row.key);
     const urgency: ThreadAgentUrgency = row.state === 'failed' ? 'failed' : row.state === 'blocked' || hasPendingDecision ? 'needs-you' : 'normal';
     return {
       row,

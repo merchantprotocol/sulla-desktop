@@ -11,7 +11,7 @@ import { StatusRollupQueue, type StatusRollupItem } from '../../../../pages/chat
 
 class StatusRollupQueueFixture {
   readonly queue = new StatusRollupQueue();
-  readonly threadId = 'thread-1';
+  readonly threadId = 'thread-a';
 
   item(
     key: string,
@@ -21,144 +21,182 @@ class StatusRollupQueueFixture {
     urgency: StatusRollupItem['urgency'] = 'normal',
     threadId = this.threadId,
   ): StatusRollupItem {
-    return {
-      key,
-      threadId,
-      agentId,
-      agentName: agentId,
-      text,
-      observedAt,
-      urgency,
-      role: 'worker',
-    };
+    return { key, threadId, agentId, agentName: agentId, kind: 'agent', text, observedAt, urgency, role: 'worker' };
   }
 }
 
 describe('StatusRollupQueue', () => {
-  // risk: data accuracy — queued progress should not flicker faster than one new line per second.
-  it('keeps the last shown item after its hold and replaces it only with the next item', () => {
+  // risk: data accuracy — a rapid event burst must be displayed in-order without dropping progress.
+  it('drains all 30 events from a one-second burst in order within about three seconds', () => {
     const fixture = new StatusRollupQueueFixture();
-    fixture.queue.observe([
-      fixture.item('first', 'agent-a', 'First update', 0),
-      fixture.item('second', 'agent-b', 'Second update', 0),
-    ], fixture.threadId, 0);
+    const items = Array.from({ length: 30 }, (_, index) =>
+      fixture.item(`event-${index}`, `agent-${index % 4}`, `Action ${index}`, index * 33),
+    );
+    fixture.queue.observe(items, fixture.threadId, 1_000);
 
-    expect(fixture.queue.pump(0)?.key).toBe('first');
-    expect(fixture.queue.pump(749)).toBeNull();
-    expect(fixture.queue.pump(750)).toBeNull();
-    expect(fixture.queue.current?.key).toBe('first');
-    expect(fixture.queue.pump(999)).toBeNull();
-    expect(fixture.queue.pump(1_000)?.key).toBe('second');
-  });
+    const shown: string[] = [];
+    let lastShownAt = 1_000;
+    for (let now = 1_000; now <= 4_000 && shown.length < items.length; now += 25) {
+      const item = fixture.queue.pump(now);
+      if (item) { shown.push(item.key); lastShownAt = now; }
+    }
 
-  // risk: data accuracy — urgent needs-you/failure signals must jump normal work and remain visible long enough to read.
-  it('prioritizes urgent snippets and holds them for 2.6 seconds', () => {
-    const fixture = new StatusRollupQueueFixture();
-    fixture.queue.observe([
-      fixture.item('normal', 'agent-a', 'Working', 0),
-      fixture.item('urgent', 'agent-b', 'Needs input', 0, 'needs-you'),
-    ], fixture.threadId, 0);
-
-    expect(fixture.queue.pump(0)?.key).toBe('urgent');
-    expect(fixture.queue.pump(999)?.key).toBeUndefined();
-    expect(fixture.queue.pump(2_599)?.key).toBeUndefined();
-    expect(fixture.queue.current?.key).toBe('urgent');
-    expect(fixture.queue.pump(2_600)?.key).toBe('normal');
-  });
-
-  // risk: data accuracy — stale queued progress must be replaced and a repeated visible line must not reappear.
-  it('replaces a queued item from the same agent and drops a repeated visible agent/text pair', () => {
-    const fixture = new StatusRollupQueueFixture();
-    fixture.queue.observe([fixture.item('a-1', 'agent-a', 'Starting', 0)], fixture.threadId, 0);
-    fixture.queue.observe([fixture.item('a-2', 'agent-a', 'Still working', 100)], fixture.threadId, 100);
-
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['a-2']);
-    expect(fixture.queue.pump(0)?.key).toBe('a-2');
-    fixture.queue.observe([fixture.item('a-3', 'agent-a', 'Still working', 250)], fixture.threadId, 250);
-
+    expect(shown).toEqual(items.map(item => item.key));
     expect(fixture.queue.pending).toEqual([]);
-    expect(fixture.queue.history.map(item => item.key)).toEqual(['a-3', 'a-2', 'a-1']);
+    expect(fixture.queue.current?.key).toBe('event-29');
+    expect(lastShownAt - 1_000).toBeLessThanOrEqual(3_000);
   });
 
-  // risk: data accuracy — old normal progress must not surface after it is stale, while urgent requests remain available.
-  it('expires nonurgent items only after six seconds, including while the pump is paused', () => {
+  // risk: data accuracy — hidden-tab backlog playback must catch up without skipping or reordering actions.
+  it('drains a 200-item backlog on real 100ms ticks in about three seconds', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const items = Array.from({ length: 200 }, (_, index) =>
+      fixture.item(`event-${index}`, `agent-${index % 4}`, `Action ${index}`, index),
+    );
+    fixture.queue.observe(items, fixture.threadId, 0);
+
+    const shown: string[] = [];
+    for (let now = 0; now <= 3_000 && shown.length < items.length; now += 100) {
+      shown.push(...fixture.queue.pumpDue(now).map(item => item.key));
+    }
+
+    expect(shown).toEqual(items.map(item => item.key));
+    expect(fixture.queue.pending).toEqual([]);
+    expect(fixture.queue.current?.key).toBe('event-199');
+  });
+
+  // risk: safety — a blocked or failed agent must interrupt ordinary updates and remain readable.
+  it('jumps urgent activity ahead of normal items and holds it for 2.6 seconds', () => {
     const fixture = new StatusRollupQueueFixture();
     fixture.queue.observe([
-      fixture.item('normal', 'agent-a', 'Old normal', 0),
-      fixture.item('urgent', 'agent-b', 'Urgent survives', 0, 'failed'),
+      fixture.item('normal-1', 'agent-a', 'Working', 0),
+      fixture.item('normal-2', 'agent-b', 'Still working', 1),
     ], fixture.threadId, 0);
-    fixture.queue.pump(0, true);
+    expect(fixture.queue.pump(0)?.key).toBe('normal-1');
 
-    fixture.queue.pump(6_000, true);
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['normal', 'urgent']);
-    fixture.queue.pump(6_001, true);
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['urgent']);
+    fixture.queue.observe([fixture.item('blocked', 'agent-c', 'Needs you', 10, 'needs-you')], fixture.threadId, 10);
+    expect(fixture.queue.pump(10)?.key).toBe('blocked');
+    expect(fixture.queue.pump(2_609)).toBeNull();
+    expect(fixture.queue.current?.key).toBe('blocked');
+    expect(fixture.queue.pump(2_610)?.key).toBe('normal-2');
   });
 
-  // risk: data accuracy — sustained bursts must remain bounded without displacing urgent FIFO order.
-  it('caps at five, evicts the oldest nonurgent item, and drops the newest urgent overflow', () => {
+  // risk: safety — simultaneous urgent updates must keep FIFO order while interrupting normal work.
+  it('keeps multiple urgent items in FIFO order', () => {
     const fixture = new StatusRollupQueueFixture();
     fixture.queue.observe([
-      fixture.item('n-1', 'normal-1', 'one', 0),
-      fixture.item('n-2', 'normal-2', 'two', 1),
-      fixture.item('u-1', 'urgent-1', 'three', 2, 'needs-you'),
-      fixture.item('u-2', 'urgent-2', 'four', 3, 'failed'),
-      fixture.item('u-3', 'urgent-3', 'five', 4, 'needs-you'),
-      fixture.item('u-4', 'urgent-4', 'six', 5, 'failed'),
-    ], fixture.threadId, 5);
+      fixture.item('u-1', 'agent-a', 'First urgent update', 0, 'needs-you'),
+      fixture.item('u-2', 'agent-b', 'Second urgent update', 1, 'failed'),
+    ], fixture.threadId, 0);
 
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['n-2', 'u-1', 'u-2', 'u-3', 'u-4']);
-
-    fixture.queue.observe([
-      fixture.item('u-5', 'urgent-5', 'seven', 6, 'needs-you'),
-    ], fixture.threadId, 6);
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['u-1', 'u-2', 'u-3', 'u-4', 'u-5']);
-
-    fixture.queue.observe([
-      fixture.item('u-6', 'urgent-6', 'eight', 7, 'failed'),
-    ], fixture.threadId, 7);
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['u-1', 'u-2', 'u-3', 'u-4', 'u-5']);
+    expect(fixture.queue.pump(0)?.key).toBe('u-1');
+    expect(fixture.queue.pump(StatusRollupQueue.urgentHoldMs)?.key).toBe('u-2');
   });
 
-  // risk: data accuracy — urgency ordering and thread scope must not leak another chat's activity.
-  it('prioritizes urgent arrivals FIFO and ignores records outside the active thread', () => {
+  // risk: availability — only an idle single-item display may typewrite; a burst batch must render in full immediately.
+  it('selects typewriter animation only when one item is shown and no backlog remains', () => {
+    const idleFixture = new StatusRollupQueueFixture();
+    idleFixture.queue.observe([idleFixture.item('single', 'agent-a', 'Single action', 0)], idleFixture.threadId, 0);
+    const single = idleFixture.queue.pumpDue(0);
+    expect(idleFixture.queue.shouldAnimateTypewriter(single.length)).toBe(true);
+
+    const burstFixture = new StatusRollupQueueFixture();
+    burstFixture.queue.observe([burstFixture.item('initial', 'agent-a', 'Initial action', 0)], burstFixture.threadId, 0);
+    burstFixture.queue.pump(0);
+    burstFixture.queue.observe([
+      burstFixture.item('burst-1', 'agent-a', 'First burst action', 10),
+      burstFixture.item('burst-2', 'agent-b', 'Second burst action', 11),
+      burstFixture.item('burst-3', 'agent-c', 'Third burst action', 12),
+    ], burstFixture.threadId, 10);
+    const backlogBatch = burstFixture.queue.pumpDue(260);
+    expect(backlogBatch).toHaveLength(1);
+    expect(burstFixture.queue.pending).toHaveLength(2);
+    expect(burstFixture.queue.shouldAnimateTypewriter(backlogBatch.length)).toBe(false);
+
+    const batch = burstFixture.queue.pumpDue(2_000);
+    expect(batch).toHaveLength(2);
+    expect(burstFixture.queue.pending).toEqual([]);
+    expect(burstFixture.queue.shouldAnimateTypewriter(batch.length)).toBe(false);
+  });
+
+  // risk: privacy — events from another chat must never enter the active thread's queue or history.
+  it('rejects another thread’s events while retaining only current-thread history', () => {
     const fixture = new StatusRollupQueueFixture();
     fixture.queue.observe([
-      fixture.item('normal', 'normal', 'normal first', 0),
-      fixture.item('urgent-first', 'urgent-1', 'urgent first', 1, 'failed'),
-      fixture.item('urgent-second', 'urgent-2', 'urgent second', 2, 'needs-you'),
-      fixture.item('foreign', 'foreign', 'other chat', 3, 'failed', 'thread-2'),
-    ], fixture.threadId, 3);
+      fixture.item('local', 'agent-a', 'This thread', 0),
+      fixture.item('foreign', 'agent-b', 'Other thread private activity', 1, 'failed', 'thread-b'),
+    ], fixture.threadId, 0);
 
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['normal', 'urgent-first', 'urgent-second']);
-    expect(fixture.queue.pump(3)?.key).toBe('urgent-first');
-    expect(fixture.queue.pump(2_603)?.key).toBe('urgent-second');
-    expect(fixture.queue.history.map(item => item.key)).not.toContain('foreign');
+    expect(fixture.queue.pending.map(item => item.key)).toEqual(['local']);
+    expect(fixture.queue.history.map(item => item.key)).toEqual(['local']);
+    expect(fixture.queue.pump(0)?.threadId).toBe('thread-a');
+    expect(fixture.queue.pending.some(item => item.text.includes('Other thread'))).toBe(false);
   });
 
-  // risk: data accuracy — recent check-in history and queued content must not cross thread boundaries.
-  it('keeps only six observed check-ins and fully resets queue state on thread switch', () => {
+  // risk: availability — an initial single check-in must render during setup without being replayed after mount.
+  it('seeds one initial event while preserving its recorded history', () => {
     const fixture = new StatusRollupQueueFixture();
-    fixture.queue.observe(Array.from({ length: 7 }, (_, index) =>
-      fixture.item(`check-${index}`, `agent-${index}`, `Update ${index}`, index),
-    ), fixture.threadId, 7);
-    expect(fixture.queue.history.map(item => item.key)).toEqual([
-      'check-6', 'check-5', 'check-4', 'check-3', 'check-2', 'check-1',
-    ]);
+    const initial = fixture.item('initial', 'agent-a', 'Ready', 0);
+    fixture.queue.observe([initial], fixture.threadId, 0);
 
-    fixture.queue.observe([
-      fixture.item('other-thread', 'agent-other', 'New chat', 8, 'normal', 'thread-2'),
-    ], 'thread-2', 8);
-    expect(fixture.queue.history.map(item => item.key)).toEqual(['other-thread']);
-    expect(fixture.queue.pending.map(item => item.key)).toEqual(['other-thread']);
-    expect(fixture.queue.current).toBeNull();
+    expect(fixture.queue.seed([initial], fixture.threadId, 0)?.key).toBe('initial');
+    expect(fixture.queue.current?.key).toBe('initial');
+    expect(fixture.queue.pending).toEqual([]);
+    expect(fixture.queue.history.map(item => item.key)).toEqual(['initial']);
   });
 
-  // risk: data accuracy — external text must remain inert and a foreign root fallback must be rejected.
-  it('presents check-in data as bounded plain text and rejects a cross-thread root fallback', () => {
+  // risk: data accuracy — only an identical event key may be collapsed, not repeated text from the same agent.
+  it('collapses exact duplicate keys but preserves distinct repeated actions', () => {
+    const fixture = new StatusRollupQueueFixture();
+    fixture.queue.observe([
+      fixture.item('same', 'agent-a', 'Read file', 0),
+      fixture.item('same', 'agent-a', 'Read file', 0),
+      fixture.item('again', 'agent-a', 'Read file', 1),
+    ], fixture.threadId, 1);
+
+    expect(fixture.queue.pending.map(item => item.key)).toEqual(['same', 'again']);
+  });
+
+  // risk: data accuracy — a thought's stable key must update pending/visible text in place without another queue entry.
+  it('updates the visible thought text without replaying the same key', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const first = { ...fixture.item('thought', 'agent-a', 'Considering the first option', 0), kind: 'thought' as const };
+    fixture.queue.observe([first], fixture.threadId, 0);
+    expect(fixture.queue.pump(0)?.key).toBe('thought');
+
+    fixture.queue.observe([{
+      ...first,
+      text: 'Considering the updated option',
+      observedAt: 1,
+    }], fixture.threadId, 1, fixture.queue.current);
+
+    expect(fixture.queue.current?.text).toBe('Considering the updated option');
+    expect(fixture.queue.history[0]?.text).toBe('Considering the updated option');
+    expect(fixture.queue.pending).toEqual([]);
+  });
+
+  // risk: event delivery — each displayed tool step must retain its label and start/result correlation for the glow.
+  it('preserves action labels and tool correlation through presentation', () => {
+    const fixture = new StatusRollupQueueFixture();
+    const item = {
+      ...fixture.item('tool-start', 'agent-a', 'Reading file', 0),
+      kind: 'read' as const,
+      phase: 'start' as const,
+      correlationId: 'primary:thread-a:tool-1',
+    };
+
+    expect(fixture.queue.present(item, fixture.threadId, 0)).toMatchObject({
+      kind: 'read',
+      phase: 'start',
+      correlationId: 'primary:thread-a:tool-1',
+    });
+  });
+
+  // risk: privacy — event text remains inert plain text and foreign root fallbacks are rejected.
+  it('sanitizes event text and rejects a cross-thread fallback', () => {
     const fixture = new StatusRollupQueueFixture();
     const item = fixture.item('safe', 'agent', '  <b>literal</b>\nupdate\u0000 ', 0);
     expect(fixture.queue.present(item, fixture.threadId, 0)?.text).toBe('<b>literal</b> update');
-    expect(fixture.queue.present(fixture.item('foreign-root', 'root', 'fallback', 0, 'normal', 'thread-2'), fixture.threadId, 0)).toBeNull();
+    expect(fixture.queue.present(fixture.item('foreign-root', 'root', 'fallback', 0, 'normal', 'thread-b'), fixture.threadId, 0)).toBeNull();
   });
 });

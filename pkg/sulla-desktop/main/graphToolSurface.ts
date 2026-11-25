@@ -24,6 +24,7 @@
  */
 
 import { sessionAllowsTool } from './toolSessionPolicy';
+import type { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
@@ -62,11 +63,14 @@ export interface GraphToolExecutionOptions {
  * (non-empty allowedToolNames), null for unrestricted sessions — those
  * already have the full CLI catalog and need no projection.
  */
-export function resolveGraphToolSurface(metadata: unknown): string[] | null {
+export function resolveGraphToolSurface(metadata: unknown, awarenessPolicy: AgentAwarenessPolicy): string[] | null {
   const meta = (metadata ?? {}) as Record<string, unknown>;
   const allowed = meta.allowedToolNames;
   if (!Array.isArray(allowed) || allowed.length === 0) return null;
-  return allowed.filter((name): name is string => typeof name === 'string');
+  return awarenessPolicy.filterToolNames(
+    allowed.filter((name): name is string => typeof name === 'string'),
+    { agent_awareness: meta.agentAwareness as boolean | undefined },
+  );
 }
 
 /**
@@ -77,14 +81,18 @@ export function resolveGraphToolSurface(metadata: unknown): string[] | null {
 export function buildGraphToolHandler(
   allowedTools: string[],
   getTool: ToolResolver,
-  execution?: GraphToolExecutionOptions,
+  execution: GraphToolExecutionOptions,
+  awarenessPolicy: AgentAwarenessPolicy,
 ) {
   const chatTransport = new ToolSessionChatTransport();
   return async({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
     // `exec` in the surface means full Sulla catalog authority (same rule as
     // the CLI session gate), so dispatched workers can reach github/*,
     // files/*, etc. here too — sandboxed CLI providers have no other path.
-    if (!sessionAllowsTool(allowedTools, tool)) {
+    if (!awarenessPolicy.allowsTool(execution.state.metadata, tool)) {
+      return { content: [{ type: 'text', text: `sulla_tool: '${ tool }' is not available to this agent.` }], isError: true };
+    }
+    if (!sessionAllowsTool(allowedTools, tool, execution.state.metadata, awarenessPolicy)) {
       return {
         content: [{ type: 'text', text: `sulla_tool: "${ tool }" is not in this agent's graph-stamped tool surface. Allowed: ${ allowedTools.join(', ') }` }],
         isError: true,

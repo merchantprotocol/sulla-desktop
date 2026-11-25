@@ -11,14 +11,17 @@
 <template>
   <div :class="['approval', decisionClass]">
     <p v-if="msg.resolutionError" role="alert">{{ msg.resolutionError }}</p>
-    <div class="head">Approval required</div>
+    <div class="head">{{ msg.title || 'Approval required' }}</div>
+    <p v-if="msg.requestedBy" class="requester">Requested by {{ requesterName }}<template v-if="requesterLabel"> · {{ requesterLabel }}</template></p>
     <div class="what">{{ msg.reason }}</div>
     <div class="cmd">{{ msg.command }}</div>
-    <p v-if="stateLabel && msg.decision === 'timed_out'" role="status">{{ stateLabel }}</p>
-    <div v-if="msg.decision === 'pending'" class="actions">
+    <p v-if="expiresAtLabel" class="expires">Expires {{ expiresAtLabel }}</p>
+    <p v-if="effectiveDecision === 'timed_out'" role="status">{{ effectiveStateLabel }}</p>
+    <div v-if="effectiveDecision === 'pending'" class="actions">
       <button class="approve" type="button" :disabled="blocked" @click="settle('approved')">Approve</button>
       <button class="deny"    type="button" :disabled="blocked" @click="settle('denied')">Deny</button>
     </div>
+    <button v-if="showDecideLink" class="open-decide" type="button" @click="openDecide">Open in Decide</button>
   </div>
 </template>
 
@@ -27,17 +30,35 @@ import { computed } from 'vue';
 import type { ToolApprovalMessage } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
 
-const props = defineProps<{ msg: ToolApprovalMessage; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void> }>();
+const props = defineProps<{ msg: ToolApprovalMessage; now?: number; blocked?: boolean; stateLabel?: string; decide?: (action: 'approved' | 'denied') => Promise<void>; showDecideLink?: boolean }>();
 const controller = useChatController();
+const now = computed(() => props.now ?? Date.now());
+const requesterName = computed(() => props.msg.requestedBy?.agentId || props.msg.requestedBy?.label || 'default agent');
+const requesterLabel = computed(() => {
+  const label = props.msg.requestedBy?.label;
+  return label && label !== requesterName.value ? label : '';
+});
+const effectiveDecision = computed(() => props.msg.decision === 'pending' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value
+  ? 'timed_out'
+  : props.msg.decision);
+const expiresAtLabel = computed(() => props.msg.expiresAt === undefined
+  ? undefined
+  : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(props.msg.expiresAt)));
+const effectiveStateLabel = computed(() => effectiveDecision.value === 'timed_out' && props.msg.expiresAt !== undefined && props.msg.expiresAt <= now.value
+  ? 'Expired'
+  : props.stateLabel || 'Timed out');
 function settle(action: 'approved' | 'denied'): void {
-  if (props.blocked || props.msg.decision !== 'pending') return;
+  if (props.blocked || effectiveDecision.value !== 'pending') return;
   if (props.decide) void props.decide(action);
   else if (action === 'approved') controller.approveTool(props.msg.id);
   else controller.denyTool(props.msg.id);
 }
+function openDecide(): void {
+  window.dispatchEvent(new CustomEvent('sulla:mode-rail-select', { detail: { mode: 'decide' } }));
+}
 const decisionClass = computed(() => {
-  if (props.msg.decision === 'approved') return 'settled approved';
-  if (props.msg.decision === 'denied')   return 'settled denied';
+  if (effectiveDecision.value === 'approved') return 'settled approved';
+  if (effectiveDecision.value === 'denied')   return 'settled denied';
   return '';
 });
 </script>
@@ -66,6 +87,8 @@ const decisionClass = computed(() => {
   font-family: var(--font-display); font-style: italic; font-size: 16px;
   color: var(--text-primary); line-height: 1.55; margin-bottom: 12px;
 }
+.requester { margin: -4px 0 10px; color: var(--text-secondary); font-size: 12px; }
+.expires { margin: -5px 0 14px; color: var(--text-secondary); font-size: 12px; }
 .cmd {
   font-family: var(--font-mono); font-size: 12px;
   background: var(--status-warning-soft);
@@ -94,6 +117,10 @@ const decisionClass = computed(() => {
 }
 .actions .deny:hover {
   color: var(--status-error); border-color: var(--status-error); background: var(--status-warning-soft);
+}
+.open-decide {
+  margin-top: 12px; padding: 0; border: 0; background: none; color: var(--accent);
+  font: inherit; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
 }
 .approval.settled { opacity: 0.6; }
 .approval.approved::after,

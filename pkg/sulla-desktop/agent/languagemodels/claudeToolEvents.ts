@@ -48,7 +48,7 @@ export class ClaudeToolEventTracker {
     this.reportTiming(started.name, elapsedMs, resultChars);
     try {
       this.callbacks.onToolEvent?.({
-        toolUseId, toolName: started.name, input: started.input, result, resultChars,
+        toolUseId, toolName: started.name, input: started.input, result: isError ? undefined : result, resultChars,
         error: isError ? resultText : undefined, isError,
       });
     } catch { /* provider callbacks are best-effort */ }

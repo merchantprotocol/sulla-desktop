@@ -146,8 +146,8 @@ function cancelTitle(): void {
   container: chat-header / inline-size;
   position: absolute; top: 0; left: 0; right: 0; z-index: 21;
   display: grid; grid-template-columns: fit-content(32%) minmax(0, 1fr) auto auto; align-items: center;
-  /* Keep the previous 52px outer height and content alignment without the 1px border. */
-  box-sizing: border-box; height: 52px; padding: 0 20px 1px;
+  /* Match the approved thread-title row; workerChart.css anchors to this 48px height. */
+  box-sizing: border-box; height: 48px; padding: 10px 16px;
   background: transparent;
   font-family: var(--font-body);
 }
@@ -155,18 +155,22 @@ function cancelTitle(): void {
 .ch-center { display: flex; min-width: 0; }
 .ch-title {
   /* Fit the title and its padding, then shrink to the available grid space. */
-  flex: 0 1 auto; min-width: 0; padding: 3px 8px; text-align: left;
-  background: #fff;
+  flex: 0 1 auto; min-width: 0; height: auto; margin: 0; padding: 4px 10px; text-align: left;
+  --chat-title-chip-bg: #f3f6f9;
+  --chat-title-chip-text: #1c2630;
+  background: var(--chat-title-chip-bg);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  border-radius: 6px; outline: none; cursor: text;
-  color: var(--text-primary); font-size: 15px; font-weight: normal; letter-spacing: 0;
+  border: 0; border-radius: 8px; outline: none; cursor: text;
+  color: var(--chat-title-chip-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px; font-weight: 400; line-height: 1.5; letter-spacing: -.005em;
 }
-.ch-title:hover { background-color: #fff; }
-.ch-title:focus { text-overflow: clip; background-color: #fff; box-shadow: inset 0 0 0 1px var(--accent); }
-/* Every dark Desktop theme (html.dark: default, ocean, nord, protocol, noir) gets a solid surface in all states. */
-:global(.dark) .ch-title,
-:global(.dark) .ch-title:hover,
-:global(.dark) .ch-title:focus { background: var(--bg-surface); }
+.ch-title:focus {
+  text-overflow: clip;
+  background: var(--chat-title-chip-bg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+html.dark .ch-title { --chat-title-chip-bg: #1d2126; --chat-title-chip-text: #e8ecf0; }
 .ch-origin {
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; height: 28px; padding: 0 10px;
   border: 1px solid var(--border-default); border-radius: 999px; background: var(--bg-surface);

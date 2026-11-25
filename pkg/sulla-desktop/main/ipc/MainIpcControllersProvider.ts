@@ -12,6 +12,7 @@ import { TabsIpcController } from '../browserTabs/tabsIpc';
 import { ChatArtifactsIpcController } from '../chatArtifactsIpc';
 import { ChatHeartbeatIpcController } from '../chatHeartbeatIpc';
 import { ChatMessagesIpcController } from '../chatMessagesIpc';
+import { ConversationToolPayloadStore } from '../conversationToolPayloadStore';
 import { cloudRequest } from '../cloud/cloudFetch';
 import { ConversationMessagesIpcController } from '../conversationMessagesIpc';
 import { ExtensionUiIpcController } from '../extensionUiIpc';
@@ -39,7 +40,7 @@ import { initializeMainClaudeModelCatalogBoundary } from '@pkg/agent/languagemod
 import { modelRouter, recommendedState } from '@pkg/agent/languagemodels/modelRouter';
 import { acknowledgeAgentTabReady, getAgentTabThreadSnapshot } from '@pkg/agent/services/AgentTabOpener';
 import { configureChatArtifactBookmarkSync, configureChatArtifactFilesRegistration, getChatArtifactService } from '@pkg/agent/services/ChatArtifactService';
-import { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatService';
+import { chatHeartbeatProvider } from '@pkg/agent/app/Providers/ChatHeartbeatServiceProvider';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { IpcMessageBus } from '@pkg/agent/services/IpcMessageBus';
 import { getUsageSummary } from '@pkg/agent/usage/providerUsage';
@@ -50,6 +51,7 @@ import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { listDockerLinks } from '@pkg/main/dockerLinks';
 import Logging from '@pkg/utils/logging';
 import { safeSend } from '@pkg/utils/safeSend';
+import { resolveSullaLogsDir } from '@pkg/agent/utils/sullaPaths';
 
 import type { IpcMainRegistrar, IpcRegistrar } from './IpcController';
 
@@ -142,7 +144,7 @@ export class MainIpcControllersProvider {
       listDockerLinks,
       isAppWindow:           sender => !!agentWindowFromSender(sender) || !!BrowserWindow.fromWebContents(sender),
     });
-    this.chatMessages = new ChatMessagesIpcController(raw, ConversationThreadStore as any, log);
+    this.chatMessages = new ChatMessagesIpcController(raw, ConversationThreadStore as any, log, new ConversationToolPayloadStore(ConversationHistoryModel, resolveSullaLogsDir));
     this.conversationMessages = new ConversationMessagesIpcController(raw, ConversationMessagesModel, log);
     this.chatArtifacts = new ChatArtifactsIpcController(raw, {
       service: () => {
@@ -154,7 +156,7 @@ export class MainIpcControllersProvider {
       getArtifactById:    id => ChatArtifactModel.getById(id) as any,
       getHistoryByThread: threadId => ConversationHistoryModel.getByThread(threadId) as any,
     });
-    this.chatHeartbeat = new ChatHeartbeatIpcController(raw, getChatHeartbeatService);
+    this.chatHeartbeat = new ChatHeartbeatIpcController(raw, () => chatHeartbeatProvider.registrations());
     this.usage = new UsageIpcController(proxy, {
       summary:            (hours, profileId) => getUsageSummary(hours, profileId),
       activeContractorId: async() => (await import('../sullaCloudAuth')).getActiveContractorId(),

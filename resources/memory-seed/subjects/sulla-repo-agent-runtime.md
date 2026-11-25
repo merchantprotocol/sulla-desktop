@@ -7,7 +7,7 @@ aliases: [agent runtime source, agent code, prompts, tool manifests, built-in ag
 ---
 
 ## Overview
-The agent runtime is under `pkg/sulla-desktop/agent`. Nodes and controllers execute turns, prompt sections assemble system prompts, and tool manifests expose the `sulla <category>/<tool>` catalog. Database migrations create runtime state, while seeders install built-in agents, skills, observations, and memory data. The v7 subject-memory schema and memory seed are part of this runtime.
+The agent runtime is under `pkg/sulla-desktop/agent`. Nodes and controllers execute turns, prompt sections assemble system prompts, and tool manifests expose the `sulla <category>/<tool>` catalog. Database migrations create runtime state, while seeders install built-in agents, skills, and memory data. The v7 subject-memory schema and memory seed are part of this runtime.
 
 ## Facts
 - `agent/nodes` contains the turn and workflow execution nodes; `agent/controllers` contains orchestration controllers.

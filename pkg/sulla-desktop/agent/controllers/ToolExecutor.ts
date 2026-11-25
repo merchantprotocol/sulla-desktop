@@ -20,6 +20,7 @@ import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { createHash } from 'node:crypto';
 
 import { extensionHooks } from '../extensions/HookRegistry';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { throwIfAborted } from '../services/AbortService';
 import { RunActivity } from '../services/RunActivity';
 import { TurnToolActivity } from '../services/TurnToolActivity';
@@ -92,7 +93,10 @@ export interface ToolExecutorContext {
 // ============================================================================
 
 export class ToolExecutor {
-  constructor(private readonly ctx: ToolExecutorContext) {}
+  constructor(
+    private readonly ctx: ToolExecutorContext,
+    private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy(),
+  ) {}
 
   // --------------------------------------------------------------------------
   // Public API
@@ -269,7 +273,8 @@ export class ToolExecutor {
             ? result.error
             : (!toolSuccess && typeof result?.result === 'string' ? result.result : undefined);
 
-          await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result);
+          const payloadThreadId = await this.persistToolCallForPayload(state, toolRunId, toolName, args, result);
+          await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result, payloadThreadId);
           await this.appendToolResultMessage(state, toolName, {
             toolName, success: toolSuccess, result, error: toolError, toolCallId: toolRunId,
           });
@@ -282,17 +287,10 @@ export class ToolExecutor {
 
           this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
-          // Conversation logging
-          const convIdSuccess = (state.metadata as any).conversationId;
-          if (convIdSuccess) {
-            try {
-              const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdSuccess, toolName, args, result);
-            } catch { /* best-effort */ }
-          }
         } catch (err: any) {
           const error = err.message || String(err);
-          await this.emitToolResultEvent(state, toolRunId, false, error);
+          const payloadThreadId = await this.persistToolCallForPayload(state, toolRunId, toolName, args, { error });
+          await this.emitToolResultEvent(state, toolRunId, false, error, undefined, payloadThreadId);
           await this.appendToolResultMessage(state, toolName, {
             toolName, success: false, error, toolCallId: toolRunId,
           });
@@ -303,14 +301,6 @@ export class ToolExecutor {
 
           this.trackFailureSignature(state, toolName, false, error, null);
 
-          // Conversation logging for failed tool calls
-          const convIdFail = (state.metadata as any).conversationId;
-          if (convIdFail) {
-            try {
-              const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-              getLogger().logToolCall(convIdFail, toolName, args, { error });
-            } catch { /* best-effort */ }
-          }
           this.pushToTranscript(toolName, false, error);
         }
       } catch {
@@ -460,7 +450,8 @@ export class ToolExecutor {
           ? result.error
           : (!toolSuccess && typeof result?.result === 'string' ? result.result : undefined);
 
-        await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result);
+        const payloadThreadId = await this.persistToolCallForPayload(state, toolRunId, toolName, args, result);
+        await this.emitToolResultEvent(state, toolRunId, toolSuccess, toolError, result, payloadThreadId);
         await this.appendToolResultMessage(state, toolName, {
           toolName, success: toolSuccess, result, error: toolError, toolCallId: toolRunId,
         });
@@ -472,17 +463,11 @@ export class ToolExecutor {
         await extensionHooks.runAction('after_tool_call', { toolName, args, toolRunId, success: toolSuccess, result, error: toolError });
         this.trackFailureSignature(state, toolName, toolSuccess, toolError, result);
 
-        const convId = (state.metadata as any).conversationId;
-        if (convId) {
-          try {
-            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-            getLogger().logToolCall(convId, toolName, args, result);
-          } catch { /* best-effort */ }
-        }
       } else {
         const error = settled.error || 'Tool execution failed';
+        const payloadThreadId = settled.loopBlock ? undefined : await this.persistToolCallForPayload(state, toolRunId, toolName, args, { error });
 
-        await this.emitToolResultEvent(state, toolRunId, false, error);
+        await this.emitToolResultEvent(state, toolRunId, false, error, undefined, payloadThreadId);
         await this.appendToolResultMessage(state, toolName, {
           toolName, success: false, error, toolCallId: toolRunId,
         });
@@ -497,13 +482,6 @@ export class ToolExecutor {
         results.push({ toolName, success: false, error });
         this.pushToTranscript(toolName, false, error);
 
-        const convId = (state.metadata as any).conversationId;
-        if (convId && !settled.loopBlock) {
-          try {
-            const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
-            getLogger().logToolCall(convId, toolName, args, { error });
-          } catch { /* best-effort */ }
-        }
       }
     }
 
@@ -515,6 +493,7 @@ export class ToolExecutor {
   // --------------------------------------------------------------------------
 
   async getToolPolicyBlockReason(state: BaseThreadState, toolName: string): Promise<string | null> {
+    if (!this.agentAwarenessPolicy.allowsTool(state.metadata, toolName)) return `Tool not available to this agent: ${ toolName }`;
     const callPolicy = (state.metadata as any).__toolAccessPolicy as {
       allowedCategories: string[] | null;
       allowedToolNames:  string[] | null;
@@ -654,7 +633,7 @@ export class ToolExecutor {
           toolName,
           args,
           kind,
-          thread_id:   parentThreadId,
+          thread_id:   parentThreadId, payloadThreadId: state.metadata.threadId,
         },
         timestamp: Date.now(),
       });
@@ -685,12 +664,31 @@ export class ToolExecutor {
     return sent;
   }
 
+  private async persistToolCallForPayload(
+    state: BaseThreadState,
+    toolRunId: string,
+    toolName: string,
+    args: unknown,
+    result?: unknown,
+  ): Promise<string | undefined> {
+    const conversationId = (state.metadata as any).conversationId;
+    if (typeof conversationId !== 'string' || !conversationId.trim()) return undefined;
+    try {
+      const { getConversationLogger: getLogger } = require('../services/ConversationLogger');
+      const confirmed = await getLogger().logToolCall(conversationId, toolName, args, result, toolRunId);
+      return confirmed ? conversationId : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async emitToolResultEvent(
     state: BaseThreadState,
     toolRunId: string,
     success: boolean,
     error?: string,
     result?: any,
+    payloadThreadId?: string,
   ): Promise<boolean> {
     (state.metadata as any).lastAgentActivityAt = Date.now();
     RunActivity.touch(state.metadata);
@@ -704,6 +702,7 @@ export class ToolExecutor {
         error,
         result,
         thread_id: state.metadata.threadId,
+        ...(payloadThreadId ? { payloadThreadId, payloadPersisted: true } : {}),
       },
       timestamp: Date.now(),
     });
@@ -718,9 +717,10 @@ export class ToolExecutor {
           phase:     'tool_result',
           toolRunId,
           success,
-          error,
-          result,
           thread_id: parentThreadId,
+          ...(payloadThreadId
+            ? { payloadThreadId, payloadPersisted: true }
+            : { error, result }),
         },
         timestamp: Date.now(),
       });

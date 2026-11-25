@@ -20,7 +20,7 @@ export type ComposerGlowPulse = 'hit' | 'soft' | 'tick' | 'settle';
 export interface ComposerGlowState {
   /** A run is active: the glow sits at its activity level. Off fades it out. */
   active:    boolean;
-  /** 0-3, from the number of actions in the last 6 seconds. */
+  /** 0-3, from the number of actions in the last 6 seconds (level 1 is the active-run floor). */
   level:     0 | 1 | 2 | 3;
   streaming: boolean;
   /** A single tool call has been running for a while. */
@@ -119,12 +119,11 @@ export class ComposerGlow {
 
   toolFinished(id: string): void {
     const startedAt = this.runningTools.get(id);
-    if (startedAt === undefined) return;
+    if (startedAt === undefined) { this.action(); return; }
     this.runningTools.delete(id);
-    const wasDeep = this.mutable.deep;
     this.recompute();
-    // A long call ending is itself an event worth a hit; quick ones already hit on start.
-    if (wasDeep) this.action();
+    // Every result is a status-line event and gets the same hit as its start.
+    this.action();
   }
 
   /** One streamed batch of reply text. Throttled to the mockup's ~230 ms cadence. */
@@ -169,7 +168,7 @@ export class ComposerGlow {
     const now = this.clock.now();
     this.hits = this.hits.filter(at => now - at < ComposerGlow.windowMs);
     const n = this.hits.length;
-    this.mutable.level = !this.mutable.active ? 0 : n > 7 ? 3 : n > 3 ? 2 : n > 0 ? 1 : 0;
+    this.mutable.level = !this.mutable.active ? 0 : n > 7 ? 3 : n > 3 ? 2 : 1;
     let oldestTool = Number.POSITIVE_INFINITY;
     for (const at of this.runningTools.values()) oldestTool = Math.min(oldestTool, at);
     this.mutable.deep = this.mutable.active && now - oldestTool >= ComposerGlow.deepAfterMs;

@@ -4,8 +4,10 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { AgentModelStatus } from '@pkg/shared/agentState/AgentModelStatus';
+import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { AgentRowState, AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { AgentJobCheckin } from '@pkg/agent/database/models/AgentJobMessagingModel';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
 import type { Message, ProactiveMessage, SubAgentExchangeMessage, SubAgentMessage } from '../../models/Message';
@@ -28,7 +30,9 @@ interface JobTrace {
 }
 
 const states: Record<AgentRowState, SubAgentTraceStatus> = {
-  queued: 'starting', working: 'working', quiet: 'quiet', parked: 'waiting', blocked: 'blocked',
+  // A parked task is still running (waiting on a timer or its children); the
+  // approved row has exactly seven status words, so it reads as working.
+  queued: 'starting', working: 'working', quiet: 'quiet', parked: 'working', blocked: 'blocked',
   done: 'returned', failed: 'failed', lost: 'failed', stopped: 'stopped',
 };
 const resultStates: Record<AgentResultItem['status'], SubAgentTraceStatus> = {
@@ -39,8 +43,28 @@ const exchangeStates: Record<SubAgentExchangeMessage['status'], SubAgentTraceSta
 };
 const legacyStates: Record<string, SubAgentTraceStatus> = { Done: 'returned', Failed: 'failed', Blocked: 'blocked', Stopped: 'stopped' };
 
+const statusLabels: Record<SubAgentTraceStatus, string> = {
+  starting: 'starting', working: 'working', quiet: 'no check-in', blocked: 'blocked',
+  returned: 'returned', failed: 'failed', stopped: 'stopped',
+};
+
 /** Collects related events across the whole chat; the row stays in the first event's turn. */
 export class SubAgentTraceProjection {
+  /** The one status word the approved row shows. */
+  static statusLabel(status: SubAgentTraceStatus): string { return statusLabels[status]; }
+
+  /** "2 agents: 1 returned, 1 working" for the turn header, in first-seen status order. */
+  static summary(statuses: readonly SubAgentTraceStatus[]): string | undefined {
+    if (!statuses.length) return undefined;
+    const counts = new Map<string, number>();
+    for (const status of statuses) {
+      const label = statusLabels[status];
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const parts = [...counts].map(([label, count]) => `${ count } ${ label }`).join(', ');
+    return `${ statuses.length } ${ statuses.length === 1 ? 'agent' : 'agents' }: ${ parts }`;
+  }
+
   rowsByMessage(messages: readonly Message[], input: SubAgentTraceInput): Map<string, TraceRow[]> {
     const agents = new Map(input.agents?.map(row => [row.key, row]));
     const byThread = new Map<string, string>();
@@ -125,7 +149,10 @@ export class SubAgentTraceProjection {
       native ? ({ running: 'working', done: 'returned', error: 'failed' } as const)[native.status] :
       launch?.status && launch.status !== 'running' ? exchangeStates[launch.status] : 'starting');
     const ended = status === 'returned' || status === 'failed' || status === 'stopped';
-    const note = settled?.note ?? (live ? live.stateReason || live.lastCheckinSummary || launch?.summary :
+    const liveNote = live && (live.state === 'parked'
+      ? live.lastCheckinSummary || live.waitReason || live.stateReason
+      : live.stateReason || live.lastCheckinSummary);
+    const note = settled?.note ?? (live ? liveNote || launch?.summary :
       native?.desc ?? exchange?.summary ?? launch?.summary ?? legacy?.headline);
     const modelStatus = live?.modelStatus ?? result?.modelStatus;
     const startedAt = (reopened ? startedLiveAt : result?.startedAt ?? startedLiveAt) ?? launch?.createdAt ?? native?.createdAt;
@@ -133,12 +160,15 @@ export class SubAgentTraceProjection {
     const lastCheckinAt = this.timestamp(live?.lastCheckinAt);
     const report = [exchange?.detail, result?.report].filter((value, index, values) => value && values.indexOf(value) === index).join('\n\n');
     const details: SubAgentTraceDetails = {
-      agentId, conversationId: launch?.conversationId ?? result?.threadId ?? exchange?.conversationId ?? live?.threadId ?? undefined,
+      agentId, marker: ThreadAgentActivityPresenter.initials(agentId, job.key), conversationId: launch?.conversationId ?? result?.threadId ?? exchange?.conversationId ?? live?.threadId ?? undefined,
       jobId: launch?.jobId ?? result?.jobId ?? exchange?.jobId ?? live?.jobId ?? old?.jobId,
       taskIndex: launch?.taskIndex ?? result?.taskIndex ?? exchange?.taskIndex ?? live?.taskIndex,
       model: modelStatus ? AgentModelStatus.label(modelStatus) : result?.model,
       runLocation: result?.runLocation, isReviewer: result?.purpose === 'review',
       startedAt, endedAt, noteAt: settled || ended ? undefined : lastCheckinAt,
+      durationMs: !reopened && result?.durationMs !== undefined ? result.durationMs
+        : endedAt !== undefined && startedAt !== undefined ? endedAt - startedAt : undefined,
+      followUpOf: this.followUp(live?.followUpOf ?? result?.followUpOf),
       brief: launch?.detail, briefAt: launch?.createdAt,
       checkinAt: lastCheckinAt, checkinSummary: live?.lastCheckinSummary ?? undefined,
       report: report || legacy?.body || native?.steps.map(step => `${ step.tag }  ${ step.text }`).join('\n') ||
@@ -147,31 +177,49 @@ export class SubAgentTraceProjection {
     return { id: `subagent:${ job.key }`, kind: 'subagent', verb: '', target: label, targetIsCode: false, status,
       at: first.createdAt, anchorEntryId: '', note,
       payload: new TracePayload([status, details.brief, details.briefAt, details.checkinAt, details.checkinSummary,
-        details.endedAt, details.report], history => this.disclosure(details, status, history)),
+        details.endedAt, details.report], (history, messages) => this.disclosure(details, status, history, messages)),
       durationLabel: !reopened && result?.durationMs !== undefined ? this.duration(result.durationMs) : undefined,
       subagent: details,
     };
   }
 
-  disclosure(details: SubAgentTraceDetails, status: SubAgentTraceStatus, history: readonly AgentJobCheckin[] = []): string {
+  disclosure(details: SubAgentTraceDetails, status: SubAgentTraceStatus, history: readonly AgentJobCheckin[] = [],
+    messages: AgentTraceHistoryData['messages'] = []): string {
     const checkins = [...history];
     const { checkinAt, checkinSummary, briefAt, brief, endedAt } = details;
     if (checkinAt !== undefined && checkinSummary && !history.some(entry => entry.createdAt === checkinAt && entry.summary === checkinSummary)) {
       checkins.push({ createdAt: checkinAt, summary: checkinSummary, step: '', blockers: [], filesTouched: [] });
     }
-    checkins.sort((a, b) => a.createdAt - b.createdAt);
-    const formattedCheckins = checkins.map(entry => [
-      `${ this.timeLabel(entry.createdAt) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
-      ...(entry.step ? [entry.step] : []), ...entry.blockers, ...entry.filesTouched,
-    ].join('\n')).join('\n');
+    // Check-ins and messages sent to the worker, interleaved by time, word for word.
+    // agent_job_messages records no sender, so a message is labelled as a message, not as Sulla's.
+    const timeline = [
+      ...checkins.map(entry => ({ at: entry.createdAt, text: [
+        `${ this.timeLabel(entry.createdAt) }  ${ entry.summary }${ entry.percent !== undefined ? ` · ${ entry.percent }%` : '' }`,
+        ...(entry.step ? [entry.step] : []), ...entry.blockers, ...entry.filesTouched,
+      ].join('\n') })),
+      ...messages.map(entry => ({ at: entry.createdAt, text: `${ this.timeLabel(entry.createdAt) }  ← message: ${ entry.message }` })),
+    ].sort((a, b) => a.at - b.at);
+    const formattedCheckins = timeline.map(entry => entry.text).join('\n');
     return [
       brief && `BRIEF${ briefAt !== undefined ? ` · sent ${ this.timeLabel(briefAt) }` : '' }
 ${ brief }`,
       `CHECK-INS
 ${ formattedCheckins || 'None recorded.' }`,
-      `REPORT${ endedAt !== undefined ? ` · ${ status } ${ this.timeLabel(endedAt) }` : '' }
+      `REPORT${ endedAt !== undefined ? ` · ${ this.reportHeader(details, status, endedAt) }` : '' }
 ${ details.report }`,
     ].filter(Boolean).join('\n\n');
+  }
+
+  /** "completed 1:07:52 PM · 3m 40s". Results record no token count, so none is shown. */
+  private reportHeader(details: SubAgentTraceDetails, status: SubAgentTraceStatus, endedAt: number): string {
+    const word = status === 'returned' ? 'completed' : statusLabels[status];
+    return [`${ word } ${ this.timeLabel(endedAt) }`, details.durationMs !== undefined ? this.duration(details.durationMs) : undefined]
+      .filter(Boolean).join(' · ');
+  }
+
+  private followUp(ref?: { jobId?: unknown; taskIndex?: unknown } | null): SubAgentTraceDetails['followUpOf'] {
+    return ref && typeof ref.jobId === 'string' && ref.jobId && Number.isInteger(ref.taskIndex)
+      ? { jobId: ref.jobId, taskIndex: ref.taskIndex as number } : undefined;
   }
 
   duration(ms: number): string {

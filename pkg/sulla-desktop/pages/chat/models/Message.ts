@@ -123,6 +123,8 @@ export interface ThinkingMessage extends MessageBase {
 // ─── Tool call ────────────────────────────────────────────────────
 export interface ToolMessage extends MessageBase {
   kind:          'tool';
+  providerTool?: boolean;
+  toolPayloadRef?: { threadId: string; toolRunId: string };
   recordedToolName?: string;
   tool:          string;        // Standard-view label; Detailed uses recordedToolName
   desc:          string;        // formatter description when available
@@ -140,12 +142,15 @@ export interface ToolApprovalMessage extends MessageBase {
   kind:             'tool_approval';
   reason:           string;         // what Sulla wants to do & why
   command:          string;         // the exact command/action
+  title?:           string;         // durable approval title from DecisionService
+  expiresAt?:       number;         // DecisionService deadline, retained with the transcript
   decision:         'pending' | 'approved' | 'denied' | 'timed_out';
   /** Round-trip id that the renderer sends back on approve/deny so the
    *  backend's pending promise (parked in ApprovalService) can settle. */
   approvalId?:      string;
   /** Optional origin tag — tool / workflow / vault / function / etc. */
   origin?:          { kind: string; [field: string]: unknown };
+  requestedBy?:     { agentId?: string; label?: string };
 }
 
 // ─── Tool question (multiple choice) ──────────────────────────────

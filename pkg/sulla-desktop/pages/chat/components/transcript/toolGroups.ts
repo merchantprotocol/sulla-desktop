@@ -165,6 +165,8 @@ export class TranscriptReporting {
       return `${ toolName } · ${ message.status || 'unknown' }`;
     }
 
+    if (message.providerTool) return undefined;
+
     // Preserve main's Standard projection: only typed tool envelopes with a
     // known formatter label are shown, with their established friendly label.
     if (!/^\d+_tool_[\w.-]+$/.test(message.id)) return undefined;

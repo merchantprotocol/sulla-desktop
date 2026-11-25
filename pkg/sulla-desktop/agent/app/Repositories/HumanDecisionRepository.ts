@@ -40,8 +40,22 @@ export class HumanDecisionRepository {
     return rows.length > 0;
   }
 
-  async expirePending(id: string): Promise<void> {
-    await this.client.query(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
-        WHERE id = $1 AND status IN ('pending', 'deferred')`, [id]);
+  /**
+   * Settle a Files publish approval with no session owner, so it stays decidable after a restart.
+   * Only an unexpired publish approval in its own conversation qualifies. True when a row changed.
+   */
+  async settleDurablePublish(id: string, status: string, next: DecisionRecord, now: number): Promise<boolean> {
+    const rows = await this.client.query(`UPDATE human_decisions SET status = $2, record = $3::jsonb, updated_at = NOW()
+        WHERE id = $1 AND status IN ('pending', 'deferred') AND record->>'kind' = 'approval'
+          AND NULLIF(record#>>'{payload,filesPublishRequestId}', '') IS NOT NULL
+          AND (record->>'expiresAt')::bigint > $4 AND record->>'conversationId' = $5 RETURNING id`,
+    [id, status, JSON.stringify(next), now, next.conversationId]);
+    return rows.length > 0;
+  }
+
+  async expirePending(id: string): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions SET status = 'expired', record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
+        WHERE id = $1 AND status IN ('pending', 'deferred') RETURNING record`, [id]);
+    return rows[0]?.record;
   }
 }

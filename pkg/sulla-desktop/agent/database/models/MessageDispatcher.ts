@@ -19,7 +19,8 @@
  */
 
 import type { WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
-import { formatToolCard, formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
+import { formatToolCard, formatToolResult, TOOL_PAYLOAD_POINTER_THRESHOLD } from '@pkg/agent/tools/toolCardFormatters';
+import { ToolResultCardProjector } from './ToolResultCardProjector';
 import { dispatchLogger as console } from '@pkg/agent/utils/agentLogger';
 import { stripProtocolTagsForUi, stripProtocolTagsStreaming } from '@pkg/agent/utils/stripProtocolTags';
 import { isTerminalRunError } from '@pkg/agent/workflow/agentNodeError';
@@ -339,9 +340,13 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const reason = typeof ta?.reason === 'string' ? ta.reason.trim() : '';
     const command = typeof ta?.command === 'string' ? ta.command.trim() : '';
     if (!approvalId || !reason || !command) return;
+    if (ctx.messages.some(message => message.kind === 'tool_approval' && message.threadId === msgThreadId &&
+      message.toolApproval?.approvalId === approvalId)) return;
+    const title = typeof ta?.title === 'string' && ta.title.trim() ? ta.title.trim() : undefined;
+    const expiresAt = typeof ta?.expiresAt === 'number' && Number.isFinite(ta.expiresAt) ? ta.expiresAt : undefined;
 
     ctx.messages.push({
-      id:        `${ Date.now() }_ws_tool_approval_${ approvalId }`,
+      id:        `${ Number.isFinite(data?.timestamp) ? data.timestamp : Date.now() }_ws_tool_approval_${ approvalId }`,
       channelId: agentId,
       threadId:  msgThreadId,
       role:      'assistant',
@@ -351,6 +356,8 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         approvalId,
         reason,
         command,
+        ...(title ? { title } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
         origin: ta?.origin && typeof ta.origin === 'object' ? ta.origin : undefined,
       },
     });
@@ -876,6 +883,7 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
         toolCard:  {
           toolRunId,
           toolName,
+            providerTool: data?.kind === 'provider',
           description,
           status:       'running',
           args:         argsRecord,
@@ -894,32 +902,12 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
   if (phase === 'tool_result') {
     ctx.currentActivity.value = 'Thinking';
     const toolRunId = typeof data?.toolRunId === 'string' ? data.toolRunId : null;
-    const success = data?.success === true;
-    const error = typeof data?.error === 'string' ? data.error : null;
-    const result = data?.result;
-
     if (toolRunId) {
       const messageId = ctx.toolRunIdToMessageId.get(toolRunId);
       if (messageId) {
         const message = ctx.messages.find(m => m.id === messageId);
-        if (message?.toolCard) {
-          message.toolCard.status = success ? 'success' : 'failed';
-          message.toolCard.error = error;
-          message.toolCard.result = result;
-          const resultDisplay = formatToolResult(
-            message.toolCard.toolName,
-            message.toolCard.args ?? {},
-            result,
-            error,
-          );
-          const fullOutput = result === undefined
-            ? resultDisplay.output
-            : typeof result === 'string' ? result : JSON.stringify(result, null, 2) ?? String(result);
-          if (fullOutput !== undefined) {
-            message.toolCard.output = fullOutput;
-          }
-          if (resultDisplay.outputFormat) message.toolCard.outputFormat = resultDisplay.outputFormat;
-        }
+        if (message?.toolCard) new ToolResultCardProjector(formatToolResult, TOOL_PAYLOAD_POINTER_THRESHOLD)
+          .project(message.toolCard, data, msgThreadId);
         ctx.toolRunIdToMessageId.delete(toolRunId);
       }
     }
@@ -1273,9 +1261,6 @@ const TOOL_VERB_MAP: Record<string, string> = {
   calendar_list:               'Checking calendar',
   calendar_create:             'Creating event',
   calendar_list_upcoming:      'Checking schedule',
-  // Memory
-  add_observational_memory:    'Remembering',
-  remove_observational_memory: 'Forgetting',
   // Skills / Projects
   create_skill:                'Creating skill',
   // Channel

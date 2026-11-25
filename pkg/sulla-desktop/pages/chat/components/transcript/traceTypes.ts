@@ -6,10 +6,12 @@
 import type { TracePayload } from './TracePayloadSerializer';
 
 export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
-export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'waiting' | 'blocked' | 'returned' | 'failed' | 'stopped';
+export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'blocked' | 'returned' | 'failed' | 'stopped';
 
 export interface SubAgentTraceDetails {
   agentId?: string;
+  /** Same initials the worker chart draws for this agent. */
+  marker: string;
   conversationId?: string;
   jobId?: string;
   taskIndex?: number;
@@ -23,7 +25,10 @@ export interface SubAgentTraceDetails {
   report: string;
   startedAt?: number;
   endedAt?: number;
+  durationMs?: number;
   noteAt?: number;
+  /** The job this one relaunches or continues, from result tracking. */
+  followUpOf?: { jobId: string; taskIndex: number };
 }
 
 export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'running';
@@ -38,6 +43,8 @@ export interface TraceRow {
   durationLabel?: string;
   status: TraceRowStatus;
   note?: string;
+  /** Source number, matching the reply's [n] marks and its sources row. */
+  cite?: number;
   subagent?: SubAgentTraceDetails;
   payload?: TracePayload;
   anchorEntryId: string;
@@ -49,4 +56,10 @@ export interface TraceTurn {
   anchorEntryId: string;
   rows: TraceRow[];
   usage?: { model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; durationLabel?: string };
+  /** "2 agents: 1 returned, 1 working" when the turn launched sub-agents. */
+  agentSummary?: string;
+  /** Sources the turn's reply cites. */
+  sourceCount?: number;
+  /** A worker in this turn is blocked or a decision here is pending. */
+  waitingOnYou?: boolean;
 }

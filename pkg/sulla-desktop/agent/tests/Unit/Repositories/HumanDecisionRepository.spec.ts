@@ -30,6 +30,21 @@ describe('HumanDecisionRepository', () => {
     await expect(new HumanDecisionRepository(new FakeQueryClient([])).settle('d-1', 'approved', next, 'session-a')).resolves.toBe(false);
   });
 
+  // risk: irreversible side effects — the only session-free settle is limited to an unexpired Files publish approval in its own conversation.
+  it('settles a durable publish approval without a session only while it is an unexpired publish approval', async() => {
+    const changed = new FakeQueryClient([{ id: 'd-1' }]);
+    const next = { ...record, status: 'approved' } as DecisionRecord;
+    await expect(new HumanDecisionRepository(changed).settleDurablePublish('d-1', 'approved', next, 1234)).resolves.toBe(true);
+    const sql = changed.calls[0].sql.replace(/\s+/g, ' ');
+    expect(sql).toContain("WHERE id = $1 AND status IN ('pending', 'deferred') AND record->>'kind' = 'approval'");
+    expect(sql).toContain("AND NULLIF(record#>>'{payload,filesPublishRequestId}', '') IS NOT NULL");
+    expect(sql).toContain("AND (record->>'expiresAt')::bigint > $4 AND record->>'conversationId' = $5 RETURNING id");
+    expect(sql).not.toContain('session_id');
+    expect(changed.calls[0].params).toEqual(['d-1', 'approved', JSON.stringify(next), 1234, 't-1']);
+
+    await expect(new HumanDecisionRepository(new FakeQueryClient([])).settleDurablePublish('d-1', 'approved', next, 1234)).resolves.toBe(false);
+  });
+
   // risk: data accuracy — the inserted row carries the session and the full record JSON.
   it('inserts the record under the current session', async() => {
     const client = new FakeQueryClient();
@@ -47,11 +62,15 @@ describe('HumanDecisionRepository', () => {
     await expect(repo.listRecent()).resolves.toEqual([record]);
   });
 
-  it('expires a single pending decision by id', async() => {
-    const client = new FakeQueryClient();
-    await new HumanDecisionRepository(client).expirePending('d-9');
+  it('returns the row only when a pending decision was expired', async() => {
+    // risk: irreversible side effects — subscribers must only announce an expiry that actually won the database race.
+    const expired = { ...record, status: 'expired' } as DecisionRecord;
+    const client = new FakeQueryClient([{ record: expired }]);
+    await expect(new HumanDecisionRepository(client).expirePending('d-9')).resolves.toEqual(expired);
     expect(client.calls[0].sql).toMatch(/SET status = 'expired'/);
+    expect(client.calls[0].sql).toMatch(/WHERE id = \$1 AND status IN \('pending', 'deferred'\) RETURNING record/);
     expect(client.calls[0].params).toEqual(['d-9']);
+    await expect(new HumanDecisionRepository(new FakeQueryClient([])).expirePending('d-9')).resolves.toBeUndefined();
   });
 });
 

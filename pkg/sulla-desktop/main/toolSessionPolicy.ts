@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
+
 /**
  * Which Sulla tools a session-bound CLI call may run.
  *
@@ -12,7 +14,13 @@
  * ones like ask_user_question. Every agent gets the same full access.
  */
 
-export function sessionAllowsTool(allowed: unknown, toolName: string): boolean {
+export function sessionAllowsTool(
+  allowed: unknown,
+  toolName: string,
+  metadata: unknown,
+  awarenessPolicy: AgentAwarenessPolicy,
+): boolean {
+  if (!awarenessPolicy.allowsTool(metadata, toolName)) return false;
   if (!Array.isArray(allowed) || allowed.length === 0) return true;
   if (allowed.includes(toolName)) return true;
 

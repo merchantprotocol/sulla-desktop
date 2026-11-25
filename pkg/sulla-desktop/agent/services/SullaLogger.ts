@@ -34,6 +34,8 @@ import util from 'node:util';
 
 import { autoTitleAfterMessages } from './ConversationTitleService';
 import { TitleMessageBuffer } from './TitleMessageBuffer';
+import { FileConversationEventAppender, type ConversationEventAppender } from './ConversationEventAppender';
+import { ToolCallLogWriter } from './ToolCallLogWriter';
 import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
 import { resolveSullaLogsDir } from '../utils/sullaPaths';
 
@@ -381,6 +383,10 @@ export class TopicLog {
 // ══════════════════════════════════════════════════════════════════════════════
 
 class SullaLogger extends EventEmitter {
+  private readonly toolCallLogWriter = new ToolCallLogWriter(
+    (id, event) => this.log(id, event), id => this.resolveJsonlPath(id),
+    id => ConversationHistoryModel.getFileAssociations(id),
+    (name, args) => redactToolArgs(name.replace(/^mcp__.*?__|^[^/]+\//, ''), args));
   private readonly dir:            string;
   private readonly indexPath:      string;
   private readonly indexJsonlPath: string;
@@ -397,7 +403,7 @@ class SullaLogger extends EventEmitter {
   // ── Topic log cache (static, shared across all callers) ──
   private static topics = new Map<string, TopicLog>();
 
-  constructor() {
+  constructor(private readonly eventAppender: ConversationEventAppender = new FileConversationEventAppender()) {
     super();
     this.setMaxListeners(20);
     this.dir = resolveSullaLogsDir();
@@ -456,7 +462,7 @@ class SullaLogger extends EventEmitter {
 
   /** Start a new conversation — writes an entry to the index. */
   start(meta: ConversationMeta): void {
-    // Subconscious agents (memory-recall, observation writer/recall, summarizer,
+    // Subconscious agents (memory-recall, V7 memory writer, summarizer,
     // tool-result digester) run as ephemeral `subconscious_*` conversations.
     // They are internal machinery, never user-facing history — never record
     // them to the conversation_history DB or the on-disk index/JSONL logs.
@@ -505,15 +511,15 @@ class SullaLogger extends EventEmitter {
   }
 
   /** Append an event to a conversation's event log. */
-  log(conversationId: string, event: ConversationEvent): void {
+  log(conversationId: string, event: ConversationEvent): boolean {
     // Never persist subconscious machinery to history/logs (see start()).
-    if (isSubconsciousConversationId(conversationId)) return;
+    if (isSubconsciousConversationId(conversationId)) return false;
     try {
       this.ensureDir();
       const filePath = this.resolveFilePath(conversationId);
-      fs.appendFileSync(filePath, formatEvent(event), 'utf-8');
+      this.eventAppender.append(filePath, formatEvent(event));
       const jsonlPath = this.resolveJsonlPath(conversationId);
-      fs.appendFileSync(jsonlPath, JSON.stringify(event) + '\n', 'utf-8');
+      this.eventAppender.append(jsonlPath, JSON.stringify(event) + '\n');
       this.emit('event', { conversationId, event });
 
       // Throttled activity update to history DB (max once per 30s per conversation)
@@ -524,8 +530,10 @@ class SullaLogger extends EventEmitter {
         ConversationHistoryModel.updateActivity(conversationId)
           .catch(err => globalThis.console.error('[SullaLogger] Failed to update activity in history:', err));
       }
+      return true;
     } catch (err) {
       globalThis.console.error('[SullaLogger] Failed to write event:', err);
+      return false;
     }
   }
 
@@ -626,15 +634,7 @@ class SullaLogger extends EventEmitter {
     }
   }
 
-  logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown): void {
-    this.log(conversationId, {
-      ts:       new Date().toISOString(),
-      type:     'tool_call',
-      toolName,
-      args: redactToolArgs(toolName, args),
-      ...(result !== undefined ? { result } : {}),
-    });
-  }
+  logToolCall(conversationId: string, toolName: string, args: unknown, result?: unknown, toolCallId?: string): Promise<boolean> { return this.toolCallLogWriter.write(conversationId, toolName, args, result, toolCallId) }
 
   logLLMCall(conversationId: string, direction: 'request' | 'response', data: Record<string, unknown>): void {
     this.log(conversationId, {

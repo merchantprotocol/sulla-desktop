@@ -20,15 +20,37 @@ it('sends the complete tool result and error through the WebSocket event', async
   });
   const output = `FULL_TOOL_OUTPUT:${ 'x'.repeat(60_000) }`;
   const error = 'FULL_TOOL_ERROR';
-  const state = { metadata: { wsChannel: 'fixture', threadId: 'fixture-thread' } } as BaseThreadState;
+  const state = { metadata: { wsChannel: 'fixture', threadId: 'fixture-thread', parentWsChannel: 'fixture-parent', parentConversationId: 'parent-thread' } } as BaseThreadState;
 
   await executor.emitToolResultEvent(state, 'fixture-tool-call', false, error, output);
 
-  expect(deliveries).toHaveLength(1);
+  expect(deliveries).toHaveLength(2);
   expect(deliveries[0]).toMatchObject({
     type: 'progress',
     data: { phase: 'tool_result', toolRunId: 'fixture-tool-call', success: false, error, result: output },
   });
+  expect(deliveries[1]).toMatchObject({
+    type: 'progress',
+    data: { phase: 'tool_result', toolRunId: 'fixture-tool-call', success: false, error, result: output, thread_id: 'parent-thread' },
+  });
+});
+
+// risk: data loss — the parent may receive a pointer only after the payload writer confirms the associated thread.
+it('sends only the confirmed pointer to the parent once the durable write is acknowledged', async() => {
+  const deliveries: any[] = [];
+  const executor = new ToolExecutor({} as ToolExecutorContext);
+  Object.defineProperty(executor, 'dispatchToWebSocket', {
+    configurable: true,
+    value: async(_channel: string, message: unknown) => { deliveries.push(message); return true; },
+  });
+  const output = `FULL_TOOL_OUTPUT:${ 'x'.repeat(60_000) }`;
+  const state = { metadata: { wsChannel: 'child', threadId: 'child-thread', parentWsChannel: 'parent', parentConversationId: 'parent-thread' } } as BaseThreadState;
+
+  await executor.emitToolResultEvent(state, 'fixture-tool-call', true, undefined, output, 'child-conversation');
+
+  expect(deliveries[0].data).toMatchObject({ result: output, payloadThreadId: 'child-conversation', payloadPersisted: true });
+  expect(deliveries[1].data).toMatchObject({ thread_id: 'parent-thread', payloadThreadId: 'child-conversation', payloadPersisted: true });
+  expect(deliveries[1].data).not.toHaveProperty('result');
 });
 
 // risk: context cost — model-bound results must retain the existing 5,000-character cap.

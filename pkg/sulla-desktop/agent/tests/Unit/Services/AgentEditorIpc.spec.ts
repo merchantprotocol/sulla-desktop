@@ -33,6 +33,7 @@ const complete = {
   costTier:      'medium',
   canCall:       [],
   frontDoor:     null,
+  agentAwareness: true,
   allowedTools:  ['artifact_read'],
   skillRefs:     ['missing/skill-ref'],
   routineRefs:   ['routine.review'],
@@ -45,6 +46,14 @@ describe('agent editor IPC contract', () => {
     expect(result).toEqual(complete);
     expect(result.canCall).toEqual([]);
     expect(result.skillRefs).toEqual(['missing/skill-ref']);
+  });
+
+  it('defaults new agents to visible and preserves an explicit worker opt-out on create and patch', () => {
+    // risk: custom workers unexpectedly regain agent roster and launch guidance after save.
+    const { agentAwareness: _ignored, ...withoutSetting } = complete;
+    expect(validateAgentEditorCreateInput(withoutSetting).agentAwareness).toBe(true);
+    expect(validateAgentEditorCreateInput({ ...complete, agentAwareness: false }).agentAwareness).toBe(false);
+    expect(validateAgentEditorPatch({ agentAwareness: false }).patch.agentAwareness).toBe(false);
   });
 
   it('rejects unsupported fields, malformed values, duplicate references, and duplicate model routes before a write', () => {

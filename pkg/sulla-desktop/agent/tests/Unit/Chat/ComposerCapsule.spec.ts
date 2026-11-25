@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { ref } from 'vue';
+import { nextTick, ref, type Ref } from 'vue';
 
 const fixture = vi.hoisted(() => ({
   ipc: {
@@ -100,12 +100,20 @@ vi.mock('@pkg/composables/useFocusGuard', () => ({ useFocusGuard: vi.fn() }));
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { ChatController } from '@pkg/pages/chat/controller/ChatController';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
+import { THREAD_AGENT_ACTIVITY_KEY } from '@pkg/pages/chat/composables/useThreadAgentActivity';
+import type { Message } from '@pkg/pages/chat/models/Message';
+import type { StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 import Composer from '@pkg/pages/chat/components/composer/Composer.vue';
 
 describe('Capsule chat composer', () => {
   let controller: ChatController;
   let wrapper: VueWrapper | undefined;
   let focus: ReturnType<typeof vi.spyOn> | undefined;
+  let activityFixture: {
+    threadId: Ref<string | undefined>;
+    checkIns: Ref<StatusRollupItem[]>;
+    statusItemShown: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     fixture.ipc.invoke.mockClear();
@@ -115,13 +123,25 @@ describe('Capsule chat composer', () => {
     fixture.useCases = null;
     focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
     controller = new ChatController();
+    const statusThreadId = ref<string | undefined>();
+    const checkIns = ref<StatusRollupItem[]>([]);
+    const statusItemShown = vi.fn();
+    activityFixture = { threadId: statusThreadId, checkIns, statusItemShown };
     wrapper = mount(Composer, {
       props: { reportingLevel: 'debug' },
       global: {
         provide: {
           [ChatControllerKey as symbol]: controller,
           [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot: ref({ rows: [] }) },
-          'chat:activity-context': { backendThreadId: ref(undefined) },
+          [THREAD_AGENT_ACTIVITY_KEY as symbol]: {
+            checkIns,
+            rootFallback: ref<StatusRollupItem | null>(null),
+            attachConsumer: vi.fn(),
+            detachConsumer: vi.fn(),
+            consumeCheckIns: vi.fn(),
+            statusItemShown,
+          },
+          'chat:activity-context': { backendThreadId: statusThreadId },
           'chat:is-active': ref(true),
         },
         stubs: {
@@ -200,6 +220,83 @@ describe('Capsule chat composer', () => {
     remote.running.value = false;
     await flushPromises();
     expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running');
+  });
+
+  it('relays a newly shown mounted roll-up item through the shared chat activity path', async() => {
+    // risk: missed live feedback — the status line must notify shared chart activity only when it actually shows an item.
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    activityFixture.threadId.value = 'thread-1';
+    const first: StatusRollupItem = {
+      key: 'rollup-one', threadId: 'thread-1', agentId: 'agent-one', agentName: 'Worker One',
+      text: 'First check-in', observedAt: Date.now(),
+    };
+    const second: StatusRollupItem = {
+      ...first, key: 'rollup-two', agentId: 'agent-two', agentName: 'Worker Two', text: 'Second check-in', observedAt: Date.now() + 1,
+    };
+    activityFixture.checkIns.value = [first];
+    await flushPromises();
+    expect(activityFixture.statusItemShown).not.toHaveBeenCalled();
+
+    activityFixture.checkIns.value = [first, second];
+    await nextTick();
+    vi.advanceTimersByTime(1_500);
+    await flushPromises();
+
+    expect(activityFixture.statusItemShown).toHaveBeenCalledWith(expect.objectContaining({
+      key: second.key,
+      agentId: second.agentId,
+      threadId: second.threadId,
+    }));
+  });
+
+  it('pulses stream and observed check-in events even when the parent fills the status slot', async() => {
+    // risk: availability — live reply text and queued worker activity keep the capsule responsive without the fallback line.
+    capsule().unmount();
+    const checkIns = ref<StatusRollupItem[]>([]);
+    const activity = { checkIns, rootFallback: ref(null), projection: ref({}), chartRoot: ref(null) };
+    wrapper = mount(Composer, {
+      props: { reportingLevel: 'debug' },
+      slots: { 'status-line': '<span class="parent-status">Parent status</span>' },
+      global: {
+        provide: {
+          [ChatControllerKey as symbol]: controller,
+          [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot: ref({ rows: [] }) },
+          [THREAD_AGENT_ACTIVITY_KEY as symbol]: activity,
+          'chat:activity-context': { backendThreadId: ref('thread-a') },
+          'chat:is-active': ref(true),
+        },
+        stubs: {
+          CommandPopover: { template: '<div class="command-popover-stub" />' },
+          ShelfPanel: true,
+          ThreadStatusLine: { template: '<div class="thread-status-stub"><slot name="end" /></div>' },
+          ComposerVoicePanel: true,
+        },
+      },
+    });
+    expect(capsule().get('.parent-status').text()).toBe('Parent status');
+
+    controller.send('Run while observing the status capsule.');
+    await flushPromises();
+    const streaming = {
+      id: 'streaming-glow' as Message['id'],
+      kind: 'streaming',
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      text: 'First chunk',
+    } as Message;
+    controller.appendMessage(streaming);
+    await flushPromises();
+    controller.updateMessage(streaming.id, { text: 'First chunk plus more' } as Partial<Message>);
+    await flushPromises();
+    expect(capsule().get('.composer-capsule').classes()).toContain('glow-stream');
+
+    checkIns.value = [{
+      key: 'worker-event', threadId: 'thread-a', agentId: 'worker-job:0', agentName: 'Worker',
+      kind: 'agent', text: 'Worker action', observedAt: Date.now(), role: 'worker',
+    }];
+    await flushPromises();
+    expect(capsule().get('.composer-capsule').classes()).toContain('glow-soft');
   });
 
   it('does not send during IME composition or keyCode 229, preserves Shift+Enter, and sends on plain Enter', async() => {

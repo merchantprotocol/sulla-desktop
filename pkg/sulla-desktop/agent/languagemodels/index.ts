@@ -201,8 +201,8 @@ export class LLMRegistryImpl {
   }
 
   /**
-   * Subconscious-aware service. Subconscious agents (observation writer,
-   * observation recall, summarizer) and spawned sub-agents run here at the
+   * Subconscious-aware service. Subconscious agents (memory recall,
+   * V7 memory writer, summarizer) and spawned sub-agents run here at the
    * 'fast' tier by default — cheap, quick recon so the orchestrator doesn't
    * burn expensive tokens on file searching.
    *

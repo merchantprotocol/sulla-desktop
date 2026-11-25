@@ -38,3 +38,12 @@ it('forwards the full command and MCP tool payloads from completed Codex items',
     input: { query: 'FULL_MCP_ARGUMENT' }, result, error, isError: true,
   })]);
 });
+
+// risk: data accuracy — successful stdout must not disappear when the same command also writes stderr.
+it('preserves stdout and stderr together when Codex has no aggregate output', () => {
+  const emitter = new CodexToolEventEmitter();
+  const streams = { stdout: 'FULL_STDOUT', stderr: 'FULL_STDERR' };
+  let event: unknown;
+  emitter.emit('item.completed', { item_type: 'command_execution', id: 'streams', ...streams, exit_code: 1 }, value => { event = value });
+  expect(event).toMatchObject({ result: streams, error: 'FULL_STDERR', isError: true, resultChars: JSON.stringify(streams).length });
+});
