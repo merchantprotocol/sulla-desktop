@@ -973,6 +973,8 @@ export class PersonaAdapter {
         createdAt,
         reason:     b.toolApproval.reason,
         command:    b.toolApproval.command,
+        title:      b.toolApproval.title,
+        expiresAt:  b.toolApproval.expiresAt,
         decision:   this.approvalDecision(b.toolApproval.approvalId),
         approvalId: b.toolApproval.approvalId,
         origin:     b.toolApproval.origin,

@@ -19,7 +19,7 @@ Glossa turns owner-approved shorthand into a small, editable memory pack. It dis
 Use when Sulla misreads a nickname, acronym, project codename, team term, or recurring preference.
 
 ## Steps
-1. Search existing Files and memory before adding a duplicate: `sulla files/search '{"query":"glossary shorthand people acronyms"}'` and `sulla observation/search_observations '{"query":"acronym nickname project term"}'`.
+1. Search existing Files and memory before adding a duplicate: `sulla files/search '{"query":"glossary shorthand people acronyms"}'` and `sulla memory/episodic_search '{"query":"acronym nickname project term"}'`.
 2. Capture the exact term, approved meaning, context, aliases, and source. Never infer a person's identity, role, or sensitive trait from a message.
 3. Keep a compact hot set in the pack subject and put richer context in separate subjects. Use plain language and aliases a human would type. Separate “stated”, “derived”, and “unknown”; unknown terms remain questions.
 4. Put durable decoding guidance in `memory/skills/glossa-decode.md`, and update `memory/manifest.json` whenever pack content changes. The pack is scoped and editable; it does not override core safety rules.

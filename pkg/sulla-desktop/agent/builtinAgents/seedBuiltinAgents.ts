@@ -50,9 +50,10 @@ import {
   FRONT_DOOR_CHOSEN_KEY,
   getBuiltinAgentSpecs,
   getRetiredBuiltinSlugs,
-  hashManagedContent,
+  BuiltinAgentHasher,
   readGitIdentity,
   RETIRED_CODING_MANAGER_SLUGS,
+  RETIRED_OBSERVATION_AGENT_SLUGS,
   renderBuiltinAgent,
   isRetiredCodingManagerSlug,
   type BuiltinAgentSpec,
@@ -96,7 +97,7 @@ export function shouldFillBuiltinFrontDoor(row: AgentDefinition | null, bundleFr
   if (!row || row.front_door !== null || typeof bundleFrontDoor !== 'boolean') return false;
   if (hasExplicitFrontDoorChoice(row.config)) return false;
   // Only a row still matching its own hash; an older 'sha256:' row never does, so it is left alone.
-  if (row.is_builtin && row.builtin_hash && hashManagedContent(row) !== row.builtin_hash) return false;
+  if (row.is_builtin && row.builtin_hash && BuiltinAgentHasher.hashManagedContent(row) !== row.builtin_hash) return false;
   return true;
 }
 
@@ -122,6 +123,7 @@ function applyCardPatch(row: AgentDefinition, patch: AgentDefinitionPatch): Agen
     ...(patch.returns !== undefined ? { returns: patch.returns } : {}),
     ...(patch.costTier !== undefined ? { cost_tier: patch.costTier } : {}),
     ...(patch.canCall !== undefined ? { can_call: patch.canCall } : {}),
+    ...(patch.agentAwareness !== undefined ? { agent_awareness: patch.agentAwareness } : {}),
   };
 }
 
@@ -132,9 +134,13 @@ export function decideBuiltinSeedAction(
   seenBefore: boolean,
 ): BuiltinSeedAction {
   if (!row) return seenBefore ? { kind: 'deleted-by-human' } : { kind: 'insert' };
+  // Files is authoritative once a version has been published; the boot fallback must not overwrite it.
+  if (row.use_case_file_id && row.use_case_version_id) return { kind: 'kept' };
 
-  const bundleHash = hashManagedContent(content);
-  const liveHash = hashManagedContent(row);
+  const bundleHash = BuiltinAgentHasher.hashManagedContent(content);
+  const liveHash = BuiltinAgentHasher.hashManagedContent(row);
+  const legacyBundleHash = BuiltinAgentHasher.hashManagedContentBeforeAgentAwareness(content);
+  const legacyLiveHash = BuiltinAgentHasher.hashManagedContentBeforeAgentAwareness(row);
   const fill = cardFillPatch(row, content);
   const hasFill = Object.keys(fill).length > 0;
 
@@ -142,7 +148,7 @@ export function decideBuiltinSeedAction(
     if (liveHash === bundleHash) {
       return row.builtin_hash === bundleHash ? { kind: 'unchanged' } : { kind: 'adopt', patch: { builtinHash: bundleHash } };
     }
-    if (row.builtin_hash && liveHash === row.builtin_hash) return { kind: 'refresh' };
+    if (row.builtin_hash && (liveHash === row.builtin_hash || legacyLiveHash === row.builtin_hash)) return { kind: 'refresh' };
     // Hash no longer matches a seeded built-in: the person saved it, or it carries
     // an older 'sha256:' hash and differs from the bundle. Leave it wholly as is;
     // do not put bundle card text back over a cleared field. Not-yet-hashed rows still fill.
@@ -153,7 +159,7 @@ export function decideBuiltinSeedAction(
   // A row this install already had (legacy import, hand-made, older build).
   // Adopt it only when it is exactly the bundled content apart from the card
   // fields that did not exist before; anything else is someone's version.
-  if (hashManagedContent(applyCardPatch(row, fill)) === bundleHash) {
+  if (BuiltinAgentHasher.hashManagedContent(applyCardPatch(row, fill)) === bundleHash || BuiltinAgentHasher.hashManagedContentBeforeAgentAwareness(applyCardPatch(row, fill)) === legacyBundleHash) {
     return { kind: 'adopt', patch: { ...fill, isBuiltin: true, builtinHash: bundleHash } };
   }
   return hasFill ? { kind: 'fill-cards', patch: fill } : { kind: 'kept' };
@@ -182,6 +188,7 @@ function contentPatch(content: BuiltinManagedContent, bundleHash: string): Agent
     returns:       content.returns,
     costTier:      content.cost_tier,
     canCall:       content.can_call,
+    agentAwareness: content.agent_awareness,
     isBuiltin:     true,
     builtinHash:   bundleHash,
   };
@@ -211,7 +218,7 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
   const summary: BuiltinSeedSummary = { inserted: 0, refreshed: 0, adopted: 0, filled: 0, kept: 0, unchanged: 0, skipped: 0, errors: [] };
   // Retire these before the rest of the seed work so a transient builtin-ledger error cannot
   // prevent long-tail rows from being switched off at startup.
-  const retiredManagers = await retireLongTailCodingManagers();
+  const retiredManagers = await retireLongTailCodingManagers([...RETIRED_CODING_MANAGER_SLUGS, ...RETIRED_OBSERVATION_AGENT_SLUGS]);
   summary.errors.push(...retiredManagers.errors);
   const seen = await seenSlugs();
   const home = os.homedir();
@@ -221,7 +228,7 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
     try {
       if (isRetiredCodingManagerSlug(spec.slug)) continue;
       const content = renderBuiltinAgent(spec, home, git);
-      const bundleHash = hashManagedContent(content);
+      const bundleHash = BuiltinAgentHasher.hashManagedContent(content);
       const row = await AgentDefinitionModel.findBySlug(spec.slug);
       const action = decideBuiltinSeedAction(content, row, seen.has(spec.slug));
 
@@ -291,7 +298,7 @@ export function retiredLedgerKey(slug: string): string {
  */
 export function shouldRetireBuiltin(row: AgentDefinition | null, handledBefore: boolean): boolean {
   if (!row || handledBefore || !row.is_builtin || !row.enabled || !row.builtin_hash) return false;
-  return hashManagedContent(row) === row.builtin_hash;
+  return BuiltinAgentHasher.hashManagedContent(row) === row.builtin_hash;
 }
 
 export interface BuiltinRetireSummary {

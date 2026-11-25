@@ -18,6 +18,7 @@
  */
 
 import { checkHeartbeatPromptInvariants, type HeartbeatInvariantResult } from './heartbeatInvariants';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 
 import type { ChatMode } from '../controllers/ChatController';
 
@@ -35,9 +36,9 @@ export interface PromptSection {
   /**
    * Cache tier:
    * - 'stable'      — effectively frozen for the session (soul, safety, tooling)
-   * - 'semi-stable' — changes occasionally, not per turn (observational memory).
-   *                   Gets its own cache breakpoint so an update only
-   *                   invalidates this segment, not the whole stable prefix.
+   * - 'semi-stable' — changes occasionally, not per turn. Gets its own cache
+   *                   breakpoint so an update only invalidates this segment,
+   *                   not the whole stable prefix.
    * - 'dynamic'     — changes every turn (runtime, channel awareness); sits
    *                   after the cache boundary.
    */
@@ -63,6 +64,10 @@ export interface PromptBuildContext {
   isHeartbeat:           boolean;
   /** WebSocket channel name */
   wsChannel:             string;
+  /** Whether this agent may see other agents and team-operation instructions. */
+  agentAwareness?:       boolean;
+  /** Shared policy instance injected by SystemPromptBuilder for section factories. */
+  agentAwarenessPolicy?: AgentAwarenessPolicy;
   /** Tool exposure mode: 'slim' pushes only the minimal native set + catalog discovery; 'full' pushes resolved schemas */
   toolMode?:             'slim' | 'full';
   /** Template variables for {{placeholder}} substitution */
@@ -73,9 +78,7 @@ export interface PromptBuildContext {
   excludeSections:       Set<string>;
   /**
    * DB-backed prompt sections (SystemPromptSectionModel), keyed by id — the
-   * editable CORE layer. Enabled rows only. The subconscious-produced `user`
-   * row is returned as assistant context instead of system content. For any
-   * other REGISTERED section id the
+   * editable CORE layer. Enabled rows only. For any REGISTERED section id the
    * content replaces the baked factory content (unless an agent .md override is
    * present, which still wins, or the section is generated — see isGenerated).
    * A row whose id has no registered factory is injected as a NEW section using
@@ -117,11 +120,7 @@ export interface BuiltPrompt {
   anthropicSystem?:         AnthropicSystemBlock[];
   /** Which sections were included in the build */
   includedSections:         string[];
-  /**
-   * Contextual sections that must be delivered as assistant-role context,
-   * never as system instructions. This includes the `observational_memory`
-   * recall section and the dream-consolidated DB `user` section.
-   */
+  /** Contextual sections delivered as assistant-role context, not system instructions. */
   assistantContextSections: PromptSection[];
   /**
    * Heartbeat-only: runtime invariant check of the composed prompt — confirms
@@ -175,6 +174,7 @@ interface RegisteredSection {
 
 class SystemPromptBuilderImpl {
   private sections = new Map<string, RegisteredSection>();
+  constructor(private readonly agentAwarenessPolicy = new AgentAwarenessPolicy()) {}
   // Stable sections can still read state outside ctx (DB agent prompts, tool catalog,
   // installed skills), so a cached section also expires after a short TTL.
   private static readonly STABLE_SECTION_TTL_MS = 60_000;
@@ -206,6 +206,7 @@ class SystemPromptBuilderImpl {
    * Build the complete system prompt from registered sections.
    */
   async build(ctx: PromptBuildContext): Promise<BuiltPrompt> {
+    const includeAgentAwareness = this.agentAwarenessPolicy.canSeeOtherAgents({ agent_awareness: ctx.agentAwareness });
     // Mode 'none' — just return the base prompt, no sections
     if (ctx.mode === 'none') {
       return {
@@ -226,13 +227,15 @@ class SystemPromptBuilderImpl {
     const factoryResults = await Promise.all(registrations.map(async ([id, reg]) => {
       if (!reg.modes.has(ctx.mode)) return { id, reg, section: null, elapsed: 0, error: undefined as unknown };
       const frozenHeartbeat = ctx.isHeartbeat && id === 'heartbeat';
-      if ((ctx.isHeartbeat && id === 'agent_prompt') || (ctx.excludeSections.has(id) && !frozenHeartbeat)) {
+      if ((ctx.isHeartbeat && id === 'agent_prompt') || (ctx.excludeSections.has(id) && !frozenHeartbeat) ||
+          (id === 'channel_awareness' && !includeAgentAwareness)) {
         return { id, reg, section: null, elapsed: 0, error: undefined as unknown };
       }
       const cacheKey = JSON.stringify({
         mode: ctx.mode, agentId: ctx.agentId, agentConfig: ctx.agentConfig,
         provider: ctx.provider, chatMode: ctx.chatMode, trustLevel: ctx.trustLevel,
         isSubAgent: ctx.isSubAgent, isHeartbeat: ctx.isHeartbeat, wsChannel: ctx.wsChannel,
+        agentAwareness: ctx.agentAwareness,
         toolMode: ctx.toolMode, templateVars: ctx.templateVars,
         overrides: [...ctx.agentSectionOverrides.entries()], excluded: [...ctx.excludeSections].sort(),
         db: ctx.dbSections ? [...ctx.dbSections.entries()] : [], basePrompt: ctx.basePrompt,
@@ -241,7 +244,7 @@ class SystemPromptBuilderImpl {
       if (cached?.key === cacheKey && Date.now() - cached.at < SystemPromptBuilderImpl.STABLE_SECTION_TTL_MS) return { id, reg, section: cached.section, elapsed: 0, error: undefined as unknown };
       const started = Date.now();
       try {
-        const section = await reg.factory(ctx);
+        const section = await reg.factory({ ...ctx, agentAwarenessPolicy: this.agentAwarenessPolicy });
         const elapsed = Date.now() - started;
         if (section?.cacheStability === 'stable') this.stableSectionCache.set(id, { key: cacheKey, section, at: Date.now() });
         return { id, reg, section, elapsed, error: undefined as unknown };
@@ -254,6 +257,7 @@ class SystemPromptBuilderImpl {
     for (const [id, reg] of registrations) {
       // Skip if mode doesn't match
       if (!reg.modes.has(ctx.mode)) continue;
+      if (id === 'channel_awareness' && !includeAgentAwareness) continue;
 
       // Heartbeat's operator contract is frozen and DB-backed. Legacy files in
       // ~/sulla/agents/heartbeat previously leaked in through two paths:
@@ -316,14 +320,14 @@ class SystemPromptBuilderImpl {
       if (!section) continue;
 
       // Layer 2: DB row content replaces the baked factory content, keeping the
-      // factory's priority/cacheStability. Generated sections (isGenerated) are
-      // left as-is — their factory already composed the DB static preamble with
-      // the live runtime tail (it reads ctx.dbSections directly).
+      // factory's priority/cacheStability. Generated sections and soul stay
+      // factory-owned — soul normalizes legacy rows before policy is applied.
+      // Other generated sections compose DB content with their live runtime tails.
       // The compiled Heartbeat contract is replace-only from source control.
       // A DB row is install-local state just like an agent markdown override;
       // accepting it here would silently bypass the frozen section guard above.
       const dbRow = isFrozenHeartbeatSection ? undefined : ctx.dbSections?.get(id);
-      const content = dbRow && !dbRow.isGenerated && dbRow.content?.trim()
+      const content = id !== 'soul' && dbRow && !dbRow.isGenerated && dbRow.content?.trim()
         ? dbRow.content
         : section.content;
       if (content?.trim()) {
@@ -352,16 +356,6 @@ class SystemPromptBuilderImpl {
           builtSections.push(section);
         }
       }
-    }
-
-    // Observational memory is subconscious context, not governing policy.
-    // Factories still build it normally, but it leaves the system section list
-    // here and travels through the same assistant-role carrier as the DB user
-    // identity section.
-    for (let i = builtSections.length - 1; i >= 0; i--) {
-      if (builtSections[i].id !== 'observational_memory') continue;
-      assistantContextSections.unshift(builtSections[i]);
-      builtSections.splice(i, 1);
     }
 
     // Sort by priority
@@ -395,10 +389,7 @@ class SystemPromptBuilderImpl {
     const includedSections = orderedSections.map(s => s.id);
 
     // Build Anthropic-optimized blocks: stable (cached) → semi-stable (own
-    // cache breakpoint) → dynamic (uncached, after the boundary). Prompt
-    // caching is a prefix match, so giving semi-stable content (observational
-    // memory) its own breakpoint means a memory update only re-writes that
-    // segment — the stable prefix's cache entry stays valid.
+    // cache breakpoint) → dynamic (uncached, after the boundary).
     let anthropicSystem: AnthropicSystemBlock[] | undefined;
     if (ctx.provider === 'anthropic') {
       anthropicSystem = [];

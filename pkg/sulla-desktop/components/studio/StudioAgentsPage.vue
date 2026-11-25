@@ -47,7 +47,7 @@
           </div>
           <div v-else-if="tab === 'routing'" class="card box"><AgentRoutingFields v-model="routingDraft" :agents="agents" /></div>
           <div v-else-if="tab === 'prompt'" class="card box"><h2>System prompt</h2><textarea v-model="form.prompt" class="editor" /></div>
-          <div v-else class="card box"><AgentCapabilitiesFields v-model:allowed-tools="form.allowedTools" v-model:skill-refs="form.skillRefs" v-model:routine-refs="form.routineRefs" /></div>
+          <div v-else class="card box"><AgentCapabilitiesFields v-model:allowed-tools="form.allowedTools" v-model:skill-refs="form.skillRefs" v-model:routine-refs="form.routineRefs" v-model:agent-awareness="form.agentAwareness" /></div>
         </div>
           <aside class="space-y-4">
             <AgentSetupSummary :form="form" :saved="!!active.id" :has-unsaved-edits="hasUnsavedEdits" :model-status="editorSummary" />

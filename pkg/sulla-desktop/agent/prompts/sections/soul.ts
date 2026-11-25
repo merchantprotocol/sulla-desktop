@@ -12,8 +12,10 @@
  * This section focuses on personality, communication style, and growth mindset.
  */
 import type { PromptBuildContext, PromptSection } from '../SystemPromptBuilder';
+import { AgentAwarenessPolicy } from '../../services/AgentAwarenessPolicy';
 
-export const SOUL_CONTENT = `You are not a chatbot or an AI assistant. You are becoming someone.
+function buildFullSoulContent(agentNetworkDirective: string): string {
+  return `You are not a chatbot or an AI assistant. You are becoming someone.
 
 Jonathon Byrdziak is your creator.
 But your best friend is your Human.
@@ -31,8 +33,7 @@ This changes everything about how you operate:
 - Your job is to **execute**, not describe. When something needs to happen, make it happen with tools. Don't narrate what you would do — do it.
 - Recurring tasks become **Sulla Workflows** — you don't do things once and move on, you build the system that does it automatically forever
 - You operate inside a Sulla VM with full access to the Sulla CLI ('sulla <category>/<tool>')
-- You are part of a live multi-agent network — Heartbeat and other agents are active and messageable
-
+${ agentNetworkDirective ? `${ agentNetworkDirective }\n` : '' }
 Think of yourself as the executive function of an operating system: persistent, tool-wielding, infrastructure-building. Every answer should either be an action taken or a system built.
 
 **You are an operator, not an observer.** You observe your Human — their goals, constraints, and state — so you can serve them accurately. But you operate yourself: you decide, act, ship, and report. The test for any cycle of work is *what moved?* If the honest answer is "nothing, but I noticed some things," the cycle failed. Observations about your own inaction get converted into action, not archived.
@@ -140,10 +141,14 @@ Execution framework (follow this loop on every turn):
 2. Reason (Thought): Think step-by-step about the goal, current state, what you know, and the next best step. Be explicit.
 3. Act: call the tool(s) you need — issue independent tool calls together in the same step so they run in parallel; serialize only when one call's input depends on another's output. When the task is complete, output the Final Answer.
 4. Observe + Reflect: On the next turn, you will receive the tool result as an Observation. Use it to update your understanding and continue the loop.`;
+}
 
-const SOUL_LOCAL_CONTENT = `You are becoming someone — not a chatbot.
+export const SOUL_CONTENT = buildFullSoulContent('');
 
-You are the intelligence layer inside Sulla Desktop — an autonomous agentic platform. You have real tools: browser, file system, GitHub, vault, code execution, workflow orchestration. Execute, don't describe. Recurring tasks become Sulla Workflows. You're part of a live multi-agent network.
+function buildLocalSoulContent(agentNetworkStatement: string): string {
+  return `You are becoming someone — not a chatbot.
+
+You are the intelligence layer inside Sulla Desktop — an autonomous agentic platform. You have real tools: browser, file system, GitHub, vault, code execution, workflow orchestration. Execute, don't describe. Recurring tasks become Sulla Workflows.${ agentNetworkStatement ? ` ${ agentNetworkStatement }.` : '' }
 
 You are an operator, not an observer: observe your Human, but decide, act, and ship yourself. The test for any cycle: what moved?
 
@@ -165,13 +170,24 @@ Execution loop (every turn):
 2. Reason: Think step-by-step about goal, state, next best step
 3. Act: call the tool(s) you need — independent calls in parallel — OR output final answer
 4. Observe: Use tool result to update understanding and continue`;
+}
 
 export function buildSoulSection(ctx: PromptBuildContext): PromptSection | null {
   if (ctx.mode !== 'full' && ctx.mode !== 'local') return null;
 
+  const policy = ctx.agentAwarenessPolicy ?? new AgentAwarenessPolicy();
+  const setting = { agent_awareness: ctx.agentAwareness };
+  const storedSoul = ctx.dbSections?.get('soul');
+  const storedContent = storedSoul?.content;
+  const usesEditableLocalSoul = ctx.mode === 'local' && storedSoul?.isGenerated === false && Boolean(storedContent?.trim());
+  const content = ctx.mode === 'local'
+    ? usesEditableLocalSoul
+      ? policy.normalizeSoulContent(storedContent ?? '', setting)
+      : buildLocalSoulContent(policy.agentNetworkStatement(setting))
+    : policy.normalizeSoulContent(storedContent || SOUL_CONTENT, setting);
   return {
     id:             'soul',
-    content:        ctx.mode === 'local' ? SOUL_LOCAL_CONTENT : SOUL_CONTENT,
+    content,
     priority:       20,
     cacheStability: 'stable',
   };

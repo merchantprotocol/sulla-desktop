@@ -14,6 +14,7 @@ export interface AgentJobTaskTarget {
   parentChannel?:  string;
   parentThreadId?: string;
   label?:          string;
+  agentId?:        string;
 }
 
 export interface AgentJobMessage {

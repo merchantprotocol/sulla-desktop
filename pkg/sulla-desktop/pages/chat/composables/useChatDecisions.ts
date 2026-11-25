@@ -81,7 +81,7 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
     const known = inlineRecords.value;
     const ids = [...new Set(transcriptIds.value)].filter(id => {
       const record = known.get(id);
-      return !page.has(id) && (!record || record.conversationId === owner) &&
+      return !page.has(id) && (!record || ChatDecisions.visibleIn(record, owner)) &&
         (revalidate || (!checked.has(id) && !checking.has(id) && !record));
     });
     if (!ids.length) return;
@@ -217,7 +217,7 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
     selectedId,
     inlineRecord(id, kind) {
       const record = inlineRecords.value.get(id);
-      return record?.conversationId === threadId.value && record?.kind === kind ? record : undefined;
+      return record?.kind === kind && threadId.value && ChatDecisions.visibleIn(record, threadId.value) ? record : undefined;
     },
     checkingInline: id => unverified.has(id) || (!inlineRecords.value.has(id) && !checked.has(id)),
     inlineReadFailed: computed(() => inlineReadFailed.value || (!!error.value && (!firstPageLoaded.value || unverified.size > 0))),
@@ -263,6 +263,10 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
   };
 }
 export class ChatDecisions {
+  static visibleIn(record: DecisionRecord, conversationId: string): boolean {
+    return record.conversationId === conversationId || record.relatedConversationIds?.includes(conversationId) === true;
+  }
+
   static provide(threadId: Ref<string | undefined>, transcriptIds?: Ref<string[]>): ChatDecisionStore { const store = createStore(threadId, transcriptIds); provide(KEY, store); return store }
   static useChatDecisions(): ChatDecisionStore {
     const shared = inject(KEY, null); if (shared) return shared;

@@ -18,12 +18,11 @@ import { ThreadGraphCache } from './ThreadGraphCache';
 import '../tools/manifests';
 import { FULL_AGENT_TOOL_NAMES } from '../tools/fullAgentTools';
 import { toolRegistry } from '../tools/registry';
-import { buildObserverTranscriptMessage } from '../utils/observerTranscript';
+import { buildV7MemoryTranscriptMessage } from '../utils/v7MemoryTranscript';
 import { DEFAULT_CORE_ROUTINE_AGENT_ID } from '../routines/core/defaultCoreAgent';
 import { agentDefinitionService } from './AgentDefinitionService';
 import { buildV7ElephantContext } from '../memory/V7SubjectMemoryWriter';
 
-export { buildObserverTranscriptMessage } from '../utils/observerTranscript';
 // Back-compat re-export
 export type { AgentGraphState as OverlordThreadState } from '../nodes/Graph';
 
@@ -250,7 +249,7 @@ async function buildV7MemoryGraph(parentState: BaseThreadState, options: V7Memor
   const graph = createSubconsciousGraph();
   const state = await buildSubconsciousState({
     systemPrompt, tools: [], userMessage,
-    messages: [...parentState.messages], contextWindow: options.contextWindow, observeAsTranscript: true,
+    messages: [...parentState.messages], contextWindow: options.contextWindow, asV7MemoryTranscript: true,
     parentAbortSignal: options.abort,
     agentLabel, silent: true,
     parentWsChannel: String(parentState.metadata.wsChannel || ''),
@@ -1052,7 +1051,7 @@ async function buildSubconsciousState(opts: {
    * tool_use/tool_result scaffolding removes that structural cue. Pair with the
    * subconscious native-tool lockdown in ClaudeCodeService for defense in depth.
    */
-  observeAsTranscript?:  boolean;
+  asV7MemoryTranscript?: boolean;
   maxIterations?:        number;
   temperature?:          number;
   format?:               'json';
@@ -1063,11 +1062,11 @@ async function buildSubconsciousState(opts: {
   agentLabel?:           string;
   /**
    * Fully silent sub-agent: suppress ALL parent-channel thinking emissions.
-   * Post-turn observation WRITERS run fire-and-forget AFTER the primary loop
+   * Post-turn V7 memory writers run fire-and-forget AFTER the primary loop
    * has already emitted graph_execution_complete — any thinking bubble they
    * push then arrives on a closed run and spins forever (the user has to hit
    * Stop to clear it). Silent writers narrate nothing to the UI; they just
-   * run and write to the DB. Recall agents (which run BEFORE the reply and
+   * run and write V7 memory. Recall agents (which run BEFORE the reply and
    * inform it) stay non-silent so their progress is still visible.
    */
   silent?:               boolean;
@@ -1101,15 +1100,12 @@ async function buildSubconsciousState(opts: {
     ? (opts.contextWindow ? windowedContext(opts.messages, opts.contextWindow, opts.maxContextBlockChars ?? 4_000) : [...opts.messages])
     : [];
 
-  // OBSERVER FRAMING (observeAsTranscript): collapse the inherited conversation
-  // into ONE user message containing a flat transcript + an observe-don't-act
-  // instruction, so the model treats it as material to analyze, not a live
-  // session to continue. Otherwise keep the legacy behavior: replay the raw
-  // message array and append the instruction as the last user turn.
-  const messages: any[] = opts.observeAsTranscript
+  // V7 memory framing collapses the inherited conversation into one user
+  // message so the memory pass sees source material rather than a live session.
+  const messages: any[] = opts.asV7MemoryTranscript
     ? [{
       role:     'user',
-      content:  buildObserverTranscriptMessage(context, opts.userMessage),
+      content:  buildV7MemoryTranscriptMessage(context, opts.userMessage),
       metadata: { source: 'subconscious' },
     }]
     : [...context, { role: 'user', content: opts.userMessage, metadata: { source: 'subconscious' } }];

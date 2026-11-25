@@ -20,6 +20,7 @@ import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import { createHash } from 'node:crypto';
 
 import { extensionHooks } from '../extensions/HookRegistry';
+import { AgentAwarenessPolicy } from '../services/AgentAwarenessPolicy';
 import { throwIfAborted } from '../services/AbortService';
 import { RunActivity } from '../services/RunActivity';
 import { TurnToolActivity } from '../services/TurnToolActivity';
@@ -92,7 +93,10 @@ export interface ToolExecutorContext {
 // ============================================================================
 
 export class ToolExecutor {
-  constructor(private readonly ctx: ToolExecutorContext) {}
+  constructor(
+    private readonly ctx: ToolExecutorContext,
+    private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy(),
+  ) {}
 
   // --------------------------------------------------------------------------
   // Public API
@@ -515,6 +519,7 @@ export class ToolExecutor {
   // --------------------------------------------------------------------------
 
   async getToolPolicyBlockReason(state: BaseThreadState, toolName: string): Promise<string | null> {
+    if (!this.agentAwarenessPolicy.allowsTool(state.metadata, toolName)) return `Tool not available to this agent: ${ toolName }`;
     const callPolicy = (state.metadata as any).__toolAccessPolicy as {
       allowedCategories: string[] | null;
       allowedToolNames:  string[] | null;
