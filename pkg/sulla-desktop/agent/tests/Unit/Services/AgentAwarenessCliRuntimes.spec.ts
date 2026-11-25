@@ -24,6 +24,7 @@ describe('Claude Code and Codex runtime context', () => {
     const codexOff = (await codex.buildUserMessageContextPrefix(state, { convId: 'codex-off', isNewSession: false })).prefix;
     for (const prefix of [claudeOff, codexOff]) {
       expect(prefix).not.toContain('live multi-agent network');
+      expect(prefix).not.toContain('Sub-agent and workflow-worker runs are NOT woken');
       expect(prefix).toContain('Sulla Desktop');
     }
 

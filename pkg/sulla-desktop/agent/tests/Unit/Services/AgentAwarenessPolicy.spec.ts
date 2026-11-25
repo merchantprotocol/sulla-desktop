@@ -11,8 +11,11 @@ describe('AgentAwarenessPolicy', () => {
     // risk: workers can see sibling work or lose the tools needed to report their own result.
     const policy = new AgentAwarenessPolicy();
     const tools = ['meta/spawn_agent', 'agents/directory', 'agents_list_agents', 'check_agent_jobs', 'send_job_message', 'stop_agent_job', 'report_progress', 'return_result', 'wait', 'org/directory', 'github_get_pr'];
+    const definitions = tools.map(name => ({ type: 'function', function: { name } }));
     expect(policy.filterToolNames(tools, { agent_awareness: false })).toEqual(['report_progress', 'return_result', 'wait', 'org/directory', 'github_get_pr']);
+    expect(policy.filterTools(definitions, { agent_awareness: false }).map(tool => tool.function.name)).toEqual(['report_progress', 'return_result', 'wait', 'org/directory', 'github_get_pr']);
     expect(policy.filterToolNames(tools, { agent_awareness: true })).toEqual(tools);
+    expect(policy.filterTools(definitions, { agent_awareness: true })).toEqual(definitions);
     expect(policy.filterToolNames(tools)).toEqual(tools);
   });
 

@@ -13,6 +13,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
+import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
@@ -134,6 +135,7 @@ export class ChatCompletionsServer {
     },
   );
   private readonly toolDeadlinePolicy = new ToolDeadlinePolicy();
+  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   /** Grace for in-flight responses before open sockets are cut on stop. */
   static readonly CONNECTION_DRAIN_MS = 1_000;
   /** Upper bound on the agent-container sweep that runs on stop. */
@@ -147,7 +149,8 @@ export class ChatCompletionsServer {
   private taskerUnsubscribe: (() => void) | null = null;
   private apiToken:          string | null = null;
 
-  constructor() {
+  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) {
+    this.agentAwarenessPolicy = agentAwarenessPolicy;
     this.initializeTaskerWebSocketListener();
     this.setupMiddleware();
     this.setupRoutes();
@@ -1275,7 +1278,10 @@ export class ChatCompletionsServer {
         }
         if (session) {
           const allowed = (session.state.metadata as { allowedToolNames?: string[] }).allowedToolNames;
-          if (!sessionAllowsTool(allowed, toolName)) {
+          if (!this.agentAwarenessPolicy.allowsTool(session.state.metadata, toolName)) {
+            return res.status(403).json({ success: false, error: 'not available to this agent' });
+          }
+          if (!sessionAllowsTool(allowed, toolName, session.state.metadata, this.agentAwarenessPolicy)) {
             return res.status(403).json({ success: false, error: 'Tool not allowed for this session' });
           }
           if (session.executionContext && session.executionContext.exp <= Math.floor(Date.now() / 1000)) {

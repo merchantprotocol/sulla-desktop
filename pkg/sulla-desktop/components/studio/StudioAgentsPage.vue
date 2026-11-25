@@ -44,7 +44,9 @@
             <div class="field"><label>Description</label><textarea v-model="form.description" rows="3" /></div>
             <div class="field model-choice"><label>Model</label><AgentModelControls v-if="routing" v-model="editorChoice" v-model:fallbacks="editorFallbacks" :base-choice="editorBase" :state="routing" /><p v-else role="alert">Model settings could not be loaded. <button type="button" class="btn sm" @click="load">Retry</button></p></div>
             <label class="mt-4 flex items-center gap-2 text-sm"><input v-model="form.enabled" type="checkbox"><span>Enabled for new work</span><span class="text-xs text-content-muted">Existing jobs keep their launch settings.</span></label>
-            <label class="mt-4 flex items-center gap-2 text-sm"><input v-model="form.agentAwareness" type="checkbox" aria-label="Sees other agents"><span>Sees other agents</span><span class="text-xs text-content-muted">Show this agent the running agents, the agents it can launch and its sub-agents. Turn off for workers to keep their prompt short.</span></label>
+            <PrefRow title="Sees other agents" subtitle="Show this agent the running agents, the agents it can launch and its sub-agents. Turn off for workers to keep their prompt short.">
+              <PrefToggle v-model="form.agentAwareness" label="Sees other agents" />
+            </PrefRow>
           </div>
           <div v-else-if="tab === 'routing'" class="card box"><AgentRoutingFields v-model="routingDraft" :agents="agents" /></div>
           <div v-else-if="tab === 'prompt'" class="card box"><h2>System prompt</h2><textarea v-model="form.prompt" class="editor" /></div>
@@ -66,6 +68,8 @@ import AgentDirectoryTab from './AgentDirectoryTab.vue';
 import AgentCapabilitiesFields from './AgentCapabilitiesFields.vue';
 import AgentRoutingFields from './AgentRoutingFields.vue';
 import AgentSetupSummary from './AgentSetupSummary.vue';
+import PrefRow from '../settings/PrefRow.vue';
+import PrefToggle from '../settings/PrefToggle.vue';
 import { AgentModelConfiguration } from './AgentModelConfiguration';
 import AgentModelControls from './AgentModelControls.vue';
 import {

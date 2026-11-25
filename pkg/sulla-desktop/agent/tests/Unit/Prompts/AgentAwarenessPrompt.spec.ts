@@ -22,6 +22,7 @@ import { getBuiltinAgentSpecs, renderBuiltinAgent } from '../../../builtinAgents
 import { BaseNode } from '../../../nodes/BaseNode';
 import { SystemPromptBuilder, type PromptBuildContext } from '../../../prompts/SystemPromptBuilder';
 import { buildTurnContext } from '../../../prompts/turnContext';
+import { WorkerPromptBuilder } from '../../../tools/agents/workerMessaging';
 
 class PromptContextNode extends BaseNode {
   async execute(state: any): Promise<any> { return { state, decision: { type: 'end' } } }
@@ -47,8 +48,11 @@ function promptContext(spec: typeof worker, aware: boolean): PromptBuildContext 
 }
 
 function promptState(agentId: string, aware: boolean): any {
+  const identity = new WorkerPromptBuilder().build({
+    delegatedJobId: 'job-42', delegatedTaskIndex: 2, managerAgentId: 'coding-manager', managerThreadId: 'manager-thread',
+  });
   return {
-    messages: [{ role: 'user', content: 'Task: implement the assigned change.' }],
+    messages: [{ role: 'user', content: `${ identity }\n\nTask: implement the assigned change.` }],
     metadata: {
       action: 'direct_answer', threadId: 'job-thread-1', wsChannel: agentId, agentId, agentAwareness: aware,
       subAgentDepth: 1,
@@ -79,6 +83,7 @@ describe('per-agent prompt awareness', () => {
     expect(after).toContain('now="');
     expect(after).toContain('tz=');
     expect(after).toContain('Jonathon (human): Busy');
+    expect(after).toContain('Job: job-42 (task 2)');
     expect(after).toContain('Task: implement the assigned change.');
     expect(after).not.toContain('agents: sibling@worker');
     expect(after).not.toContain('<agent_team>');

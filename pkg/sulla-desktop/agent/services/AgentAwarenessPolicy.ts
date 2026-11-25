@@ -10,6 +10,13 @@ export interface AgentAwarenessSetting {
 
 /** One policy for prompt context and direct agent-launch tool exposure. */
 export class AgentAwarenessPolicy {
+  static readonly WORKER_AGENT_SLUGS = Object.freeze([
+    'codex-luna-worker', 'codex-sol-worker', 'haiku-worker', 'sonnet-worker', 'opus-worker', 'analytics-worker',
+  ] as const);
+  static readonly DEFAULT_OFF_AGENT_SLUGS = Object.freeze([
+    ...AgentAwarenessPolicy.WORKER_AGENT_SLUGS, 'integrator', 'premortem-planner', 'mockup-designer',
+  ] as const);
+
   private readonly launchingToolNames = new Set([
     'spawn_agent',
     'agents_directory',
@@ -17,6 +24,11 @@ export class AgentAwarenessPolicy {
     'check_agent_jobs',
     'send_job_message',
     'stop_agent_job',
+    'start_agent_conversation',
+    'send_agent_message',
+    'read_agent_conversation',
+    'close_agent_conversation',
+    'promote_to_tab',
   ]);
 
   canSeeOtherAgents(setting?: AgentAwarenessSetting | null): boolean {
@@ -26,24 +38,22 @@ export class AgentAwarenessPolicy {
     return value !== false;
   }
 
-  filterRuntimeContext(parts: readonly string[], setting?: AgentAwarenessSetting | null): string[] {
-    if (this.canSeeOtherAgents(setting)) return [...parts];
-    return parts.map(part => part
-      .replace(/^- You are part of a live multi-agent network[^\n]*\n?/gm, '')
-      .replace(/\n{3,}/g, '\n\n'));
+  allowsTool(metadata: unknown, toolName: string): boolean {
+    return this.canSeeOtherAgents(metadata as AgentAwarenessSetting | null | undefined)
+      || !this.isLaunchingToolName(toolName);
   }
 
   filterTurnContext(text: string, setting?: AgentAwarenessSetting | null): string {
     if (this.canSeeOtherAgents(setting)) return text;
-    return text.replace(/(^|\n)agents:[^\n]*(?=\n<\/turn_context>)/gm, '$1');
+    return text.split('\n').filter(line => !line.startsWith('agents:')).join('\n');
   }
 
   filterToolNames(names: readonly string[], setting?: AgentAwarenessSetting | null): string[] {
-    return this.canSeeOtherAgents(setting) ? [...names] : names.filter(name => !this.isLaunchingToolName(name));
+    return this.canSeeOtherAgents(setting) ? [...names] : names.filter(name => this.allowsTool(setting, name));
   }
 
   filterTools<T>(tools: readonly T[], setting?: AgentAwarenessSetting | null): T[] {
-    return this.canSeeOtherAgents(setting) ? [...tools] : tools.filter(tool => !this.isLaunchingToolName(this.toolName(tool)));
+    return this.canSeeOtherAgents(setting) ? [...tools] : tools.filter(tool => this.allowsTool(setting, this.toolName(tool)));
   }
 
   /** Accepts bare, slash-qualified (agents/directory) and underscore-qualified (agents_spawn_agent) names. */
