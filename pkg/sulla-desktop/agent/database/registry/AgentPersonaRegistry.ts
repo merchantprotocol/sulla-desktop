@@ -43,10 +43,10 @@ export interface ChatMessage {
     args?:         Record<string, unknown>;
     result?:       unknown;
     error?:        string | null;
-    /** Human-friendly display fields populated by toolCardFormatters */
-    label?:        string;
+    label?:        string; // label/summary: display fields from toolCardFormatters
     summary?:      string;
     input?:        string;
+    inputIsFull?:  boolean; // input is the complete serialized args, not a formatter summary
     output?:       string;
     outputFormat?: 'text' | 'code' | 'url' | 'json';
   };

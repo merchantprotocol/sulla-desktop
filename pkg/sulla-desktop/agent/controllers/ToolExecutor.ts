@@ -48,21 +48,9 @@ const perf = Logging.perf;
 
 const DEFAULT_WS_CHANNEL = 'heartbeat';
 
-// Cap inline screenshot base64 at this size before we embed it as an image
-// content block in state.messages. Oversize images are dropped (we fall back
-// to text-only tool_result) because they blow up Redis state, JSONL logs,
-// and the renderer's WebSocket payload. Tools should persist screenshots to
-// disk via screenshot_store.saveScreenshot and return a compact reference
-// instead of inlining base64 — this cap is a safety net for any tool that
-// slips through that pattern.
+// Model-bound tool results stay bounded to protect the next request's
+// context window. The separate WebSocket transcript event remains complete.
 const MAX_INLINE_SCREENSHOT_BYTES = 500_000;
-
-// Cap the serialized size of a tool result before we ship it over the WebSocket
-// to the renderer. Any tool that returns a huge payload (full DOM snapshot,
-// raw HTML, base64 blob, etc.) gets replaced with a compact truncation
-// placeholder. Protects the chat window's V8 heap, the WS pipe, and the
-// renderer-side reactive state regardless of which tool was invoked.
-const MAX_TOOL_RESULT_WIRE_BYTES = 50_000;
 
 // The loop detector only needs enough history to prove that the same call was
 // made seven times in a row. Keep fixed-size hashes instead of retaining raw
@@ -71,22 +59,6 @@ const MAX_TOOL_RESULT_WIRE_BYTES = 50_000;
 const TOOL_LOOP_THRESHOLD = 7;
 const TOOL_DEDUPE_HISTORY_LIMIT = TOOL_LOOP_THRESHOLD;
 const TOOL_DEDUPE_HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
-
-function capWireResult(r: any): any {
-  if (r == null) return r;
-  try {
-    const serialized = typeof r === 'string' ? r : JSON.stringify(r);
-    if (serialized.length <= MAX_TOOL_RESULT_WIRE_BYTES) return r;
-    const preview = serialized.slice(0, MAX_TOOL_RESULT_WIRE_BYTES);
-    return {
-      _truncated:     true,
-      _originalBytes: serialized.length,
-      _preview:       `${ preview }\n\n[truncated ${ serialized.length - MAX_TOOL_RESULT_WIRE_BYTES } bytes — full payload was ${ serialized.length } bytes total]`,
-    };
-  } catch {
-    return r;
-  }
-}
 
 // ============================================================================
 // Context interface — everything the executor needs from the calling node
@@ -651,7 +623,7 @@ export class ToolExecutor {
     state: BaseThreadState,
     toolRunId: string,
     toolName: string,
-    args: Record<string, any>,
+    args: unknown,
     kind?: string,
   ): Promise<boolean> {
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
@@ -723,7 +695,6 @@ export class ToolExecutor {
     (state.metadata as any).lastAgentActivityAt = Date.now();
     RunActivity.touch(state.metadata);
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
-    const cappedResult = capWireResult(result);
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
       data: {
@@ -731,7 +702,7 @@ export class ToolExecutor {
         toolRunId,
         success,
         error,
-        result:    cappedResult,
+        result,
         thread_id: state.metadata.threadId,
       },
       timestamp: Date.now(),
@@ -748,7 +719,7 @@ export class ToolExecutor {
           toolRunId,
           success,
           error,
-          result:    cappedResult,
+          result,
           thread_id: parentThreadId,
         },
         timestamp: Date.now(),
@@ -812,7 +783,7 @@ export class ToolExecutor {
         }
       }
 
-      const serialized = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
+      const serialized = typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2) ?? String(parsed);
       if (maxLen && serialized.length > maxLen) {
         return `${ serialized.substring(0, maxLen) }...`;
       }
@@ -855,12 +826,9 @@ export class ToolExecutor {
       } as ChatMessage);
     }
 
-    // 2. Persist to state.messages as native tool_result (user role).
-    // When a screenshot is present AND under the size cap, include it as an
-    // image content block so the LLM can see the page visually. Oversize
-    // screenshots fall back to text-only — the preferred path is for tools
-    // to saveScreenshot to disk and return a compact reference that the
-    // agent can Read on demand.
+    // 2. Persist the model-bounded result to state.messages as native
+    // tool_result. The full result was already sent to the independent chat
+    // transcript event in emitToolResultEvent above.
     let toolResultContent: string | any[];
     if (screenshotBase64 && screenshotBase64.length <= MAX_INLINE_SCREENSHOT_BYTES) {
       toolResultContent = [
