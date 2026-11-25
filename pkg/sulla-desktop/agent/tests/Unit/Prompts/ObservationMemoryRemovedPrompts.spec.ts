@@ -128,6 +128,21 @@ describe('prompts after observation memory removal', () => {
     expect(system).not.toContain(IDENTITY_PROFILE);
   });
 
+  it('excludes a user row marked by either generated flag: source dreamer or is_generated', async() => {
+    // risk: a dreamer-written identity profile slips back into the system prompt through only one of its two markers
+    for (const marker of [{ is_generated: false, source: 'dreamer' }, { is_generated: true, source: 'baked-default' }]) {
+      (SystemPromptSectionModel.list as any).mockResolvedValue([{
+        id: 'user', title: 'User', content: IDENTITY_PROFILE, priority: 15, enabled: true, cache_stability: 'stable',
+        is_builtin: true, is_customized: true, created_at: '2026-01-01', updated_at: null, ...marker,
+      }]);
+
+      const { system } = await new GraphAgentProbe().promptAndContext(threadState('probe'));
+
+      expect(system.length, JSON.stringify(marker)).toBeGreaterThan(500);
+      expect(system, JSON.stringify(marker)).not.toContain(IDENTITY_PROFILE);
+    }
+  });
+
   it('gives a Claude Code runtime agent no instruction to call observation tools', async() => {
     // risk: Claude Code agents are told to call a tool that no longer exists on every turn
     const service = createClaudeCodeService('claude-opus-5-5') as any;
