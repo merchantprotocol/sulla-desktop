@@ -27,7 +27,7 @@ export interface DelegatedFreshTurnPorts {
   endWakeTurn(jobId: string, taskIndex: number): Promise<unknown>;
   waitForWake(threadId: string, signal?: AbortSignal, timeoutMs?: number): Promise<unknown>;
   repairInput?(): Promise<void>;
-  alertRoot?(deadline: number): Promise<void>;
+  alertRoot?(deadline: number, stillMissing: () => boolean): Promise<'enqueued' | 'present' | 'obsolete'>;
   logWake?(facts: Omit<WakeObservation, 'graphCache'>): void;
   resume(jobId: string, taskIndex: number): Promise<unknown>;
   rerouteCompletions(manager: any, taskIndex: number, reason: string, entries: any[]): Promise<unknown>;
@@ -64,6 +64,9 @@ export class DelegatedFreshTurnRunner {
     if (jobId && !entries.length && !currentInputs.length) {
       let attempt = 0;
       let alerted = false;
+      let alertDeadline: number | undefined;
+      const stillMissing = () => !ports.signal?.aborted && !state.metadata?.delegatedContractReturned
+        && !DelegatedCompletionHandoff.hasWakeEntries(state) && !DeferredStallInput.actionableMessages(state).length;
       await ports.endWakeTurn(jobId, taskIndex);
       while (!ports.signal?.aborted) {
         const returned = await ports.returnedTask();
@@ -73,20 +76,21 @@ export class DelegatedFreshTurnRunner {
         if (entries.length || currentInputs.length) break;
         const timeout = [30_000, 60_000, 90_000][attempt];
         if (!alerted) {
-          const deadline = Date.now() + (timeout ?? 300_000);
+          const deadline = timeout ? Date.now() + timeout : (alertDeadline ??= Date.now() + 300_000);
           const waitReason = timeout ? 'waiting for missing wake input' : 'wake repair exhausted; PO response requested';
           await ports.updateJobTask(jobId, taskIndex, { waitReason, wakeAt: deadline });
           await this.log({ wakeId: `${ jobId }:${ taskIndex }:repair`, source: 'missing_input' }, attempt + 1, false);
           if (!timeout) {
             try {
-              await ports.alertRoot?.(deadline);
+              if (!stillMissing()) continue;
+              const receipt = await ports.alertRoot?.(deadline, stillMissing);
+              alerted = receipt === 'enqueued' || receipt === 'present';
             } catch {
               await ports.updateJobTask(jobId, taskIndex, { waitReason: 'wake repair exhausted; root notification unavailable' });
             }
-            alerted = true;
           }
         }
-        await ports.waitForWake(ports.threadId, ports.signal, timeout);
+        await ports.waitForWake(ports.threadId, ports.signal, timeout ?? (alerted ? undefined : 30_000));
         if (timeout && !ports.signal?.aborted) {
           attempt++;
           try { await ports.repairInput?.() } catch { /* keep parked; the next repair or PO can supply input */ }

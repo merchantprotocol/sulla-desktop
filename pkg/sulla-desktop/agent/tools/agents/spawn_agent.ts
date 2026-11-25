@@ -803,8 +803,8 @@ content: `[Message from orchestrator]\n${ row.message }`,
 });
             }
           },
-          alertRoot: deadline => new DelegatedWakeRepairNotice(id => agentJobProvider.jobs.findByTaskThread(id), completionInboxStore)
-            .send(activityJobId!, index, threadId, deadline),
+          alertRoot: (deadline, stillMissing) => new DelegatedWakeRepairNotice(id => agentJobProvider.jobs.findByTaskThread(id), completionInboxStore)
+            .send(activityJobId!, index, threadId, deadline, stillMissing),
           logWake: facts => agentJobProvider.failureLogger.wake({
  ...facts,
 graphCache: agentJobLifecycle.liveState(threadId) === subState
