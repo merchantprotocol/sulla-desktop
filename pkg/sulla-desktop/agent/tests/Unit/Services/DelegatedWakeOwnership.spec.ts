@@ -112,7 +112,7 @@ describe('live delegated wake ownership', () => {
   it('retries a failed alert on a bounded timer with the same episode deadline', async() => {
     vi.useFakeTimers();
     const h = harness();
-    const alert = vi.fn(h.ports.alertRoot!).mockRejectedValueOnce(new Error('ancestry unavailable'));
+    const alert = vi.fn(h.ports.alertRoot).mockRejectedValueOnce(new Error('ancestry unavailable'));
     h.ports.alertRoot = alert;
     const run = h.run();
     try {
@@ -135,7 +135,8 @@ describe('live delegated wake ownership', () => {
     let finish!: () => void;
     const lookup = new Promise<undefined>(resolve => { finish = () => resolve(undefined) });
     const notice = new DelegatedWakeRepairNotice(id => id === taskThread
-      ? Promise.resolve({ parentThreadId: 'po' }) : lookup, h.inbox);
+      ? Promise.resolve({ parentThreadId: 'po' })
+      : lookup, h.inbox);
     h.ports.alertRoot = (deadline, missing) => notice.send('job', 0, taskThread, deadline, missing);
     const run = h.run();
     await vi.advanceTimersByTimeAsync(180_000);

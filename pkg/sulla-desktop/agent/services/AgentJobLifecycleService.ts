@@ -2,11 +2,11 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { DeferredStallInput } from '../app/Services/DeferredStallInput';
-import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { GraphRegistry } from './GraphRegistry';
 import { ReturnedTaskSettlement } from './ReturnedTaskSettlement';
 import { agentJobProvider } from '../app/Providers/AgentJobServiceProvider';
+import { DeferredStallInput } from '../app/Services/DeferredStallInput';
+import { DelegatedCompletionHandoff } from '../app/Services/DelegatedCompletionHandoff';
 import { deliverJobCompletion, returnedJobResult } from '../tools/agents/jobDelivery';
 import { completeJob, getJob, parkJobTask, recordTaskCompletion, resumeParkedJob } from '../tools/agents/jobRegistry';
 import { injectSteer } from '../utils/steerChannel';
@@ -115,8 +115,8 @@ export class AgentJobLifecycleService {
   async waitForWake(threadId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void> {
     if (signal?.aborted) return;
     const state = this.liveState(threadId);
-    if (state && (DeferredStallInput.actionableMessages(state).length || DelegatedCompletionHandoff.hasWakeEntries(state)
-      || (state.metadata as any).delegatedContractReturned)) return;
+    if (state && (DeferredStallInput.actionableMessages(state).length || DelegatedCompletionHandoff.hasWakeEntries(state) ||
+      (state.metadata as any).delegatedContractReturned)) return;
     const queuedAt = this.pendingWakes.get(threadId);
     this.pendingWakes.delete(threadId);
     if (!state && queuedAt && Date.now() - queuedAt <= AgentJobLifecycleService.PENDING_WAKE_TTL_MS) return;

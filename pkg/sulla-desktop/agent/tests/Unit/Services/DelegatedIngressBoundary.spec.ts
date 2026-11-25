@@ -2,12 +2,12 @@
 import '../../Support/TestHomeEnv';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider';
 import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
 import { BackendGraphWebSocketService } from '../../../services/BackendGraphWebSocketService';
-import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider';
+import { GraphRegistry } from '../../../services/GraphRegistry';
 import { parkedAgentRehydrator } from '../../../services/ParkedAgentRehydrator';
 import { toolRegistry } from '../../../tools/registry';
-import { GraphRegistry } from '../../../services/GraphRegistry';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../services/AgentExecutionReadiness', () => ({
