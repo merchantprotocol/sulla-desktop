@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 
 import { config } from './config.js';
 import { pool } from './db.js';
+import { DESKTOP_WORKFLOW_OWNER_IDENTITY } from '../../../packages/workflow-engine/src/ownerIdentity.js';
 
 import type { NextFunction, Request, Response as ExpressResponse } from 'express';
 
@@ -60,7 +61,7 @@ async function runnerIdentity(token: string): Promise<RequestIdentity | null> {
 async function ownerIdentity(token: string): Promise<RequestIdentity> {
   if (!equalSecret(token, config.localToken)) throw new Error('invalid local credential');
   return {
-    kind: 'owner', issuer: 'urn:sulla:desktop', subject: 'local-owner',
+    kind: 'owner', issuer: DESKTOP_WORKFLOW_OWNER_IDENTITY.issuer, subject: DESKTOP_WORKFLOW_OWNER_IDENTITY.subject,
     authorityId: null, organizationId: null, roles: ['owner'], groups: [],
   };
 }
