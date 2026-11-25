@@ -61,7 +61,8 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
   }
 
   const orchestratorMessages = fresh.map(message =>
-    message.message.startsWith('[Decision from ') ? message.message : `[Message from orchestrator]\n${ message.message}`,
+    message.message.startsWith('[Decision from ') || message.message.startsWith('[FYI from ')
+      ? message.message : `[Message from orchestrator]\n${ message.message}`,
   ).join('\n\n');
 
   return [CHECKIN_GUIDANCE, REVIEW_GUIDANCE, workerGuidance, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');

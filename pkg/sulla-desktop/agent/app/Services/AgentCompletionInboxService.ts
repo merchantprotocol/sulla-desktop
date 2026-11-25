@@ -69,6 +69,15 @@ export class AgentCompletionInboxService extends Service {
   }
 
   enqueue(channel: string, threadId: string, completion: PendingCompletion): boolean {
+    return this.enqueueInternal(channel, threadId, completion, true);
+  }
+
+  /** Queue an informational entry for the next real turn without dispatching or waking it. */
+  enqueueQuietly(channel: string, threadId: string, completion: PendingCompletion): boolean {
+    return this.enqueueInternal(channel, threadId, completion, false);
+  }
+
+  private enqueueInternal(channel: string, threadId: string, completion: PendingCompletion, dispatch: boolean): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
     const entryKey = this.entryKey(completion);
@@ -76,7 +85,7 @@ export class AgentCompletionInboxService extends Service {
       inbox.entries.some(entry => this.entryKey(entry) === entryKey);
     if (!duplicate) inbox.entries.push(completion);
     this.inboxes.set(key, inbox);
-    if (!inbox.stopped && !duplicate) this.idleDispatcher.dispatch(channel, threadId);
+    if (dispatch && !inbox.stopped && !duplicate) this.idleDispatcher.dispatch(channel, threadId);
     return !duplicate;
   }
 

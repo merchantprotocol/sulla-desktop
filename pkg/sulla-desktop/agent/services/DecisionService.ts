@@ -18,6 +18,7 @@ import { DecisionRouteResolver } from './DecisionRouteResolver';
 import { DecisionAskerWaiter, type DecisionQuestionAskerWaiter } from './DecisionAskerWaiter';
 import { DecisionEscalationService } from './DecisionEscalationService';
 import { DecisionHolderNotifier } from './DecisionHolderNotifier';
+import { DecisionParentFyiNotifier } from './DecisionParentFyiNotifier';
 import type { DecisionAgentAction, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import type { DecisionSettlementStatus, DecisionTransitionActor } from '../repositories/DecisionRouteTransitionSqlBuilder';
 import type { AgentJobTaskTarget } from '../database/models/AgentJobMessagingModel';
@@ -35,7 +36,7 @@ export class DecisionService {
   private readonly approvalPolicies: ToolApprovalPolicyRepository;
   private readonly authorityPolicy: DecisionAuthorityPolicy;
   private readonly routeResolver: DecisionRouteResolver;
-  private readonly askerWaiter: DecisionQuestionAskerWaiter;
+  private readonly askerWaiter: DecisionQuestionAskerWaiter; private readonly parentFyiNotifier: DecisionParentFyiNotifier;
   private readonly escalation: Pick<DecisionEscalationService, 'start' | 'reconcile' | 'answerAsAgent' | 'authorize' | 'passFromResolveAs' | 'historyForAction'>;
 
   constructor(
@@ -49,6 +50,7 @@ export class DecisionService {
       askerWaiter?: DecisionQuestionAskerWaiter;
       escalation?: DecisionService['escalation'];
       holderNotifier?: DecisionHolderNotifier;
+      parentFyiNotifier?: DecisionParentFyiNotifier;
     } = {},
   ) {
     this.pendingDecisions = repositories.pendingDecisions ?? new PendingDecisionRepository(postgresClient);
@@ -56,7 +58,7 @@ export class DecisionService {
     this.approvalPolicies = repositories.approvalPolicies ?? new ToolApprovalPolicyRepository(postgresClient);
     this.authorityPolicy = repositories.authorityPolicy ?? new DecisionAuthorityPolicy();
     this.routeResolver = repositories.routeResolver ?? new DecisionRouteResolver(this.pendingDecisions);
-    this.askerWaiter = repositories.askerWaiter ?? new DecisionAskerWaiter();
+    this.askerWaiter = repositories.askerWaiter ?? new DecisionAskerWaiter(); this.parentFyiNotifier = repositories.parentFyiNotifier ?? new DecisionParentFyiNotifier();
     this.lateAnswerHandler = lateAnswerHandler ?? new LateDecisionAnswerHandler(
       this.pendingDecisions,
       { find: conversationId => this.pendingDecisions.findConversation(conversationId) },
@@ -132,6 +134,7 @@ export class DecisionService {
         },
       };
       await this.decisions.insert(record, this.session);
+      await this.parentFyiNotifier.notify(record);
       const parked = await this.parkQuestionAsker(asker, record.id);
       let current = record;
       if (record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent') {
@@ -158,6 +161,7 @@ export class DecisionService {
       id: randomUUID(), status: 'pending', attention: 'active', createdAt: now, expiresAt: now + timeoutMs,
     };
     await this.decisions.insert(record, this.session);
+    await this.parentFyiNotifier.notify(record);
     let settle!: (value: DecisionOutcome) => void;
     const result = new Promise<DecisionOutcome>(resolve => { settle = resolve });
     const timer = setTimeout(() => { this.expire(record.id) }, timeoutMs);
