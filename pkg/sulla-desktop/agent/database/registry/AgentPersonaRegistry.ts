@@ -37,16 +37,16 @@ export interface ChatMessage {
   };
   toolCard?: {
     toolRunId:     string;
-    toolName:      string;
+    toolName:      string; providerTool?: boolean; toolPayloadRef?: { threadId: string; toolRunId: string };
     description?:  string;
     status:        'running' | 'success' | 'failed';
     args?:         Record<string, unknown>;
     result?:       unknown;
     error?:        string | null;
-    /** Human-friendly display fields populated by toolCardFormatters */
-    label?:        string;
+    label?:        string; // label/summary: display fields from toolCardFormatters
     summary?:      string;
     input?:        string;
+    inputIsFull?:  boolean; // input is the complete serialized args, not a formatter summary
     output?:       string;
     outputFormat?: 'text' | 'code' | 'url' | 'json';
   };

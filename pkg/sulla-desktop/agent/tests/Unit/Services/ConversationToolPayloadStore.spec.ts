@@ -1,0 +1,60 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { expect, it, vi } from 'vitest';
+
+import { ConversationToolPayloadStore } from '@pkg/main/conversationToolPayloadStore';
+
+// risk: data accuracy — expanding a large Detailed tool row must recover every character from its durable JSONL event.
+it('loads the complete 5 MB tool result by thread and tool id, without reading outside the log directory', async() => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'sulla-tool-payload-'));
+  try {
+    const file = path.join(directory, 'conversation.jsonl');
+    const result = `RESULT_START:${ 'x'.repeat(5_000_000) }:RESULT_END`;
+    const lines = [
+      JSON.stringify({ type: 'message', content: 'unrelated row' }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'run-other', toolName: 'exec', result: 'other result' }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'run-1', toolName: 'exec', args: { path: 'redacted' } }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'run-1', toolName: 'exec', result }),
+    ];
+    await writeFile(file, `${ lines.join('\n') }\n`);
+    const history = { getFileAssociations: vi.fn(async() => ({ log_file: file })) };
+    const store = new ConversationToolPayloadStore(history, () => directory);
+    const parse = vi.spyOn(JSON, 'parse');
+
+    const event = await store.load('thread-1', 'run-1') as { result: string; toolCallId: string };
+    expect(event).toMatchObject({ toolCallId: 'run-1', result });
+    // Cheap id filtering skipped both unrelated lines; the first matching call without a result was ignored.
+    expect(parse).toHaveBeenCalledTimes(2);
+    parse.mockRestore();
+    expect(await store.load('thread-1', 'missing')).toBeNull();
+    history.getFileAssociations.mockResolvedValue({ log_file: path.join(tmpdir(), 'outside.jsonl') });
+    expect(await store.load('thread-1', 'run-1')).toBeNull();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// risk: data accuracy — reused tool-call IDs must resolve to the latest complete result, not stale output from an earlier call.
+it('returns the last result-bearing event when a tool-call ID is reused', async() => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'sulla-tool-payload-reused-id-'));
+  try {
+    const file = path.join(directory, 'conversation.jsonl');
+    await writeFile(file, [
+      JSON.stringify({ type: 'tool_call', toolCallId: 'reused-run', args: { attempt: 1 }, result: 'stale result' }),
+      JSON.stringify({ type: 'tool_call', toolCallId: 'reused-run', args: { attempt: 2 }, result: 'latest result' }),
+    ].join('\n'));
+    const history = { getFileAssociations: vi.fn(async() => ({ log_file: file })) };
+    const store = new ConversationToolPayloadStore(history, () => directory);
+
+    const event = await store.load('thread-reused', 'reused-run') as { args: { attempt: number }; result: string };
+    expect(event).toMatchObject({ args: { attempt: 2 }, result: 'latest result' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

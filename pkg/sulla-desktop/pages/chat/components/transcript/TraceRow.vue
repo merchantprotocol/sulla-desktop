@@ -45,6 +45,14 @@
       ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
     </div>
     <p v-if="row.note" class="dtr-note">{{ row.note }}</p>
+    <p v-if="open && toolPayloadLoading" class="dtr-note" role="status">Loading the complete tool result…</p>
+    <p v-if="open && toolPayloadError" class="dtr-note" role="status">
+      The complete tool result could not be loaded from the conversation log.
+      <button type="button" class="dtr-retry" @click="loadToolPayload">Retry</button>
+    </p>
+    <div v-if="open && payloadImages.length" class="dtr-images">
+      <figure v-for="image in payloadImages" :key="image.alt"><img :src="image.src" :alt="image.alt" /></figure>
+    </div>
     <pre v-if="open && row.payload" :id="payloadId" class="dtr-raw" tabindex="0">{{ payloadText }}</pre>
   </li>
 </template>
@@ -57,6 +65,7 @@ import type { OpenSubAgentConversation } from '../subagent/subAgentConversation'
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
 import type { SubAgentTraceStatus, TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
+import { TracePayloadSerializer } from './TracePayloadSerializer';
 
 const props = defineProps<{ row: TraceRowModel }>();
 const disclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
@@ -113,8 +122,42 @@ const payloadSource = computed<{ id: string; payload?: TraceRowModel['payload'] 
   if (previous?.id === id && (previous.payload === payload || (payload && previous.payload?.matches(payload)))) return previous;
   return { id, payload };
 });
-// Only the open disclosure reads this computed.
-const payloadText = computed(() => payloadSource.value.payload?.serialize(history.value?.checkins, history.value?.messages));
+// A pointer-backed payload supplements the card's own arguments; its loader only supplies the stored result.
+const payloadSerializer = new TracePayloadSerializer();
+const loadedPresentation = shallowRef<ReturnType<TracePayloadSerializer['present']> | null>(null);
+const toolPayloadLoading = ref(false);
+const toolPayloadError = ref(false);
+let loadGeneration = 0;
+async function loadToolPayload(): Promise<void> {
+  const payload = props.row.payload;
+  if (!payload?.load) return;
+  const generation = ++loadGeneration;
+  toolPayloadLoading.value = true;
+  toolPayloadError.value = false;
+  try {
+    const value = await payload.load();
+    if (generation === loadGeneration && open.value && props.row.payload === payload) {
+      loadedPresentation.value = payloadSerializer.present(value);
+    }
+  } catch {
+    if (generation === loadGeneration) toolPayloadError.value = true;
+  } finally {
+    if (generation === loadGeneration) toolPayloadLoading.value = false;
+  }
+}
+watch([open, () => props.row.payload], ([expanded, payload], _, onCleanup) => {
+  loadedPresentation.value = null;
+  toolPayloadError.value = false;
+  toolPayloadLoading.value = false;
+  if (!expanded || !payload?.load) { loadGeneration++; return; }
+  onCleanup(() => { loadGeneration++; });
+  void loadToolPayload();
+}, { immediate: true });
+const payloadPresentation = computed(() => loadedPresentation.value ?? payloadSerializer.present(
+  payloadSource.value.payload?.serialize(history.value?.checkins, history.value?.messages) ?? '',
+));
+const payloadImages = computed(() => payloadPresentation.value.images);
+const payloadText = computed(() => payloadPresentation.value.text);
 const statusLabel = computed(() => SubAgentTraceProjection.statusLabel(props.row.status as SubAgentTraceStatus));
 const agentMeta = computed(() => {
   const agent = props.row.subagent;
@@ -192,6 +235,10 @@ code.dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface
 .dtr-agent-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin: 2px 34px 4px; color: var(--text-muted); font: 11.5px/18px var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
 .dtr-agent-meta button { padding: 0; border: 0; background: none; color: var(--primary-color-text-override, var(--accent)); font: 12.5px var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .dtr-row button:focus-visible { outline: 0; border-radius: 6px; box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 28%, transparent); }
+.dtr-retry { margin-left: 8px; border: 0; padding: 0; background: none; color: var(--primary-color-text-override, var(--accent)); font: inherit; text-decoration: underline; cursor: pointer; }
+.dtr-images { display: grid; gap: 8px; margin: 4px 34px 8px; }
+.dtr-images figure { margin: 0; }
+.dtr-images img { max-width: 100%; height: auto; }
 @media (max-width: 600px) {
   .dtr-line { grid-template-columns: 24px minmax(0, 1fr) 24px; }
   .dtr-m { grid-column: 2; grid-row: 2; line-height: 18px; padding-bottom: 2px; }

@@ -115,6 +115,7 @@ export class LocalStoragePersister implements ThreadPersister {
     } catch (e) { console.warn('[LocalStoragePersister] index update failed:', e); }
   }
 
+
   load(id: ThreadId): ThreadState | null {
     try {
       const raw = localStorage.getItem(KEY(id));

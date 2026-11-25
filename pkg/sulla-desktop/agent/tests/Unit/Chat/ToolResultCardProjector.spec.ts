@@ -1,0 +1,75 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import { expect, it } from 'vitest';
+
+import { formatToolResult } from '@pkg/agent/tools/toolCardFormatters';
+import { ToolResultCardProjector } from '@pkg/agent/database/models/ToolResultCardProjector';
+
+// risk: performance and data accuracy — a 5 MB result must remain complete in the durable log, not duplicated inline in chat state.
+it('keeps a 5 MB result as a bounded reference with no second card copy', () => {
+  const card = { toolRunId: 'run-5mb', toolName: 'exec', status: 'running' as const, args: {} };
+  const result = `RESULT_START:${ 'x'.repeat(5_000_000) }:RESULT_END`;
+
+  new ToolResultCardProjector(formatToolResult).project(card, { success: true, result, payloadThreadId: 'thread-5mb', payloadPersisted: true }, 'thread-5mb');
+
+  expect(card).toMatchObject({ status: 'success', toolPayloadRef: { threadId: 'thread-5mb', toolRunId: 'run-5mb' } });
+  expect(card).not.toHaveProperty('result');
+  expect(card).not.toHaveProperty('output');
+  expect(JSON.stringify(card).length).toBeLessThan(1_000);
+});
+
+// risk: image visibility — even a small inline image must stay in the durable log and load as an image on expansion, not persist as base64 text.
+it('stores inline image blocks by reference even below the text payload threshold', () => {
+  const card = { toolRunId: 'run-image', toolName: 'browser', status: 'running' as const, args: {} };
+  const image = 'IMAGE_BYTES_DO_NOT_PERSIST';
+  const result = { content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: image } }] };
+
+  new ToolResultCardProjector(formatToolResult).project(card, { success: true, result, payloadThreadId: 'thread-image', payloadPersisted: true }, 'thread-image');
+
+  expect(card).toMatchObject({ status: 'success', toolPayloadRef: { threadId: 'thread-image', toolRunId: 'run-image' } });
+  expect(card).not.toHaveProperty('result');
+  expect(card).not.toHaveProperty('output');
+  expect(JSON.stringify(card)).not.toContain(image);
+});
+
+// risk: data loss — inline output remains recoverable for small confirmed writes, and oversized output is offloaded only after durable confirmation.
+it('keeps small confirmed results inline and only points large results to confirmed logs', () => {
+  const projector = new ToolResultCardProjector(formatToolResult);
+  const smallResult = `SMALL_RESULT:${ 's'.repeat(2_000) }:END`;
+  const largeResult = `LARGE_RESULT:${ 'l'.repeat(5_000_000) }:END`;
+  const small = { toolRunId: 'run-small', toolName: 'exec', status: 'running' as const, args: {} };
+  const confirmedLarge = { toolRunId: 'run-confirmed', toolName: 'exec', status: 'running' as const, args: {} };
+  const unconfirmedLarge = { toolRunId: 'run-unconfirmed', toolName: 'exec', status: 'running' as const, args: {} };
+
+  projector.project(small, { success: true, result: smallResult, payloadThreadId: 'thread-small', payloadPersisted: true }, 'thread-small');
+  projector.project(confirmedLarge, { success: true, result: largeResult, payloadThreadId: 'thread-confirmed', payloadPersisted: true }, 'thread-confirmed');
+  projector.project(unconfirmedLarge, { success: true, result: largeResult, payloadThreadId: 'thread-unconfirmed', payloadPersisted: false }, 'thread-unconfirmed');
+
+  expect(small.output).toBe(smallResult);
+  expect(small).not.toHaveProperty('toolPayloadRef');
+  expect(confirmedLarge).toMatchObject({ toolPayloadRef: { threadId: 'thread-confirmed', toolRunId: 'run-confirmed' } });
+  expect(confirmedLarge).not.toHaveProperty('output');
+  expect(unconfirmedLarge.output).toBe(largeResult);
+  expect(unconfirmedLarge).not.toHaveProperty('toolPayloadRef');
+});
+
+// risk: data loss — a large result must remain inline unless the durable append and thread association were confirmed.
+it('keeps the full result inline when persistence or its thread association is unconfirmed', () => {
+  const result = `INLINE_RESULT:${ 'x'.repeat(5_000_000) }:END`;
+  const projector = new ToolResultCardProjector(formatToolResult);
+  const failedWrite = { toolRunId: 'run-write-failed', toolName: 'exec', status: 'running' as const, args: {} };
+  const missingAssociation = { toolRunId: 'run-no-association', toolName: 'exec', status: 'running' as const, args: {} };
+  const unconfirmedWrite = { toolRunId: 'run-not-confirmed', toolName: 'exec', status: 'running' as const, args: {} };
+
+  projector.project(failedWrite, { success: true, result }, 'thread-failed');
+  projector.project(missingAssociation, { success: true, result, payloadPersisted: true }, 'thread-missing');
+  projector.project(unconfirmedWrite, { success: true, result, payloadThreadId: 'thread-not-confirmed', payloadPersisted: false }, 'thread-not-confirmed');
+
+  for (const card of [failedWrite, missingAssociation, unconfirmedWrite]) {
+    expect(card.output).toBe(result);
+    expect(card).not.toHaveProperty('toolPayloadRef');
+  }
+});

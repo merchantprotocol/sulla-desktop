@@ -32,6 +32,7 @@ import { AgentModelStatusRegistry } from '../services/AgentModelStatusRegistry';
 import { parseJson } from '../services/JsonParseService';
 import { RunActivity } from '../services/RunActivity';
 import { TurnToolActivity } from '../services/TurnToolActivity';
+import { ProviderToolTranscript, ProviderToolTranscriptSink } from './ProviderToolTranscript';
 import { getWebSocketClientService } from '../services/WebSocketClientService';
 import { workerModelRouting } from '../services/WorkerModelRouting';
 import { toolRegistry } from '../tools/registry';
@@ -1833,9 +1834,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
-    // Tool_use/tool_result pairs run inside the provider's own CLI (Claude
-    // Code, Codex) and never touch Sulla's ToolExecutor — this is the only
-    // place that sees them, so log each one directly once its result lands.
+    // Provider-CLI tool calls (Claude Code, Codex) bypass ToolExecutor: forward their full call and result events.
+    const providerTools = new ProviderToolTranscript(new ProviderToolTranscriptSink(String((state.metadata as any).runId ?? state.metadata.threadId ?? this.name),
+      this.emitToolCallEvent.bind(this, state), this.emitToolResultEvent.bind(this, state),
+      (name, input, result, toolCallId) => this.logConversationToolCall(state, name, input, result, toolCallId), (message, error) => console.warn(`[${ this.name }] ${ message }`, error)));
     const onContextCompaction = (event: { provider: string; at: number; source: string }): void => {
       const meta = state.metadata as any;
       meta.cliCompactedAt = event.at;
@@ -1852,19 +1854,17 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
     };
-    const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; resultChars: number; isError?: boolean }): void => {
+    const onToolEvent = (event: { toolUseId: string; toolName: string; input?: unknown; result?: unknown; error?: string; resultChars: number; isError?: boolean }): void => {
       providerToolStarted = true;
       toolActivity.finished(event.toolUseId);
       new TurnOutputCounter(state.metadata as any).record();
-      this.logConversationToolCall(state, event.toolName, event.input, {
-        chars: event.resultChars,
-        error: event.isError || undefined,
-      });
+      providerTools.finished(event);
     };
-    const onToolStarted = (event?: { toolUseId: string; toolName: string }): void => {
+    const onToolStarted = (event?: { toolUseId: string; toolName: string; input?: unknown }): void => {
       providerToolStarted = true;
       toolActivity.started(event?.toolUseId, event?.toolName);
       new TurnOutputCounter(state.metadata as any).record();
+      if (event?.toolUseId) providerTools.started(event);
     };
 
     let reply: NormalizedResponse | null = null;
@@ -1907,7 +1907,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       if (providerToolStarted && error && typeof error === 'object') (error as any).unsafeToFallback = true;
       throw error;
     } finally {
-      toolActivity.close();
+      await providerTools.interrupted(); toolActivity.close();
       // Close partial output on failure too, before recovery starts another stream.
       // End-of-turn flush. `onActivity` only fires segment boundaries while
       // the model is still producing activity; a stream that ends naturally
@@ -2240,12 +2240,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
    * tool execution happens inside their own subprocess and never touches
    * Sulla's ToolExecutor — see StreamCallbacks.onToolEvent.
    */
-  protected logConversationToolCall(state: BaseThreadState, toolName: string, args: unknown, result?: unknown): void {
+  protected logConversationToolCall(state: BaseThreadState, toolName: string, args: unknown, result?: unknown, toolCallId?: string): void {
     const convId = (state.metadata as any).conversationId;
     if (!convId) return;
     try {
       const { getConversationLogger } = require('../services/ConversationLogger');
-      getConversationLogger().logToolCall(convId, toolName, args, result);
+      getConversationLogger().logToolCall(convId, toolName, args, result, toolCallId);
     } catch { /* best-effort */ }
   }
 
@@ -2308,7 +2308,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     state: BaseThreadState,
     toolRunId: string,
     toolName: string,
-    args: Record<string, any>,
+    args: unknown,
     kind?: string,
   ): Promise<boolean> {
     return this.toolExecutor.emitToolCallEvent(state, toolRunId, toolName, args, kind);

@@ -25,9 +25,11 @@ export interface ChatMessagesLogger {
   error(...args: unknown[]): void;
 }
 
+export interface ChatToolPayloadReader { load(threadId: string, toolRunId: string): Promise<unknown | null> }
+
 /** chat-messages:* — save/load/delete thread state and count messages. */
 export class ChatMessagesIpcController implements IpcController {
-  constructor(private readonly ipc: IpcRegistrar, private readonly store: ChatThreadStatePort, private readonly log: ChatMessagesLogger) {}
+  constructor(private readonly ipc: IpcRegistrar, private readonly store: ChatThreadStatePort, private readonly log: ChatMessagesLogger, private readonly payloads?: ChatToolPayloadReader) {}
 
   register(): void {
     const { store, log } = this;
@@ -54,6 +56,13 @@ export class ChatMessagesIpcController implements IpcController {
 
         return { success: false, error: String(err) };
       }
+    });
+
+    this.ipc.handle('chat-messages:tool-payload', async(_event, input: { threadId: string; toolRunId: string }) => {
+      try {
+        const data = await this.payloads?.load(input.threadId, input.toolRunId);
+        return data == null ? { success: false, error: 'Tool payload is not available in the conversation log.' } : { success: true, data };
+      } catch (err) { log.error('[ChatMessagesIpc] Failed to load tool payload:', err); return { success: false, error: String(err) }; }
     });
 
     this.ipc.handle('chat-messages:load-before', async(_event, input: { threadId: string; beforeMessageId: string; limit?: number }) => {

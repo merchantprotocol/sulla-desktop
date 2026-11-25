@@ -26,6 +26,9 @@ export class ToolCardCompositionRoot {
   readonly presenter: ToolCardPresenter;
   constructor() {
     const text = new ToolCardText();
+    this.redactor = new ToolArgumentRedactor(new Map([
+      ['vault_create_password', ['password']], ['vault_update_password', ['password']], ['vault_set_credential', ['value']],
+    ]));
     const strategies = [new ShellFileToolCardFormatter(text), new BrowserToolCardFormatter(text),
       new GitToolCardFormatter(text), new GitHubToolCardFormatter(text), new DockerToolCardFormatter(text),
       new SlackToolCardFormatter(text), new DatabaseToolCardFormatter(text), new RedisToolCardFormatter(text),
@@ -35,9 +38,6 @@ export class ToolCardCompositionRoot {
     const prefixes = [['fs_', 'Files'], ['git', 'Git'], ['github_', 'GitHub'], ['docker_', 'Docker'],
       ['kubectl_', 'Kubernetes'], ['pg_', 'Database'], ['redis_', 'Redis'], ['slack_', 'Slack'],
       ['calendar_', 'Calendar']].map(([prefix, label]) => new PrefixToolCardFormatter(prefix, label));
-    this.redactor = new ToolArgumentRedactor(new Map([
-      ['vault_create_password', ['password']], ['vault_update_password', ['password']], ['vault_set_credential', ['value']],
-    ]));
     this.presenter = new ToolCardPresenter(new ToolCardFormatterRegistry(strategies, prefixes, text));
   }
 }

@@ -8,13 +8,14 @@ import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
+import { ToolPayloadRepository } from '../../services/ToolPayloadRepository';
 import type { SubAgentTraceStatus, TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
   static readonly trailingAnchor = '__trace-trailing__';
 
-  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection()) {}
+  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection(), private readonly toolPayloads = new ToolPayloadRepository()) {}
 
   project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
     const activities = this.debugActivities(messages, standardEntries);
@@ -105,8 +106,14 @@ export class DetailedTraceProjection {
     const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
     const target = message.recordedToolName ?? message.tool;
     const { input, output, error, desc, meta } = message;
-    const payload = new TracePayload([target, message.status, input, output, error, desc, meta], () =>
-      this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }));
+    const payload = new TracePayload([target, message.status, input, output, error, desc, meta, message.toolPayloadRef], () =>
+      this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }),
+      message.toolPayloadRef ? async() => {
+        const event = await this.toolPayloads.load(message.toolPayloadRef!);
+        const stored = event && typeof event === 'object' ? event as Record<string, unknown> : {};
+        if (!Object.prototype.hasOwnProperty.call(stored, 'result')) throw new Error('The conversation log entry has no complete tool result.');
+        return { tool: target, status: message.status, input, output: stored.result, error: typeof stored.error === 'string' ? stored.error : error, description: desc, meta };
+      } : undefined);
     const shell = this.shellCommand(message);
     if (shell) {
       // "Ran <command>  <tool> · exit N": the real tool name stays on the line (no-redaction rule).

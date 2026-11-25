@@ -1011,11 +1011,11 @@ export class PersonaAdapter {
         id,
         kind: 'tool',
         createdAt,
-        recordedToolName: b.toolCard.toolName,
+        recordedToolName: b.toolCard.toolName, providerTool: b.toolCard.providerTool, toolPayloadRef: b.toolCard.toolPayloadRef,
         tool: b.toolCard.label || b.toolCard.toolName || 'Tool',
         desc: b.toolCard.summary || b.toolCard.description || '',
         status,
-        input:        b.toolCard.input,
+        input:        b.toolCard.inputIsFull || b.toolCard.args === undefined ? b.toolCard.input : JSON.stringify(b.toolCard.args, null, 2),
         output:       toolOutputDetail(b.toolCard.output, b.toolCard.result),
         error:        b.toolCard.error ?? undefined,
         outputFormat: b.toolCard.outputFormat,
@@ -1555,14 +1555,12 @@ function firstLineOf(s: string): string {
 }
 
 function toolOutputDetail(output: unknown, result: unknown): string | undefined {
-  if (typeof output === 'string' && output.length > 0) return output;
-  if (result === undefined || result === null) return undefined;
-  if (typeof result === 'string') return result;
-  try {
-    return JSON.stringify(result, null, 2);
-  } catch {
-    return String(result);
+  if (result !== undefined) {
+    if (typeof result === 'string') return result;
+    try { return JSON.stringify(result, null, 2) ?? String(result) }
+    catch { return String(result) }
   }
+  return typeof output === 'string' ? output : undefined;
 }
 
 async function fileToAttachmentInput(file: File): Promise<{ mediaType: string; base64: string }> {

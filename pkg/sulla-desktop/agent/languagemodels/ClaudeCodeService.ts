@@ -24,6 +24,8 @@ import {
 } from './claudeBackgroundTasks';
 import { buildClaudeLaunchCommand, newRemotePidFile } from './claudeLaunchCommand';
 import { ClaudeToolPolicy } from './claudeToolPolicy';
+import { ClaudeToolEventTracker } from './claudeToolEvents';
+import { ProviderToolActivityReporter } from './ProviderToolActivityReporter';
 import {
   CliFaultError, CliHandoffFailure, isCliFault, isPermanentCliFailure, markSullaInternalFault, recoveryMessages, runWithCliFaultRecovery, terminateCliChild,
 } from './cliFaultRecovery';
@@ -1209,9 +1211,21 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // to time the gap between a tool_use block's input completing and its
         // matching tool_result arriving. Keyed by the tool_use id so parallel
         // tool calls are timed independently.
-        const toolStarts = new Map<string, { name: string; input?: unknown; startedAt: number }>();
         let unresolvedTool = false;
-        const toolTotals = new Map<string, { count: number; ms: number }>();
+        // Tool starts and results also drive the run's liveness clock, so a
+        // tool still running counts as activity for the stall detector.
+        const toolEvents = new ClaudeToolEventTracker({
+          onToolStarted: (event) => {
+            liveness.toolStarted(event.toolUseId, event.toolName);
+            callbacks.onToolStarted?.(event);
+          },
+          onToolEvent: (event) => {
+            liveness.toolFinished(event.toolUseId);
+            callbacks.onToolEvent?.(event);
+          },
+        }, Date.now, (name, ms, resultChars) => {
+          perf.log(`[ToolTiming] tool=${ name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
+        });
         let firstTokenAt = 0;
         const runStartedAt = Date.now();
         let spawnedAt = 0;
@@ -1226,31 +1240,6 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const setupParts = Object.entries(runPhaseMarks).map(([key, ms]) => `${ key }Ms=${ ms }`).join(' ');
           perf.log(`[RunPhase] provider=claude-code convId=${ convId } setupMs=${ setupDoneAt - runPhaseStart } ${ setupParts } spawnMs=${ d(setupDoneAt, spawnedAt) } initMs=${ d(spawnedAt, initAt) } firstStreamMs=${ d(initAt || spawnedAt, firstStreamAt) } firstContentMs=${ d(firstStreamAt || initAt || spawnedAt, firstContentAt) } firstTextMs=${ d(firstContentAt || firstStreamAt || initAt || spawnedAt, firstTokenAt) } totalToTextMs=${ d(runPhaseStart, firstTokenAt) }`);
         };
-        const noteToolStart = (id?: string, name?: string, input?: unknown) => {
-          if (!id || toolStarts.has(id)) return;
-          toolStarts.set(id, { name: name ?? 'tool', input, startedAt: Date.now() });
-          liveness.toolStarted(id, name ?? 'tool');
-          callbacks.onToolStarted?.({ toolUseId: id, toolName: name ?? 'tool', input });
-        };
-        const noteToolResult = (id?: string, resultChars = 0, isError = false) => {
-          if (!id) return;
-          const started = toolStarts.get(id);
-          if (!started) return;
-          toolStarts.delete(id);
-          liveness.toolFinished(id);
-          const ms = Date.now() - started.startedAt;
-          const agg = toolTotals.get(started.name) ?? { count: 0, ms: 0 };
-          agg.count += 1;
-          agg.ms += ms;
-          toolTotals.set(started.name, agg);
-          perf.log(`[ToolTiming] tool=${ started.name } ms=${ ms } resultChars=${ resultChars } convId=${ convId }`);
-          try {
-            callbacks.onToolEvent?.({
-              toolUseId: id, toolName: started.name, input: started.input, resultChars, isError,
-            });
-          } catch { /* ignore */ }
-        };
-
         // Kill THIS run's claude process inside the VM. Without a TTY, SSH
         // signal propagation isn't guaranteed — fire a follow-up kill so an
         // orphaned claude doesn't keep burning tokens after the user hits stop.
@@ -1325,37 +1314,35 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.once('spawn', () => { spawnedAt = Date.now(); onSpawned() });
 
         /**
-       * Summarise a tool_use block into a short activity message like
-       * "Running Bash: ls /etc" or "Reading /etc/hosts". Keep it tight so
-       * the thinking bubble stays readable on mobile.
+       * Summarise a tool_use block for the activity line. The structured
+       * tool event separately carries the complete input and result.
        */
         const activityForToolUse = (name: string, input: any): string => {
-          const pretty = (s: string) => s.length > 80 ? `${ s.slice(0, 77) }…` : s;
           if (!input || typeof input !== 'object') return `Using ${ name }`;
           switch (name) {
           case 'Bash':
-            if (typeof input.command === 'string') return `$ ${ pretty(input.command) }`;
+            if (typeof input.command === 'string') return `$ ${ input.command }`;
             return 'Running a shell command';
           case 'Read':
-            if (typeof input.file_path === 'string') return `Reading ${ pretty(input.file_path) }`;
+            if (typeof input.file_path === 'string') return `Reading ${ input.file_path }`;
             return 'Reading a file';
           case 'Edit':
           case 'Write':
-            if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ pretty(input.file_path) }`;
+            if (typeof input.file_path === 'string') return `${ name === 'Write' ? 'Writing' : 'Editing' } ${ input.file_path }`;
             return `${ name === 'Write' ? 'Writing' : 'Editing' } a file`;
           case 'Glob':
-            if (typeof input.pattern === 'string') return `Searching for ${ pretty(input.pattern) }`;
+            if (typeof input.pattern === 'string') return `Searching for ${ input.pattern }`;
             return 'Searching files';
           case 'Grep':
-            if (typeof input.pattern === 'string') return `Grepping ${ pretty(input.pattern) }`;
+            if (typeof input.pattern === 'string') return `Grepping ${ input.pattern }`;
             return 'Grepping';
           case 'WebFetch':
           case 'WebSearch':
-            if (typeof input.url === 'string') return `Fetching ${ pretty(input.url) }`;
-            if (typeof input.query === 'string') return `Searching web: ${ pretty(input.query) }`;
+            if (typeof input.url === 'string') return `Fetching ${ input.url }`;
+            if (typeof input.query === 'string') return `Searching web: ${ input.query }`;
             return `${ name } request`;
           case 'Task':
-            if (typeof input.description === 'string') return `Task: ${ pretty(input.description) }`;
+            if (typeof input.description === 'string') return `Task: ${ input.description }`;
             return 'Spawning sub-task';
           case 'AskUserQuestion':
           case 'mcp__sulla-native__ask_user_question':
@@ -1378,10 +1365,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         };
 
         const reportedToolIds = new Set<string>();
-        const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => {
-          if (!msg) return;
-          try { callbacks.onActivity?.(msg, reportingActivity) } catch { /* ignore */ }
-        };
+        const activityReporter = new ProviderToolActivityReporter(callbacks.onActivity);
+        const emitActivity = (msg: string, reportingActivity?: 'status' | 'tool') => activityReporter.report(msg, reportingActivity);
 
         const emitToolActivity = (id: string | undefined, name: string, input: unknown) => {
           if (id && reportedToolIds.has(id)) return;
@@ -1623,7 +1608,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               const name = ev.content_block.name ?? 'tool';
               // Input is fully streamed → the CLI is about to RUN the tool. Start
               // the clock here so input-generation time isn't counted as tool time.
-              noteToolStart(ev.content_block.id, name, ev.content_block.input);
+              toolEvents.noteStart(ev.content_block.id, name, ev.content_block.input);
               emitToolActivity(ev.content_block.id, name, ev.content_block.input);
               emitFilePatch(name, ev.content_block.input);
               return;
@@ -1655,7 +1640,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
                 // Fallback start for CLI versions that batch the whole assistant
                 // message instead of emitting streamed content_block_stop events.
                 // Idempotent — won't override an earlier stream-path start.
-                noteToolStart(b.id, b.name, b.input);
+                toolEvents.noteStart(b.id, b.name, b.input);
                 emitToolActivity(b.id, b.name, b.input);
                 emitFilePatch(b.name, b.input);
               }
@@ -1669,13 +1654,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             const blocks: any[] = Array.isArray(parsed.message.content) ? parsed.message.content : [];
             for (const b of blocks) {
               if (b?.type === 'tool_result') {
-                let chars = 0;
-                if (typeof b.content === 'string') {
-                  chars = b.content.length;
-                } else if (Array.isArray(b.content)) {
-                  chars = b.content.reduce((n: number, c: any) => n + (typeof c?.text === 'string' ? c.text.length : 0), 0);
-                }
-                noteToolResult(b.tool_use_id, chars, b.is_error === true);
+                toolEvents.noteResult(b.tool_use_id, b.content, b.is_error === true);
               }
             }
           }
@@ -1701,7 +1680,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             let toolMs = 0;
             let toolCount = 0;
             const breakdown: string[] = [];
-            toolTotals.forEach((agg, name) => {
+            toolEvents.totals.forEach((agg, name) => {
               toolMs += agg.ms;
               toolCount += agg.count;
               breakdown.push(`${ name }x${ agg.count }=${ agg.ms }ms`);
@@ -1795,7 +1774,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (capturedSessionId) this.setSession(convId, capturedSessionId).catch(() => {});
           if (!settled) {
             settled = true;
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool;
+            const retrySafe = toolEvents.pendingCount === 0 && !unresolvedTool;
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
             reject(handoffFault(new CliFaultError('spawn', `Claude Code process error: ${ err.message }.${ safety }`, err, retrySafe, !retrySafe)));
           }
@@ -1984,9 +1963,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             log.warn(`[ClaudeCodeService] runClaude errored: ${ msg.slice(0, 200) }`);
             const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
             await handleClaudeAuthFailure(typedFailure);
-            reject(isPermanentCliFailure(typedFailure) && !(toolStarts.size > 0 || unresolvedTool)
+            reject(isPermanentCliFailure(typedFailure) && !(toolEvents.pendingCount > 0 || unresolvedTool)
               ? typedFailure
-              : new CliFaultError('process_exit', `Claude Code: ${ msg }`, typedFailure, !(toolStarts.size > 0 || unresolvedTool), Boolean(toolStarts.size > 0 || unresolvedTool)));
+              : new CliFaultError('process_exit', `Claude Code: ${ msg }`, typedFailure, !(toolEvents.pendingCount > 0 || unresolvedTool), Boolean(toolEvents.pendingCount > 0 || unresolvedTool)));
             return;
           }
 
@@ -1995,16 +1974,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             log.warn(`[ClaudeCodeService] runClaude exited nonzero (exitCode=${ code }; stderr=${ JSON.stringify(redactClaudeDiagnostic(stderrBuffer.trim(), messages)) })`);
             const typedFailure = legacyProviderFailure('claude-code', msg, { exitCode: code });
             await handleClaudeAuthFailure(typedFailure);
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
+            const retrySafe = toolEvents.pendingCount === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
+            reject(!retrySafe && !(toolEvents.pendingCount > 0 || unresolvedTool)
               ? typedFailure
-              : handoffFault(new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool))));
+              : handoffFault(new CliFaultError('process_exit', `Claude Code: ${ msg }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolEvents.pendingCount > 0 || unresolvedTool))));
             return;
           }
 
           if (!sawTerminalResult) {
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool;
+            const retrySafe = toolEvents.pendingCount === 0 && !unresolvedTool;
             reject(handoffFault(new CliFaultError('protocol', 'Claude Code exited before emitting a terminal result event.', undefined, retrySafe, !retrySafe)));
             return;
           }
@@ -2014,11 +1993,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             log.warn(`[ClaudeCodeService] runClaude exited with no text (code=${ code }) stderr=${ stderrTail }`);
             const typedFailure = legacyProviderFailure('claude-code', stderrTail || 'Claude Code returned no output', { exitCode: code });
             await handleClaudeAuthFailure(typedFailure);
-            const retrySafe = toolStarts.size === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
+            const retrySafe = toolEvents.pendingCount === 0 && !unresolvedTool && !isPermanentCliFailure(typedFailure);
             const safety = retrySafe ? '' : ' Recovery was not attempted because a tool was still unresolved.';
-            reject(!retrySafe && !(toolStarts.size > 0 || unresolvedTool)
+            reject(!retrySafe && !(toolEvents.pendingCount > 0 || unresolvedTool)
               ? typedFailure
-              : new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolStarts.size > 0 || unresolvedTool)));
+              : new CliFaultError('protocol', `Claude Code returned no output (exit code ${ code }). ${ stderrTail || 'Check credentials or VM status.' }${ safety }`, typedFailure, retrySafe, !retrySafe && (toolEvents.pendingCount > 0 || unresolvedTool)));
             return;
           }
 
