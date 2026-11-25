@@ -53,12 +53,12 @@
   align-items: flex-end;
   gap: 2px;
 }
-.app-titlebar .tab-pinned-section { flex: none; }
+.app-titlebar .tab-pinned-section { min-width: min-content; }
 .app-titlebar .tab-group {
   position: relative;
   display: flex;
   flex: 0 1 auto;
-  min-width: 0;
+  min-width: min-content;
   height: 40px;
   align-items: flex-end;
   padding: 0 4px 0 2px;
@@ -68,6 +68,16 @@
     inset 1px 0 0 color-mix(in srgb, var(--group-accent) 16%, transparent),
     inset -1px 0 0 color-mix(in srgb, var(--group-accent) 16%, transparent);
 }
+/* Give spare room to the selected tab's group, not just the selected tab. */
+.app-titlebar .tab-group:not(.tab-group-folded):has([data-active="true"]),
+.app-titlebar .tab-group:not(.tab-group-folded):has([data-active="true"]) .tab-group-tabs {
+  flex-grow: 1;
+}
+.app-titlebar .tab-group:not(.tab-group-folded):has([data-active="true"]) .tab-inactive {
+  flex-grow: 1;
+  max-width: none;
+}
+.app-titlebar .tab-group-tabs > [data-active="true"]:only-child { flex-grow: 1; max-width: none; }
 .app-titlebar .tab-group-chats { --group-accent: var(--accent); }
 .app-titlebar .tab-group-browser { --group-accent: var(--text-accent); }
 .app-titlebar .tab-group-tools { --group-accent: var(--status-success); }
@@ -125,6 +135,7 @@
 .app-titlebar .tab-group-dot-you { background: var(--status-warning); }
 .app-titlebar .tab-group-dot-stalled { background: var(--status-error); }
 .app-titlebar .tab-group-folded {
+  flex: none;
   height: 30px;
   align-self: center;
   padding: 0;
@@ -227,15 +238,6 @@
   -webkit-mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
   mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
 }
-.app-titlebar .tab-busy:not(.tab-active):not(.tab-active-native) .tab-label { max-width: 100%; }
-.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native) {
-  flex: 0 0 36px;
-  min-width: 36px;
-  max-width: 36px;
-  padding: 0 10px;
-}
-.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native) .tab-label,
-.app-titlebar .tab-idle:not(.tab-active):not(.tab-active-native) .tab-close { display: none; }
 .app-titlebar .tab-pinned-boundary { margin-left: 12px; }
 .app-titlebar .tab-pinned-boundary::before {
   position: absolute;
@@ -248,14 +250,6 @@
   pointer-events: none;
 }
 .app-titlebar .tab-pin { width: 13px; height: 13px; flex: none; color: var(--accent); }
-.app-titlebar .tab-idle.tab-inactive .tab-pin {
-  position: absolute;
-  top: 3px;
-  inset-inline-end: 3px;
-  width: 10px;
-  height: 10px;
-  pointer-events: none;
-}
 .app-titlebar .tab-icon { position: relative; width: 16px; height: 16px; flex: 0 0 16px; }
 .app-titlebar .tab-status { width: 16px; height: 16px; }
 .app-titlebar .tab-status-working svg { display: none; }
