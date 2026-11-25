@@ -1158,7 +1158,7 @@ watch(
 
 // Update scroll fades and active visibility when order or status changes.
 watch(
-  () => orderedTabs.value.map(tab => `${ tab.id }:${ tab.isActive }:${ tab.pinned }:${ tab.activity || '' }`).join('|'),
+  () => orderedTabs.value.map(tab => `${ tab.id }:${ tab.isActive }:${ tab.pinned }:${ tab.working }:${ tab.activity || '' }`).join('|'),
   () => {
     nextTick(() => {
       updateScrollButtons();
