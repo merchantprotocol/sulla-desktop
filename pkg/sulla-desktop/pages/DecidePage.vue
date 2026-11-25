@@ -7,7 +7,7 @@
 <template>
   <section class="decide-page">
     <header class="decide-hero">
-      <div><span class="decide-eyebrow">Decision desk</span><h1>Decide with confidence.</h1><p>{{ pending.length }} waiting on you</p></div>
+      <div><span class="decide-eyebrow">Decision desk</span><h1>Decide with confidence.</h1><p v-if="routeCount">{{ routeCounts.yourTurn }} your turn · {{ routeCounts.withAgent }} with an agent</p><p v-else>{{ pending.length }} waiting on you</p></div>
       <button
         type="button"
         @click="openSettings"
@@ -68,8 +68,22 @@
       <p v-if="!records.length && !error">
         Nothing waiting on you. Requests appear here when an agent needs your decision.
       </p>
+      <template v-for="group in routeSections" :key="group.key">
+      <section class="decision-route-group">
+      <h2 class="decision-group">{{ group.label }}</h2>
+      <ul class="decision-route-list">
+      <li v-for="item in group.items" :key="item.record.id" class="decision-route-row" :data-turn="item.presentation.turn">
+        <svg v-if="item.record.kind === 'question'" class="decision-route-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M9.5 9a2.5 2.5 0 0 1 4.8 1c0 1.7-2.3 2-2.3 3.5" /><path d="M12 17.5h.01" /></svg>
+        <svg v-else class="decision-route-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 3 4.3v3.6c0 2.7 2 4.8 5 5.6 3-.8 5-2.9 5-5.6V4.3z" /><path d="M8 6v2.5M8 10.4v.1" /></svg>
+        <div class="decision-route-main"><b>{{ item.record.title }}</b><small>from <code>{{ item.record.requestedBy?.agentId || item.presentation.requesterLabel }}</code><template v-if="item.presentation.answerSummary"> · {{ item.presentation.answerSummary }}</template></small></div>
+        <DecisionHolderLine class="decision-route-holder" :presentation="item.presentation" compact />
+        <button type="button" class="decision-route-action" :class="{ 'decision-primary': item.presentation.turn === 'yours' }" @click="openConversation(item.record)">{{ routeButton(item.record, item.presentation.turn) }}</button>
+      </li>
+      </ul>
+      </section>
+      </template>
       <article
-        v-for="item in records"
+        v-for="item in legacyRecords"
         :key="item.id"
         class="decision"
         :class="`decision-${item.status}`"
@@ -149,7 +163,7 @@
           Open original conversation
         </button>
       </article>
-    </template>
+      </template>
   </section>
 </template>
 <script setup lang="ts">
@@ -158,9 +172,25 @@ import { useRouter } from 'vue-router';
 
 import { useDecisions } from '@pkg/composables/useDecisions';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
+import { DecisionConversationTargetResolver } from '@pkg/pages/chat/decisions/DecisionConversationTargetResolver';
+import { useDecisionRoutePresenter } from '@pkg/pages/chat/decisions/useDecisionRoutePresenter';
+import DecisionHolderLine from '@pkg/pages/chat/components/tool/DecisionHolderLine.vue';
 import type { DecisionRecord, DecisionResponse } from '@pkg/shared/decisions';
+import type { DecisionRouteTurn } from '@pkg/pages/chat/decisions/DecisionRoutePresenter';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 const { records, pending, error, refresh } = useDecisions();
+const routePresenter = useDecisionRoutePresenter({ now: () => Date.now() });
+const conversationTarget = new DecisionConversationTargetResolver();
+const routeGroups = computed(() => routePresenter.group(records.value));
+const routeCount = computed(() => routeGroups.value.yourTurn.length + routeGroups.value.withAgent.length + routeGroups.value.settled.length);
+const routeCounts = computed(() => routePresenter.counts(records.value, legacyPendingCount.value));
+const routeSections = computed(() => [
+  { key: 'yours', label: `Your turn · ${routeGroups.value.yourTurn.length}`, items: routeGroups.value.yourTurn },
+  { key: 'with-agent', label: `With an agent · ${routeGroups.value.withAgent.length}`, items: routeGroups.value.withAgent },
+  { key: 'settled', label: `Settled today · ${routeGroups.value.settled.length}`, items: routeGroups.value.settled },
+].filter(group => group.items.length));
+const legacyRecords = computed(() => records.value.filter(record => !record.route));
+const legacyPendingCount = computed(() => pending.value.filter(record => !record.route).length);
 const router = useRouter();
 const settings = ref(false);
 const search = ref('');
@@ -186,7 +216,8 @@ async function setPolicy(policy: Policy, required: boolean) {
   try { await ipcRenderer.invoke('decisions:set-policy', policy.name, required); policy.required = required; actionError.value = '' } catch (e) { actionError.value = `Policy was not saved: ${ reason(e) }` } finally { busy.value = '' }
 }
 function openConversation(item: DecisionRecord) {
-  const tab = restoreChatFromHistory({ id: item.conversationId, thread_id: item.conversationId, type: 'graph', title: item.title });
+  const rootConversationId = conversationTarget.resolve(item);
+  const tab = restoreChatFromHistory({ id: rootConversationId, thread_id: rootConversationId, type: 'graph', title: item.title });
   router.push(`/Browser/${ tab.id }`).catch(() => { actionError.value = 'Could not open the original conversation.' });
 }
 async function answer(item: DecisionRecord, action: DecisionResponse['action']) {
@@ -206,6 +237,11 @@ async function answer(item: DecisionRecord, action: DecisionResponse['action']) 
     await refresh();
     if (action !== 'deferred') openConversation(item);
   } catch (e) { actionError.value = reason(e) || 'Decision was not accepted.' } finally { busy.value = '' }
+}
+function routeButton(record: DecisionRecord, turn: DecisionRouteTurn): string {
+  if (turn === 'settled') return 'View';
+  if (turn === 'with-agent') return record.kind === 'approval' ? 'Decide now' : 'Answer now';
+  return record.kind === 'approval' ? 'Review' : 'Answer';
 }
 </script>
 <style scoped>
@@ -307,9 +343,28 @@ small { display: block; margin: 5px 0; } fieldset { margin: 14px 0; padding: 12p
   background: linear-gradient(180deg, var(--accent-hover), var(--accent));
   box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 24%, transparent), inset 0 1px color-mix(in srgb, var(--text-on-accent) 20%, transparent);
 }
+.decision-group { margin: 14px 0 4px; color: var(--text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.decision-route-group { padding: 6px 20px 16px; }
+.decision-route-list { margin: 0; padding: 0; list-style: none; }
+.decision-route-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(0, 270px) 92px; column-gap: 12px; align-items: center; padding: 9px 0; border-top: 1px solid var(--border-default); min-width: 0; }
+.decision-route-icon { width: 16px; height: 16px; fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; justify-self: center; }
+.decision-route-row[data-turn="yours"] .decision-route-icon { color: var(--status-warning); stroke: currentColor; }
+.decision-route-main { min-width: 0; }
+.decision-route-main b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 500; line-height: 19px; }
+.decision-route-main small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 12px; }
+.decision-route-main code { font: 11.5px var(--font-mono); }
+.decision-route-row .decision-route-action { justify-self: end; height: 28px; padding: 0 12px; margin: 0; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-secondary); font-size: 12.5px; white-space: nowrap; }
+.decision-route-row .decision-route-action.decision-primary { border-color: var(--accent); background: var(--accent); color: var(--text-on-accent); }
 @keyframes decide-noir-enter { from { opacity: 0; transform: translateY(8px); filter: blur(8px); } to { opacity: 1; transform: none; filter: none; } }
 @media (prefers-reduced-motion: reduce) {
   .decision { animation: none; transition: none; }
   .decide-page button { transition: none; }
+}
+@media (max-width: 600px) {
+  .decision-route-group { padding: 4px 12px 14px; }
+  .decision-route-row { grid-template-columns: 24px minmax(0, 1fr); row-gap: 6px; }
+  .decision-route-holder, .decision-route-action { grid-column: 2; }
+  .decision-route-action { justify-self: start; }
+  .decision-route-main b, .decision-route-main small { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 }
 </style>

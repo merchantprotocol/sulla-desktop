@@ -18,7 +18,44 @@
       No questions or approvals in this chat yet.
     </p>
     <template v-else>
-      <div class="dc-sum">
+      <div v-if="routeCount" class="dc-sum dc-route-counts">
+        <span><b>{{ routeGroups.yourTurn.length }}</b> your turn</span>
+        <span><b>{{ routeGroups.withAgent.length }}</b> with an agent</span>
+        <span><b>{{ routeGroups.settled.length }}</b> settled</span>
+      </div>
+      <section v-for="group in routeSections" :key="group.key" class="dc-route-group">
+        <p class="dc-grp">{{ group.label }}</p>
+        <article v-for="item in group.items" :key="item.record.id" class="dc-route-item">
+          <div class="dc-route-head">
+            <span class="dc-route-status" :data-turn="item.presentation.turn">{{ item.presentation.statusLabel }}</span>
+            <span class="dc-route-time">{{ item.presentation.statusTimeLabel }}</span>
+            <span class="dc-sp" />
+            <button type="button" class="dc-btn" :class="{ 'dc-pri': item.presentation.turn === 'yours' }" @click="openDecision(item.record)">
+              {{ item.presentation.turn === 'settled' ? 'Jump to' : routeButton(item.record, item.presentation.turn) }}
+            </button>
+          </div>
+          <p class="dc-q">{{ item.record.title }}</p>
+          <div class="dc-route-origin">
+            <DecisionActorMarker
+              :role="item.presentation.turn === 'yours' ? item.presentation.requesterRole : item.presentation.holderRole"
+              :initials="item.presentation.turn === 'yours' ? item.presentation.requesterInitial : item.presentation.holderInitial"
+            />
+            <span v-if="item.presentation.turn === 'with-agent'">
+              <b>With {{ item.presentation.holderLabel || 'an agent' }}</b>
+              <small>from {{ item.presentation.requesterLabel }}<template v-if="item.presentation.routeDetail"> · {{ item.presentation.routeDetail }}</template></small>
+            </span>
+            <span v-else-if="item.presentation.turn === 'settled'">
+              <b>{{ item.presentation.answeredByLabel || item.presentation.holderLine }}</b>
+              <small v-if="item.presentation.routeDetail">{{ item.presentation.routeDetail }}</small>
+            </span>
+            <span v-else>
+              from {{ item.presentation.requesterLabel }}
+              <small v-if="item.presentation.routeDetail">{{ item.presentation.routeDetail }}</small>
+            </span>
+          </div>
+        </article>
+      </section>
+      <div v-if="legacyDecisions.length" class="dc-sum">
         <span
           v-for="chip in chips"
           :key="chip.key"
@@ -27,7 +64,7 @@
         ><b>{{ chip.count }}</b> {{ chip.label }}</span>
       </div>
       <article
-        v-for="record in decisions"
+        v-for="record in legacyDecisions"
         :key="record.id"
         class="dc-item"
         :class="{ 'dc-open': isOpenDecision(record) }"
@@ -80,14 +117,28 @@ import { computed } from 'vue';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimes } from '../../messages/lineTime';
 import { isOpenDecision } from '../../messages/sideDock';
+import { ChatDecisions } from '../../composables/useChatDecisions';
+import type { DecisionRouteTurn } from '../../decisions/DecisionRoutePresenter';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
+import DecisionActorMarker from '../../decisions/DecisionActorMarker.vue';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
 
 const props = defineProps<{ decisions: readonly DecisionRecord[] }>();
 const controller = useChatController();
+const store = ChatDecisions.useChatDecisions();
+const routePresenter = useDecisionRoutePresenter({ now: () => store.now.value });
+const routeGroups = computed(() => routePresenter.group(props.decisions));
+const routeCount = computed(() => routeGroups.value.yourTurn.length + routeGroups.value.withAgent.length + routeGroups.value.settled.length);
+const routeSections = computed(() => [
+  { key: 'yours', label: `Your turn · ${routeGroups.value.yourTurn.length}`, items: routeGroups.value.yourTurn },
+  { key: 'agent', label: `With an agent · ${routeGroups.value.withAgent.length}`, items: routeGroups.value.withAgent },
+  { key: 'settled', label: `Settled today · ${routeGroups.value.settled.length}`, items: routeGroups.value.settled },
+].filter(group => group.items.length));
+const legacyDecisions = computed(() => props.decisions.filter(record => !record.route));
 
 const chips = computed(() => {
-  const count = (test: (record: DecisionRecord) => boolean) => props.decisions.filter(test).length;
+  const count = (test: (record: DecisionRecord) => boolean) => legacyDecisions.value.filter(test).length;
   return [
     { key: 'open', label: 'open', count: count(isOpenDecision) },
     { key: 'done', label: 'answered', count: count(record => ['answered', 'approved', 'denied'].includes(record.status)) },
@@ -125,6 +176,16 @@ function cardFor(record: DecisionRecord): string | undefined {
 function jump(messageId: string): void {
   window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId } }));
 }
+function routeButton(record: DecisionRecord, turn: DecisionRouteTurn): string {
+  if (turn === 'settled') return 'View';
+  if (turn === 'with-agent') return record.kind === 'approval' ? 'Decide now' : 'Answer now';
+  return record.kind === 'approval' ? 'Review' : 'Answer';
+}
+function openDecision(record: DecisionRecord): void {
+  const messageId = cardFor(record);
+  if (messageId) jump(messageId);
+  else store.show(record.id);
+}
 </script>
 
 <style scoped>
@@ -156,4 +217,21 @@ function jump(messageId: string): void {
 .dc-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .dc-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dc-pri { border-color: var(--status-warning); background: var(--status-warning); color: var(--bg-page); font-weight: 650; }
+.dc-route-counts { gap: 6px 14px; margin-bottom: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.dc-route-counts b { color: var(--text-primary); }
+.dc-grp { margin: 14px 0 4px; color: var(--text-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dc-route-item { display: grid; gap: 4px; padding: 10px 0; border-top: 1px solid var(--border-default); }
+.dc-route-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dc-route-status { color: var(--text-secondary); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.dc-route-status[data-turn="yours"] { color: var(--status-warning); }
+.dc-route-time { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dc-route-head .dc-sp { flex: 1; min-width: 0; }
+.dc-route-head .dc-btn { flex: none; }
+.dc-route-item .dc-q { overflow-wrap: anywhere; font-weight: 500; }
+.dc-route-origin { display: flex; align-items: flex-start; gap: 7px; color: var(--text-secondary); font-size: 12.5px; line-height: 18px; min-width: 0; }
+.dc-route-origin > span { min-width: 0; overflow-wrap: anywhere; }
+.dc-route-origin b { color: var(--text-primary); font-weight: 500; }
+.dc-route-origin small { display: block; color: var(--text-muted); font-size: 12px; line-height: 18px; }
+.dc-route-item .dc-btn { border-color: var(--border-strong); border-radius: 8px; }
+.dc-route-item .dc-pri { border-color: var(--accent); background: var(--accent); color: var(--text-on-accent, #fff); font-weight: 600; }
 </style>

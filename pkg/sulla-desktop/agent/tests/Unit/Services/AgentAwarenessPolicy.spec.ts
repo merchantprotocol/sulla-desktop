@@ -18,6 +18,15 @@ describe('AgentAwarenessPolicy', () => {
     expect(policy.filterToolNames(tools)).toEqual(tools);
   });
 
+  it('blocks answer_decision when a holder has opted out of seeing other agents', () => {
+    // risk: authorization — an agent with Sees other agents OFF must not act as a parent decision holder.
+    const policy = new AgentAwarenessPolicy();
+    for (const name of ['answer_decision', 'agents/answer_decision', 'agents_answer_decision']) {
+      expect(policy.allowsTool({ agentAwareness: false }, name), name).toBe(false);
+      expect(policy.allowsTool({ agentAwareness: true }, name), name).toBe(true);
+    }
+  });
+
   it('removes every past roster line from turn-context blocks without touching surrounding text', () => {
     // risk: an opt-out is ineffective if a prior turn's roster remains in CLI transcript history.
     const policy = new AgentAwarenessPolicy();

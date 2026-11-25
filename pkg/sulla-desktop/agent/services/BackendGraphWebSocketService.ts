@@ -232,7 +232,7 @@ export class BackendGraphWebSocketService {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
-        content:   this.orchestratorMessageFormatter.format(message),
+        content:   this.orchestratorMessageFormatter.format(message, String(messageMeta.jobMessageKind ?? '')),
         timestamp: Date.now(),
         metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
       } as any);
@@ -246,7 +246,7 @@ export class BackendGraphWebSocketService {
       injectSteer(delegated.state, {
         id:        nextMessageId(),
         role:      'user',
-        content:   this.orchestratorMessageFormatter.format(message),
+        content:   this.orchestratorMessageFormatter.format(message, String(messageMeta.jobMessageKind ?? '')),
         timestamp: Date.now(),
         metadata:  { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
       } as any);
@@ -266,7 +266,7 @@ export class BackendGraphWebSocketService {
       return false;
     }
     const receipt = await this.dispatchToAgent(channelId, channelId === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
-      this.orchestratorMessageFormatter.format(message), threadId, undefined, agentId || parked.agentId, 'system', {
+      this.orchestratorMessageFormatter.format(message, String(messageMeta.jobMessageKind ?? '')), threadId, undefined, agentId || parked.agentId, 'system', {
         source: 'orchestrator_job_message', ...messageMeta,
       });
     return receipt !== 'deferred';
@@ -467,9 +467,9 @@ export class BackendGraphWebSocketService {
         threadId,
         undefined,
         receiverAgentId,
-        entries.every(entry => entry.envelope.kind === 'human') ? 'keyboard' : 'system',
-        { source: 'agent_inbox', workerMappingNewHumanTurn: entries.every(entry => entry.envelope.kind === 'human'), inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
-        entries.every(entry => entry.envelope.kind === 'human') ? entries.map(entry => ({ id: entry.envelope.ids.messageId, attempt: String((entry.envelope.ids as any).answerAttempt ?? ''), body: entry.envelope.body })) : undefined,
+        human ? 'keyboard' : 'system',
+        { source: 'agent_inbox', workerMappingNewHumanTurn: human, inboxMessageIds: entries.map(entry => entry.envelope.ids.messageId), relayed: entries.some(entry => entry.envelope.ids.relayed === true) },
+        entries.filter(entry => entry.envelope.ids.messageId.startsWith('decision-answer:')).map(entry => ({ id: entry.envelope.ids.messageId, attempt: String((entry.envelope.ids as any).answerAttempt ?? ''), body: entry.envelope.body })),
       );
     } finally { if (human && threadId) this.deliveringDecisionThreads.delete(threadId); }
   }

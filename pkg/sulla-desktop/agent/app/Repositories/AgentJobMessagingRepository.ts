@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { Repository } from '@sulla/foundation';
 
 import { AgentJobMessage as AgentJobMessageModel } from '../Models/AgentJobMessage';
-import type { AgentJobTaskTarget, AgentJobMessage, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
+import type { AgentJobTaskTarget, AgentJobMessage, AgentJobMessageKind, AgentJobCheckin, AgentJobCheckinReceipt, AgentJobTaskTelemetry } from '../../database/models/AgentJobMessagingModel';
 
 export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel> {
   protected readonly model = AgentJobMessageModel;
@@ -19,18 +19,19 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
   setClock(clock: () => number): void { this.telemetryClock = clock; }
   /** Every check-in/message write goes through this repository; each one invalidates the telemetry cache. */
   private telemetryChanged(): void { this.telemetryVersion++; this.telemetryReads.clear(); }
-  private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined, label: row.label || undefined, agentId: row.agent_id || undefined }; }
-  private rowToMessage(row: any): AgentJobMessage { return { id: row.id, jobId: row.job_id, taskIndex: Number(row.task_index), message: row.message, createdAt: new Date(row.created_at).getTime(), deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : undefined }; }
+  private rowToTarget(row: any): AgentJobTaskTarget { return { jobId: row.job_id, taskIndex: Number(row.task_index), jobStatus: row.job_status, taskStatus: row.task_status, threadId: row.thread_id || undefined, parentChannel: row.parent_channel || undefined, parentThreadId: row.parent_thread_id || undefined, label: row.label || undefined, agentId: row.agent_id || undefined, spawnMode: row.spawn_mode === 'sync' ? 'sync' : row.spawn_mode === 'async' ? 'async' : undefined, parentJobId: row.parent_job_id ?? null }; }
+  private rowToMessage(row: any): AgentJobMessage { return { id: row.id, jobId: row.job_id, taskIndex: Number(row.task_index), message: row.message, messageKind: row.message_kind ?? 'orchestrator', createdAt: new Date(row.created_at).getTime(), deliveredAt: row.delivered_at ? new Date(row.delivered_at).getTime() : undefined }; }
   private rowToCheckin(row: any): AgentJobCheckin { return { step: row.step, summary: row.summary, filesTouched: Array.isArray(row.files_touched) ? row.files_touched : [], blockers: Array.isArray(row.blockers) ? row.blockers : [], percent: row.percent == null ? undefined : Number(row.percent), createdAt: new Date(row.created_at).getTime() }; }
 
   async taskForThread(threadId: string): Promise<AgentJobTaskTarget | null> {
     const rows = await this.connection.select<any>(
-      `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id,
+      `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id, j.parent_job_id,
               task.ordinality - 1 AS task_index,
               task.value->>'status' AS task_status,
               task.value->>'threadId' AS thread_id,
               task.value->>'label' AS label,
-              task.value->>'agentId' AS agent_id
+              task.value->>'agentId' AS agent_id,
+              task.value->>'spawnMode' AS spawn_mode
          FROM agent_jobs j
          CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
         WHERE task.value->>'threadId' = $1
@@ -43,12 +44,13 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
 
   async targetsForJob(jobId: string, requestedTaskIndex?: number): Promise<AgentJobTaskTarget[]> {
     const rows = await this.connection.select<any>(
-      `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id,
+      `SELECT j.job_id, j.status AS job_status, j.parent_channel, j.parent_thread_id, j.parent_job_id,
               task.ordinality - 1 AS task_index,
               task.value->>'status' AS task_status,
               task.value->>'threadId' AS thread_id,
               task.value->>'label' AS label,
-              task.value->>'agentId' AS agent_id
+              task.value->>'agentId' AS agent_id,
+              task.value->>'spawnMode' AS spawn_mode
          FROM agent_jobs j
          CROSS JOIN LATERAL jsonb_array_elements(j.tasks) WITH ORDINALITY AS task(value, ordinality)
         WHERE j.job_id = $1
@@ -63,13 +65,13 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
     );
   }
 
-  async queueMessage(target: AgentJobTaskTarget, message: string): Promise<AgentJobMessage> {
+  async queueMessage(target: AgentJobTaskTarget, message: string, messageKind: AgentJobMessageKind = 'orchestrator'): Promise<AgentJobMessage> {
     const id = crypto.randomUUID();
     const rows = await this.connection.select<any>(
-      `INSERT INTO agent_job_messages (id, job_id, task_index, message)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO agent_job_messages (id, job_id, task_index, message, message_kind)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [id, target.jobId, target.taskIndex, message],
+      [id, target.jobId, target.taskIndex, message, messageKind],
     );
     this.telemetryChanged();
 

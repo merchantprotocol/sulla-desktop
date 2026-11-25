@@ -79,7 +79,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'ask_user_question',
-    description: 'Pause and ask the user one or more multiple-choice questions, then BLOCK until they answer in the chat (or the timeout elapses — default 5 min). Renders an interactive card with selectable options; the user may also type a free-form answer. Returns the selected option(s) per question. Use whenever the next step depends on a decision only the user can make — picking between approaches, confirming an assumption, supplying a missing detail, or getting a yes/no go-ahead (offer Approve / Deny options).',
+    description: 'Save one or more multiple-choice questions in For You. The human may answer at any time. An agent in the delegation chain may also answer or pass plain questions when one is available; task questions require the human. Replies identify who answered. End this turn and wait; do not re-ask or proceed with dependent work.',
     category:    'meta',
     schemaDef:   {
       questions: {

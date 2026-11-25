@@ -52,6 +52,7 @@ import {
   emitQuestionCardViaWs,
   formatQuestionReceipt,
   normalizeQuestions,
+  QuestionReceiptPolicy,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
@@ -433,7 +434,7 @@ export class MCPServerHost {
 
         const { decisionService } = await import('@pkg/agent/services/DecisionService');
         const stopSignals = [session.state.metadata.options?.abort?.signal, extra?.signal].filter((signal): signal is AbortSignal => !!signal);
-        const { record, reused } = await decisionService.requestQuestion({
+        const { record, reused, parked } = await decisionService.requestQuestion({
           title: normalized[0].question, questions: normalized,
           conversationId: session.state.metadata.threadId,
           channel: session.state.metadata.wsChannel || 'sulla-desktop',
@@ -441,7 +442,7 @@ export class MCPServerHost {
         // The durable record is authoritative even if the transient transcript notification fails.
         if (!reused) await emitQuestionCardViaWs(session.state.metadata.wsChannel, session.state.metadata.threadId, record.id, normalized);
         return {
-          content: [{ type: 'text' as const, text: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? '')) }],
+          content: [{ type: 'text' as const, text: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, new QuestionReceiptPolicy().parentMayAnswer(record)) }],
         };
       },
     );

@@ -8,11 +8,22 @@
 <template>
   <section
     class="qc"
-    :class="{ 'qc-settled': locked, 'qc-original': retainOptions }"
+    :class="{ 'qc-settled': locked, 'qc-original': retainOptions, 'qc-route': routePresentation }"
     :aria-disabled="locked"
-    aria-label="Question from Sulla"
+    :aria-label="routePresentation ? `Question from ${routePresentation.requesterLabel}` : 'Question from Sulla'"
   >
-    <header class="qc-status">
+    <template v-if="routePresentation">
+      <DecisionHolderLine :presentation="routePresentation" />
+      <p class="qc-route-from">
+        <DecisionActorMarker
+          :role="routePresentation.requesterRole"
+          :initials="routePresentation.requesterInitial"
+        />
+        <span>Question from <b>{{ routePresentation.requesterLabel }}</b></span>
+      </p>
+      <DecisionTrail :rows="routePresentation.trail" />
+    </template>
+    <header v-else class="qc-status">
       <span
         class="qc-state"
         :class="stateTone"
@@ -29,6 +40,7 @@
       >Expires in {{ countdown }}</span>
     </header>
 
+    <div :class="{ 'qc-route-body': routePresentation }">
     <p
       v-if="msg.resolutionError"
       class="qc-error"
@@ -91,10 +103,10 @@
           :key="oi"
           type="button"
           class="qc-option"
-          :class="{ picked: isPicked(qi, opt.label), multi: q.multiSelect }"
+          :class="{ picked: selection.isPicked(qi, opt.label), multi: q.multiSelect }"
           :role="q.multiSelect ? 'checkbox' : 'radio'"
-          :aria-checked="isPicked(qi, opt.label)"
-          @click="toggle(qi, opt.label, q.multiSelect === true)"
+          :aria-checked="selection.isPicked(qi, opt.label)"
+          @click="selection.toggle(qi, opt.label, q.multiSelect === true)"
         >
           <span
             class="qc-mark"
@@ -115,7 +127,7 @@
           v-if="!locked"
           class="qc-option qc-custom"
           :class="{ picked: customSelected[qi], multi: q.multiSelect }"
-          @click.self="selectCustom(qi, true)"
+          @click.self="selection.selectCustom(qi, true)"
         >
           <input
             class="qc-mark qc-custom-choice"
@@ -123,7 +135,7 @@
             :name="`custom-${msg.id}-${qi}`"
             :checked="customSelected[qi]"
             :aria-label="`Write your own answer to: ${q.question}`"
-            @change="selectCustom(qi, ($event.target as HTMLInputElement).checked)"
+            @change="selection.selectCustom(qi, ($event.target as HTMLInputElement).checked)"
           >
           <input
             v-model="otherText[qi]"
@@ -131,8 +143,8 @@
             type="text"
             placeholder="Or write your own answer"
             :aria-label="`Your own answer to: ${q.question}`"
-            @focus="selectCustom(qi, true)"
-            @input="selectCustom(qi, true)"
+            @focus="selection.selectCustom(qi, true)"
+            @input="selection.selectCustom(qi, true)"
             @keyup.enter="submit"
           >
         </div>
@@ -187,6 +199,10 @@
         v-else-if="!canSubmit"
         class="qc-hint"
       >Pick an option or write an answer{{ msg.questions.length > 1 ? ' for each question' : '' }} to continue.</span>
+      <span
+        v-if="routePresentation?.turn === 'with-agent'"
+        class="qc-hint qc-route-hint"
+      >You can answer now. Your answer goes straight to {{ routePresentation.requesterLabel }} and {{ routePresentation.holderLabel }} stops.</span>
     </footer>
 
     <dl
@@ -201,17 +217,30 @@
         <dd>{{ a.selected.join(', ') || 'No selection' }}</dd>
       </template>
     </dl>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { ToolQuestionMessage, ToolQuestionAnswerItem } from '../../models/Message';
 import { useChatController } from '../../controller/useChatController';
 import { answerSelection } from '../../messages/questionAnswer';
+import { ChatDecisions } from '../../composables/useChatDecisions';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
+import DecisionHolderLine from './DecisionHolderLine.vue';
+import DecisionTrail from './DecisionTrail.vue';
+import DecisionActorMarker from '../../decisions/DecisionActorMarker.vue';
+import { ToolQuestionSelection } from './ToolQuestionSelection';
+import './ToolQuestion.css';
 
-const props = defineProps<{ msg: ToolQuestionMessage; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
+const props = defineProps<{ msg: ToolQuestionMessage; decision?: DecisionRecord; persistent?: boolean; blocked?: boolean; retainOptions?: boolean; stateLabel?: string; draft?: { picks: string[][]; other: string[]; customSelected?: boolean[] }; submitAnswers?: (answers: ToolQuestionAnswerItem[]) => Promise<void> }>();
 const controller = useChatController();
+const decisionStore = ChatDecisions.useChatDecisions();
+const routePresenter = useDecisionRoutePresenter({ now: () => decisionStore.now.value });
+const routePresentation = computed(() => { const record = props.decision ?? (props.msg.questionId ? decisionStore.inlineRecord(props.msg.questionId, 'question') : undefined); return record?.route ? routePresenter.present(record) : undefined });
+
 const currentStep = ref(0);
 
 // Per-question selected option labels and free-text. Index-aligned with
@@ -220,27 +249,13 @@ const picks = reactive<string[][]>(props.draft?.picks ?? props.msg.questions.map
 const otherText = reactive<string[]>(props.draft?.other ?? props.msg.questions.map(() => ''));
 const customSelected = reactive<boolean[]>(props.draft?.customSelected ?? props.msg.questions.map((q, qi) => !!otherText[qi]?.trim() && (!!q.multiSelect || !picks[qi]?.length)));
 
-function selectCustom(qi: number, selected: boolean): void {
-  if (locked.value) return;
-  customSelected[qi] = selected;
-  if (selected && !props.msg.questions[qi].multiSelect) picks[qi] = [];
-}
-function customAnswer(qi: number): string { return customSelected[qi] ? (otherText[qi] ?? '') : '' }
-
-function selectedLabels(qi: number): readonly string[] {
-  if (props.retainOptions && props.msg.status !== 'pending') {
-    const question = props.msg.questions[qi].question;
-    return props.msg.answers?.find(answer => answer.question === question)?.selected ?? [];
-  }
-  return picks[qi] ?? [];
-}
-
-function isPicked(qi: number, label: string): boolean { return selectedLabels(qi).includes(label) }
+const selection = new ToolQuestionSelection(() => props, picks, otherText, customSelected, () => locked.value);
 
 // Countdown to the backend's deadline; the card used to give no sign it would expire.
 const now = ref(Date.now());
 const ticker = setInterval(() => { now.value = Date.now() }, 1_000);
 onBeforeUnmount(() => clearInterval(ticker));
+
 const remaining = computed(() => !props.persistent && !props.submitAnswers && props.msg.status === 'pending' && !sending.value && props.msg.expiresAt ? Math.max(0, props.msg.expiresAt - now.value) : null);
 const countdown = computed(() => {
   const seconds = Math.ceil((remaining.value ?? 0) / 1_000);
@@ -256,6 +271,7 @@ const stateText = computed(() => {
 const stateTone = computed(() => props.msg.status === 'answered' || sending.value ? 'done' : props.msg.status === 'timed_out' ? 'closed' : 'open');
 const expiredUnsent = computed(() => !props.submitAnswers && props.msg.status === 'timed_out' && !(props.msg.answers?.length));
 const hasDraft = computed(() => picks.some(p => p.length > 0) || otherText.some(t => t.trim()));
+
 /** The answered card already shows each question with the option picked; the summary list is only for when those picks are not known (e.g. after a restart). */
 const picksShown = computed(() => !!props.msg.answers?.length && props.msg.answers.every((answer, qi) =>
   answer.selected.length > 0 && answer.selected.every(choice => props.retainOptions
@@ -265,7 +281,7 @@ const picksShown = computed(() => !!props.msg.answers?.length && props.msg.answe
 /** The deadline passed while the user was still choosing: keep their work by sending it as a chat message. */
 function sendAsMessage(): void {
   const lines = props.msg.questions.map((q, qi) => {
-    const selected = answerSelection(picks[qi] ?? [], customAnswer(qi), !!q.multiSelect);
+    const selected = answerSelection(picks[qi] ?? [], selection.customAnswer(qi), !!q.multiSelect);
     return selected.length ? `- ${ q.question }\n  ${ selected.join(', ') }` : '';
   }).filter(Boolean);
   if (lines.length) controller.send(`My answers to your expired question:\n${ lines.join('\n') }`);
@@ -275,32 +291,22 @@ function sendAsMessage(): void {
 // so the answered card can't read as a second open prompt or be re-submitted.
 const sending = ref(false);
 const locked = computed(() => !!props.blocked || sending.value || props.msg.status !== 'pending');
-
 // The backend rejected the answer: reopen the card so it can be fixed and resent.
 watch(() => props.msg.resolutionError, (error) => {
   if (error && props.msg.status !== 'answered' && props.msg.status !== 'timed_out') sending.value = false;
 });
 
-function toggle(qi: number, label: string, multi: boolean): void {
-  if (locked.value) return;
-  if (!multi) customSelected[qi] = false;
-  const cur = picks[qi] ?? [];
-  if (cur.includes(label)) {
-    picks[qi] = cur.filter(l => l !== label);
-  } else {
-    picks[qi] = multi ? [...cur, label] : [label];
-  }
-}
 
 // Every question must have at least one selection or a non-empty "Other".
 const canSubmit = computed(() =>
   props.msg.questions.every((_q, qi) =>
-    (picks[qi]?.length ?? 0) > 0 || customAnswer(qi).trim().length > 0));
+    (picks[qi]?.length ?? 0) > 0 || selection.customAnswer(qi).trim().length > 0));
 
 /** Questions still without an answer, named by their short header when they have one. */
 const missing = computed(() => props.msg.questions
-  .map((q, qi) => ({ qi, name: q.header || `Question ${ qi + 1 }`, done: (picks[qi]?.length ?? 0) > 0 || customAnswer(qi).trim().length > 0 }))
+  .map((q, qi) => ({ qi, name: q.header || `Question ${ qi + 1 }`, done: (picks[qi]?.length ?? 0) > 0 || selection.customAnswer(qi).trim().length > 0 }))
   .filter(x => !x.done));
+
 const blocks = reactive<(HTMLElement | null)[]>([]);
 function jumpTo(qi: number): void {
   currentStep.value = qi;
@@ -312,7 +318,7 @@ function jumpTo(qi: number): void {
 async function submit(): Promise<void> {
   if (locked.value || !canSubmit.value) return;
   const answers: ToolQuestionAnswerItem[] = props.msg.questions.map((q, qi) => {
-    return { question: q.question, selected: answerSelection(picks[qi] ?? [], customAnswer(qi), !!q.multiSelect) };
+    return { question: q.question, selected: answerSelection(picks[qi] ?? [], selection.customAnswer(qi), !!q.multiSelect) };
   });
   sending.value = true;
   if (props.submitAnswers) {
@@ -320,118 +326,3 @@ async function submit(): Promise<void> {
   } else controller.answerQuestion(props.msg.id, answers);
 }
 </script>
-
-<style scoped>
-/* One sans family throughout: the question reads like body text, options like
-   standard radio/checkbox rows. Only theme tokens every theme defines. */
-.qc {
-  margin: 4px 0;
-  padding: 16px 18px 18px;
-  border: 1px solid var(--border-default);
-  border-radius: 12px;
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-family: var(--font-body);
-  transition: opacity 0.2s ease;
-}
-.qc-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; font-size: 12.5px; }
-.qc-state { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; color: var(--text-secondary); }
-.qc-state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-.qc-state.done .qc-state-dot { background: var(--status-success); }
-.qc-state.closed .qc-state-dot { background: var(--text-muted); }
-.qc-countdown { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.qc-countdown.urgent { color: var(--status-warning); font-weight: 600; }
-
-/*
- * Each question sits in a padded box (pulled out by the same amount, so text
- * stays aligned with the card) with a transparent border, so the "needs an
- * answer" state only recolours it and never shifts layout. The legend floats
- * so the fieldset box starts above the question, not through its middle.
- */
-.qc-block { position: relative; margin: 0 -14px; padding: 12px 14px 14px; border: 1px solid transparent; border-radius: 10px; min-width: 0; }
-.qc-block + .qc-block { margin-top: 12px; }
-.qc-block + .qc-block::before {
-  content: ''; position: absolute; top: -7px; left: 14px; right: 14px; height: 1px;
-  background: var(--border-subtle, var(--border-default));
-}
-.qc-question { float: left; width: 100%; padding: 0; max-width: 70ch; font-size: 15px; line-height: 1.6; font-weight: 400; color: var(--text-primary); }
-.qc-question + * { clear: both; }
-.qc-topic { display: block; margin-bottom: 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
-.qc-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--text-muted); }
-
-.qc-options { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 10px; }
-.qc-option {
-  display: flex; align-items: flex-start; gap: 12px; width: 100%;
-  padding: 11px 14px; text-align: left; cursor: pointer;
-  border: 1px solid var(--border-default); border-radius: 10px;
-  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
-  font: inherit;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-.qc-option:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--border-default)); }
-.qc-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.qc-option.picked { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface)); }
-.qc-mark {
-  display: grid; place-items: center; flex: none; width: 18px; height: 18px; margin-top: 1px;
-  border: 1.5px solid var(--text-muted); border-radius: 50%;
-}
-.qc-option.multi .qc-mark { border-radius: 5px; }
-.qc-option.picked .qc-mark { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-surface); }
-.qc-option.multi.picked .qc-mark { box-shadow: none; }
-.qc-mark svg { width: 12px; height: 12px; fill: none; stroke: var(--text-on-accent, #fff); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
-.qc-option.multi.picked .qc-mark svg { opacity: 1; }
-.qc-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.qc-label { font-size: 14px; font-weight: 600; line-height: 1.4; }
-.qc-desc { font-size: 13px; line-height: 1.45; color: var(--text-secondary); }
-
-.qc-custom { align-items: center; }
-.qc-custom-choice { appearance: none; cursor: pointer; padding: 0; }
-.qc-custom-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.qc-custom-choice:checked { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-surface); }
-.qc-custom-choice[type=checkbox] { appearance: auto; accent-color: var(--accent); }
-.qc-other {
-  min-width: 0; flex: 1; width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px;
-  border: 1px solid var(--border-default); border-radius: 8px;
-  background: var(--bg-page, var(--bg-surface)); color: var(--text-primary);
-  font: 14px var(--font-body);
-}
-.qc-other::placeholder { color: var(--text-muted); }
-.qc-other:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-
-.qc-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
-.qc-actions .qc-hint { margin: 0; }
-.qc-jump { border: 0; background: none; padding: 0 0 0 4px; color: var(--primary-color-text-override, var(--accent)); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
-.qc-block.qc-open { border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
-.qc-submit {
-  height: 36px; padding: 0 16px; border: 0; border-radius: 8px; cursor: pointer;
-  background: var(--accent); color: var(--text-on-accent, #fff);
-  font: 600 13.5px var(--font-body);
-}
-.qc-submit:hover { filter: brightness(1.08); }
-.qc-submit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.qc-submit:disabled { cursor: default; filter: none; opacity: 0.45; }
-
-.qc-error { margin: 0 0 12px; font-size: 13px; color: var(--status-error); }
-.qc-note { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--text-secondary); }
-.qc-late {
-  display: block; margin-top: 8px; padding: 6px 12px; cursor: pointer; pointer-events: auto;
-  border: 1px solid var(--accent); border-radius: 8px; background: transparent;
-  color: var(--text-primary); font: 600 13px var(--font-body);
-}
-
-.qc-answers { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px 0; margin: 14px 0 0; font-size: 13px; }
-.qc-answers dt { color: var(--text-secondary); }
-.qc-answers dd { margin: 0 0 8px; font-weight: 600; color: var(--text-primary); }
-
-/* Answered or expired: quieter and inert, so it never reads as a second open prompt. */
-.qc-settled { opacity: 0.62; background: transparent; }
-.qc-settled .qc-option { cursor: default; }
-/* Only the chosen options stay once answered (picks exist only in the session that answered). */
-.qc-settled:not(.qc-original) .qc-option:not(.picked) { display: none; }
-.qc-settled .qc-option:hover { border-color: var(--border-default); }
-.qc-settled:has(.qc-late) { opacity: 0.9; }
-
-@media (prefers-reduced-motion: reduce) {
-  .qc, .qc-option { transition: none; }
-}
-</style>

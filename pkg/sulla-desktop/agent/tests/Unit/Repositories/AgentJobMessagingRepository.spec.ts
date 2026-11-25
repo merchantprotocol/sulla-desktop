@@ -35,8 +35,9 @@ dbDescribe('AgentJobMessagingRepository', () => {
       finishedAt: null, taskCount: 1, results: [], visibility: 'hidden',
       tasks: [{ agentId: 'worker', label: 'lane', prompt: 'work', status: 'running', threadId: 'message-thread' }] });
     const target = (await messages.targetsForJob('message-idempotency'))[0];
-    const queued = await messages.queueMessage(target, 'continue');
-    expect((await messages.pendingMessagesForThread('message-thread')).map(item => item.message)).toEqual(['continue']);
+    const queued = await messages.queueMessage(target, 'continue', 'decision');
+    expect(queued.messageKind).toBe('decision');
+    expect(await messages.pendingMessagesForThread('message-thread')).toMatchObject([{ message: 'continue', messageKind: 'decision' }]);
     await messages.markMessagesDelivered([queued.id], 'message-thread');
     await database.query("UPDATE agent_job_messages SET delivered_at = TIMESTAMP '2000-01-01 00:00:00' WHERE id = $1", [queued.id]);
     const [{ delivered_at: firstDelivery }] = await database.query<{ delivered_at: Date }>('SELECT delivered_at FROM agent_job_messages WHERE id = $1', [queued.id]);

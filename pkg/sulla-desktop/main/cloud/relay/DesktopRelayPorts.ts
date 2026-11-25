@@ -13,6 +13,7 @@
 import type { RelayFailureKind, RelaySocketLike } from '@pkg/main/cloudRelayTransport';
 import type { ChatSelection } from '@pkg/main/chatSelection';
 import type { NormalizedMobileTurn } from '@pkg/main/mobileRelayContent';
+import type { DecisionActor } from '@pkg/shared/decisions';
 
 /** WebSocket readyState values (same numbers as WebSocket and VaultRelaySocket). */
 export const RELAY_SOCKET_CONNECTING = 0;
@@ -189,7 +190,7 @@ export interface DesktopRelayChatPorts {
   admitRelayThread?(thread: string, existing: boolean, scope?: ScopedRelayBinding): Promise<boolean>;
   validateSelection(message: RelayIncomingFrame): Promise<ChatSelection>;
   persistAttachments(conversationId: string, messageId: string, turn: NormalizedMobileTurn): Promise<string[]>;
-  companionRequest(method: string, params: Record<string, unknown>): Promise<unknown>;
+  companionRequest(method: string, params: Record<string, unknown>, actor?: DecisionActor): Promise<unknown>;
   registerMobileCard(threadId: string, kind: string, data: unknown): Promise<void>;
 }
 

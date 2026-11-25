@@ -60,7 +60,7 @@ export function initSullaApprovalEvents(): void {
   ipcMainProxy.handle('decisions:conversation', async(event, conversationId, before) => { trusted(event); return decisionService.listForConversation(conversationId, before); });
   ipcMainProxy.handle('decisions:transcript', (event, conversationId, ids) => { trusted(event); return decisionService.listTranscriptDecisions(conversationId, ids); });
   ipcMainProxy.handle('decisions:dismiss', async(event, id, conversationId) => { trusted(event); return decisionService.dismiss(id, conversationId) });
-  ipcMainProxy.handle('decisions:resolve', async(event, response) => { trusted(event); return decisionService.resolve(response) });
+  ipcMainProxy.handle('decisions:resolve', async(event, response) => { trusted(event); return decisionService.resolve(response, { kind: 'human' }) });
   ipcMainProxy.handle('decisions:policies', async(event) => {
     trusted(event);
     const required = new Set(await decisionService.policies());
@@ -109,7 +109,7 @@ export function initSullaApprovalEvents(): void {
       .filter((a: UserQuestionAnswerItem) => a.selected.length > 0);
 
     const record = await decisionService.find(questionId);
-    if (record) return decisionService.resolve({ id: questionId, conversationId: record.conversationId, action: 'answered', answers });
+    if (record) return decisionService.resolve({ id: questionId, conversationId: record.conversationId, action: 'answered', answers }, { kind: 'human' });
     const settled = ApprovalService.getInstance().resolveQuestion(questionId, answers);
     return { settled };
   });

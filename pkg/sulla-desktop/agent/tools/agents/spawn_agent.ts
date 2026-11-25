@@ -590,7 +590,7 @@ export class SpawnAgentWorker extends BaseTool {
         workspacePath: task.workspacePath,
         taskId:           task.projectTaskId?.trim(),
         followUpOf:       task.followUpOf,
-        status:     'queued',
+        status: 'queued', spawnMode: async_ ? 'async' : 'sync',
         visibility: 'hidden',
         ...(decisions[index]?.requestedVisibility ? { requestedVisibility: decisions[index].requestedVisibility, downgradeReason: decisions[index].downgradeReason } : {}),
         contract:   contracts[index],

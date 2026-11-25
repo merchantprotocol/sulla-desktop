@@ -16,7 +16,7 @@ export class CompletionKey {
   static isStall(entry: PendingCompletion): boolean { return entry.noticeKind === 'stall' }
 
   static isTaskCompletion(entry: PendingCompletion): boolean {
-    return !this.isStall(entry) && !entry.dedupeKey?.startsWith('stranded:') && !entry.dedupeKey?.startsWith('blocker:');
+    return !this.isStall(entry) && !entry.dedupeKey?.startsWith('stranded:') && !entry.dedupeKey?.startsWith('blocker:') && !entry.dedupeKey?.startsWith('decision:');
   }
 
   static of(entry: CompletionIdentity): string {

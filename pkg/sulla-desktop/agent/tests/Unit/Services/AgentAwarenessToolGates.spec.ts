@@ -69,7 +69,7 @@ describe('Sees other agents OFF is enforced where tools execute', () => {
 
   it('refuses spawn_agent and agents/directory on the real sulla CLI route, and still runs reporting tools', async() => {
     // risk: permissions — a worker with the setting OFF could still launch agents through `sulla meta/spawn_agent`.
-    for (const path of ['meta/spawn_agent', 'agents/spawn_agent', 'agents/directory']) {
+    for (const path of ['meta/spawn_agent', 'agents/spawn_agent', 'agents/directory', 'agents/answer_decision']) {
       const refused = await callCli(path, false);
       expect(refused.status, path).toBe(403);
       expect(refused.body.error).toBe('not available to this agent');
@@ -84,6 +84,7 @@ describe('Sees other agents OFF is enforced where tools execute', () => {
 
     const aware = await callCli('agents/directory', true);
     expect(aware.status).toBe(200);
+    expect((await callCli('agents/answer_decision', true)).status).toBe(200);
   });
 
   it('refuses launch tools at the ToolExecutor gate without an allowlist', async() => {
@@ -93,6 +94,7 @@ describe('Sees other agents OFF is enforced where tools execute', () => {
     });
     expect(await executor.getToolPolicyBlockReason(workerState(false), 'spawn_agent')).toContain('not available to this agent');
     expect(await executor.getToolPolicyBlockReason(workerState(false), 'agents_directory')).toContain('not available to this agent');
+    expect(await executor.getToolPolicyBlockReason(workerState(false), 'agents/answer_decision')).toContain('not available to this agent');
     for (const name of ['report_progress', 'return_result', 'wait']) {
       expect(await executor.getToolPolicyBlockReason(workerState(false), name)).toBeNull();
     }

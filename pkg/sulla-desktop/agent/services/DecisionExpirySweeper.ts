@@ -21,12 +21,12 @@ export class NodeSweepTimer implements SweepTimer {
 }
 
 /**
- * Expires overdue decisions when the app starts and on a coarse interval after that.
+ * Expires overdue decisions at startup and within one minute of an in-memory holder deadline.
  * Durable requests (a Files publish approval lasts 7 days) have no in-memory timer
  * after a restart, so without this their expiry would wait for someone to open Decide.
  */
 export class DecisionExpirySweeper {
-  static readonly DEFAULT_INTERVAL_MS = 5 * 60_000;
+  static readonly DEFAULT_INTERVAL_MS = 60_000;
   private cancel?: () => void;
   private sweeping = false;
 

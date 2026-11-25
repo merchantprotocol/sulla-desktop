@@ -29,7 +29,7 @@ describe('DecisionExpirySweeper', () => {
     sweeper.start();
     sweeper.start();
     await vi.waitFor(() => expect(decisions.reconcileExpired).toHaveBeenCalledTimes(1));
-    expect(timer.intervalMs).toBe(5 * 60_000);
+    expect(timer.intervalMs).toBe(60_000);
 
     timer.fire();
     await vi.waitFor(() => expect(decisions.reconcileExpired).toHaveBeenCalledTimes(2));

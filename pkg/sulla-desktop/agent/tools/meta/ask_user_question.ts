@@ -23,11 +23,12 @@ import { decisionService } from '@pkg/agent/services/DecisionService';
 import {
   formatQuestionReceipt,
   normalizeQuestions,
+  QuestionReceiptPolicy,
 } from './askUserQuestionShared';
 
 export class AskUserQuestionWorker extends BaseTool {
   name = 'ask_user_question';
-  description = 'Save persistent questions in For You and return a receipt immediately. Questions remain until answered or dismissed. Their saved answers arrive through the original chat mailbox. End the current turn; do not infer consent or ask again while the decision is pending. Resume decision-dependent work only after the answer arrives. Independent work can continue separately.';
+  description = 'Save persistent questions in For You and return a receipt. The human may answer any time. An agent in the delegation chain may also answer or pass plain questions when one is available; task questions require the human. Replies identify who answered. End this turn and wait; do not re-ask, infer consent, or continue dependent work.';
 
   schemaDef: InputSchemaDef = {
     questions: {
@@ -68,12 +69,12 @@ export class AskUserQuestionWorker extends BaseTool {
       return { successBoolean: false, responseString: error };
     }
 
-    const { record, reused } = await decisionService.requestQuestion({
+    const { record, reused, parked } = await decisionService.requestQuestion({
       title: questions[0].question, questions,
       conversationId: this.state?.metadata?.threadId || '',
       channel: this.state?.metadata?.wsChannel || '',
     }, this.state?.metadata?.options?.abort?.signal);
     if (!reused) await this.emitMessage('', 'tool_question', { toolQuestion: { questionId: record.id, questions } });
-    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? '')) };
+    return { successBoolean: true, responseString: formatQuestionReceipt(record.id, ['queued', 'processing'].includes(record.answerDelivery ?? ''), parked, new QuestionReceiptPolicy().parentMayAnswer(record)) };
   }
 }

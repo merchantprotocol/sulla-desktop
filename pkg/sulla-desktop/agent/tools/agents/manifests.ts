@@ -129,6 +129,19 @@ export const agentToolManifests: ToolManifest[] = [
     loader:         () => import('./send_job_message'),
   },
   {
+    name:        'answer_decision',
+    description: 'Answer or pass a plain question currently held by you. Approvals can only be decided by a human. Identity is bound to your verified tool session.',
+    category:    'agents',
+    schemaDef:   {
+      decisionId: { type: 'string', description: 'The decision id from the holder notification.' },
+      action: { type: 'enum', enum: ['answer', 'pass'], description: 'Answer or pass a plain question currently held by you.' },
+      answers: { type: 'array', optional: true, items: { type: 'object', properties: { question: { type: 'string' }, selected: { type: 'array', items: { type: 'string' } } } } },
+      note: { type: 'string', optional: true, description: 'Plain-text pass note, capped at 500 characters.' },
+    },
+    operationTypes: ['update'],
+    loader:         () => import('./answer_decision'),
+  },
+  {
     name:        'report_progress',
     description: 'Record a milestone check-in for your current delegated task (hidden worker or agent tab). Call it at meaningful milestones and at least every ~5 minutes; your parent sees it in its subagent directory.',
     category:    'agents',

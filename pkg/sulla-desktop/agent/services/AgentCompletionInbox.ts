@@ -32,6 +32,8 @@ export const registerCompletionIdleDispatcher = (...args: Parameters<typeof agen
   agentCompletionProvider.inbox.registerIdleDispatcher(...args);
 export const enqueueAgentCompletion = (...args: Parameters<typeof agentCompletionProvider.inbox.enqueue>) =>
   agentCompletionProvider.inbox.enqueue(...args);
+export const enqueueAgentCompletionQuietly = (...args: Parameters<typeof agentCompletionProvider.inbox.enqueueQuietly>) =>
+  agentCompletionProvider.inbox.enqueueQuietly(...args);
 export const notifyAgentCompletionsReady = (...args: Parameters<typeof agentCompletionProvider.inbox.notifyReady>) =>
   agentCompletionProvider.inbox.notifyReady(...args);
 export const setCompletionInboxStopped = (...args: Parameters<typeof agentCompletionProvider.inbox.setStopped>) =>

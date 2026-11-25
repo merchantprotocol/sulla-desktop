@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
+import type { AgentJobMessage } from '../../database/models/AgentJobMessagingModel';
 
 const CHECKIN_GUIDANCE = `[Worker check-ins]
 Call report_progress at each meaningful milestone and at least every ~5 minutes while working. Include blockers immediately. Check every new turn for blocks labelled "Message from orchestrator" and treat them as new direction for the current task.`;
@@ -34,6 +34,13 @@ function representedMessageIds(state: any): Set<string> {
     .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0));
 }
 
+class QueuedWorkerMessagePresenter {
+  present(message: AgentJobMessage): string {
+    return message.messageKind === 'decision' || message.messageKind === 'decision-fyi'
+      ? message.message : `[Message from orchestrator]\n${ message.message }`;
+  }
+}
+
 /** Add worker guidance and durable queued messages at a CLI model-call boundary. */
 export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): Promise<string> {
   if (!state?.metadata?.isSubAgent) return basePrompt;
@@ -41,8 +48,9 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
   const threadId = typeof state.metadata.threadId === 'string' ? state.metadata.threadId : '';
   if (!threadId) return `${ CHECKIN_GUIDANCE }\n\n${ REVIEW_GUIDANCE }\n\n${ workerGuidance }\n\n${ basePrompt }`;
 
-  let pending: Awaited<ReturnType<typeof AgentJobMessagingModel.pendingMessagesForThread>>;
+  let pending: AgentJobMessage[];
   try {
+    const { AgentJobMessagingModel } = await import('../../database/models/AgentJobMessagingModel');
     pending = await AgentJobMessagingModel.pendingMessagesForThread(threadId);
   } catch (err) {
     console.warn('[workerMessaging] queued-message read failed; continuing worker turn:', (err as Error).message);
@@ -53,15 +61,15 @@ export async function prepareWorkerTurnPrompt(state: any, basePrompt: string): P
 
   if (pending.length > 0) {
     try {
+      const { AgentJobMessagingModel } = await import('../../database/models/AgentJobMessagingModel');
       await AgentJobMessagingModel.markMessagesDelivered(pending.map(message => message.id), threadId);
     } catch (err) {
       console.warn('[workerMessaging] delivery receipt write failed; continuing worker turn:', (err as Error).message);
     }
   }
 
-  const orchestratorMessages = fresh.map(message =>
-    `[Message from orchestrator]\n${ message.message }`,
-  ).join('\n\n');
+  const presenter = new QueuedWorkerMessagePresenter();
+  const orchestratorMessages = fresh.map(message => presenter.present(message)).join('\n\n');
 
   return [CHECKIN_GUIDANCE, REVIEW_GUIDANCE, workerGuidance, orchestratorMessages, basePrompt].filter(Boolean).join('\n\n');
 }

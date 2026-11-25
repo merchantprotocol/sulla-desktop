@@ -96,6 +96,7 @@ describe('Files request publish inline approval', () => {
 
       expect(decision).toMatchObject({ request_id: 'files-request-7', status: 'pending' });
       expect(record).toMatchObject({ id: decision.decision_id, kind: 'approval', status: 'pending', conversationId: 'chat-thread', payload: { filesPublishRequestId: 'files-request-7' } });
+      expect(record.route).toBeUndefined();
       expect(record.expiresAt - record.createdAt).toBe(7 * 24 * 60 * 60_000);
       expect(record.approvalPresentation).toMatchObject({ reason: 'Publishing this draft will make it available to agents.', command: 'Files draft publication', origin: { kind: 'files_publish' } });
       expect((worker as any).sentMessages).toHaveLength(1);
@@ -104,7 +105,7 @@ describe('Files request publish inline approval', () => {
         kind: 'tool_approval',
         extras: { toolApproval: { approvalId: decision.decision_id, title: record.title, expiresAt: record.expiresAt, origin: { kind: 'files_publish' } } },
       });
-      const final = await fixture.service.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' });
+      const final = await fixture.service.resolve({ id: record.id, conversationId: record.conversationId, action: 'approved' }, { kind: 'human' });
       expect(final.settled).toBe(true);
     } finally { coordinator.dispose() }
   });

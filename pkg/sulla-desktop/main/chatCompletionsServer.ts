@@ -12,6 +12,7 @@ import cors from 'cors';
 import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
+import { ChatToolRequestSecurity } from './ChatToolRequestSecurity';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
 import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
@@ -1281,8 +1282,7 @@ export class ChatCompletionsServer {
         const canonicalCategory = String(tool.metadata?.category ?? '').trim();
         const isGitHubTool = canonicalCategory === 'github';
         const needsGitHubCredential = isGitHubTool && !LOCAL_GITHUB_TOOLS.has(toolName);
-        const sessionToken = req.header('X-Sulla-Tool-Session')?.trim();
-        const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, '').trim();
+        const { sessionToken, bearer, invoke } = new ChatToolRequestSecurity(req);
         const host = getMCPServerHost();
         const session = sessionToken ? host.getToolSession(sessionToken) : null;
         if (sessionToken && !session) {
@@ -1530,8 +1530,8 @@ export class ChatCompletionsServer {
           const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
-          const invoke = () => tool.call(params);
-          const result = runtime ? await withAgentContainerRuntime(runtime, invoke) : await invoke();
+          const callTool = () => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
+          const result = runtime ? await withAgentContainerRuntime(runtime, callTool) : await callTool();
           return res.json({ success: true, result });
         } finally { res.off('close', onDisconnect) }
       }

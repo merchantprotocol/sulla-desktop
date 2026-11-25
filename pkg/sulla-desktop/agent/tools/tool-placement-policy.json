@@ -117,6 +117,7 @@
       "budget/budget_set_policy",
       "agents/close_agent_conversation",
       "agents/report_progress",
+      "agents/answer_decision",
       "agents/return_result",
       "agents/send_agent_message",
       "agents/send_job_message",

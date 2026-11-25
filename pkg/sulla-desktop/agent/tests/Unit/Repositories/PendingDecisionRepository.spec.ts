@@ -2,10 +2,26 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PendingDecisionRepository } from '../../../repositories/PendingDecisionRepository';
+import { TestDatabase } from '../../Support/TestDatabase';
+
+import type { DecisionRecord } from '@pkg/shared/decisions';
 
 describe('PendingDecisionRepository', () => {
+  it('selects spawn mode and parent job id for escalation route decisions', async() => {
+    // risk: authorization — omitted persisted route fields can send a decision to a blocked sync-spawn parent or misclassify a pruned parent as a root chat.
+    const task = { jobId: 'child-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', spawnMode: 'sync', parentJobId: 'missing-parent-job' };
+    const query = vi.fn(async() => [task]);
+    const repository = new PendingDecisionRepository({ query });
+
+    await expect(repository.taskForThread('child-thread')).resolves.toMatchObject(task);
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain(`task.value->>'spawnMode' AS "spawnMode"`);
+    expect(sql).toContain('j.parent_job_id AS "parentJobId"');
+    expect(params).toEqual(['child-thread']);
+  });
+
   it('reuses the pending Decide approval for a Files publish request', async() => {
     // risk: irreversible side effects — retrying publication must not create duplicate human approvals.
     const record = { id:'decision-1', kind:'approval', status:'pending' } as any;
@@ -41,5 +57,119 @@ describe('PendingDecisionRepository', () => {
     expect(sql).toContain("NULLIF(record#>>'{payload,filesPublishRequestId}','') IS NOT NULL");
     expect(sql).toContain('RETURNING record');
     expect(params).toEqual(['new-session', 500]);
+  });
+
+  it('includes system decision envelopes in every durable answer-mailbox claim and recovery filter', async() => {
+    // risk: user communication — a parent answer must survive retries and process recovery without being treated as a human keyboard answer.
+    const queries: string[] = [];
+    const repository = new PendingDecisionRepository({ query: async(sql) => { queries.push(sql); return [] } });
+    await repository.pendingAnswerTargets();
+    await repository.startAnswers([{ id: 'decision-answer:q', attempt: 'attempt' }], 'asker');
+    await repository.finishAnswers([{ id: 'decision-answer:q', attempt: 'attempt' }], 'asker', true);
+    await repository.recoverInterruptedAnswers();
+    expect(queries).toHaveLength(4);
+    expect(queries.every(sql => sql.includes("kind IN ('human','decision')"))).toBe(true);
+  });
+
+  it('stores a non-human answer as a named system decision envelope, never as you/human', async() => {
+    // risk: identity integrity — an agent's answer must not be laundered into human keyboard input.
+    const record = { id: 'question-agent-answer', conversationId: 'chat', channel: 'sulla-desktop', kind: 'question', status: 'pending', answeredBy: { kind: 'agent', agentId: 'coding-manager', label: 'Coding Manager' } } as any;
+    const query = vi.fn(async() => [{ record }]);
+    const repository = new PendingDecisionRepository({ query });
+    await repository.queueLateAnswer(record, [{ question: 'Color?', selected: ['Blue'] }], '[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("SELECT $4,record->>'channel',record->>'conversationId',$9,$10");
+    expect(params?.[8]).toBe('system:decision');
+    expect(params?.[9]).toBe('decision');
+    expect(params?.[4]).toBe('[Decision answered by Coding Manager]\nPick a color\nColor?: Blue');
+    expect(JSON.parse(String(params?.[7]))).toEqual(record.answeredBy);
+    expect(sql).not.toContain("'you','human'");
+  });
+
+  it('requires persisted any-authority and the current holder for every agent late-answer write', async() => {
+    // risk: authorization — route-less legacy questions remain human-only even if a caller reaches the repository directly.
+    const record = { id: 'legacy-agent-answer', conversationId: 'chat', channel: 'sulla-desktop', kind: 'question', status: 'expired',
+      answeredBy: { kind: 'agent', threadId: 'parent-thread' } } as any;
+    const query = vi.fn(async() => []);
+    const repository = new PendingDecisionRepository({ query });
+    await repository.queueLateAnswer(record, [{ question: 'Color?', selected: ['Blue'] }], 'Parent answer');
+    await repository.recordJobAnswer(record, [{ question: 'Color?', selected: ['Blue'] }]);
+
+    expect(query).toHaveBeenCalledTimes(2);
+    const [chatSql] = query.mock.calls[0];
+    const [jobSql] = query.mock.calls[1];
+    expect(chatSql).toContain("$8::jsonb->>'kind'='human'");
+    expect(chatSql).toContain('$11::integer IS NOT NULL');
+    expect(jobSql).toContain("$3::jsonb->>'kind'='human'");
+    expect(jobSql).toContain('$5::integer IS NOT NULL');
+  });
+
+  it('marks a successfully sent delegated answer delivered only while queued', async() => {
+    // risk: user communication — a successful job-mailbox send must not leave a permanently queued decision receipt.
+    const query = vi.fn(async() => [{ id: 'decision-1' }]);
+    const repository = new PendingDecisionRepository({ query });
+    await expect(repository.markJobAnswerDelivered('decision-1')).resolves.toBe(true);
+    expect(query).toHaveBeenCalledOnce();
+    const [sql, params] = query.mock.calls[0];
+    expect(sql).toContain("jsonb_set(record,'{answerDelivery}','\"delivered\"')");
+    expect(sql).toContain("record->>'answerDelivery'='queued'");
+    expect(params).toEqual(['decision-1']);
+  });
+});
+
+const databaseDescribe = TestDatabase.available() ? describe : describe.skip;
+databaseDescribe('PendingDecisionRepository human override delivery against PostgreSQL', () => {
+  const database = new TestDatabase();
+  const repository = new PendingDecisionRepository({ query: (sql, params) => database.query(sql, params) as any });
+
+  beforeAll(async() => { await database.initialize() });
+  afterAll(async() => { await database.dispose() });
+
+  it('queues the asker delivery after the human has settled the routed question', async() => {
+    // risk: user communication — the PostgreSQL predicate must permit one durable delivery after the answer CAS already marked attention answered.
+    const record: DecisionRecord = {
+      id: 'human-override-postgres', conversationId: 'human-override-asker', channel: 'chat', title: 'Which option?',
+      kind: 'question', status: 'pending', attention: 'active', createdAt: 1, expiresAt: 1_000_000,
+      payload: { answerRoute: 'inbox', askerJobId: 'asker-job', askerTaskIndex: '2' },
+      questions: [{ question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }],
+      route: { authority: 'any', chain: [
+        { threadId: 'parent-thread', channel: 'chat', agentId: 'manager', jobId: 'parent-job', taskIndex: 0, kind: 'agent' },
+        { threadId: 'root-thread', channel: 'chat', agentId: 'human', kind: 'human' },
+      ], holderIndex: 0, holderSince: 1, history: [] },
+    };
+    await database.query('INSERT INTO human_decisions(id,session_id,status,record) VALUES($1,$2,$3,$4::jsonb)',
+      [record.id, 'human-override-session', record.status, JSON.stringify(record)]);
+    const answers = [{ question: 'Which?', selected: ['A'] }];
+    const history = [{ threadId: 'root-thread', agentId: 'human', action: 'answered' as const, at: 2 }];
+
+    expect(await repository.settleAs(record.id, 0, { kind: 'human' }, 'answered', {
+      status: 'answered', attention: 'answered', answeredBy: { kind: 'human' }, answers,
+    }, history)).toBe(true);
+    const settled = await repository.findById(record.id);
+    expect(settled).toMatchObject({ status: 'answered', attention: 'answered', answeredBy: { kind: 'human' }, answers });
+    expect(settled?.answerDelivery).toBeUndefined();
+
+    await expect(repository.recordJobAnswer(settled!, answers)).resolves.toMatchObject({
+      status: 'answered', attention: 'answered', answerDelivery: 'queued', answeredBy: { kind: 'human' }, answers,
+    });
+  });
+
+  it('recovers only answered routed questions whose mailbox delivery was never queued', async() => {
+    // risk: user communication — startup recovery must target the exact crash window and leave already-queued answers alone.
+    const id = 'routed-answer-recovery';
+    const record: DecisionRecord = {
+      id, conversationId: 'recovery-asker', channel: 'chat', title: 'Which?', kind: 'question', status: 'answered', attention: 'answered',
+      createdAt: 1, expiresAt: 10, answeredBy: { kind: 'human' }, answers: [{ question: 'Which?', selected: ['A'] }],
+      route: { authority: 'any', holderIndex: 0, holderSince: 1, chain: [
+        { threadId: 'parent', channel: 'chat', agentId: 'manager', kind: 'agent' },
+        { threadId: 'root', channel: 'chat', agentId: 'human', kind: 'human' },
+      ], history: [] },
+    };
+    await database.query('INSERT INTO human_decisions(id,session_id,status,record) VALUES($1,$2,$3,$4::jsonb)',
+      [id, 'answer-recovery-session', 'answered', JSON.stringify(record)]);
+
+    await expect(repository.answeredRoutedQuestionsWithoutDelivery()).resolves.toEqual([expect.objectContaining({ id })]);
+    await database.query("UPDATE human_decisions SET record=jsonb_set(record,'{answerDelivery}','\"queued\"') WHERE id=$1", [id]);
+    await expect(repository.answeredRoutedQuestionsWithoutDelivery()).resolves.toEqual([]);
   });
 });
