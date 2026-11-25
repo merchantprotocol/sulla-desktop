@@ -349,10 +349,32 @@ function onStatusItemShown(item: StatusRollupShownEvent): void {
   if (item.phase === 'result' && item.correlationId) { glow.toolFinished(item.correlationId); return; }
   glow.action();
 }
+const streamedTextLengths = new Map<string, number>();
 const glowSubscriptions = [
   controller.on('runStateChanged', ({ from, to }) => {
     if (to.phase === 'streaming') glow.setStreaming(true);
     else if (from.phase === 'streaming') glow.setStreaming(false);
+  }),
+  controller.on('messageAppended', ({ message }) => {
+    if (message.kind !== 'streaming') return;
+    const id = String(message.id);
+    streamedTextLengths.clear();
+    streamedTextLengths.set(id, message.text.length);
+    glow.streamed();
+  }),
+  controller.on('messageUpdated', ({ messageId, patch }) => {
+    const id = String(messageId);
+    const message = controller.messages.value.find(candidate => candidate.id === messageId);
+    if (patch.kind === 'streaming') {
+      const text = message && 'text' in message && typeof message.text === 'string' ? message.text : undefined;
+      if (text !== undefined) streamedTextLengths.set(id, text.length);
+      glow.streamed();
+      return;
+    }
+    if ((message?.kind !== 'streaming' && message?.kind !== 'sulla') || !('text' in patch) || typeof patch.text !== 'string') return;
+    const previousLength = streamedTextLengths.get(id);
+    if (previousLength !== undefined && patch.text.length > previousLength) glow.streamed();
+    streamedTextLengths.set(id, patch.text.length);
   }),
 ];
 const modelKey = (model: RemoteModel) => JSON.stringify([model.providerId, model.modelId]);
