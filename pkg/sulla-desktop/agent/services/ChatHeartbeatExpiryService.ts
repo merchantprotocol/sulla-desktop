@@ -17,6 +17,8 @@ export class ChatHeartbeatExpiryService {
     deliver: ChatHeartbeatDeliver;
     setActive?: (threadId: string, active: boolean) => void;
     isCurrent: (runtime: ChatHeartbeatRuntime) => boolean;
+    isBusy?: (runtime: ChatHeartbeatRuntime) => boolean;
+    watchForIdle?: (runtime: ChatHeartbeatRuntime) => void;
     jobHeartbeatChanged?: (threadId: string) => void;
     clearTimers: (runtime: ChatHeartbeatRuntime) => void;
     unregisterJobTask: (jobId: string, taskIndex: number) => void;
@@ -80,24 +82,45 @@ export class ChatHeartbeatExpiryService {
     // The durable job record goes now, not at the next restart: nothing may rehydrate an expired heartbeat.
     if (target) this.deps.jobHeartbeatChanged?.(runtime.threadId);
 
-    const finalMessage = await this.buildMessage(runtime, message, intervalMinutes, startedAt, expiresAt, true);
     try {
-      const result = await this.deps.deliver(runtime.channel, runtime.threadId, finalMessage, intervalMinutes, target, { final: true });
-      const delivered = typeof result === 'boolean' ? result : result.delivered;
-      if (typeof result !== 'boolean' && result.terminal) {
-        this.deps.unregisterJobTask(runtime.jobId ?? '', runtime.taskIndex ?? -1);
+      const finalMessage = await this.buildMessage(runtime, message, intervalMinutes, startedAt, expiresAt, true);
+      if (!target) {
+        runtime.pendingFinalBeat = { message: finalMessage, intervalMinutes, attempts: 0 };
+        // Chat notices use the same deferred path whether the thread is busy at expiry
+        // or the bus rejects the first idle delivery; neither case may drop the only notice.
+        await this.deliverPending(runtime);
         return;
       }
-      if (delivered && this.deps.isCurrent(runtime)) {
-        runtime.onBeat?.({ threadId: runtime.threadId, createdAt: this.deps.now(), intervalMinutes, message: finalMessage, autoOff: true });
-      } else if (!delivered) {
-        console.warn(`[ChatHeartbeat] final beat was not delivered for thread ${ runtime.threadId }`);
-      }
-    } catch (error) {
-      console.warn(`[ChatHeartbeat] final beat failed for thread ${ runtime.threadId }:`, error);
+      await this.deliverFinal(runtime, finalMessage, intervalMinutes, target);
     } finally {
       if (runtime.generation === generation && this.deps.isCurrent(runtime)) {
         runtime.expiring = false;
+        this.deps.emitStatus(runtime);
+      }
+    }
+  }
+
+  /** Deliver a deferred chat auto-off notice only once its graph is idle. */
+  async deliverPending(runtime: ChatHeartbeatRuntime): Promise<void> {
+    const pending = runtime.pendingFinalBeat;
+    if (!pending || runtime.finalDeliveryInFlight || !this.deps.isCurrent(runtime)) return;
+    if (this.deps.isBusy?.(runtime)) {
+      this.deps.watchForIdle?.(runtime);
+      return;
+    }
+    runtime.finalDeliveryInFlight = true;
+    pending.attempts += 1;
+    try {
+      const delivered = await this.deliverFinal(runtime, pending.message, pending.intervalMinutes);
+      if (runtime.pendingFinalBeat !== pending) return;
+      if (delivered || pending.attempts >= 2) runtime.pendingFinalBeat = null;
+    } catch (error) {
+      if (pending.attempts >= 2 && runtime.pendingFinalBeat === pending) runtime.pendingFinalBeat = null;
+      console.warn(`[ChatHeartbeat] deferred final beat failed for thread ${ runtime.threadId }:`, error);
+    } finally {
+      runtime.finalDeliveryInFlight = false;
+      if (this.deps.isCurrent(runtime)) {
+        if (runtime.pendingFinalBeat === pending && pending.attempts < 2) this.deps.watchForIdle?.(runtime);
         this.deps.emitStatus(runtime);
       }
     }
@@ -139,6 +162,27 @@ export class ChatHeartbeatExpiryService {
       return await this.deps.hasPendingWait(target);
     } catch (error) {
       console.warn(`[ChatHeartbeat] could not inspect pending wait for job ${ target.jobId }:`, error);
+      return false;
+    }
+  }
+
+  private async deliverFinal(runtime: ChatHeartbeatRuntime, message: string, intervalMinutes: number,
+    target?: ChatHeartbeatJobTarget): Promise<boolean> {
+    try {
+      const result = await this.deps.deliver(runtime.channel, runtime.threadId, message, intervalMinutes, target, { final: true });
+      const delivered = typeof result === 'boolean' ? result : result.delivered;
+      if (typeof result !== 'boolean' && result.terminal) {
+        this.deps.unregisterJobTask(runtime.jobId ?? '', runtime.taskIndex ?? -1);
+        return true;
+      }
+      if (delivered && this.deps.isCurrent(runtime)) {
+        runtime.onBeat?.({ threadId: runtime.threadId, createdAt: this.deps.now(), intervalMinutes, message, autoOff: true });
+      } else if (!delivered) {
+        console.warn(`[ChatHeartbeat] final beat was not delivered for thread ${ runtime.threadId }`);
+      }
+      return delivered;
+    } catch (error) {
+      console.warn(`[ChatHeartbeat] final beat failed for thread ${ runtime.threadId }:`, error);
       return false;
     }
   }

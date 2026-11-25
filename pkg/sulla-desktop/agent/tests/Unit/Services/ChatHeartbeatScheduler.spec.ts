@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatHeartbeatScheduler } from '../../../services/ChatHeartbeatScheduler';
+import { ChatHeartbeatDeliveryService } from '../../../services/ChatHeartbeatDeliveryService';
 import { HeartbeatNoticeBuilder } from '../../../services/HeartbeatNoticeBuilder';
 
 const MINUTE = 60_000;
@@ -150,6 +151,73 @@ describe('ChatHeartbeatScheduler lifecycle', () => {
 
     expect(deliver).toHaveBeenCalledTimes(deliveredAtOff);
     expect(beats.filter(beat => beat.autoOff)).toHaveLength(1);
+  });
+
+  it('holds the chat auto-off notice while busy, then delivers once without aborting the live run', async() => {
+    // risk: a final heartbeat user_message aborts a live graph turn and loses in-progress work.
+    let graphBusy = false;
+    let liveRun = true;
+    let runAborted = false;
+    const send = vi.fn(async(_channel: string, message: any) => {
+      if (message.type === 'user_message' && liveRun) runAborted = true;
+      return true;
+    });
+    const delivery = new ChatHeartbeatDeliveryService({
+      getJob: async() => undefined,
+      wakeParkedAgent: async() => true,
+      send, now: () => Date.now(),
+    });
+    const beats: any[] = [];
+    const scheduler = new ChatHeartbeatScheduler({
+      now: () => Date.now(), isGraphBusy: () => graphBusy,
+      deliver: (channel, threadId, message, interval, target, options) =>
+        delivery.deliver(channel, threadId, message, interval, target, options),
+      noticeBuilder: new HeartbeatNoticeBuilder('America/Los_Angeles'),
+    });
+    scheduler.register({
+      threadId: 'chat-expire-busy', channel: 'sulla-desktop',
+      config: { intervalMinutes: 1440, message: 'Finish the task.' },
+      onBeat: beat => beats.push(beat),
+    });
+
+    await vi.advanceTimersByTimeAsync(SIX_HOURS_MS - 1);
+    graphBusy = true;
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(scheduler.status('chat-expire-busy')).toMatchObject({ enabled: false, intervalMinutes: null });
+    expect(send).not.toHaveBeenCalled();
+    expect(beats.filter(beat => beat.autoOff)).toHaveLength(0);
+
+    graphBusy = false;
+    scheduler.updateBusy('chat-expire-busy', false);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[1]?.type).toBe('inject_message');
+    expect(beats.filter(beat => beat.autoOff)).toHaveLength(1);
+    expect(runAborted).toBe(false);
+    liveRun = false;
+    scheduler.unregister('chat-expire-busy');
+  });
+
+  it('retries one rejected chat auto-off delivery and then stops', async() => {
+    // risk: the heartbeat is already off, so a rejected final notice would otherwise be lost forever.
+    const deliver = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { scheduler, beats } = schedulerHarness(undefined, deliver);
+    scheduler.register({
+      threadId: 'chat-expire-retry', channel: 'sulla-desktop',
+      config: { intervalMinutes: 1440, message: 'Continue.' },
+      onBeat: beat => beats.push(beat),
+    });
+
+    await vi.advanceTimersByTimeAsync(SIX_HOURS_MS);
+    expect(deliver).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(beats.filter(beat => beat.autoOff)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(deliver).toHaveBeenCalledTimes(2);
   });
 
   it('re-setting an active heartbeat starts a fresh six-hour window', async() => {

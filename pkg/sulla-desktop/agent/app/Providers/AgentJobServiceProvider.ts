@@ -8,6 +8,7 @@ import { DesktopPostgresConnection } from '../Database/DesktopPostgresConnection
 import { AgentJobMessagingRepository } from '../Repositories/AgentJobMessagingRepository';
 import { AgentJobReviewItemRepository } from '../Repositories/AgentJobReviewItemRepository';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
+import { AgentJobChildrenQuery } from '../Repositories/AgentJobChildrenQuery';
 import { ConversationTitleRepository } from '../Repositories/ConversationTitleRepository';
 import { StrandedEpisodeRepository } from '../Repositories/StrandedEpisodeRepository';
 import { CompletionAcknowledgementService } from '../Services/CompletionAcknowledgementService';
@@ -45,6 +46,7 @@ import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
+  readonly children: AgentJobChildrenQuery;
   readonly messaging: AgentJobMessagingRepository;
   readonly reviewItems: AgentJobReviewItemRepository;
   readonly reviewGate: ReviewObligationGate;
@@ -65,6 +67,7 @@ export class AgentJobServiceProvider {
   constructor(runActivity: RunActivityReader = RunActivity) {
     const connection = new DesktopPostgresConnection(postgresClient);
     this.jobs = new AgentJobRepository(connection);
+    this.children = new AgentJobChildrenQuery(connection);
     this.messaging = new AgentJobMessagingRepository(connection);
     this.reviewItems = new AgentJobReviewItemRepository(connection);
     this.reviewGate = new ReviewObligationGate(this.reviewItems);

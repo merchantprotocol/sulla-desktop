@@ -18,6 +18,7 @@ vi.mock('@pkg/agent/services/BackendGraphWebSocketService', () => ({
 
 import { ChatHeartbeatServiceProvider, chatHeartbeatProvider } from '@pkg/agent/app/Providers/ChatHeartbeatServiceProvider';
 import type { ChatHeartbeatJobRecord } from '@pkg/agent/app/Repositories/ChatHeartbeatJobRepository';
+import { HeartbeatNoticeBuilder } from '@pkg/agent/services/HeartbeatNoticeBuilder';
 import { MemoryHeartbeatStore } from '../../Support/MemoryHeartbeatStore';
 import { getChatHeartbeatService } from '@pkg/agent/services/ChatHeartbeatService';
 
@@ -104,10 +105,17 @@ describe('ChatHeartbeatServiceProvider', () => {
     };
     const expiredRecord: ChatHeartbeatJobRecord = {
       ...activeRecord, jobId: 'expired-job', threadId: 'expired-thread',
-      config: { ...activeRecord.config, startedAt: 2_000, expiresAt: now }, startedAt: 2_000, expiresAt: now,
+      config: { ...activeRecord.config, setBy: 'human', startedAt: 2_000, expiresAt: now }, startedAt: 2_000, expiresAt: now,
     };
     const finishedRecord: ChatHeartbeatJobRecord = { ...activeRecord, jobId: 'finished-job', threadId: 'finished-thread' };
     const heartbeats = new MemoryHeartbeatStore([activeRecord, expiredRecord, finishedRecord]);
+    const events: string[] = [];
+    const queued: Array<{ target: unknown; threadId: string; message: string }> = [];
+    const originalDelete = heartbeats.delete.bind(heartbeats);
+    vi.spyOn(heartbeats, 'delete').mockImplementation(async(jobId, taskIndex) => {
+      events.push(`delete:${ jobId }`);
+      await originalDelete(jobId, taskIndex);
+    });
     const jobs: Record<string, any> = {
       'active-job': { jobId: 'active-job', status: 'parked', parentChannel: 'sulla-desktop', tasks: [{ threadId: 'active-thread', status: 'parked' }] },
       'expired-job': { jobId: 'expired-job', status: 'running', tasks: [{ threadId: 'expired-thread', status: 'running' }] },
@@ -118,6 +126,12 @@ describe('ChatHeartbeatServiceProvider', () => {
       jobHeartbeats: heartbeats,
       getJob: async jobId => jobs[jobId],
       hasRunningChildren: async() => false,
+      queueJobMessage: async(target, threadId, message) => {
+        events.push(`queue:${ target.jobId }`);
+        queued.push({ target, threadId, message });
+        return { id: 'queued-expired-final' };
+      },
+      noticeBuilder: new HeartbeatNoticeBuilder('UTC'),
       now: () => now,
     });
 
@@ -131,6 +145,13 @@ describe('ChatHeartbeatServiceProvider', () => {
       { jobId: 'expired-job', taskIndex: 0 }, { jobId: 'finished-job', taskIndex: 0 },
     ]));
     expect(heartbeats.records.map(record => record.jobId)).toEqual(['active-job']);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({ target: { jobId: 'expired-job', taskIndex: 0 }, threadId: 'expired-thread' });
+    expect(queued[0].message).toContain('System: your heartbeat was switched off automatically after 6 hours.');
+    expect(queued[0].message).toContain('Heartbeat notice: This message was sent automatically by your heartbeat');
+    expect(queued[0].message).toContain('by you and switches itself off');
+    expect(queued[0].message).not.toContain('The human set this heartbeat.');
+    expect(events.indexOf('queue:expired-job')).toBeLessThan(events.indexOf('delete:expired-job'));
     provider.scheduler().unregister('active-thread');
   });
 

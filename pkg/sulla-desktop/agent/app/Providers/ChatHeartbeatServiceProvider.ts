@@ -5,6 +5,7 @@
 
 import { ChatHeartbeatScheduler } from '../../services/ChatHeartbeatScheduler';
 import { ChatHeartbeatDeliveryService } from '../../services/ChatHeartbeatDeliveryService';
+import { HeartbeatNoticeBuilder } from '../../services/HeartbeatNoticeBuilder';
 import { ChatHeartbeatRegistrationService, type ChatHeartbeatThreadTask } from '../../services/ChatHeartbeatRegistrationService';
 import { ChatHeartbeatJobRepository, type ChatHeartbeatJobRecord, type ChatHeartbeatJobRecordStore } from '../Repositories/ChatHeartbeatJobRepository';
 import { GraphRegistry } from '../../services/GraphRegistry';
@@ -25,6 +26,7 @@ interface ChatHeartbeatProviderDependencies {
   hasRunningChildren?: (jobId: string, taskIndex: number) => Promise<boolean>;
   taskForThread?: (threadId: string) => Promise<ChatHeartbeatThreadTask | null>;
   queueJobMessage?: (target: { jobId: string; taskIndex: number }, threadId: string, message: string) => Promise<{ id: string }>;
+  noticeBuilder?: HeartbeatNoticeBuilder;
   now?: () => number;
 }
 
@@ -39,6 +41,7 @@ export class ChatHeartbeatServiceProvider {
   private readonly hasRunningChildren: (jobId: string, taskIndex: number) => Promise<boolean>;
   private readonly taskForThread: (threadId: string) => Promise<ChatHeartbeatThreadTask | null>;
   private readonly queueJobMessage: (target: { jobId: string; taskIndex: number }, threadId: string, message: string) => Promise<{ id: string }>;
+  private readonly noticeBuilder: HeartbeatNoticeBuilder;
   private readonly now: () => number;
 
   constructor(private readonly dependencies: ChatHeartbeatProviderDependencies = {}) {
@@ -49,7 +52,7 @@ export class ChatHeartbeatServiceProvider {
     });
     this.hasRunningChildren = dependencies.hasRunningChildren ?? (async(jobId, taskIndex) => {
       const { agentJobProvider } = await import('./AgentJobServiceProvider');
-      return agentJobProvider.jobs.hasRunningChildren(jobId, taskIndex);
+      return agentJobProvider.children.hasRunningChildren(jobId, taskIndex);
     });
     this.taskForThread = dependencies.taskForThread ?? (async(threadId) => {
       const { agentJobProvider } = await import('./AgentJobServiceProvider');
@@ -59,6 +62,7 @@ export class ChatHeartbeatServiceProvider {
       const { agentJobProvider } = await import('./AgentJobServiceProvider');
       return agentJobProvider.messaging.queueMessage({ ...target, threadId, jobStatus: 'running', taskStatus: 'running' }, message);
     });
+    this.noticeBuilder = dependencies.noticeBuilder ?? new HeartbeatNoticeBuilder();
     this.now = dependencies.now ?? Date.now;
   }
 
@@ -173,7 +177,7 @@ export class ChatHeartbeatServiceProvider {
     const job = await this.getJob(record.jobId);
     const task = job?.tasks[record.taskIndex];
     if (!job || !task || task.threadId !== record.threadId || !['running', 'parked'].includes(job.status)
-        || !['running', 'parked'].includes(task.status)) {
+        || !this.isOpenTask(task)) {
       await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
       return;
     }
@@ -184,7 +188,17 @@ export class ChatHeartbeatServiceProvider {
       taskIndex: record.taskIndex,
       config: normalizeChatHeartbeatConfig({ ...record.config, startedAt: record.startedAt, expiresAt: record.expiresAt, setBy: record.setBy }),
     });
-    if (!status.enabled) await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
+    if (!status.enabled) {
+      if (record.expiresAt <= this.now() && record.config.intervalMinutes !== null) {
+        const message = this.noticeBuilder.buildMessage({
+          message: record.config.message, intervalMinutes: record.config.intervalMinutes,
+          startedAt: record.startedAt, expiresAt: record.expiresAt, setBy: record.setBy, autoOff: true,
+        });
+        await this.queueJobMessage({ jobId: record.jobId, taskIndex: record.taskIndex }, record.threadId, message);
+      }
+      // Keep a failed queue attempt recoverable: delete only after its final notice is durable.
+      await this.jobHeartbeats.delete(record.jobId, record.taskIndex);
+    }
   }
 
   private isOpenTask(task: import('../../tools/agents/jobRegistry').AgentJobTask | undefined): boolean {

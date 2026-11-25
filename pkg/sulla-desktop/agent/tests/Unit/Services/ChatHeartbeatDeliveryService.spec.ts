@@ -101,6 +101,29 @@ describe('ChatHeartbeatDeliveryService', () => {
     expect(wakeParkedAgent.mock.calls[0]?.[4]).not.toHaveProperty('source');
   });
 
+  it('falls through to the parked-task wake when queuing a final notice throws', async() => {
+    // risk: queue storage failures must not silently discard the only auto-off notice.
+    const queueJobMessage = vi.fn(async() => { throw new Error('queue unavailable') });
+    const wakeParkedAgent = vi.fn(async() => true);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const service = new ChatHeartbeatDeliveryService({
+        getJob: async() => ({
+          status: 'parked', parentChannel: 'sulla-desktop',
+          tasks: [{ threadId: 'queue-fallback-thread', agentId: 'codex-sol-worker', status: 'parked' }],
+        }),
+        hasRunningChildren: async() => false,
+        queueJobMessage, wakeParkedAgent, send: async() => true, now: () => 123,
+      });
+
+      await expect(service.deliver('sulla-desktop', 'queue-fallback-thread', 'final notice', 5,
+        { jobId: 'job-fallback', taskIndex: 0 }, { final: true })).resolves.toEqual({ delivered: true });
+      expect(queueJobMessage).toHaveBeenCalledTimes(1);
+      expect(wakeParkedAgent).toHaveBeenCalledTimes(1);
+      expect(wakeParkedAgent.mock.calls[0]?.[2]).toBe('final notice');
+    } finally { warning.mockRestore() }
+  });
+
   it('keeps the queued final beat when the wake loses a race with another turn', async() => {
     // risk: a declined wake silently discards the only notice that the heartbeat is off.
     const queueJobMessage = vi.fn(async() => ({ id: 'queued-9' }));

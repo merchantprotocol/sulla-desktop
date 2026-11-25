@@ -44,6 +44,8 @@ export interface ChatHeartbeatRuntime extends ChatHeartbeatRegistration {
   expiryTimer: ReturnType<typeof setTimeout> | null;
   expirationPending: boolean;
   expiring:   boolean;
+  pendingFinalBeat: { message: string; intervalMinutes: number; attempts: number } | null;
+  finalDeliveryInFlight: boolean;
   generation: number;
 }
 
@@ -86,6 +88,8 @@ export class ChatHeartbeatScheduler {
       now: this.now, setTimer: this.setTimer, clearTimer: this.clearTimer,
       deliver: deps.deliver, setActive: deps.setActive,
       isCurrent: runtime => this.isCurrent(runtime),
+      isBusy: runtime => runtime.busy || deps.isGraphBusy(runtime.threadId),
+      watchForIdle: runtime => this.watchdog.start(runtime),
       jobHeartbeatChanged: deps.jobHeartbeatChanged,
       clearTimers: runtime => this.clearRuntimeTimers(runtime),
       unregisterJobTask: (jobId, taskIndex) => this.unregisterJobTask(jobId, taskIndex),
@@ -96,7 +100,12 @@ export class ChatHeartbeatScheduler {
     this.watchdog = new ChatHeartbeatBusyWatchdog({
       now: this.now, setTimer: this.setTimer, clearTimer: this.clearTimer,
       isGraphBusy: deps.isGraphBusy, isCurrent: runtime => this.isCurrent(runtime),
-      onStale: (runtime) => { this.resume(runtime); this.emitStatus(runtime) },
+      onStale: (runtime) => {
+        if (runtime.pendingFinalBeat) void this.expiry.deliverPending(runtime);
+        if (runtime.config.intervalMinutes !== null) this.resume(runtime);
+        this.emitStatus(runtime);
+      },
+      onIdle: runtime => { void this.expiry.deliverPending(runtime) },
     });
   }
 
@@ -129,8 +138,13 @@ export class ChatHeartbeatScheduler {
     runtime.paused = false;
     this.runtimes.set(input.threadId, runtime);
     this.deps.setActive?.(input.threadId, runtime.config.intervalMinutes !== null);
-    if (runtime.busy) this.pause(runtime);
-    else this.schedule(runtime, runtime.pending ? BUSY_RETRY_MS : undefined);
+    if (runtime.busy) {
+      this.pause(runtime);
+      if (runtime.pendingFinalBeat) this.watchdog.start(runtime);
+    } else {
+      this.schedule(runtime, runtime.pending ? BUSY_RETRY_MS : undefined);
+      if (runtime.pendingFinalBeat) void this.expiry.deliverPending(runtime);
+    }
     this.expiry.schedule(runtime);
     runtime.onConfig?.(runtime.config);
     return this.emitStatus(runtime);
@@ -203,10 +217,15 @@ export class ChatHeartbeatScheduler {
     const runtime = this.runtimes.get(threadId);
     if (!runtime) return null;
     runtime.busy = busy;
-    if (busy) this.pause(runtime);
+    if (busy) {
+      this.pause(runtime);
+      if (runtime.pendingFinalBeat) this.watchdog.start(runtime);
+    }
     else {
-      this.watchdog.stop(runtime);
+      if (runtime.pendingFinalBeat && this.deps.isGraphBusy(threadId)) this.watchdog.start(runtime);
+      else this.watchdog.stop(runtime);
       if (runtime.paused) this.resume(runtime);
+      if (runtime.pendingFinalBeat) void this.expiry.deliverPending(runtime);
     }
     return this.emitStatus(runtime);
   }
@@ -298,7 +317,7 @@ export class ChatHeartbeatScheduler {
       threadId: input.threadId, channel: input.channel, config: normalizeChatHeartbeatConfig(null),
       busy: false, pending: false, paused: false, nextAt: null, timer: null, delivering: false, watchdog: null,
       idleSince: null, startedAt: null, expiresAt: null, expiryTimer: null, expirationPending: false,
-      expiring: false, generation: 0,
+      expiring: false, pendingFinalBeat: null, finalDeliveryInFlight: false, generation: 0,
     };
   }
 

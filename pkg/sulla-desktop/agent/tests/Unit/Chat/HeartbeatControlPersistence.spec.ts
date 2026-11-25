@@ -18,6 +18,31 @@ import { defaultChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
 describe('HeartbeatControl persistence', () => {
   afterEach(() => { vi.clearAllMocks() });
 
+  it('appends a heartbeat notice for the registered thread', async() => {
+    // risk: a composer refactor drops all delivered heartbeat notices from the visible chat history.
+    const listeners = new Map<string, (event: unknown, value: any) => void>();
+    f.on.mockImplementation((channel: string, listener: (event: unknown, value: any) => void) => listeners.set(channel, listener));
+    f.invoke.mockImplementation(async(channel: string) => channel === 'chat-heartbeat:register'
+      ? { success: true, status: { ...defaultChatHeartbeatConfig(), threadId: 'composer-beat-thread', enabled: false, nextAt: null, pending: false, startedAt: null, expiresAt: null } }
+      : { success: true });
+    const controller = new ChatController();
+    controller.setBackendThreadId('composer-beat-thread');
+    const wrapper = mount(HeartbeatControl, { global: { provide: { [ChatControllerKey as symbol]: controller } } });
+    try {
+      await flushPromises();
+      listeners.get('chat-heartbeat:beat')?.({}, {
+        threadId: 'composer-beat-thread', createdAt: 123, intervalMinutes: 5, message: 'Heartbeat notice',
+      });
+
+      expect(controller.messages.value).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'heartbeat', createdAt: 123, intervalMinutes: 5, text: 'Heartbeat notice' }),
+      ]));
+    } finally {
+      wrapper.unmount();
+      await flushPromises();
+    }
+  });
+
   it('persists the confirmed scheduler deadline, and not an enabled heartbeat before IPC confirms it', async() => {
     // risk: a renderer restart between configure and save re-registers an enabled heartbeat with a fresh six-hour deadline.
     let saved: any;
