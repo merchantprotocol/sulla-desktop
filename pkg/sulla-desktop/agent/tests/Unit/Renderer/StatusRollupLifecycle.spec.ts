@@ -68,6 +68,7 @@ describe('StatusRollup lifecycle', () => {
     await nextTick();
 
     expect(wrapper.text()).toContain(checkIn.text);
+    expect(wrapper.emitted('consumer-attached')).toHaveLength(1);
     expect(wrapper.emitted('shown')).toBeUndefined();
     expect(wrapper.emitted('consumed')).toHaveLength(1);
 
@@ -87,6 +88,7 @@ describe('StatusRollup lifecycle', () => {
     wrapper.unmount();
     mountedWrapper = undefined;
 
+    expect(wrapper.emitted('consumer-detached')).toHaveLength(1);
     expect(clearInterval).toHaveBeenCalledWith(intervalId);
   });
 
