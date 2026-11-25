@@ -268,26 +268,27 @@ describe('live delegated wake ownership', () => {
     } finally { sample.mockRestore(); cache.clear() }
   });
 
-  it('records the throwing provider boundary and never echoes prompt text, arbitrary source or supplied ID', async() => {
-    const h = harness();
-    const sentinel = 'PRIVATE_SENTINEL_NOT_FOR_LOGS';
-    DeferredStallInput.appendActionable(h.state, { role: 'user', content: sentinel, metadata: { source: sentinel, wakeId: sentinel } });
-    h.ports.execute = () => {
-      h.state.metadata.delegatedProviderDispatchCount = 1;
-      return Promise.reject(new Error(sentinel));
-    };
-    await expect(h.run()).rejects.toThrow('Delegated wake execution failed');
-    expect(h.lines).toHaveLength(1);
-    expect(h.lines.join('')).not.toContain(sentinel);
-    expect(JSON.parse(h.lines[0].slice(h.lines[0].indexOf('{')))).toMatchObject({
-      wakeId:             expect.stringMatching(/^[0-9a-f]{16}$/),
-      source:             'unknown_wake',
-      attempt:            1,
-      graphCache:         'live_runner',
-      cacheHit:           false,
-      providerDispatched: true,
-      liveChildCount:     1,
+  it.each([['agent_inbox', 'agent_inbox'], ['PRIVATE_SENTINEL_NOT_FOR_LOGS', 'unknown_wake']])(
+    'logs the safe source for a failed wake from %s without exposing input or IDs', async(source, expected) => {
+      const h = harness();
+      const sentinel = 'PRIVATE_SENTINEL_NOT_FOR_LOGS';
+      DeferredStallInput.appendActionable(h.state, { role: 'user', content: sentinel, metadata: { source, wakeId: sentinel } });
+      h.ports.execute = () => {
+        h.state.metadata.delegatedProviderDispatchCount = 1;
+        return Promise.reject(new Error(sentinel));
+      };
+      await expect(h.run()).rejects.toThrow('Delegated wake execution failed');
+      expect(h.lines).toHaveLength(1);
+      expect(h.lines.join('')).not.toContain(sentinel);
+      expect(JSON.parse(h.lines[0].slice(h.lines[0].indexOf('{')))).toMatchObject({
+        wakeId:             expect.stringMatching(/^[0-9a-f]{16}$/),
+        source:             expected,
+        attempt:            1,
+        graphCache:         'live_runner',
+        cacheHit:           false,
+        providerDispatched: true,
+        liveChildCount:     1,
+      });
+      expect(h.lifecycle.liveState(taskThread)).toBeUndefined();
     });
-    expect(h.lifecycle.liveState(taskThread)).toBeUndefined();
-  });
 });
