@@ -20,7 +20,6 @@ import { buildHeartbeatSection } from './heartbeat';
 import { buildHeartbeatGoalSection } from './heartbeatGoal';
 import { buildIdentitySection } from './identity';
 import { buildNarrationPolicySection } from './narrationPolicy';
-import { buildObservationalMemorySection } from './observationalMemory';
 import { buildSafetySection } from './safety';
 import { buildSilentReplySection } from './silentReply';
 import { buildSkillsSection } from './skills';
@@ -44,7 +43,6 @@ SystemPromptBuilder.register('narration_policy', buildNarrationPolicySection, ['
 SystemPromptBuilder.register('environment', buildEnvironmentSection, ['full', 'local']);
 SystemPromptBuilder.register('skills', buildSkillsSection, ['full', 'local']);
 SystemPromptBuilder.register('workspace', buildWorkspaceSection, ['full', 'minimal', 'local']);
-SystemPromptBuilder.register('observational_memory', buildObservationalMemorySection, ['full', 'local']);
 SystemPromptBuilder.register('trust', buildTrustSection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('completion_wrappers', buildCompletionWrappersSection, ['full', 'minimal', 'local']);
 SystemPromptBuilder.register('citations', buildCitationsSection, ['full', 'minimal']);

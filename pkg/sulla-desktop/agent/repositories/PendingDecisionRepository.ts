@@ -48,6 +48,18 @@ export class PendingDecisionRepository {
     return rows.map(row => row.id);
   }
 
+  /** Persist expiry transitions and return the authoritative records to every subscribed consumer. */
+  async expireOpenDecisions(sessionId: string, now: number): Promise<DecisionRecord[]> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions SET status = 'expired',
+      record = jsonb_set(CASE WHEN record->>'kind'='question' AND NOT record ? 'attention' THEN record || '{"attention":"active"}'::jsonb ELSE record END, '{status}', '"expired"'), updated_at = NOW()
+      WHERE status IN ('pending', 'deferred') AND NOT (record->>'kind'='question' AND COALESCE(record#>>'{payload,answerRoute}','')='inbox')
+        AND ((record->>'kind'='approval' AND NULLIF(record#>>'{payload,filesPublishRequestId}','') IS NOT NULL AND (record->>'expiresAt')::bigint <= $2)
+          OR (NOT (record->>'kind'='approval' AND NULLIF(record#>>'{payload,filesPublishRequestId}','') IS NOT NULL)
+            AND (session_id <> $1 OR (record->>'expiresAt')::bigint <= $2)))
+      RETURNING record`, [sessionId, now]);
+    return rows.map(row => row.record);
+  }
+
   /** Snapshot proven links for existing records before normal job retention removes them. */
   async preserveAncestry(conversationId: string): Promise<void> {
     await this.client.query(`WITH RECURSIVE family(id,path) AS (
@@ -124,7 +136,7 @@ export class PendingDecisionRepository {
   /** Transcript history can outlive the drawer's first page. Only read cards owned by this thread. */
   async listTranscriptDecisions(conversationId: string, ids: string[]): Promise<DecisionRecord[]> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
-      WHERE id=ANY($2::text[]) AND record->>'conversationId'=$1`, [conversationId, ids]);
+      WHERE id=ANY($2::text[]) AND (record->>'conversationId'=$1 OR COALESCE(record->'relatedConversationIds','[]'::jsonb) ? $1)`, [conversationId, ids]);
     return rows.map(row => row.record);
   }
 
@@ -158,9 +170,10 @@ export class PendingDecisionRepository {
     return rows[0]?.record;
   }
 
+  /** Files publish approvals outlive the app session that created them; every other approval is session-bound. */
   async findApproval(sessionId: string, key: string, value: string, now: number): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
-      WHERE status IN ('pending', 'deferred') AND session_id=$1 AND record->>'kind'='approval'
+      WHERE status IN ('pending', 'deferred') AND (session_id=$1 OR $2='filesPublishRequestId') AND record->>'kind'='approval'
         AND record->'payload'->>$2=$3 AND (record->>'expiresAt')::bigint>$4
       ORDER BY updated_at DESC LIMIT 1`, [sessionId, key, value, now]);
     return rows[0]?.record;

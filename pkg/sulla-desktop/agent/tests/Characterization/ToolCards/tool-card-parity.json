@@ -2253,52 +2253,6 @@
     }
   },
   {
-    "name": "add_observational_memory",
-    "result": null,
-    "card": {
-      "label": "Memory",
-      "summary": "Remembering observation"
-    },
-    "output": {}
-  },
-  {
-    "name": "add_observational_memory",
-    "result": {
-      "responseString": "done"
-    },
-    "card": {
-      "label": "Memory",
-      "summary": "Remembering observation",
-      "output": "done"
-    },
-    "output": {
-      "output": "done"
-    }
-  },
-  {
-    "name": "remove_observational_memory",
-    "result": null,
-    "card": {
-      "label": "Memory",
-      "summary": "Forgetting observation "
-    },
-    "output": {}
-  },
-  {
-    "name": "remove_observational_memory",
-    "result": {
-      "responseString": "done"
-    },
-    "card": {
-      "label": "Memory",
-      "summary": "Forgetting observation ",
-      "output": "done"
-    },
-    "output": {
-      "output": "done"
-    }
-  },
-  {
     "name": "create_workspace",
     "result": null,
     "card": {

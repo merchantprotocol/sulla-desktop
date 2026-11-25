@@ -69,14 +69,16 @@ describe('StatusRollup lifecycle', () => {
 
     expect(wrapper.text()).toContain(checkIn.text);
     expect(wrapper.emitted('shown')).toBeUndefined();
+    expect(wrapper.emitted('consumed')).toHaveLength(1);
 
     vi.advanceTimersByTime(1_000);
     const nextCheckIn = { ...checkIn, key: 'check-in-2', agentId: 'agent-2', agentName: 'Worker Two', text: 'The second worker is ready', observedAt: Date.now() };
     await wrapper.setProps({ checkIns: [checkIn, nextCheckIn] });
+    vi.advanceTimersByTime(1_500);
     await nextTick();
     expect(wrapper.text()).toContain(nextCheckIn.text);
     expect(wrapper.emitted('shown')).toEqual([[
-      { key: nextCheckIn.key, agentId: nextCheckIn.agentId, threadId: nextCheckIn.threadId },
+      expect.objectContaining({ key: nextCheckIn.key, agentId: nextCheckIn.agentId, threadId: nextCheckIn.threadId, role: 'worker' }),
     ]]);
 
     const intervalId = setInterval.mock.results[0]?.value;
@@ -112,12 +114,12 @@ describe('StatusRollup lifecycle', () => {
 
     Object.defineProperty(document, 'hidden', { configurable: true, value: false });
     document.dispatchEvent(new Event('visibilitychange'));
-    vi.advanceTimersByTime(1_000);
+    vi.advanceTimersByTime(2_000);
     await nextTick();
 
     expect(wrapper.text()).toContain(nextCheckIn.text);
     expect(wrapper.emitted('shown')).toEqual([[
-      { key: nextCheckIn.key, agentId: nextCheckIn.agentId, threadId: nextCheckIn.threadId },
+      expect.objectContaining({ key: nextCheckIn.key, agentId: nextCheckIn.agentId, threadId: nextCheckIn.threadId, role: 'worker' }),
     ]]);
   });
 });

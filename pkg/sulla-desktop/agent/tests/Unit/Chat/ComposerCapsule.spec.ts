@@ -100,6 +100,9 @@ vi.mock('@pkg/composables/useFocusGuard', () => ({ useFocusGuard: vi.fn() }));
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { ChatController } from '@pkg/pages/chat/controller/ChatController';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
+import { THREAD_AGENT_ACTIVITY_KEY } from '@pkg/pages/chat/composables/useThreadAgentActivity';
+import type { Message } from '@pkg/pages/chat/models/Message';
+import type { StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 import Composer from '@pkg/pages/chat/components/composer/Composer.vue';
 
 describe('Capsule chat composer', () => {
@@ -200,6 +203,55 @@ describe('Capsule chat composer', () => {
     remote.running.value = false;
     await flushPromises();
     expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running');
+  });
+
+  it('pulses stream and observed check-in events even when the parent fills the status slot', async() => {
+    // risk: availability — live reply text and queued worker activity keep the capsule responsive without the fallback line.
+    capsule().unmount();
+    const checkIns = ref<StatusRollupItem[]>([]);
+    const activity = { checkIns, rootFallback: ref(null), projection: ref({}), chartRoot: ref(null) };
+    wrapper = mount(Composer, {
+      props: { reportingLevel: 'debug' },
+      slots: { 'status-line': '<span class="parent-status">Parent status</span>' },
+      global: {
+        provide: {
+          [ChatControllerKey as symbol]: controller,
+          [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot: ref({ rows: [] }) },
+          [THREAD_AGENT_ACTIVITY_KEY as symbol]: activity,
+          'chat:activity-context': { backendThreadId: ref('thread-a') },
+          'chat:is-active': ref(true),
+        },
+        stubs: {
+          CommandPopover: { template: '<div class="command-popover-stub" />' },
+          ShelfPanel: true,
+          ThreadStatusLine: { template: '<div class="thread-status-stub"><slot name="end" /></div>' },
+          ComposerVoicePanel: true,
+        },
+      },
+    });
+    expect(capsule().get('.parent-status').text()).toBe('Parent status');
+
+    controller.send('Run while observing the status capsule.');
+    await flushPromises();
+    const streaming = {
+      id: 'streaming-glow' as Message['id'],
+      kind: 'streaming',
+      createdAt: Date.now(),
+      startedAt: Date.now(),
+      text: 'First chunk',
+    } as Message;
+    controller.appendMessage(streaming);
+    await flushPromises();
+    controller.updateMessage(streaming.id, { text: 'First chunk plus more' } as Partial<Message>);
+    await flushPromises();
+    expect(capsule().get('.composer-capsule').classes()).toContain('glow-stream');
+
+    checkIns.value = [{
+      key: 'worker-event', threadId: 'thread-a', agentId: 'worker-job:0', agentName: 'Worker',
+      kind: 'agent', text: 'Worker action', observedAt: Date.now(), role: 'worker',
+    }];
+    await flushPromises();
+    expect(capsule().get('.composer-capsule').classes()).toContain('glow-soft');
   });
 
   it('does not send during IME composition or keyCode 229, preserves Shift+Enter, and sends on plain Enter', async() => {

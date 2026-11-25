@@ -7,8 +7,8 @@ import type { ToolManifest } from '../registry';
 
 /**
  * Ledger tools — deterministic reads of the outcome ledger at ~/sulla/ledger/.
- * The ledger itself is maintained by the observation writer (each turn) and
- * the agents directly (via read_file/write_file); these tools provide the
+ * The ledger is maintained by agents directly (via read_file/write_file);
+ * these tools provide the
  * zero-LLM measurement layer.
  */
 export const ledgerToolManifests: ToolManifest[] = [

@@ -183,14 +183,15 @@ describe('IpcController delegation', () => {
     expect(router.reset).not.toHaveBeenCalled();
   });
 
-  it('chat heartbeat: register requires a thread id; set reports unregistered threads', () => {
+  it('chat heartbeat: register requires a thread id; set reports unregistered threads', async() => {
     const ipc = new FakeIpc();
-    const service = { register: vi.fn(() => 'on'), configure: vi.fn(() => null), updateBusy: vi.fn(), unregister: vi.fn() };
+    const service = { register: vi.fn(async() => 'on'), configure: vi.fn(async() => null), updateBusy: vi.fn(), unregisterFromUi: vi.fn() };
     new ChatHeartbeatIpcController(ipc, () => service as any).register();
-    expect(ipc.invoke('chat-heartbeat:register', {}, { threadId: '  ' })).toEqual({ success: false, error: 'threadId is required' });
-    expect(ipc.invoke('chat-heartbeat:set', {}, { threadId: 't', config: {} })).toEqual({ success: false, error: 'chat heartbeat is not registered' });
+    expect(await ipc.invoke('chat-heartbeat:register', {}, { threadId: '  ' })).toEqual({ success: false, error: 'threadId is required' });
+    expect(await ipc.invoke('chat-heartbeat:set', {}, { threadId: 't', config: {} })).toEqual({ success: false, error: 'chat heartbeat is not registered' });
     expect(ipc.invoke('chat-heartbeat:unregister', {}, ' t ')).toEqual({ success: true });
-    expect(service.unregister).toHaveBeenCalledWith('t');
+    // A closing tab goes through unregisterFromUi, which keeps a delegated job's own heartbeat alive.
+    expect(service.unregisterFromUi).toHaveBeenCalledWith('t');
   });
 
   it('chat artifacts: get-by-id hides deleted histories', async() => {

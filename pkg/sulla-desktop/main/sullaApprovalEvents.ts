@@ -4,8 +4,11 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BrowserWindow } from 'electron';
+import { DecisionExpirySweeper } from '@pkg/agent/services/DecisionExpirySweeper';
 import { decisionService } from '@pkg/agent/services/DecisionService';
 import { toolRegistry } from '@pkg/agent/tools';
+import { toolRuntime } from '@pkg/agent/tools/toolRuntime';
+import { FilesPublishDecisionApplier } from './FilesPublishDecisionApplier';
 /**
  * Sulla approval IPC handlers.
  *
@@ -34,23 +37,21 @@ export function initSullaApprovalEvents(): void {
       if (!window.isDestroyed() && /^(file:|app:)/.test(window.webContents.getURL())) window.webContents.send('decisions:changed', record);
     }
   });
-  // Agent file publish requests: once the human decides in Decide, apply the
-  // decision to Files as the human (agents are not allowed to publish).
-  const filesDecisions = new Set<string>();
-  decisionService.subscribe(record => {
-    const requestId = record.payload?.filesPublishRequestId;
-    if (!requestId || record.kind !== 'approval' || !['approved', 'denied', 'expired'].includes(record.status) || filesDecisions.has(record.id)) return;
-    filesDecisions.add(record.id);
-    const action = record.status === 'approved' ? 'approve' : 'reject';
-    void import('@pkg/main/sullaFilesClient')
-      .then(({ getSullaFilesClient }) => getSullaFilesClient().request(`/v1/files/publish-requests/${ encodeURIComponent(requestId) }/${ action }`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
-      }))
-      .then(response => {
-        if (!response.ok && response.status !== 409) console.error(`Files publish request ${ requestId } ${ action } failed: HTTP ${ response.status }`);
-      })
-      .catch(error => console.error(`Files publish request ${ requestId } ${ action } failed:`, error));
-  });
+  // Agent file publish requests: once the human decides in Decide or chat,
+  // apply that same decision to Files as the human (agents cannot publish).
+  const filePublishApplier = new FilesPublishDecisionApplier(
+    decisionService,
+    async() => {
+      const { getSullaFilesClient } = await import('@pkg/main/sullaFilesClient');
+      return getSullaFilesClient();
+    },
+    (message, error) => error === undefined ? console.error(message) : console.error(message, error),
+  );
+  filePublishApplier.start();
+  // Both listeners must be subscribed before the first sweep: an approval that expired while the
+  // app was closed is announced once, and that announcement rejects it in Files and tells its asker.
+  toolRuntime.start();
+  new DecisionExpirySweeper(decisionService, undefined, (message, error) => console.error(message, error)).start();
   const trusted = (event: Electron.IpcMainInvokeEvent) => {
     if (!BrowserWindow.fromWebContents(event.sender) || event.senderFrame !== event.sender.mainFrame ||
         !/^(file:|app:)/.test(event.senderFrame?.url || '')) throw new Error('Only the Desktop application can decide.');
@@ -86,7 +87,7 @@ export function initSullaApprovalEvents(): void {
     }
 
     const record = await decisionService.find(approvalId);
-    if (record) return decisionService.resolve({ id: approvalId, conversationId: record.conversationId, action: decision });
+    if (record) throw new Error('Use decisions:resolve');
     const settled = ApprovalService.getInstance().resolve(approvalId, decision, note);
     return { settled };
   });

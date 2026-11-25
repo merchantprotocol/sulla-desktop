@@ -5,8 +5,7 @@
 
 import { postgresClient } from '../database/PostgresClient';
 import { SubjectMemorySentModel } from '../database/models/SubjectMemorySentModel';
-import { POTION_MODEL_NAME } from './MemoryRecallService';
-import { PotionEmbedder } from './potionEmbedder';
+import { POTION_MODEL_NAME, PotionEmbedder } from './potionEmbedder';
 import { resolveBundledModelDir } from '../utils/sullaPaths';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { CheckinIdentity } from './CheckinIdentity';
@@ -278,7 +277,7 @@ export async function recallV7SubjectMemory(
   const c = await (dependencies.load || load)();
   const e = (dependencies.embedder || embedder)();
   if (!e) return null;
-  const measureBrain = options.measureBrain || ((brain: string) => measureInjectedMemoryBlocks('', brain));
+  const measureBrain = options.measureBrain || measureInjectedMemoryBlocks;
   const packer = dependencies.packer || new MemoryBudgetPacker(options.budget ?? MEMORY_CHAR_BUDGET, measureBrain);
   const cue = context.join('\n');
   const q = e.embed(cue);
