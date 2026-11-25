@@ -9,10 +9,11 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computed, nextTick, ref } from 'vue';
 
+import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import ThreadStatusLine from '@pkg/pages/chat/components/composer/ThreadStatusLine.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
-import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((): Promise<any> => Promise.resolve({ ok: true })) }));
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke, send: vi.fn(), on: vi.fn(), removeListener: vi.fn() } }));
@@ -44,7 +45,7 @@ const row = (state: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | null } = {}) {
+function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | null; tabStrip?: WindowTabStripState } = {}) {
   const controller = {
     isRunning: computed(() => !!opts.running),
     messages:  computed(() => []),
@@ -57,13 +58,14 @@ function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | 
       provide: {
         [ChatControllerKey as symbol]:      controller,
         [AGENT_STATE_CLIENT_KEY as symbol]: client,
+        [windowTabStripKey as symbol]:      opts.tabStrip ?? new WindowTabStripState(window, ipcRenderer),
         'chat:activity-context':            { tabId: 'tab-1', backendThreadId: ref('thread-1') },
       },
     },
   });
 }
 
-afterEach(() => { document.body.innerHTML = ''; invoke.mockClear(); chatActivityByTab.clear() });
+afterEach(() => { document.body.innerHTML = ''; invoke.mockClear() });
 
 describe('the activity line above the message box', () => {
   // risk: the main thread showed nothing while agents worked or sat silent
@@ -81,20 +83,24 @@ describe('the activity line above the message box', () => {
   });
 
   it('says Idle when nothing is running and nothing can be opened', () => {
-    const w = mountLine([]);
+    const tabStrip = new WindowTabStripState(window, ipcRenderer);
+    const w = mountLine([], { tabStrip });
+
     expect(w.find('.ta-line').text()).toContain('Idle');
     expect(w.find('.ta-line').attributes('disabled')).toBeDefined();
-    expect(chatActivityByTab.get('tab-1')?.state).toBe('idle');
+    expect(tabStrip.readActivity('tab-1').snapshot?.state).toBe('idle');
     w.unmount();
   });
 
   it('flags a silent agent and tells the tab strip', () => {
-    const w = mountLine([row('quiet')]);
+    const tabStrip = new WindowTabStripState(window, ipcRenderer);
+    const w = mountLine([row('quiet')], { tabStrip });
+
     expect(w.find('.ta-line').text()).toContain('No progress');
-    expect(chatActivityByTab.get('tab-1')?.state).toBe('stalled');
-    expect(chatActivityByTab.get('tab-1')?.detail).toContain('stopped responding');
+    expect(tabStrip.readActivity('tab-1').snapshot?.state).toBe('stalled');
+    expect(tabStrip.readActivity('tab-1').snapshot?.detail).toContain('stopped responding');
     w.unmount();
-    expect(chatActivityByTab.has('tab-1')).toBe(false);
+    expect(tabStrip.readActivity('tab-1').snapshot).toBeUndefined();
   });
 
   it('nudges a silent agent from its row with one click', async() => {
