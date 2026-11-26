@@ -337,6 +337,7 @@ it('keeps recorded reply attribution and its actions together across levels and 
   const actionRows = () => wrapper.findAll('.tact-sulla');
   expect(actionRows()).toHaveLength(3);
   const [legacy, recorded, followUp] = actionRows();
+  const standardActionText = actionRows().map(row => row.text());
   expect(legacy.text()).toContain('Agent not recorded');
   expect(legacy.text()).not.toContain('Model not recorded');
   expect(legacy.get('time').attributes('datetime')).toBe(new Date(legacyAt).toISOString());
@@ -348,13 +349,13 @@ it('keeps recorded reply attribution and its actions together across levels and 
   expect(followUp.classes()).not.toContain('tact-latest');
 
   await wrapper.setProps({ reportingLevel: 'debug' });
-  expect(actionRows().map(row => row.element)).toEqual([legacy, recorded, followUp].map(row => row.element));
+  expect(actionRows().map(row => row.text())).toEqual(standardActionText);
   expect(recorded.text()).toContain('Research Agent');
   expect(recorded.text()).not.toContain('reported-model');
   expect(wrapper.text()).toContain('reported-model');
   await wrapper.setProps({ reportingLevel: 'fatal' });
   const newestVisible = actionRows().find(row => row.text().includes('Research Agent'))!;
-  expect(newestVisible.element).toBe(recorded.element);
+  expect(newestVisible.text()).toBe(standardActionText[1]);
 
   // Preserve the existing Reply, Regenerate and Pin dispatches; Copy and Fork
   // remain on the same row (Fork is still the existing visual placeholder).
@@ -448,7 +449,8 @@ it('retains exact tool data and recorded timestamps through Detailed projection 
   const standardText = wrapper.findAll('.report-activity-text').map(row => row.text());
   expect(standardText).toEqual(['Shell · Completed']);
   await wrapper.setProps({ reportingLevel: 'debug' });
-  expect(wrapper.findAll('.report-activity-text').map(row => row.text())).toEqual(standardText);
+  expect(wrapper.text()).toContain('echo fixture');
+  expect(wrapper.text()).not.toContain('Shell · Completed');
   await wrapper.get('li.dtr-row[data-kind="tool"] button').trigger('click');
   expect(wrapper.get('li.dtr-row[data-kind="tool"] pre').text()).toContain('FIXTURE_OUTPUT');
   await wrapper.setProps({ reportingLevel: 'fatal' });

@@ -24,7 +24,7 @@ interface JobTrace {
   live?: AgentStateRow;
   launch?: SubAgentExchangeMessage;
   exchange?: SubAgentExchangeMessage;
-  result?: { item: AgentResultItem; at: number };
+  result?: { item: AgentResultItem; at: number; message: ProactiveMessage };
   legacy?: ProactiveMessage;
   native?: SubAgentMessage;
 }
@@ -48,7 +48,7 @@ const statusLabels: Record<SubAgentTraceStatus, string> = {
   returned: 'returned', failed: 'failed', stopped: 'stopped',
 };
 
-/** Collects related events across the whole chat; the row stays in the first event's turn. */
+/** Correlates a worker's records while emitting each visible event at its own timestamp. */
 export class SubAgentTraceProjection {
   /** The one status word the approved row shows. */
   static statusLabel(status: SubAgentTraceStatus): string { return statusLabels[status]; }
@@ -66,6 +66,31 @@ export class SubAgentTraceProjection {
   }
 
   rowsByMessage(messages: readonly Message[], input: SubAgentTraceInput): Map<string, TraceRow[]> {
+    const result = new Map<string, TraceRow[]>();
+    for (const job of this.jobs(messages, input)) {
+      const source = String(job.first.id);
+      const rows = result.get(source) ?? [];
+      rows.push(this.row(job));
+      result.set(source, rows);
+    }
+    return result;
+  }
+
+  /** Individual lifecycle events for the continuous timeline. */
+  eventRowsByMessage(messages: readonly Message[], input: SubAgentTraceInput): Map<string, TraceRow[]> {
+    const result = new Map<string, TraceRow[]>();
+    for (const job of this.jobs(messages, input)) {
+      for (const row of this.eventRows(job)) {
+        const source = row.sourceMessageId ?? String(job.first.id);
+        const rows = result.get(source) ?? [];
+        rows.push(row);
+        result.set(source, rows);
+      }
+    }
+    return result;
+  }
+
+  private jobs(messages: readonly Message[], input: SubAgentTraceInput): JobTrace[] {
     const agents = new Map(input.agents?.map(row => [row.key, row]));
     const byThread = new Map<string, string>();
     for (const message of messages) {
@@ -103,7 +128,7 @@ export class SubAgentTraceProjection {
         for (const item of message.result?.items ?? []) {
           const job = get(this.taskKey(item.jobId, item.taskIndex));
           const at = item.endedAt ?? message.createdAt;
-          if (!job.result || at >= job.result.at) job.result = { item, at };
+          if (!job.result || at >= job.result.at) job.result = { item, at, message };
         }
         const legacy = !message.result && LegacyAgentNotices.parseLegacyAgentNotice(message.headline, message.body);
         if (legacy) {
@@ -113,13 +138,65 @@ export class SubAgentTraceProjection {
       }
     }
 
-    const result = new Map<string, TraceRow[]>();
-    for (const job of jobs.values()) {
-      const rows = result.get(job.first.id) ?? [];
-      rows.push(this.row(job));
-      result.set(job.first.id, rows);
+    return [...jobs.values()];
+  }
+
+  private eventRows(job: JobTrace): TraceRow[] {
+    const aggregate = this.row(job);
+    const { launch, exchange, legacy, native, live } = job;
+    const rows: TraceRow[] = [];
+
+    if (launch) rows.push({ ...aggregate, id: `subagent:${job.key}:handoff`, kind: 'handoff', icon: 'handoff',
+      verb: 'Handed off to', status: live ? states[live.state] : 'starting', note: launch.summary || undefined,
+      at: launch.createdAt, anchorEntryId: String(launch.id), sourceMessageId: String(launch.id) });
+
+    if (native) rows.push({ ...aggregate, id: `subagent:${job.key}:native`, kind: 'activity', icon: 'dot',
+      verb: 'Agent status', status: ({ running: 'working', done: 'returned', error: 'failed' } as const)[native.status],
+      note: native.desc, at: native.createdAt, anchorEntryId: String(native.id), sourceMessageId: String(native.id) });
+
+    const endedLiveAt = this.timestamp(live?.endedAt);
+    let settled: { at: number; status: SubAgentTraceStatus; note?: string; sourceMessageId: string; durationLabel?: string } | undefined;
+    if (job.result) settled = {
+      at: job.result.at,
+      status: resultStates[job.result.item.status],
+      note: job.result.item.problem || job.result.item.outcome,
+      sourceMessageId: String(job.result.message.id),
+      ...(job.result.item.durationMs !== undefined ? { durationLabel: this.duration(job.result.item.durationMs) } : {}),
+    };
+    else if (exchange && exchange.status !== 'running') settled = {
+      at: exchange.createdAt, status: exchangeStates[exchange.status], note: exchange.summary,
+      sourceMessageId: String(exchange.id),
+    };
+    else if (legacy) {
+      const parsed = LegacyAgentNotices.parseLegacyAgentNotice(legacy.headline, legacy.body);
+      if (parsed) settled = { at: legacy.createdAt, status: legacyStates[parsed.verdict], note: legacy.headline, sourceMessageId: String(legacy.id) };
     }
-    return result;
+    else if (live && endedLiveAt !== undefined && ['returned', 'failed', 'stopped'].includes(states[live.state])) settled = {
+      at: endedLiveAt, status: states[live.state], note: live.stopReason || live.stateReason || undefined,
+      sourceMessageId: String(launch?.id ?? job.first.id),
+    };
+
+    if (settled) rows.push({ ...aggregate, id: `subagent:${job.key}:result`, kind: 'result', icon: 'result',
+      verb: 'Result from', status: settled.status, note: settled.note, at: settled.at,
+      anchorEntryId: settled.sourceMessageId, sourceMessageId: settled.sourceMessageId,
+      ...(settled.durationLabel ? { durationLabel: settled.durationLabel } : {}) });
+    else if (exchange?.status === 'running') rows.push({ ...aggregate, id: `subagent:${job.key}:checkin:${exchange.createdAt}`,
+      kind: 'activity', icon: 'dot', verb: 'Check-in', status: live ? states[live.state] : 'working',
+      note: exchange.summary || undefined, at: exchange.createdAt, anchorEntryId: String(exchange.id), sourceMessageId: String(exchange.id) });
+
+    if (live && !settled) {
+      const at = this.timestamp(live.lastCheckinAt) ?? this.timestamp(live.lastActivityAt) ?? this.timestamp(live.startedAt);
+      const note = live.lastCheckinSummary || live.stateReason || live.waitReason || undefined;
+      if (at !== undefined && note) {
+        const sourceMessageId = String(launch?.id ?? job.first.id);
+        rows.push({ ...aggregate, id: `subagent:${job.key}:status:${at}`, kind: 'activity', icon: 'dot',
+          verb: 'Status', status: states[live.state], note, at, anchorEntryId: sourceMessageId, sourceMessageId });
+      }
+    }
+
+    if (!rows.length) rows.push({ ...aggregate, id: `subagent:${job.key}:status`, kind: 'activity', icon: 'dot',
+      verb: 'Status', at: job.first.createdAt, anchorEntryId: String(job.first.id), sourceMessageId: String(job.first.id) });
+    return rows;
   }
 
   private taskKey(jobId: string, index = 0): string { return `${ jobId }:${ index }`; }
@@ -174,8 +251,8 @@ export class SubAgentTraceProjection {
       report: report || legacy?.body || native?.steps.map(step => `${ step.tag }  ${ step.text }`).join('\n') ||
         (ended ? note || 'No report recorded.' : 'Not returned yet.'),
     };
-    return { id: `subagent:${ job.key }`, kind: 'subagent', verb: '', target: label, targetIsCode: false, status,
-      at: first.createdAt, anchorEntryId: '', note,
+    return { id: `subagent:${ job.key }`, kind: 'subagent', icon: 'dot', verb: '', target: label, targetIsCode: false, status,
+      at: first.createdAt, anchorEntryId: String(first.id), sourceMessageId: String(first.id), note,
       payload: new TracePayload([status, details.brief, details.briefAt, details.checkinAt, details.checkinSummary,
         details.endedAt, details.report], (history, messages) => this.disclosure(details, status, history, messages)),
       durationLabel: !reopened && result?.durationMs !== undefined ? this.duration(result.durationMs) : undefined,

@@ -10,7 +10,7 @@ import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTrac
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
 import { ToolPayloadRepository } from '../../services/ToolPayloadRepository';
-import type { SubAgentTraceStatus, TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
+import type { SubAgentTraceStatus, TraceIcon, TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
@@ -46,6 +46,27 @@ export class DetailedTraceProjection {
         ...(usage ? { usage } : {}), ...(agentSummary ? { agentSummary } : {}),
         ...(sourceCount ? { sourceCount } : {}), ...(waitingOnYou ? { waitingOnYou } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));
+  }
+
+  /** Detailed activity as individual timestamped events, never anchored to a reply. */
+  projectRows(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceRow[] {
+    const activities = this.debugActivities(messages, standardEntries);
+    const subagents = this.subagents.eventRowsByMessage(messages, subagentInput);
+    const messageOrder = new Map(messages.map((message, index) => [String(message.id), index]));
+    const rows: TraceRow[] = [];
+
+    for (const message of messages) {
+      const ownRows = this.rowsFor(message, String(message.id), activities.get(message.id));
+      const jobRows = subagents.get(message.id) ?? [];
+      rows.push(...ownRows, ...jobRows.map(row => ({ ...row, anchorEntryId: String(message.id), sourceMessageId: String(message.id) })));
+    }
+
+    return rows.map((row, index) => ({ row, index })).sort((left, right) =>
+      (left.row.at ?? 0) - (right.row.at ?? 0) ||
+      (messageOrder.get(left.row.sourceMessageId ?? '') ?? Number.MAX_SAFE_INTEGER) -
+        (messageOrder.get(right.row.sourceMessageId ?? '') ?? Number.MAX_SAFE_INTEGER) ||
+      left.index - right.index,
+    ).map(item => item.row);
   }
 
   byAnchor(turns: readonly TraceTurn[]): Map<string, TraceTurn[]> {
@@ -94,17 +115,19 @@ export class DetailedTraceProjection {
     const hasRecordedToolRow = message.kind === 'tool' ||
       (message.kind === 'thinking' && message.reportingActivity === 'tool' && !message.chatToolActivity);
     const rows = (hasRecordedToolRow ? [] : activities ?? []).map((text, index) => this.row(`${message.id}:activity:${index}`, 'activity', 'Status', text, 'ok', anchor, message.createdAt));
+    let projected: TraceRow[];
     switch (message.kind) {
-      case 'thinking': return rows.concat(this.rowsForThinking(message, anchor));
-      case 'tool': return rows.concat(this.rowsForTool(message, anchor));
-      case 'memory': return rows.concat(this.rowsForMemory(message, anchor));
-      case 'heartbeat': return rows.concat(this.rowsForHeartbeat(message, anchor));
-      case 'tool_approval': return rows.concat(this.rowsForApproval(message, anchor));
-      case 'citation': return rows.concat(this.rowsForCitation(message, anchor));
-      case 'channel': return rows.concat(this.rowsForChannel(message, anchor));
-      case 'sulla': case 'streaming': return rows.concat(this.rowsForA2a(message, anchor));
-      default: return rows;
+      case 'thinking': projected = rows.concat(this.rowsForThinking(message, anchor)); break;
+      case 'tool': projected = rows.concat(this.rowsForTool(message, anchor)); break;
+      case 'memory': projected = rows.concat(this.rowsForMemory(message, anchor)); break;
+      case 'heartbeat': projected = rows.concat(this.rowsForHeartbeat(message, anchor)); break;
+      case 'tool_approval': projected = rows.concat(this.rowsForApproval(message, anchor)); break;
+      case 'citation': projected = rows.concat(this.rowsForCitation(message, anchor)); break;
+      case 'channel': projected = rows.concat(this.rowsForChannel(message, anchor)); break;
+      case 'sulla': case 'streaming': projected = rows.concat(this.rowsForA2a(message, anchor)); break;
+      default: projected = rows;
     }
+    return projected.map(row => ({ ...row, sourceMessageId: String(message.id) }));
   }
 
   private rowsForChannel(message: Extract<Message, { kind: 'channel' }>, anchor: string): TraceRow[] {
@@ -143,12 +166,12 @@ export class DetailedTraceProjection {
       // "Ran <command>  <tool> · exit N": the real tool name stays on the line (no-redaction rule).
       const args = [target, this.exitCode(meta, output)].filter(Boolean).join(' · ');
       return [{ ...this.row(message.id, 'tool', status === 'running' ? 'Running' : 'Ran', shell, status,
-        anchor, message.createdAt, this.duration(meta), args, payload),
-        // Keep the command's own lines and spacing; only trim the ends.
-        target: shell.trim(), targetIsCode: true }];
+         anchor, message.createdAt, this.duration(meta), args, payload), icon: this.toolIcon(target),
+        // Keep the recorded command byte-for-byte; visual clipping belongs in CSS.
+        target: shell, targetIsCode: true }];
     }
-    return [this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
-      anchor, message.createdAt, this.duration(meta), this.serializer.preview(input), payload)];
+    return [{ ...this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
+      anchor, message.createdAt, this.duration(meta), input, payload), icon: this.toolIcon(target) }];
   }
 
   private rowsForMemory(message: MemoryMessage, anchor: string): TraceRow[] {
@@ -175,7 +198,31 @@ export class DetailedTraceProjection {
 
   private row(id: string, kind: TraceRowKind, verb: string, target: string, status: TraceRowStatus, anchorEntryId: string, at: number, durationLabel?: string, keyArgs?: string, payload?: TracePayload): TraceRow {
     const safeTarget = this.serializer.summary(target);
-    return { id, kind, verb: this.serializer.summary(verb), target: safeTarget, targetIsCode: /(?:[/$\\]|\.(?:ts|js|json|sh)\b|\s--?[a-z])/i.test(safeTarget), status, ...(keyArgs ? { keyArgs: this.serializer.summary(keyArgs) } : {}), ...(durationLabel ? { durationLabel } : {}), ...(payload ? { payload } : {}), anchorEntryId, at };
+    return { id, kind, icon: this.iconFor(kind), verb: this.serializer.summary(verb), target: safeTarget, targetIsCode: /(?:[/$\\]|\.(?:ts|js|json|sh)\b|\s--?[a-z])/i.test(safeTarget), status, ...(keyArgs !== undefined ? { keyArgs } : {}), ...(durationLabel ? { durationLabel } : {}), ...(payload ? { payload } : {}), anchorEntryId, at };
+  }
+
+  private iconFor(kind: TraceRowKind): TraceIcon {
+    switch (kind) {
+      case 'thought': return 'thought';
+      case 'memory': return 'memory';
+      case 'source': return 'read';
+      case 'handoff': return 'handoff';
+      case 'result': return 'result';
+      case 'retry': return 'retry';
+      case 'approval': return 'approval';
+      case 'tool': return 'shell';
+      default: return 'dot';
+    }
+  }
+
+  private toolIcon(name: string): TraceIcon {
+    if (/browser|web|navigate|screenshot/i.test(name)) return 'browser';
+    if (/search|grep|find|query/i.test(name)) return 'search';
+    if (/read|open|fetch|list|inspect/i.test(name)) return 'read';
+    if (/edit|write|patch|replace|update/i.test(name)) return 'edit';
+    if (/file|move|copy|save/i.test(name)) return 'file';
+    if (/memory/i.test(name)) return 'memory';
+    return 'shell';
   }
 
   /** The full command of a shell tool call, or undefined for any other tool. */

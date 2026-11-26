@@ -185,6 +185,18 @@ describe('DetailedTraceProjection', () => {
     expect(invoke).toHaveBeenCalledWith('chat-messages:tool-payload', { threadId: 'thread-provider', toolRunId: 'run-provider' });
   });
 
+  it('retains the complete tool arguments in row data for CSS-only visual ellipsizing', () => {
+    // risk: truncating a long tool call before it reaches the expandable payload or row data.
+    const input = JSON.stringify({ query: 'synthetic '.repeat(100) });
+    const tool = { kind: 'tool', id: 'provider-long-args', createdAt: 2, tool: 'MCP tool', recordedToolName: 'mcp__search__run',
+      desc: 'Searching', status: 'ok', input, output: 'found' } as const;
+    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+
+    expect(row.keyArgs).toBe(input);
+    expect(row.keyArgs).toHaveLength(input.length);
+    expect(JSON.parse(row.payload!.serialize()).input).toBe(input);
+  });
+
   it('presents inline image bytes as an image resource, never as visible base64 text', () => {
     // risk: image visibility — screenshots render as images while remaining available as non-text payload data.
     const image = 'SYNTHETIC_IMAGE_BYTES';

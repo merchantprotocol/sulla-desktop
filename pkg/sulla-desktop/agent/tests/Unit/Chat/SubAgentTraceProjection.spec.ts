@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn() } }));
 
 import { DetailedTraceProjection } from '@pkg/pages/chat/components/transcript/DetailedTraceProjection';
 import { TranscriptReporting } from '@pkg/pages/chat/components/transcript/toolGroups';
