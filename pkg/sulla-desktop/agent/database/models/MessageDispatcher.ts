@@ -871,7 +871,8 @@ function handleProgress(ctx: DispatchContext, agentId: string, msgThreadId: stri
       const existingId = ctx.toolRunIdToMessageId.get(toolRunId);
       if (existingId && ctx.messages.some(message => message.id === existingId && message.threadId === msgThreadId)) return;
       const messageId = `${ Date.now() }_tool_${ toolRunId }`;
-      const description = typeof argsRecord.description === 'string' ? argsRecord.description : undefined;
+      const rawDescription = (argsRecord as Record<string, unknown>).description;
+      const description = typeof rawDescription === 'string' ? rawDescription : undefined;
       const display = formatToolCard(toolName, argsRecord);
       const message: ChatMessage = {
         id:        messageId,
