@@ -95,49 +95,21 @@ export class ThreadAgentHistoryCursor {
   }
 }
 
-/** Holds only events awaiting transfer to the status queue. */
+/** Holds at most the newest event awaiting delivery to the mounted status line. */
 export class ThreadAgentEventBuffer {
   readonly items = ref<StatusRollupItem[]>([]);
 
-  /** Retains one newest event while the status-line consumer is absent. */
-  appendNewest(item: StatusRollupItem): void {
-    const existing = this.items.value[0];
-    if (existing?.key === item.key && existing.kind === 'thought' && item.kind === 'thought' && existing.text !== item.text) {
-      this.items.value = [existing.updateOnly ? item : { ...item, updateOnly: false }];
-      return;
-    }
-    if (existing && item.observedAt < existing.observedAt) return;
-    this.items.value = [item.updateOnly ? { ...item, updateOnly: false } : item];
-  }
-
-  /** Keeps only the most recent pending event when the consumer detaches. */
-  retainNewest(): void {
-    const newest = this.items.value[this.items.value.length - 1];
-    this.items.value = newest ? [newest.updateOnly ? { ...newest, updateOnly: false } : newest] : [];
-  }
-
+  /** Replaces buffered work instead of accumulating a backlog. */
   append(item: StatusRollupItem): void {
-    const index = this.items.value.findIndex(existing => existing.key === item.key);
-    if (index >= 0) {
-      const existing = this.items.value[index];
-      if (item.kind === 'thought' && existing?.kind === 'thought' && existing.text !== item.text) {
-        const updated = [...this.items.value];
-        updated[index] = existing.updateOnly ? item : { ...item, updateOnly: false };
-        this.items.value = updated;
+    const existing = this.items.value[0];
+    if (existing?.key === item.key) {
+      if (item.kind === 'thought' && existing.kind === 'thought' && existing.text !== item.text) {
+        this.items.value = [existing.updateOnly ? item : { ...item, updateOnly: false }];
       }
       return;
     }
-
-    const ordered = [...this.items.value];
-    let low = 0;
-    let high = ordered.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if (ordered[middle]!.observedAt <= item.observedAt) low = middle + 1;
-      else high = middle;
-    }
-    ordered.splice(low, 0, item);
-    this.items.value = ordered;
+    if (item.updateOnly || (existing && item.observedAt < existing.observedAt)) return;
+    this.items.value = [item];
   }
 
   consume(): void {

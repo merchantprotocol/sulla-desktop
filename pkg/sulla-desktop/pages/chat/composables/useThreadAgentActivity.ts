@@ -34,15 +34,15 @@ export interface ThreadAgentActivitySources {
 /** Reactive view-model shared by ChatPage, the composer status line, and WorkerChart. */
 export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
-  /** Undelivered events for this chat's own transcript and proven sub-agent tree, oldest first. */
+  /** At most the newest live event for this chat's own transcript/sub-agent tree. */
   readonly checkIns: ComputedRef<StatusRollupItem[]>;
   /** Authorized full check-in history for each scoped task, shared with Detailed's inline trace. */
   readonly traceHistories: ComputedRef<ReadonlyMap<string, AgentTraceHistoryData>>;
-  /** Marks the status-rollup as the active consumer of buffered events. */
+  /** Starts a fresh timestamp-bounded status-line subscription. */
   attachConsumer(): void;
-  /** Stops buffering events when the status-rollup is not mounted. */
+  /** Stops delivery and discards any transient event when the status-rollup unmounts. */
   detachConsumer(): void;
-  /** Removes events after the status queue has taken ownership of them. */
+  /** Removes the transient event after the line has consumed it. */
   consumeCheckIns(): void;
   readonly rootFallback: ComputedRef<StatusRollupItem | null>;
   readonly chartRoot: ComputedRef<WorkerChartAgent | null>;
@@ -78,6 +78,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const transcriptProjection = new ThreadAgentEventProjectionDiff();
   let consumerAttached = false;
   let activeThreadId: string | undefined;
+  let subscribedAt = Number.POSITIVE_INFINITY;
   let snapshotPrimed = false;
   let transcriptPrimed = false;
   let historyTimer: ReturnType<typeof setInterval> | undefined;
@@ -85,6 +86,20 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let pendingTranscript: { threadId: string; messages: readonly Message[]; agentName: string } | undefined;
   let snippetSequence = 0;
   const snippetTick = ref<WorkerChartSnippetTick | null>(null);
+  const shownKeysByThread = new Map<string, Set<string>>();
+
+  const shownKeys = (threadId: string): Set<string> => {
+    let keys = shownKeysByThread.get(threadId);
+    if (!keys) {
+      keys = new Set<string>();
+      shownKeysByThread.set(threadId, keys);
+    }
+    return keys;
+  };
+
+  const rememberShown = (threadId: string, key: string): void => {
+    shownKeys(threadId).add(key);
+  };
 
   const resetThread = (threadId: string | undefined): void => {
     if (activeThreadId === threadId) return;
@@ -94,6 +109,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     transcriptTimer = undefined;
     pendingTranscript = undefined;
     activeThreadId = threadId;
+    subscribedAt = consumerAttached ? now() : Number.POSITIVE_INFINITY;
     eventBuffer.clear();
     snippetTick.value = null;
     previousRows.clear();
@@ -110,9 +126,10 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   };
 
   const append = (item: StatusRollupItem): void => {
-    if (!activeThreadId || item.threadId !== activeThreadId) return;
-    if (consumerAttached) eventBuffer.append(item);
-    else eventBuffer.appendNewest(item);
+    if (!consumerAttached || !activeThreadId || item.threadId !== activeThreadId || item.observedAt <= subscribedAt) return;
+    const seen = shownKeysByThread.get(item.threadId);
+    if (seen?.has(item.key)) return;
+    eventBuffer.append(item);
   };
 
   const stateEvent = (agent: PresentedThreadAgent, threadId: string, version: number, at: number): StatusRollupItem =>
@@ -132,24 +149,26 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
       const toolChanged = Boolean(previousTool) !== Boolean(tool) || Boolean(previousTool && tool &&
         (previousTool.name !== tool.name || previousTool.since !== tool.since));
       const stateChanged = !previous || previous.state !== agent.state;
+      const activityAt = mapper.timestamp(row.lastActivityAt) ?? mapper.timestamp(row.endedAt);
+      const toolAt = mapper.timestamp(tool?.since) ?? activityAt;
 
       if (!snapshotPrimed || !previous) {
-        append(stateEvent(agent, threadId, snapshot.version, mapper.timestamp(row.lastActivityAt, snapshotAt) ?? snapshotAt));
-        if (tool?.name?.trim()) append(mapper.tool(agent, threadId, tool.name.trim(), mapper.timestamp(tool.since, snapshotAt) ?? snapshotAt,
+        if (activityAt !== null) append(stateEvent(agent, threadId, snapshot.version, activityAt));
+        if (tool?.name?.trim() && toolAt !== null) append(mapper.tool(agent, threadId, tool.name.trim(), toolAt,
           `agent-tool-start:${threadId}:${row.key}:${tool.since}:${tool.name}:${snapshot.version}`, 'started', `agent:${threadId}:${row.key}:${tool.since}:${tool.name}`));
       } else {
-        if (stateChanged) append(stateEvent(agent, threadId, snapshot.version, snapshotAt));
+        if (stateChanged && activityAt !== null) append(stateEvent(agent, threadId, snapshot.version, activityAt));
         if (toolChanged) {
-          if (previousTool?.name?.trim()) {
-            append(mapper.tool(previous, threadId, previousTool.name.trim(), mapper.timestamp(row.lastActivityAt, snapshotAt) ?? snapshotAt,
+          if (previousTool?.name?.trim() && activityAt !== null) {
+            append(mapper.tool(previous, threadId, previousTool.name.trim(), activityAt,
               `agent-tool-finish:${threadId}:${row.key}:${previousTool.since}:${previousTool.name}:${snapshot.version}`,
               agent.state === 'failed' ? 'failed' : 'finished', `agent:${threadId}:${row.key}:${previousTool.since}:${previousTool.name}`));
           }
-          if (tool?.name?.trim()) append(mapper.tool(agent, threadId, tool.name.trim(), mapper.timestamp(tool.since, snapshotAt) ?? snapshotAt,
+          if (tool?.name?.trim() && toolAt !== null) append(mapper.tool(agent, threadId, tool.name.trim(), toolAt,
             `agent-tool-start:${threadId}:${row.key}:${tool.since}:${tool.name}:${snapshot.version}`, 'started', `agent:${threadId}:${row.key}:${tool.since}:${tool.name}`));
         }
-        if (!stateChanged && !toolChanged && !checkinChanged && row.lastActivityAt !== previous.row.lastActivityAt) {
-          append(mapper.liveActivity(agent, threadId, mapper.timestamp(row.lastActivityAt, snapshotAt) ?? snapshotAt,
+        if (!stateChanged && !toolChanged && !checkinChanged && row.lastActivityAt !== previous.row.lastActivityAt && activityAt !== null) {
+          append(mapper.liveActivity(agent, threadId, activityAt,
             `agent-activity:${threadId}:${row.key}:${row.lastActivityAt}`));
         }
       }
@@ -329,10 +348,15 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     projection,
     checkIns: computed(() => eventItems.value),
     traceHistories,
-    attachConsumer: () => { consumerAttached = true; },
+    attachConsumer: () => {
+      if (consumerAttached) return;
+      eventBuffer.clear();
+      consumerAttached = true;
+      subscribedAt = now();
+    },
     detachConsumer: () => {
       consumerAttached = false;
-      eventBuffer.retainNewest();
+      eventBuffer.clear();
     },
     consumeCheckIns: () => eventBuffer.consume(),
     rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
@@ -340,6 +364,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     snippetTick,
     statusItemShown: (event: StatusRollupShownEvent) => {
       if (!event.agentId || event.threadId !== sources.threadId.value) return;
+      rememberShown(event.threadId, event.key);
       snippetTick.value = { agentId: event.agentId, sequence: ++snippetSequence };
     },
   };
