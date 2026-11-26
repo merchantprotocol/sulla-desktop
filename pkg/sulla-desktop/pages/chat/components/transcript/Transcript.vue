@@ -78,6 +78,11 @@
               @resend="resend"
             />
           </div>
+          <TypingBubble
+            v-if="typingIndicator.shouldRender"
+            :state="typingIndicator"
+            @retry="resend"
+          />
         </template>
       </div>
     </div>
@@ -108,6 +113,7 @@ import { DetailedTimelineProjection } from './DetailedTimelineProjection';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
+import TypingBubble from './TypingBubble.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useResultActivity } from '../../composables/useResultActivity';
 import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
@@ -119,6 +125,8 @@ import { LineTimeKey, LineTimes } from '../../messages/lineTime';
 import { waitingOn } from '../../messages/waitingStatus';
 import { TranscriptJump } from '../../messages/transcriptJump';
 import type { ReportingLevel } from '../../models/ReportingLevel';
+import type { UserMessage } from '../../models/Message';
+import { TypingIndicatorState, type TypingIndicatorAgent } from './TypingIndicatorState';
 
 const props = defineProps<{ reportingLevel: ReportingLevel }>();
 const controller = useChatController();
@@ -220,10 +228,71 @@ function detailedJumpEntries(): Array<{ id: string; sourceId?: string }> {
   return entries;
 }
 function resend(): void {
-  const text = waiting.value?.message.text;
-  controller.stop();
-  if (text) controller.send(text);
+  const message = waiting.value?.message ?? latestUserMessage.value;
+  if (!message?.text.trim() || message.attachments?.length) return;
+  if (controller.isRunning.value) controller.stop();
+  controller.send(message.text);
 }
+
+const latestUserMessage = computed(() => [...controller.messages.value].reverse().find((message): message is UserMessage => message.kind === 'user'));
+const canRetryLatestUserMessage = computed(() => {
+  const message = latestUserMessage.value;
+  return Boolean(message?.text.trim() && !message.attachments?.length);
+});
+
+const typingState = new TypingIndicatorState();
+const typingIndicator = typingState.state;
+const typingInput = computed(() => {
+  const runState = controller.runState.value;
+  const messages = controller.messages.value;
+  let latestUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index].kind === 'user') { latestUserIndex = index; break }
+  }
+  const currentTurn = latestUserIndex < 0 ? [] : messages.slice(latestUserIndex + 1);
+  const assistantStreaming = currentTurn.some(message => message.kind === 'streaming');
+  const finalReply = currentTurn.some(message => message.kind === 'sulla');
+  const agents = threadAgentActivity?.projection.value.agents ?? [];
+  const mappedAgents: TypingIndicatorAgent[] = agents.map(agent => {
+    const activityKey = [agent.state, agent.row.lastActivityAt ?? '', agent.row.lastCheckinAt ?? '',
+      agent.row.toolInFlight?.since ?? '', agent.row.toolInFlight?.name ?? ''].join(':');
+    return {
+      key: agent.row.key,
+      initials: agent.initials,
+      name: agent.agentId ?? agent.lane,
+      state: agent.state,
+      activityKey,
+    };
+  });
+  const runAt = 'startedAt' in runState ? runState.startedAt : 'at' in runState ? runState.at : 0;
+  const activityAt = Math.max(
+    runAt,
+    controller.thread.value.updatedAt,
+    ...agents.flatMap(agent => [
+      TypingIndicatorState.timestamp(agent.row.lastActivityAt),
+      TypingIndicatorState.timestamp(agent.row.lastCheckinAt),
+      TypingIndicatorState.timestamp(agent.row.toolInFlight?.since),
+    ]),
+  );
+  const activityKey = JSON.stringify([
+    controller.thread.value.id, runState.phase, runAt,
+    runState.phase === 'tool' ? runState.tool : '',
+    controller.thread.value.updatedAt,
+    mappedAgents.map(agent => [agent.key, agent.activityKey]),
+    currentTurn.filter(message => message.kind === 'streaming').map(message => [message.id, message.text.length]),
+  ]);
+  return {
+    runState,
+    agents: mappedAgents,
+    assistantStreaming,
+    finalReply,
+    retryAvailable: canRetryLatestUserMessage.value,
+    activityAt,
+    activityKey,
+  };
+});
+watch(typingInput, input => typingState.update(input), { immediate: true, flush: 'sync' });
+onBeforeUnmount(() => typingState.dispose());
 
 const showTodayMarker = computed(() => controller.messages.value.length > 0);
 const todayLabel = computed(() => {
