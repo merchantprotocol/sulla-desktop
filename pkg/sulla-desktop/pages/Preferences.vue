@@ -129,9 +129,7 @@ function onUpdaterState(_event: unknown, state: { currentVersion: string, update
 }
 
 const { loading, error: loadError, start: load } = useConfigurationLoad(async() => {
-  const page = new URLSearchParams(window.location.search);
-  const startupId = page.get('startupId');
-  if (startupId) await ipcRenderer.invoke('sulla-settings:wait-for-backends', { startupId, windowKey: page.get('windowKey') || 'main' });
+  // These reads use the local command server, not the VM database.
   await store.dispatch('credentials/fetchCredentials');
   store.commit('preferences/SET_HAS_ERROR', false);
   const preferencesStatus = await store.dispatch('preferences/fetchPreferences');
