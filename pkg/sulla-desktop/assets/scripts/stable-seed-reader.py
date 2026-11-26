@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote_to_bytes, urlsplit
 
 
 class SeedGit:
@@ -35,12 +35,22 @@ def oid(value):
 def origin_url(value):
     if not value:
         return value
-    if not re.fullmatch(r'[A-Za-z0-9./@:_~-]+', value):
+    # Check the literal before urlsplit (it strips some controls). Keep encoded
+    # path bytes verbatim for Git; decoding here is ONLY for the control check.
+    if (not value.isascii() or re.search(r'[\x00-\x20\x7f]|%(?![0-9a-fA-F]{2})', value)
+            or re.search(rb'[\x00-\x1f\x7f]', unquote_to_bytes(value))):
         raise ValueError('unsupported Git origin')
+    label = r'[A-Za-z0-9_~](?:[A-Za-z0-9_~-]{0,61}[A-Za-z0-9_~])?'
+    host = rf'{label}(?:\.{label})*\.?'
+    # Existing credential-free local and scp-style forms, not URL authorities.
+    if re.fullmatch(rf'/(?!/)[A-Za-z0-9./@:_~-]*|git@{host}:[A-Za-z0-9._/-]+', value):
+        return value
     u = urlsplit(value)
-    if not ((u.scheme in ('http', 'https', 'ssh') and u.hostname and not u.username and not u.password)
-            or re.fullmatch(r'git@[A-Za-z0-9.-]+:[A-Za-z0-9._/-]+', value)
-            or (value.startswith('/') and not value.startswith('//'))):
+    authority = rf'(?:{host}|\[[0-9a-fA-F:.]+\])(?::[0-9]+)?'
+    # urlsplit validates bracketed IPv6; .port also checks the numeric range.
+    if (u.scheme not in ('http', 'https', 'ssh') or u.username is not None or u.password is not None
+            or not re.fullmatch(authority, u.netloc) or u.port == 0 or '?' in value or '#' in value
+            or not re.fullmatch(r"[A-Za-z0-9._~!$&'()*+,;=:@/%-]*", u.path)):
         raise ValueError('unsupported Git origin')
     return value
 
