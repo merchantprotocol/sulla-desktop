@@ -197,6 +197,7 @@ async function connectServiceNetwork(containerName: string): Promise<void> {
 }
 const RENEW_MS = 5 * 60_000;
 const TRANSPORT_IMAGE_LABEL = 'com.sulla.agent.transport-version';
+interface TransportImage { image: string; version: '1' | '2' }
 const TRANSPORT_IMAGE_VERSION = '2';
 const TRANSPORT_COMPATIBILITY_IMAGE = `ghcr.io/merchantprotocol/sulla-agent:transport-v${ TRANSPORT_IMAGE_VERSION }`;
 const HOST_RELAY_NAME = 'sulla-host-relay';
@@ -669,7 +670,7 @@ function ensureHostRelay(image: string): Promise<void> {
  * replaces the relay container.
  */
 export async function repairHostRelay(): Promise<void> {
-  const image = await ensureAgentImage();
+  const { image } = await ensureAgentImage();
 
   await guestExec(['docker', 'rm', '--force', HOST_RELAY_NAME]).catch(() => undefined);
   await ensureHostRelay(image);
@@ -744,28 +745,28 @@ export function keepThreatProxyForRunningAgents(): void {
   });
 }
 
-let imageReady: Promise<string> | null = null;
+let imageReady: Promise<TransportImage> | null = null;
 
 /** Re-resolve the lazy transport image after each backend start generation. */
 export function resetAgentContainerImageResolution(): void {
   imageReady = null;
 }
 
-async function requireTransportImage(image: string): Promise<void> {
+async function requireTransportImage(image: string): Promise<TransportImage> {
   const inspection = JSON.parse((await guestExec(['docker', 'image', 'inspect', image])).stdout) as Array<{
-    Config?: { Labels?: Record<string, string> };
+    Id?: string; Config?: { Labels?: Record<string, string> };
   }>;
   const version = inspection[0]?.Config?.Labels?.[TRANSPORT_IMAGE_LABEL];
 
-  if (version !== TRANSPORT_IMAGE_VERSION) {
-    throw new Error(
-      `Agent image ${ image } does not support transport protocol v${ TRANSPORT_IMAGE_VERSION } ` +
-      `(expected label ${ TRANSPORT_IMAGE_LABEL }=${ TRANSPORT_IMAGE_VERSION })`,
-    );
+  const id = inspection[0]?.Id;
+  if ((version !== '1' && version !== '2') || !id || !/^sha256:[a-f0-9]{64}$/.test(id)) {
+    throw new Error(`Agent image ${ image } requires a verified transport protocol v1 or v2 image`);
   }
+  // The tag may be updated while a launch is in flight. Run the inspected image.
+  return { image: id, version };
 }
 
-async function ensureAgentImage(): Promise<string> {
+async function ensureAgentImage(): Promise<TransportImage> {
   if (imageReady) return imageReady;
   imageReady = (async() => {
     const resolved = resolveSullaServiceImage(
@@ -775,12 +776,10 @@ async function ensureAgentImage(): Promise<string> {
 
     if (resolved.build) {
       try {
-        await requireTransportImage(resolved.image);
-        return resolved.image;
+        return await requireTransportImage(resolved.image);
       } catch { /* lazy build below */ }
       await guestExec(['docker', 'build', '--file', path.join(resolved.build.context, resolved.build.dockerfile), '--tag', resolved.image, resolved.build.context]);
-      await requireTransportImage(resolved.image);
-      return resolved.image;
+      return await requireTransportImage(resolved.image);
     }
 
     if (resolved.bundled) {
@@ -797,32 +796,35 @@ async function ensureAgentImage(): Promise<string> {
 
     if (!shouldRefresh) {
       try {
-        await requireTransportImage(resolved.image);
-        return resolved.image;
+        return await requireTransportImage(resolved.image);
       } catch { /* pull the explicit image below */ }
     }
 
     try {
       await guestExec(['docker', 'pull', resolved.image]);
-      await requireTransportImage(resolved.image);
-      return resolved.image;
+      return await requireTransportImage(resolved.image);
     } catch (error) {
       if (shouldRefresh) {
         try {
-          await requireTransportImage(resolved.image);
+          const cached = await requireTransportImage(resolved.image);
           log.warn(`[AgentContainer] Could not refresh ${ resolved.image }; using the compatible cached image`);
-          return resolved.image;
+          return cached;
         } catch { /* try the transport compatibility image below */ }
       }
-      if (process.env.SULLA_AGENT_IMAGE || resolved.image === TRANSPORT_COMPATIBILITY_IMAGE) throw error;
-      log.warn(`[AgentContainer] ${ resolved.image } is unavailable or transport-incompatible; using ${ TRANSPORT_COMPATIBILITY_IMAGE }`);
-      try {
-        await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
-      } catch {
-        await guestExec(['docker', 'pull', TRANSPORT_COMPATIBILITY_IMAGE]);
+      if (process.env.SULLA_AGENT_IMAGE) throw error;
+      const compatible = [TRANSPORT_COMPATIBILITY_IMAGE, 'ghcr.io/merchantprotocol/sulla-agent:transport-v1'];
+      // Check both local tags before attempting any network fallback.
+      for (const ref of compatible) {
+        try { return await requireTransportImage(ref); } catch { /* not cached */ }
       }
-      await requireTransportImage(TRANSPORT_COMPATIBILITY_IMAGE);
-      return TRANSPORT_COMPATIBILITY_IMAGE;
+      for (const ref of compatible) {
+        if (ref === resolved.image) continue;
+        try {
+          await guestExec(['docker', 'pull', ref]);
+          return await requireTransportImage(ref);
+        } catch { /* next supported version */ }
+      }
+      throw error;
     }
   })().catch(error => {
     imageReady = null;
@@ -1244,7 +1246,7 @@ class ContainerProviderExecutionTransport implements ProviderExecutionTransport 
  */
 export async function createAgentContainerLifecycle(run: AgentContainerLifecycleRun): Promise<AgentContainerLifecycle> {
   const cliSettings = providerCliContainerSettings(run.providerCliSnapshot);
-  const image = await ensureAgentImage().catch((error) => {
+  const { image, version } = await ensureAgentImage().catch((error) => {
     throw new AgentLaunchError('Sulla is still loading its assistant', true, (error as Error)?.message ?? String(error));
   });
   log.info('[AgentContainer] Image ready');
@@ -1338,7 +1340,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
 
     const issuer = leases = new ContainerSessionLeases(toolBinding, getMCPServerHost(),
       scopes, capabilityJti, deriveCapabilitySigningKey(installationSecret), LEASE_MS,
-      new GuestSessionLeaseFiles(`/dev/shm/sulla-agent-secrets/${ containerName }-${ capabilityJti }`, identity));
+      new GuestSessionLeaseFiles(`/dev/shm/sulla-agent-secrets/${ containerName }-${ capabilityJti }`, identity), version);
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);
     const jobKey = `${ safeName(run.jobId) }-${ run.taskIndex }`;
     const stableKey = run.persistenceKey
@@ -1495,7 +1497,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       deviceId,
       workspacePath: providerWorkspace,
     };
-    unregisterRuntime = registerAgentContainerRuntime(binding, issuer);
+    unregisterRuntime = registerAgentContainerRuntime(binding, version === '2' ? issuer : undefined);
     const abortGraph = (reason: string) => {
       log.warn(`[AgentContainer] ${ containerName } failed: ${ reason }`);
       const graphAbort = run.state.metadata.options?.abort as { abort?: () => void } | undefined;
@@ -1723,7 +1725,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
 }
 
 export async function runAgentContainer(run: AgentContainerRun): Promise<AgentContainerResult> {
-  const image = await ensureAgentImage();
+  const { image, version } = await ensureAgentImage();
   await ensureHostRelay(image);
   const runtime = new GuestDockerRuntimeDriver();
   const containerName = `sulla-agent-${ safeName(run.jobId) }-${ run.taskIndex }`;
@@ -1755,7 +1757,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     };
     const issuer = leases = new ContainerSessionLeases(toolBinding, getMCPServerHost(),
       scopes, capabilityJti, deriveCapabilitySigningKey(installationSecret), LEASE_MS,
-      new GuestSessionLeaseFiles(`/dev/shm/sulla-agent-secrets/${ containerName }-${ capabilityJti }`, identity));
+      new GuestSessionLeaseFiles(`/dev/shm/sulla-agent-secrets/${ containerName }-${ capabilityJti }`, identity), version);
     session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);
     const toolsServiceHealthy = await waitForToolsService();
     if (!toolsServiceHealthy) throw new Error('sulla-tools is unavailable; container agents require hostname-based tool routing');
@@ -1822,7 +1824,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       threadId:      metadata.threadId,
       deviceId,
       workspacePath,
-    }, issuer);
+    }, version === '2' ? issuer : undefined);
     const startedContainerId = containerId;
 
     return await new Promise((resolve, reject) => {

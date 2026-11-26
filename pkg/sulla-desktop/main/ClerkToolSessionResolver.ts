@@ -67,7 +67,7 @@ export class ClerkToolSessionResolver {
     const scope = forwarded?.credential_scope;
     if (!forwarded || typeof generation !== 'string' || !generation.trim() || !Number.isFinite(forwarded.exp) ||
         (scope && (scope.integration_id !== 'clerk' || scope.account_id !== CLERK_ACCOUNT || scope.item_id || scope.repository))) {
-      throw new ClerkError(403, 'A session-bound container lease is required.');
+      throw new ClerkError(403, 'A session-bound container lease is required for forwarded Clerk calls. Use a transport v2 agent image.');
     }
     const { state, ...caller } = await this.resolveBearer(sessionId, name, signal, undefined, {
       generation, expiresAt: forwarded.exp * 1000, identity: forwarded,

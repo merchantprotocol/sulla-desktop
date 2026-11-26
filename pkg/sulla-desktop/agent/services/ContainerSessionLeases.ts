@@ -28,6 +28,7 @@ export class ContainerSessionLeases {
     private readonly signingKey: Buffer,
     private readonly ttlMs: number,
     private readonly files: SessionLeaseFiles,
+    private readonly version: '1' | '2' = '2',
   ) {}
 
   issue(id: string): string {
@@ -46,7 +47,7 @@ export class ContainerSessionLeases {
     return issueCapabilityToken({
       sub: b.subject, org_id: b.orgId, agent_id: b.agentId, pod_id: b.podId, thread_id: b.threadId,
       job_id: b.jobId, task_index: b.taskIndex, device_id: b.deviceId, scopes: this.scopes,
-      tool_session_generation: ctx.jti, jti: this.lifecycleId, expiresInSeconds: exp - now,
+      ...(this.version === '2' ? { tool_session_generation: ctx.jti } : {}), jti: this.lifecycleId, expiresInSeconds: exp - now,
     }, this.signingKey);
   }
 
