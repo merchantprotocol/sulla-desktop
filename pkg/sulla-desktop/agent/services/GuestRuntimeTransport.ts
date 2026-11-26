@@ -243,13 +243,24 @@ export async function seedGitWorktreeIntoStableGuest(source: string, target: str
       '[ -d "$source" ] && [ ! -L "$source_input" ]',
       'git_source() { GIT_OPTIONAL_LOCKS=0 git --no-replace-objects -c safe.directory="$source" -C "$source" "$@"; }',
       '[ "$(realpath "$(git_source rev-parse --show-toplevel)")" = "$source" ]',
+      'common=$(git_source rev-parse --path-format=absolute --git-common-dir); repository=$(basename "$(dirname "$common")"); common=$(realpath "$common")',
+      // A linked checkout may live here while the primary repo is elsewhere.
+      // Trust only the Git-registered backlink; never mount or copy its backing directory.
+      [
+        'case "$common" in /mnt/worktrees/*) ;; *)',
+        'admin=$(realpath "$(git_source rev-parse --absolute-git-dir)")',
+        '[ "$(dirname "$admin")" = "$common/worktrees" ] && [ -f "$source/.git" ] && [ ! -L "$source/.git" ] || exit 73',
+        '[ -f "$admin/gitdir" ] && [ ! -L "$admin/gitdir" ] || exit 73',
+        'IFS= read -r backlink < "$admin/gitdir" || exit 73',
+        'case "$backlink" in /*) ;; *) backlink="$admin/$backlink";; esac',
+        '[ "$(realpath "$backlink")" = "$source/.git" ] || exit 73',
+        ';; esac',
+      ].join('\n'),
       'head=$(git_source rev-parse HEAD)',
       'branch=$(git_source symbolic-ref --quiet --short HEAD || true)',
       'remote=$(git_source remote get-url origin 2>/dev/null || true)',
       'case "$remote" in *://*@*|http*://*[?#]*) echo "refusing a Git remote containing credentials" >&2; exit 78;; esac',
       'remote_head=""; if [ -n "$branch" ]; then [ "$(git_source rev-parse "refs/heads/$branch")" = "$head" ]; remote_head=$(git_source rev-parse --verify "refs/remotes/origin/$branch" 2>/dev/null || true); fi',
-      'common=$(git_source rev-parse --path-format=absolute --git-common-dir); repository=$(basename "$(dirname "$common")"); common=$(realpath "$common")',
-      'case "$common" in /mnt/worktrees/*) ;; *) exit 73;; esac',
       [
         'if [ -n "$legacy_key" ]; then',
         '# Reproduce the old checkout prefix, including the mktemp prefix limit.',
