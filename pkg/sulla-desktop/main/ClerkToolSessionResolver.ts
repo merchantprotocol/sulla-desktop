@@ -63,13 +63,15 @@ export class ClerkToolSessionResolver {
         worker.name !== name || typeof worker.bindClerkCaller !== 'function') {
       throw new ClerkError(403, 'Clerk requires a verified agent tool session.');
     }
-    const { state, ...caller } = await this.resolveBearer(sessionId, name, signal);
-    const fields = ['sub', 'org_id', 'agent_id', 'pod_id', 'thread_id', 'job_id', 'device_id', 'workflow_execution_id', 'task_index'] as const;
+    const generation = forwarded?.tool_session_generation;
     const scope = forwarded?.credential_scope;
-    if (!forwarded || fields.some(field => forwarded[field] !== caller.execution[field]) ||
+    if (!forwarded || typeof generation !== 'string' || !generation.trim() || !Number.isFinite(forwarded.exp) ||
         (scope && (scope.integration_id !== 'clerk' || scope.account_id !== CLERK_ACCOUNT || scope.item_id || scope.repository))) {
-      throw new ClerkError(403, 'The forwarded Clerk identity does not match its agent session.');
+      throw new ClerkError(403, 'A session-bound container lease is required.');
     }
+    const { state, ...caller } = await this.resolveBearer(sessionId, name, signal, undefined, {
+      generation, expiresAt: forwarded.exp * 1000, identity: forwarded,
+    });
     worker.setState(state);
     worker.bindClerkCaller(caller);
   }
@@ -83,13 +85,14 @@ export class ClerkToolSessionResolver {
     return this.resolveBearer(sessionId, name, signal, expectedState).then(({ state: _state, ...caller }) => caller);
   }
 
-  private async resolveBearer(bearer: string, name: string, signal: AbortSignal, expectedState?: ToolSession['state']) {
+  private async resolveBearer(bearer: string, name: string, signal: AbortSignal, expectedState?: ToolSession['state'],
+    lease?: { generation: string; expiresAt: number; identity: ToolExecutionContext }) {
     const startedAt = this.now();
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(CLERK_DEADLINE_MS)]);
 
-    const resolveSession = async() => {
+    const resolveSession = async(pinnedState = expectedState) => {
       const session = this.sessions.getToolSession(bearer);
-      if (!session || (expectedState && session.state !== expectedState)) throw new ClerkError(403, 'The Clerk tool session is invalid or expired.');
+      if (!session || (pinnedState && session.state !== pinnedState)) throw new ClerkError(403, 'The Clerk tool session is invalid or expired.');
       const metadata = session.state?.metadata as Record<string, unknown> | undefined;
       const allowed = metadata?.allowedToolNames;
       if (!Array.isArray(allowed) || allowed.length === 0 || !sessionAllowsTool(allowed, name, metadata, this.awarenessPolicy)) {
@@ -99,6 +102,13 @@ export class ClerkToolSessionResolver {
       const threadId = String(metadata?.threadId ?? session.executionContext?.thread_id ?? '').trim();
       if (!agentId || !threadId) throw new ClerkError(403, 'The Clerk tool session is missing trusted agent context.');
       let execution = session.executionContext;
+      if (lease) {
+        const fields = ['sub', 'org_id', 'agent_id', 'pod_id', 'thread_id', 'job_id', 'device_id', 'workflow_execution_id', 'task_index'] as const;
+        if (!execution || execution.jti !== lease.generation || fields.some(field => lease.identity[field] !== execution![field]) ||
+            this.now() >= lease.expiresAt || this.now() >= session.expiresAt) {
+          throw new ClerkError(403, 'The forwarded Clerk lease no longer matches its live session.');
+        }
+      }
       if (execution) {
         if (execution.exp <= Math.floor(this.now() / 1_000) || execution.agent_id !== agentId ||
             execution.thread_id !== threadId || !execution.sub || !execution.pod_id) {
@@ -113,12 +123,13 @@ export class ClerkToolSessionResolver {
           signal: requestSignal,
         });
       }
-      return { execution, metadata, state: session.state };
+      return { execution, metadata, state: session.state, expiresAt: session.expiresAt };
     };
 
     const resolved = await resolveSession();
     const channel = resolved.metadata?.wsChannel;
-    const deadlineAt = Math.min(startedAt + CLERK_DEADLINE_MS, resolved.execution.exp * 1_000);
+    const deadlineAt = Math.min(startedAt + CLERK_DEADLINE_MS, resolved.execution.exp * 1_000,
+      ...(lease ? [lease.expiresAt, resolved.expiresAt] : []));
     const boundedSignal = AbortSignal.any([requestSignal, AbortSignal.timeout(Math.max(1, deadlineAt - this.now()))]);
     return {
       state: resolved.state,
@@ -128,7 +139,11 @@ export class ClerkToolSessionResolver {
       toolName: name,
       deadlineAt,
       signal: boundedSignal,
-      revalidate: async() => (await resolveSession()).execution,
+      revalidate: async() => {
+        if (lease && (boundedSignal.aborted || this.now() >= deadlineAt)) throw new ClerkError(403, 'The forwarded Clerk lease expired.');
+        // Registry rebind mutates a ToolSession in place. Pin the original graph and scalar issuance, not that record.
+        return (await resolveSession(lease ? resolved.state : expectedState)).execution;
+      },
     };
   }
 }
