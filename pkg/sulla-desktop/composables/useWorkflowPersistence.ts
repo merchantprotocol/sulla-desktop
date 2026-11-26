@@ -73,12 +73,14 @@ export function useWorkflowPersistence(options: { debounceMs?: number } = {}) {
 
   const debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 
-  async function load(id: string): Promise<WorkflowDefinition | null> {
+  async function load(id: string, options?: { strict?: boolean }): Promise<WorkflowDefinition | null> {
     status.value = 'loading';
     error.value = null;
     console.log(`${ LOG } load → id=${ id }`);
     try {
-      const def = await ipcRenderer.invoke('workflow-db-get', id);
+      const def = options?.strict
+        ? await ipcRenderer.invoke('workflow-db-get', id, options)
+        : await ipcRenderer.invoke('workflow-db-get', id);
       status.value = 'idle';
       if (def) {
         console.log(`${ LOG } load ← ok id=${ id } ${ nodeSummary(def as WorkflowDefinition) } name="${ (def as any).name ?? '' }"`);
@@ -90,6 +92,7 @@ export function useWorkflowPersistence(options: { debounceMs?: number } = {}) {
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
       status.value = 'error';
+      if (options?.strict) throw err;
       console.error(`${ LOG } load ✗ id=${ id }`, err);
 
       return null;
