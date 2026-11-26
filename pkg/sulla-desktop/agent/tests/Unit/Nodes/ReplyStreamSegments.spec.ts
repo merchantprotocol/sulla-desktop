@@ -134,6 +134,13 @@ describe('live reply segments around provider tool activity', () => {
   // risk: the full reply that follows the live stream carried text the last
   // throttled update hadn't shown yet, and the chat silently dropped it
   it.each([
+    { name: 'with a corrected word boundary', streams: [['r', 'The customer is notable.']], final: 'The customer is not able.', shown: ['The customer is notable.', 'The customer is not able.'] },
+    {
+      name: 'with authoritative Markdown indentation after a tool',
+      streams: [['r', 'Run this:'], ['r', 'echo one\necho two']],
+      final: 'Run this:\n\n    echo one\n    echo two',
+      shown: ['Run this:', 'echo one\necho two', 'Run this:\n\n    echo one\n    echo two'],
+    },
     { name: 'after several segments', streams: [['r', 'Checked files.'], ['r', 'Build']], final: 'Checked files.\n\nBuild passed.', shown: ['Checked files.', 'Build passed.'] },
     { name: 'keeping an indented code block', streams: [['r', 'Here is the example:'], ['r', '    echo']], final: 'Here is the example:\n\n    echo ok', shown: ['Here is the example:', '    echo ok'] },
     { name: 'after one segment with different spacing', streams: [['r', 'Build  passed']], final: 'Build passed today', shown: ['Build passed today'] },
@@ -147,11 +154,12 @@ describe('live reply segments around provider tool activity', () => {
       data: { ...extras, content, role: 'assistant', kind, thread_id: 't' },
     } as any);
     streams.forEach(([replyStreamId, text], replySegment) => {
+      if (replySegment > 0) send('Running a shell command', 'thinking', { reportingActivity: 'tool' });
       send(text!, 'streaming', replyStreamId ? { replyStreamId, replySegment } : {});
       send('', 'streaming_complete', replyStreamId ? { replyStreamId } : {});
     });
     send(final, 'progress');
 
-    expect(ctx.messages.filter(message => message.role === 'assistant').map(message => String(message.content).replace(/^\n+|\s+$/g, ''))).toEqual(shown);
+    expect(ctx.messages.filter(message => message.kind !== 'thinking').map(message => message.content)).toEqual(shown);
   });
 });
