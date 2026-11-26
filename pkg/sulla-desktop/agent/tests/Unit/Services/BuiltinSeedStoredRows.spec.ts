@@ -180,6 +180,31 @@ describe('seeding built-ins against stored rows', () => {
     expect(await AgentDefinitionModel.findBySlug('codex-luna-worker')).toMatchObject({ slug: 'quick-fixer', name: 'Quick Fixer' });
   });
 
+  it.each([false, true])('refreshes the caller around a retained built-in (legacy marker: %s)', async(hadMarker) => {
+    const worker = getBuiltinAgentSpecs().find(item => item.slug === 'advisor')!;
+    const oldSlug = 'opus-worker';
+    const manager = spec({ card: { ...spec().card!, canCall: [oldSlug] } });
+    await seedBuiltinAgents([{ ...worker, slug: oldSlug }, manager]);
+    const workerId = String(db.table.stored(oldSlug)!.id);
+    if (!hadMarker) db.table.ledger.delete(oldSlug);
+    db.table.ledger.add('advisor'); // 0174 always marks a deferred destination.
+    const updated = { ...manager, prompt: 'Updated instructions.', card: { ...manager.card, canCall: ['advisor'] } };
+    for (let boot = 0; boot < 2; boot++) {
+      const result = await seedBuiltinAgents([worker, updated]);
+      expect(result.errors).toEqual([]);
+      if (boot === 0) expect(result.refreshed).toBeGreaterThan(0);
+      const caller = await AgentDefinitionModel.findBySlug(manager.slug);
+      expect(caller?.prompt_content).toBe(updated.prompt);
+      expect(caller?.can_call).toEqual([oldSlug]);
+      expect((await AgentDefinitionModel.findBySlug(caller!.can_call[0]))?.id).toBe(workerId);
+      expect(db.table.stored('advisor')).toBeUndefined();
+    }
+    db.table.rows.delete(workerId);
+    expect((await seedBuiltinAgents([worker, updated])).errors).toEqual([]);
+    expect(db.table.stored(oldSlug)).toBeUndefined();
+    expect(db.table.stored('advisor')).toBeUndefined();
+  });
+
   it('keeps a user-owned canonical slug through repeated seeding', async() => {
     const builder = getBuiltinAgentSpecs().find(item => item.slug === 'builder')!;
     await legacySeeded({ ...builder, slug: 'codex-sol-worker' });
