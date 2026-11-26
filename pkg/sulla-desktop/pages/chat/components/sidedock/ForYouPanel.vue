@@ -22,13 +22,13 @@
       <p v-if="record.answerDelivery === 'interrupted'" role="status">Your answer is saved, but Sulla could not confirm it finished handling it. Check the original chat before submitting the saved answer again.</p>
       <p v-else-if="record.kind === 'question' && record.status === 'expired'" class="fy-muted">Sulla stopped waiting. Your answer will be queued in the original chat without interrupting running work.</p>
       <p v-if="store.actionError(record.id)" role="alert">{{ store.actionError(record.id) }}</p>
-      <!-- Routed requests use the transcript card and its guarded action, never a second approval form. -->
-      <DecisionHolderLine v-if="record.route && messageFor(record)" :presentation="presenter.present(record)" compact />
-      <DecisionReference v-else-if="record.route" :msg="routedMessage(record)" />
+      <!-- View in chat is navigation; it must not replace the durable answer controls. -->
+      <DecisionReference v-if="record.route && record.kind === 'approval'" :msg="routedApproval(record)" />
       <template v-else-if="record.kind === 'question'">
         <pre v-if="record.questions?.length !== 1 || !record.questions[0].task" v-for="question in record.questions?.filter(question => question.command)" :key="question.question" class="fy-command">{{ question.command }}</pre>
+        <DecisionHolderLine v-if="record.route && record.questions?.length === 1 && record.questions[0].task" :presentation="presenter.present(record)" compact />
         <ToolTask v-if="record.questions?.length === 1 && record.questions[0].task" :msg="questionMessage(record)" :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answer="value => taskAnswer(record, value)" />
-        <ToolQuestion v-else :msg="questionMessage(record)" persistent :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answers="answers => answer(record, answers)" />
+        <ToolQuestion v-else :msg="questionMessage(record)" :decision="record" persistent :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answers="answers => answer(record, answers)" />
       </template>
       <template v-else>
         <p v-if="record.toolName" class="fy-muted">Approval for {{ record.toolName }}</p>
@@ -76,10 +76,10 @@ import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage }
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 import type { DecisionRecord } from '@pkg/shared/decisions';
 const store = ChatDecisions.useChatDecisions();
-const presenter = useDecisionRoutePresenter({ now: () => store.now.value });
 onMounted(() => {
   if (!store.loading.value) void store.refresh();
 });
+const presenter = useDecisionRoutePresenter({ now: () => store.now.value });
 const root = ref<HTMLElement>();
 const actions = AgentResultActions.useAgentResultActions();
 const controller = useChatController();
@@ -106,8 +106,7 @@ function showRequestTitle(record: DecisionRecord): boolean {
 function messageFor(record: DecisionRecord) { return controller.messages.value.find(message => (message.kind === 'tool_question' && message.questionId === record.id) || (message.kind === 'tool_approval' && message.approvalId === record.id)); }
 function jump(record: DecisionRecord) { const message = messageFor(record); if (!message) { actions.openAgent({ threadId: record.conversationId, agentId: record.channel, label: record.title }); return; } window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId: message.id } })); }
 function approvalCommand(record: DecisionRecord): string { const message = messageFor(record); return message?.kind === 'tool_approval' ? message.command : ''; }
-function routedMessage(record: DecisionRecord): ToolQuestionMessage | ToolApprovalMessage {
-  if (record.kind === 'question') return questionMessage(record);
+function routedApproval(record: DecisionRecord): ToolApprovalMessage {
   return { id: asMessageId(record.id), kind: 'tool_approval', approvalId: record.id, createdAt: record.createdAt,
     decision: 'pending', reason: record.approvalPresentation?.reason ?? record.title, command: record.approvalPresentation?.command ?? record.toolName ?? record.title };
 }
