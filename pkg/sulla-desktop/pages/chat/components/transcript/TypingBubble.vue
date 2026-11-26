@@ -16,7 +16,7 @@
         <span class="typing-indicator__layer typing-indicator__dots" :class="{ 'typing-indicator__layer--shown': !toolShown }">
           <i v-for="index in 3" :key="index" class="typing-indicator__dot" :style="{ '--dot-index': index - 1 }" />
         </span>
-        <svg class="typing-indicator__layer typing-indicator__tool" :class="{ 'typing-indicator__layer--shown': toolShown }" viewBox="0 0 16 16">
+        <svg class="typing-indicator__layer typing-indicator__tool" :class="{ 'typing-indicator__layer--shown': toolShown }" viewBox="0 0 16 16" aria-hidden="true">
           <circle cx="8" cy="8" r="1.8" />
           <circle cx="8" cy="8" r="4.2" />
           <path d="M8 2.2v1.6M8 12.2v1.6M2.2 8h1.6M12.2 8h1.6M3.9 3.9l1.13 1.13M10.97 10.97l1.13 1.13M12.1 3.9l-1.13 1.13M5.03 10.97l-1.13 1.13" />

@@ -59,6 +59,9 @@ describe('TypingIndicatorState', () => {
     expect(state.state.shouldRender).toBe(true);
     expect(state.state.bubbleVisible).toBe(false);
     expect(state.state.agents.map(agent => agent.key)).toEqual(['cm', 'lx']);
+
+    state.update(input({ phase: 'idle' }, { agents: [workingAgent('wait', 'waiting')] }));
+    expect(state.state.kind).toBe('hidden');
     state.dispose();
   });
 
@@ -73,6 +76,10 @@ describe('TypingIndicatorState', () => {
     expect(state.state.kind).toBe('hidden');
     expect(state.state.shouldRender).toBe(false);
     expect(state.state.bubbleVisible).toBe(false);
+
+    state.update(input({ phase: 'error', message: 'late terminal event', at: Date.now() }, { finalReply: true }));
+    expect(state.state.kind).toBe('hidden');
+    expect(state.state.shouldRender).toBe(false);
 
     state.update(input({ phase: 'paused', reason: 'user', at: Date.now() }));
     expect(state.state.kind).toBe('stopped');

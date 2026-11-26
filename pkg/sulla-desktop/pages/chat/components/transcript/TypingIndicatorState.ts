@@ -101,6 +101,10 @@ export class TypingIndicatorState {
     const input = this.input;
     if (!input) { this.apply('hidden'); return }
 
+    // A completed assistant turn wins even if a terminal controller event and
+    // the final message land in the same renderer update.
+    if (input.finalReply) { this.apply('hidden'); return }
+
     const run = input.runState;
     if (run.phase === 'error') {
       this.apply('error', { retryAvailable: input.retryAvailable, errorMessage: run.message });
@@ -116,9 +120,6 @@ export class TypingIndicatorState {
     }
 
     const workingAgents = input.agents.filter(agent => agent.state === 'working');
-    // A completed reply always wins over a stale run flag in the same render turn.
-    if (input.finalReply) { this.apply('hidden'); return }
-
     if (run.phase === 'idle') {
       if (workingAgents.length) this.apply('parked', { agents: workingAgents });
       else this.apply('hidden');
