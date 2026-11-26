@@ -31,6 +31,11 @@ async function executeThroughRegistry(
   if (!resolvedName) {
     return { success: false, error: { code: 'tool_not_found', message: `Tool ${ category }/${ toolName } not registered` } };
   }
+  // Neither relay tunnel carries the live session required by Clerk.
+  if (category === 'clerk') {
+    return { success: false, error: { code: 'clerk_relay_forbidden',
+      message: 'Clerk tools are not available over the relay transport; use the direct Desktop executor.' } };
+  }
   // Tool instances carry mutable state, approval signals, and verified caller
   // identity. A cached singleton lets concurrent calls overwrite each other.
   const tool = await toolRegistry.createTool(resolvedName);

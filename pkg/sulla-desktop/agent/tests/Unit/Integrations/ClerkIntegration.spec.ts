@@ -41,6 +41,8 @@ import { toolRegistry } from '../../../tools/registry';
 import { AgentAwarenessPolicy } from '../../../services/AgentAwarenessPolicy';
 import { ClerkToolSessionResolver } from '../../../../main/ClerkToolSessionResolver';
 import type { BaseThreadState } from '../../../nodes/Graph';
+import { startRelayToolTunnel, stopRelayToolTunnel } from '../../../../main/relayToolTunnel';
+import { RelayToolTunnel } from '../../../../runtime/relayTunnelClient';
 import { ClerkApiRoute } from '../../../../main/ClerkApiRoute';
 import { configuredVaultBrokerProvider, LocalVaultBrokerClient } from '../../../../vault-broker';
 import { ClerkClient, ClerkError, clerkSettings } from '../../../integrations/clerk/ClerkClient';
@@ -1430,5 +1432,26 @@ describe('Clerk guarded egress', () => {
     });
     await expect(f.client.raw({ path: '/users' }, { ...f.caller, signal: abort.signal })).rejects.toThrow('cancelled');
     expect(f.send).not.toHaveBeenCalled();
+  });
+});
+
+describe('Desktop relay dispatch', () => {
+  it('forwards an ordinary tool but refuses a registered Clerk tool before loading it', async() => {
+    // Exercise the configured Desktop callback without a socket or an actual integration.
+    const load = vi.fn(async() => ({ invoke: async() => ({ success: true, result: 'pong' }) }));
+    toolRegistry.register('meta_fixture_ping', '', 'meta', load);
+    toolRegistry.register('clerk_fixture_ping', '', 'clerk', load);
+    vi.stubEnv('SULLA_RELAY_URL', 'http://relay.invalid');
+    vi.stubEnv('SULLA_RELAY_DEVICE_TOKEN', 'fixture');
+    const start = vi.spyOn(RelayToolTunnel.prototype, 'start').mockImplementation(() => {});
+    try {
+      const execute = startRelayToolTunnel()!['options'].execute;
+      const signal = new AbortController().signal;
+      expect(await execute(context, 'meta', 'fixture_ping', {}, signal)).toEqual({ success: true, result: 'pong' });
+      expect(await execute(context, 'clerk', 'fixture_ping', {}, signal)).toMatchObject({
+        success: false, error: { code: 'clerk_relay_forbidden' },
+      });
+      expect(load).toHaveBeenCalledTimes(1);
+    } finally { stopRelayToolTunnel(); start.mockRestore(); vi.unstubAllEnvs(); }
   });
 });
