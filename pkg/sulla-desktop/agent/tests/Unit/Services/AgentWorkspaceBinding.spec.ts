@@ -299,6 +299,29 @@ describe('durable Git workspace initialization', () => {
     expect(() => readFileSync(local('runtime/conversations/task/workspace/marker'))).toThrow(/ENOENT/);
   });
 
+  it('seeds and reopens a credential-free origin with a percent-encoded path', async() => {
+    const origin = 'https://example.invalid/team/My%20Project/_git/repo';
+    const repo = local('worktrees/repo');
+    const workspace = local('runtime/conversations/task/workspace');
+    git(repo, 'remote', 'set-url', 'origin', origin);
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+    expect(git(workspace, 'config', '--get', 'remote.origin.url')).toBe(origin);
+    renameSync(repo, local('moved'));
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+  });
+
+  it.each([
+    'https://person:example@example.invalid/r', 'https://@example.invalid/r',
+    'https://example.invalid/a\nb', 'https://example.invalid/r%00', 'https://example.invalid/r%1F',
+    'https://example.invalid/r%7f', 'https://example.invalid/r%2', 'https://example.invalid/r%xy',
+    'https://example%40invalid/r', 'https://example.invalid:bad/r', 'file:///tmp/fixture',
+    'https://example.invalid/repo?token=example',
+  ])('rejects unsafe origin %# before publishing', async(origin) => {
+    git(local('worktrees/repo'), 'remote', 'set-url', 'origin', origin);
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow('inspect failed');
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+  });
+
   it('reopens the exact legacy checkout after verifying source history and origin', async() => {
     const legacy = legacyCheckout('repo-worker-branch-job-1-0-a1b2c3d4');
     writeFileSync(path.join(legacy, 'marker'), 'uncommitted progress');
