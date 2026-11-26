@@ -9,6 +9,14 @@ import type { PoolClient } from 'pg';
 /** Preserve row IDs and captured job state. DatabaseManager runs this in a transaction. */
 export class BuiltinAgentIdentitiesMigration {
   static async up(client: PoolClient): Promise<void> {
+    // Dev shipped this exact conversion under a different ledger name. A rerun
+    // must leave later user edits alone, even if an old slug now exists again.
+    // Standalone schema builders may apply migrations without a runner ledger.
+    const ledger = await client.query("SELECT to_regclass('sulla_migrations') AS ledger");
+    if (ledger.rows[0]?.ledger && (await client.query(
+      'SELECT 1 FROM sulla_migrations WHERE name = $1', ['0170_builtin_agent_identities'],
+    )).rows.length) return;
+
     const rows = (await client.query('SELECT * FROM agent_definitions FOR UPDATE')).rows.map(rowToDefinition);
     const bySlug = new Map(rows.map(row => [row.slug, row]));
     const renames = new Map<string, string>();
