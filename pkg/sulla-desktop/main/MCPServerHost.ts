@@ -54,6 +54,8 @@ import {
   normalizeQuestions,
   QuestionReceiptPolicy,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
+import { configuredVaultBrokerProvider } from '@pkg/vault-broker';
+import { ClerkToolSessionResolver } from './ClerkToolSessionResolver';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { firstRunTracePath } from './firstRun/firstRunTraceFile';
@@ -92,7 +94,12 @@ export function getMCPServerHost(): MCPServerHost {
   return hostInstance;
 }
 export class MCPServerHost {
-  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) { this.agentAwarenessPolicy = agentAwarenessPolicy }
+  private readonly clerkSessions: ClerkToolSessionResolver;
+
+  constructor(private readonly agentAwarenessPolicy = new AgentAwarenessPolicy()) {
+    // This listener authenticates exclusively against its own live MCP session registry, never an installation key.
+    this.clerkSessions = new ClerkToolSessionResolver(this, configuredVaultBrokerProvider, () => null, agentAwarenessPolicy);
+  }
 
   private httpServer: HttpServer | null = null;
   private port = 0;
@@ -100,7 +107,6 @@ export class MCPServerHost {
 
   private readonly sessions = new ToolSessionRegistry();
   private readonly executionContexts = new ContainerExecutionContextFactory();
-  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   get running(): boolean {
@@ -494,7 +500,8 @@ export class MCPServerHost {
     // in-process to the same ToolRegistry worker the graph loop would use,
     // enforcing exactly the graph's allowlist. Unrestricted sessions (no
     // allowedToolNames) keep the full CLI catalog and get no projection.
-    const graphToolSurface = resolveGraphToolSurface(session.state.metadata, this.agentAwarenessPolicy);
+    const projectionState = session.state;
+    const graphToolSurface = resolveGraphToolSurface(projectionState.metadata, this.agentAwarenessPolicy);
     if (graphToolSurface) {
       server.registerTool(
         'sulla_tool',
@@ -518,8 +525,9 @@ export class MCPServerHost {
           graphToolSurface,
           name => toolRegistry.createTool(name),
           {
-            state:            session.state,
+            state:            projectionState,
             executionContext: session.executionContext,
+            resolveClerkCaller: (name, signal) => this.clerkSessions.resolveSession(session.id, name, signal, projectionState),
             executionTarget:  name => toolRegistry.getExecutionTarget(name),
           },
           this.agentAwarenessPolicy,
