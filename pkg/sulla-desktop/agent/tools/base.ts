@@ -7,6 +7,7 @@
 import { ToolResult } from '../types';
 import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
+import { toolSessionOrigin } from '../services/ToolSessionOrigin';
 import { ToolApprovalGate } from './ToolApprovalGate';
 import { toolDecisionPort } from './toolDecisionPort';
 import { DecisionAnswererLabel } from '../services/DecisionAnswererLabel';
@@ -314,7 +315,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
         if (answerer) decisionAttribution = `Approved by ${ answerer }.`;
       }
       if (signal?.aborted) throw new Error('Action cancelled; nothing was executed.');
-      const response = await this._validatedCall(validated);
+      const response = await toolSessionOrigin.withinTool(() => this._validatedCall(validated));
       const { successBoolean, responseString, ...extra } = response as any;
       return {
         toolName: this.name,

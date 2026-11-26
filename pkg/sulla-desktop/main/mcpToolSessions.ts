@@ -12,6 +12,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { toolSessionOrigin } from '@pkg/agent/services/ToolSessionOrigin';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
@@ -26,7 +27,15 @@ export const DEFAULT_SESSION_TTL_MS = 10 * 60 * 1000;
  * read/mutate the calling graph's metadata directly, which is the whole
  * point of the in-process bridge.
  */
+export type ClerkSessionAuthority = 'ordinary' | 'local' | 'unpaired' | {
+  generation: string;
+  expiresAt: number;
+  parent?: { id: string; generation: string };
+};
+
 export interface ToolSession {
+  /** Never projected into tokens, graph metadata, or caller-supplied execution contexts. */
+  clerk:             ClerkSessionAuthority;
   id:                string;
   state:             BaseThreadState;
   createdAt:         number;
@@ -43,11 +52,12 @@ export class ToolSessionRegistry {
 
   // Only launcher defaults outlive idle eviction. Revocation/stop invalidates the
   // captured owner marker even when the session record has already been swept.
-  private readonly launcherOwners = new Map<string, symbol>();
+  private readonly launcherOwners = new Map<string, { ordinaryOnly: boolean }>();
 
   ownLauncher(id: string): () => boolean {
-    if (!this.peek(id) || this.launcherOwners.has(id)) throw new Error('Launcher session unavailable or already owned');
-    const owner = Symbol();
+    const session = this.peek(id);
+    if (!session || this.launcherOwners.has(id)) throw new Error('Launcher session unavailable or already owned');
+    const owner = { ordinaryOnly: session.clerk === 'ordinary' };
     this.launcherOwners.set(id, owner);
     return () => this.launcherOwners.get(id) === owner;
   }
@@ -73,13 +83,19 @@ export class ToolSessionRegistry {
    */
   rebind(id: string, state: BaseThreadState, ttlMs?: number, executionContext?: ToolExecutionContext): boolean {
     if (!id) return false;
-    const session = this.sessions.get(id);
+    const session = this.peek(id);
+    const owner = this.launcherOwners.get(id);
+    if (owner && toolSessionOrigin.ordinaryOnly) owner.ordinaryOnly = true;
     if (!session) {
-      this.put(id, state, ttlMs ?? DEFAULT_SESSION_TTL_MS, executionContext);
+      // A swept record has lost its provenance. Only an owned launcher's renewal can restore pairing.
+      this.put(id, state, ttlMs ?? DEFAULT_SESSION_TTL_MS, executionContext, owner?.ordinaryOnly !== false || !executionContext);
       return true;
     }
     const now = Date.now();
     if (ttlMs !== undefined) session.ttlMs = ttlMs;
+    // Losing a container binding must never turn its process into a trusted desktop root.
+    session.clerk = this.initialAuthority(executionContext, session.clerk === 'ordinary' || (!executionContext && session.clerk !== 'local'));
+    if (owner && session.clerk === 'ordinary') owner.ordinaryOnly = true;
     session.state = state;
     session.executionContext = executionContext;
     session.lastUsedAt = now;
@@ -124,9 +140,13 @@ export class ToolSessionRegistry {
     this.sessions.clear();
   }
 
-  private put(id: string, state: BaseThreadState, ttlMs: number, executionContext?: ToolExecutionContext): void {
+  private initialAuthority(context: ToolExecutionContext | undefined, ordinaryOnly = false): ClerkSessionAuthority {
+    return ordinaryOnly || toolSessionOrigin.ordinaryOnly ? 'ordinary' : context ? 'unpaired' : 'local';
+  }
+
+  private put(id: string, state: BaseThreadState, ttlMs: number, executionContext?: ToolExecutionContext, ordinaryOnly = false): void {
     const now = Date.now();
 
-    this.sessions.set(id, { id, state, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs, executionContext });
+    this.sessions.set(id, { id, state, clerk: this.initialAuthority(executionContext, ordinaryOnly), createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs, executionContext });
   }
 }

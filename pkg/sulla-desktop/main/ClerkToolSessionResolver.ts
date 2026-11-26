@@ -15,6 +15,7 @@ import type { ToolSession } from './mcpToolSessions';
 
 interface ToolSessionLookup {
   getToolSession(token: string): ToolSession | null;
+  peekToolSession?(token: string): ToolSession | null;
 }
 
 interface LocalContextIssuer {
@@ -85,6 +86,33 @@ export class ClerkToolSessionResolver {
     return this.resolveBearer(sessionId, name, signal, expectedState).then(({ state: _state, ...caller }) => caller);
   }
 
+  /** Server records prove eligibility; claims and graph allowlists can only further restrict it. */
+  private authorityDeadline(session: ToolSession, name: string): number {
+    const deny = () => new ClerkError(403, 'The Clerk tool session is invalid or expired.');
+    const now = this.now();
+    if (!Number.isFinite(session.expiresAt) || session.expiresAt <= now) throw deny();
+    const pair = session.clerk;
+    if (pair === 'local' && !session.executionContext) return session.expiresAt;
+    const execution = session.executionContext;
+    if (!pair || typeof pair !== 'object' || !execution?.jti || pair.generation !== execution.jti ||
+        !Number.isFinite(pair.expiresAt) || now >= pair.expiresAt) throw deny();
+    const until = Math.min(session.expiresAt, pair.expiresAt);
+    if (!pair.parent) return until;
+
+    // Only launchers can sponsor provider processes. Do not slide their idle expiry here.
+    const root = this.sessions.peekToolSession?.(pair.parent.id);
+    const rootPair = root?.clerk;
+    const ctx = root?.executionContext;
+    const meta = root?.state.metadata;
+    if (!root || !ctx || !rootPair || typeof rootPair !== 'object' || rootPair.parent ||
+        rootPair.generation !== pair.parent.generation || ctx.jti !== rootPair.generation ||
+        !Array.isArray(meta?.allowedToolNames) || !meta.allowedToolNames.length ||
+        !sessionAllowsTool(meta.allowedToolNames, name, meta, this.awarenessPolicy)) throw deny();
+    const deadline = Math.min(until, root.expiresAt, rootPair.expiresAt, ctx.exp * 1000);
+    if (!Number.isFinite(deadline) || deadline <= now) throw deny();
+    return deadline;
+  }
+
   private async resolveBearer(bearer: string, name: string, signal: AbortSignal, expectedState?: ToolSession['state'],
     lease?: { generation: string; expiresAt: number; identity: ToolExecutionContext }) {
     const startedAt = this.now();
@@ -93,6 +121,7 @@ export class ClerkToolSessionResolver {
     const resolveSession = async(pinnedState = expectedState) => {
       const session = this.sessions.getToolSession(bearer);
       if (!session || (pinnedState && session.state !== pinnedState)) throw new ClerkError(403, 'The Clerk tool session is invalid or expired.');
+      const expiresAt = this.authorityDeadline(session, name);
       const metadata = session.state?.metadata as Record<string, unknown> | undefined;
       const allowed = metadata?.allowedToolNames;
       if (!Array.isArray(allowed) || allowed.length === 0 || !sessionAllowsTool(allowed, name, metadata, this.awarenessPolicy)) {
@@ -123,13 +152,13 @@ export class ClerkToolSessionResolver {
           signal: requestSignal,
         });
       }
-      return { execution, metadata, state: session.state, expiresAt: session.expiresAt };
+      return { execution, metadata, state: session.state, generation: session.executionContext?.jti, expiresAt };
     };
 
     const resolved = await resolveSession();
     const channel = resolved.metadata?.wsChannel;
     const deadlineAt = Math.min(startedAt + CLERK_DEADLINE_MS, resolved.execution.exp * 1_000,
-      ...(lease ? [lease.expiresAt, resolved.expiresAt] : []));
+      resolved.expiresAt, ...(lease ? [lease.expiresAt] : []));
     const boundedSignal = AbortSignal.any([requestSignal, AbortSignal.timeout(Math.max(1, deadlineAt - this.now()))]);
     return {
       state: resolved.state,
@@ -140,9 +169,13 @@ export class ClerkToolSessionResolver {
       deadlineAt,
       signal: boundedSignal,
       revalidate: async() => {
-        if (lease && (boundedSignal.aborted || this.now() >= deadlineAt)) throw new ClerkError(403, 'The forwarded Clerk lease expired.');
+        if (boundedSignal.aborted || this.now() >= deadlineAt) throw new ClerkError(403, 'The Clerk session authorization expired.');
         // Registry rebind mutates a ToolSession in place. Pin the original graph and scalar issuance, not that record.
-        return (await resolveSession(lease ? resolved.state : expectedState)).execution;
+        const current = await resolveSession(resolved.state);
+        if (current.generation !== resolved.generation) {
+          throw new ClerkError(403, 'The Clerk session generation changed.');
+        }
+        return current.execution;
       },
     };
   }

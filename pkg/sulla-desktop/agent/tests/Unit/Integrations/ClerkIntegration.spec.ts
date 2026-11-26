@@ -610,11 +610,12 @@ describe('Clerk guarded egress', () => {
     const name = 'clerk_get_user';
     const state = { metadata: { agentId: 'worker', threadId: 'thread', allowedToolNames: [name] } } as BaseThreadState;
     const binding = { podId: 'pod', jobId: 'job', subject: context.sub, taskIndex: 0, deviceId: 'device', agentId: 'worker', threadId: 'thread', workspacePath: '/fixture' };
-    host.rebindSession('a', state, 120_000, binding);
+    host['port'] = 1;
+    const { id } = host.registerSession(state, 120_000, binding);
     const key = deriveCapabilitySigningKey('local fixture');
     const issuer = new ContainerSessionLeases(binding, host, [name], 'lifecycle', key, 2000,
       { replace: async() => {}, remove: async() => {} });
-    const proof = { ...await verifyCapabilityToken(issuer.issue('a'), key), request_id: 'test' };
+    const proof = { ...await verifyCapabilityToken(issuer.issue(id), key), request_id: 'test' };
     const local = { issueLocalBrokerContext: vi.fn(async() => context) };
     const resolver = new ClerkToolSessionResolver(host, local, () => null, new AgentAwarenessPolicy(), () => now);
     const f = fixture(caller => caller.revalidate());
@@ -625,15 +626,15 @@ describe('Clerk guarded egress', () => {
     const saved = toolDecisionPort.resolve();
     toolDecisionPort.register({ request: f.decide, requiresApproval: async() => false });
     try {
-      await expect(resolver.bindForwarded(worker, 'clerk_delete_user', 'a', proof, signal)).rejects.toMatchObject({ status: 403 });
-      await expect(resolver.bindForwarded(worker, name, 'a', { ...proof, thread_id: 'other' }, signal)).rejects.toMatchObject({ status: 403 });
-      await resolver.bindForwarded(worker, name, 'a', proof, signal);
+      await expect(resolver.bindForwarded(worker, 'clerk_delete_user', id, proof, signal)).rejects.toMatchObject({ status: 403 });
+      await expect(resolver.bindForwarded(worker, name, id, { ...proof, thread_id: 'other' }, signal)).rejects.toMatchObject({ status: 403 });
+      await resolver.bindForwarded(worker, name, id, proof, signal);
       expect(worker.deadlineAt).toBe(proof.exp * 1000);
       now = proof.exp * 1000;
       expect(await worker.call({ user_id: 'user_a' })).toMatchObject({ success: false, status: 403 });
       now = Date.now();
-      host.rebindSession('a', state, 120_000); // Local (unprojected) session, same graph.
-      await expect(resolver.bindForwarded(worker, name, 'a', proof, signal)).rejects.toMatchObject({ status: 403 });
+      host.rebindSession(id, state, 120_000); // Local (unprojected) session, same graph.
+      await expect(resolver.bindForwarded(worker, name, id, proof, signal)).rejects.toMatchObject({ status: 403 });
       expect(local.issueLocalBrokerContext).not.toHaveBeenCalled();
       expect(f.requests).toHaveLength(0);
     } finally { toolDecisionPort.register(saved); }
@@ -717,8 +718,13 @@ describe('Clerk guarded egress', () => {
       podId: 'test-pod', subject: context.sub, agentId: context.agent_id, threadId: context.thread_id,
       jobId: 'job', deviceId: 'device', workspacePath: '/fixture',
     } : undefined;
-    const id = 'fixture-mcp-session';
-    host.rebindSession(id, state, 60_000, binding);
+    host['port'] = 1;
+    const { id } = host.registerSession(state, 60_000, binding);
+    if (binding) {
+      const issuer = new ContainerSessionLeases(binding, host, [name], 'fixture', deriveCapabilitySigningKey('fixture'),
+        60_000, { replace: async() => {}, remove: async() => {} });
+      issuer.issue(id);
+    }
     const session = host.getToolSession(id)!;
     toolRegistry.registerManifests(clerkToolManifests);
     const handler = (host as any).buildMcpServer(session)._registeredTools.sulla_tool.handler;
