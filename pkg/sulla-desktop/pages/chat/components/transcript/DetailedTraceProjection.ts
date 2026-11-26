@@ -43,7 +43,7 @@ export class DetailedTraceProjection {
       const sourceCount = rows.filter(row => row.kind === 'source').length;
       // A blocked worker or a pending approval in this turn needs the human.
       const waitingOnYou = rows.some(row => (row.subagent && row.status === 'blocked') || (row.kind === 'approval' && row.status === 'waiting'));
-      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, rows,
+      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows,
         ...(usage ? { usage } : {}), ...(agentSummary ? { agentSummary } : {}),
         ...(sourceCount ? { sourceCount } : {}), ...(waitingOnYou ? { waitingOnYou } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));

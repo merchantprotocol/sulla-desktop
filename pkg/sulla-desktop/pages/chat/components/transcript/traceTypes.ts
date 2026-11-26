@@ -57,6 +57,8 @@ export interface TraceRow {
 
 export interface TraceTurn {
   id: string;
+  /** Legacy status-line correlation; the inline Detailed timeline never renders by this anchor. */
+  anchorEntryId: string;
   rows: TraceRow[];
   usage?: { model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; durationLabel?: string };
   /** "2 agents: 1 returned, 1 working" when the turn launched sub-agents. */
