@@ -17,6 +17,9 @@ vi.mock('electron', () => ({
   webContents: { getAllWebContents: f.allContents },
 }));
 vi.mock('@pkg/agent/services/DecisionService', () => ({ decisionService: { subscribe: f.subscribe } }));
+// Notification delivery does not boot the process-wide tool graph or expiry timer.
+vi.mock('@pkg/agent/tools/toolRuntime', () => ({ toolRuntime: { start: vi.fn() } }));
+vi.mock('@pkg/agent/services/DecisionExpirySweeper', () => ({ DecisionExpirySweeper: class { start() {} } }));
 vi.mock('@pkg/agent/services/ApprovalService', () => ({ ApprovalService: {} }));
 vi.mock('@pkg/agent/tools', () => ({ toolRegistry: {} }));
 vi.mock('@pkg/main/ipcMain', () => ({ getIpcMainProxy: () => ({ handle: f.handle }) }));
