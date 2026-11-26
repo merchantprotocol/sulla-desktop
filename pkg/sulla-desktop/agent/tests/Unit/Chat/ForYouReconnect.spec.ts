@@ -15,7 +15,7 @@ function start() {
 }
 beforeEach(() => { vi.useFakeTimers(); f.invoke.mockReset(); owner.value = 'qa' });
 afterEach(() => { wrapper?.unmount(); vi.useRealTimers() });
-describe('For You interrupted reads', () => {
+describe('Decide interrupted reads', () => {
   it('recovers automatically without losing loaded requests or drafts', async() => {
     const question = { id: 'q', conversationId: 'qa', kind: 'question', status: 'pending', attention: 'active', createdAt: 1, questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] } as any;
     f.invoke.mockResolvedValueOnce([question]); start(); await flushPromises();
