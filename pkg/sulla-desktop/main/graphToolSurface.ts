@@ -26,6 +26,7 @@
 import { sessionAllowsTool } from './toolSessionPolicy';
 import type { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 
+import type { ClerkCaller } from '@pkg/agent/integrations/clerk/ClerkClient';
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { ToolSessionChatTransport } from '@pkg/agent/tools/ToolSessionChatTransport';
@@ -43,6 +44,7 @@ interface ToolWorker {
   name?:             string;
   metadata?:         { category?: unknown };
   executionContext?: ToolExecutionContext;
+  bindClerkCaller?(caller: ClerkCaller): void;
   sendChatMessage?:  (content: string, kind?: string, extras?: Record<string, unknown>) => Promise<boolean>;
   call(args: Record<string, unknown>): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
   invoke?(args: Record<string, unknown>, state: BaseThreadState): Promise<{ success: boolean; result?: unknown; error?: unknown }>;
@@ -54,6 +56,7 @@ export interface GraphToolExecutionOptions {
   state:             BaseThreadState;
   /** Present only for container runtimes; in-VM sessions run with the bound state alone. */
   executionContext?: ToolExecutionContext;
+  resolveClerkCaller(name: string, signal: AbortSignal): Promise<ClerkCaller>;
   executionTarget(name: string): ToolExecutionTarget | undefined;
 }
 
@@ -85,7 +88,7 @@ export function buildGraphToolHandler(
   awarenessPolicy: AgentAwarenessPolicy,
 ) {
   const chatTransport = new ToolSessionChatTransport();
-  return async({ tool, args }: { tool: string; args?: Record<string, unknown> }): Promise<GraphToolCallResult> => {
+  return async({ tool, args }: { tool: string; args?: Record<string, unknown> }, extra: { signal: AbortSignal }): Promise<GraphToolCallResult> => {
     // `exec` in the surface means full Sulla catalog authority (same rule as
     // the CLI session gate), so dispatched workers can reach github/*,
     // files/*, etc. here too — sandboxed CLI providers have no other path.
@@ -102,7 +105,12 @@ export function buildGraphToolHandler(
       const worker = await getTool(tool);
       let result;
       if (execution) {
-        if (execution.executionContext) worker.executionContext = execution.executionContext;
+        if (worker.metadata?.category === 'clerk') {
+          if (!worker.bindClerkCaller || worker.name !== tool) throw new Error('Clerk worker cannot verify its caller.');
+          const graphSignal = execution.state.metadata.options?.abort?.signal;
+          const signal = graphSignal ? AbortSignal.any([graphSignal, extra.signal]) : extra.signal;
+          worker.bindClerkCaller(await execution.resolveClerkCaller(tool, signal));
+        } else if (execution.executionContext) worker.executionContext = execution.executionContext;
         chatTransport.attach(worker, execution.state);
         const runtime = execution.executionContext
           ? containerRuntimeForExecution(execution.executionContext, execution.executionTarget(tool))

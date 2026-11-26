@@ -75,21 +75,21 @@ export class ClerkToolSessionResolver {
   }
 
   /** Resolve the already-authenticated MCP session captured by its handler. */
-  resolveSession(sessionId: string, name: string, signal: AbortSignal): Promise<ClerkCaller> {
+  resolveSession(sessionId: string, name: string, signal: AbortSignal, expectedState?: ToolSession['state']): Promise<ClerkCaller> {
     const installationToken = this.installationToken();
     if (!sessionId || (installationToken && sessionId === installationToken)) {
       throw new ClerkError(403, 'Clerk requires a verified agent tool session.');
     }
-    return this.resolveBearer(sessionId, name, signal).then(({ state: _state, ...caller }) => caller);
+    return this.resolveBearer(sessionId, name, signal, expectedState).then(({ state: _state, ...caller }) => caller);
   }
 
-  private async resolveBearer(bearer: string, name: string, signal: AbortSignal) {
+  private async resolveBearer(bearer: string, name: string, signal: AbortSignal, expectedState?: ToolSession['state']) {
     const startedAt = this.now();
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(CLERK_DEADLINE_MS)]);
 
     const resolveSession = async() => {
       const session = this.sessions.getToolSession(bearer);
-      if (!session) throw new ClerkError(403, 'The Clerk tool session is invalid or expired.');
+      if (!session || (expectedState && session.state !== expectedState)) throw new ClerkError(403, 'The Clerk tool session is invalid or expired.');
       const metadata = session.state?.metadata as Record<string, unknown> | undefined;
       const allowed = metadata?.allowedToolNames;
       if (!Array.isArray(allowed) || allowed.length === 0 || !sessionAllowsTool(allowed, name, metadata, this.awarenessPolicy)) {

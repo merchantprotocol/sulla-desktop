@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import '../../Support/TestHomeEnv';
 import { EventEmitter } from 'node:events';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -14,12 +15,19 @@ import { ClerkAuthority, ClerkSavedPairRejectedError } from '../../../../../../s
 import { BrokerAuditRecorder } from '../../../../../../services/sulla-vault/src/localAuthority/BrokerAuditRecorder';
 import { IntegrationAccountService } from '../../../../../../services/sulla-vault/src/localAuthority/IntegrationAccountService';
 import { LocalVaultError } from '../../../../../../services/sulla-vault/src/localAuthority/LocalVaultError';
+vi.mock('electron', () => {
+  const app = { getPath: () => '/tmp', getVersion: () => '0.0.0-test', isPackaged: false };
+  return { default: { app }, app, ipcMain: { handle: vi.fn(), on: vi.fn() }, safeStorage: {} };
+});
+
+import { MCPServerHost } from '../../../../main/MCPServerHost';
+import { toolRegistry } from '../../../tools/registry';
 import { AgentAwarenessPolicy } from '../../../services/AgentAwarenessPolicy';
 import { ClerkToolSessionResolver } from '../../../../main/ClerkToolSessionResolver';
 import { ToolSessionRegistry } from '../../../../main/mcpToolSessions';
 import type { BaseThreadState } from '../../../nodes/Graph';
 import { ClerkApiRoute } from '../../../../main/ClerkApiRoute';
-import { LocalVaultBrokerClient } from '../../../../vault-broker';
+import { configuredVaultBrokerProvider, LocalVaultBrokerClient } from '../../../../vault-broker';
 import { ClerkClient, ClerkError, clerkSettings } from '../../../integrations/clerk/ClerkClient';
 import { ClerkWorker } from '../../../tools/clerk/ClerkWorker';
 import { clerkToolManifests } from '../../../tools/clerk/manifests';
@@ -129,6 +137,7 @@ function fixture(contextPort?: (caller: any) => Promise<ToolExecutionContext>) {
   return {
     authority,
     brokerExecution,
+    broker,
     host,
     client,
     caller,
@@ -513,6 +522,49 @@ describe('Clerk guarded egress', () => {
       await expect(worker.call({ user_id: 'user_a' })).resolves.toMatchObject({ success: false, status: 403 });
       expect(f.requests).toHaveLength(1);
     } finally { toolDecisionPort.register(saved); }
+  });
+
+  it.each(['host-local', 'container'])('projected %s MCP handler runs an authorized read and refuses revocation during dispatch', async(mode) => {
+    const host = new MCPServerHost();
+    const name = 'clerk_get_user';
+    const state = { metadata: { agentId: context.agent_id, threadId: context.thread_id, allowedToolNames: [name] } } as BaseThreadState;
+    const binding = mode === 'container' ? {
+      podId: 'test-pod', subject: context.sub, agentId: context.agent_id, threadId: context.thread_id,
+      jobId: 'job', deviceId: 'device', workspacePath: '/fixture',
+    } : undefined;
+    const id = 'fixture-mcp-session';
+    host.rebindSession(id, state, 60_000, binding);
+    const session = host.getToolSession(id)!;
+    toolRegistry.registerManifests(clerkToolManifests);
+    const handler = (host as any).buildMcpServer(session)._registeredTools.sulla_tool.handler;
+    const f = fixture();
+    const broker = vi.spyOn(configuredVaultBrokerProvider, 'requireConfiguredCredentialBroker').mockReturnValue(f.broker);
+    const issue = vi.spyOn(configuredVaultBrokerProvider, 'issueLocalBrokerContext').mockResolvedValue({ ...context, pod_id: 'desktop-main' });
+    const saved = toolDecisionPort.resolve();
+    let needsApproval = false;
+    toolDecisionPort.register({ request: f.decide, requiresApproval: async() => needsApproval });
+    const invoke = () => handler({ tool: name, args: { user_id: 'user_a' } }, { signal: new AbortController().signal });
+    try {
+      expect((await invoke()).isError).toBe(false);
+      expect(f.send).toHaveBeenCalledTimes(1);
+      if (!binding) expect(issue).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: context.agent_id, threadId: context.thread_id, podId: 'desktop-main', signal: expect.anything(),
+      }));
+      else expect(issue).not.toHaveBeenCalled();
+      needsApproval = true;
+      const waiting = invoke();
+      await vi.waitFor(() => expect(f.decide).toHaveBeenCalledTimes(1));
+      host.revokeSession(id);
+      f.settle('approved');
+      expect((await waiting).isError).toBe(true);
+      expect((await invoke()).isError).toBe(true);
+      expect(f.requests).toHaveLength(1);
+    } finally {
+      host.revokeSession(id);
+      toolDecisionPort.register(saved);
+      issue.mockRestore();
+      broker.mockRestore();
+    }
   });
 
   it('keeps the internal Clerk worker bound to its live session across explicit retry', async() => {
