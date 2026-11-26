@@ -8,9 +8,10 @@ import crypto from 'node:crypto';
 import { Notification } from 'electron';
 import yaml from 'yaml';
 
-import { BUILTIN_AGENT_RENAMES, newerBuiltinAgentSlug } from '@pkg/shared/agentJobNames';
+import { BUILTIN_AGENT_RENAMES } from '@pkg/shared/agentJobNames';
 import { AgentModelCategoryPolicy } from '@pkg/agent/languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
+import { RenamedAgentPublicationRepository, type PublishedAgentRow } from '@pkg/agent/database/repositories/RenamedAgentPublicationRepository';
 import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
 import { isRetiredCodingManagerSlug, RETIRED_CODING_MANAGER_SLUGS } from '@pkg/agent/builtinAgents/index';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
@@ -35,7 +36,6 @@ const OWNER_HOME_AREA = 'sulla';
 const TYPES = ['agents', 'skills', 'workflows', 'functions', 'recipes'] as const;
 type UseCaseType = typeof TYPES[number];
 type FilesRow = { id:string; path:string; published_version_id?:string|null; publishedVersionId?:string|null; deleted_at?:string|null };
-type PublishedAgentRow = { id:string; source_kind:string; removed_from_editor:boolean; use_case_file_id:string|null; use_case_version_id:string|null };
 type Request = (endpoint:string, init?:RequestInit) => Promise<Response>;
 
 let activeUseCaseFiles: SullaUseCaseFiles | undefined;
@@ -79,7 +79,8 @@ export class SullaUseCaseFiles {
   private stopped = false;
   private readonly reportedModelConflicts = new Set<string>();
 
-  constructor(private readonly request:Request, private readonly notifier?:UseCaseChangePublisher) {}
+  constructor(private readonly request:Request, private readonly notifier?:UseCaseChangePublisher,
+    private readonly renamedPublications = new RenamedAgentPublicationRepository(postgresClient)) {}
 
   start():void {
     activeUseCaseFiles = this;
@@ -388,18 +389,11 @@ export class SullaUseCaseFiles {
     for (const row of removed) this.notifier?.announce({ type: row.type as 'agent'|'skill'|'workflow'|'function'|'recipe', slug: row.slug, change: 'deleted' });
   }
 
-  /** The exact root manifest of an agent package, by readAgentPackage precedence; never a nested same-name file. */
-  private static rootAgentAnchor(slug:string, packageRows:FilesRow[]):FilesRow | undefined {
-    const root = (name:string) => packageRows.find(row => row.path === `${ ROOT }/agents/${ slug }/${ name }` && activePublishedVersion(row));
-    return root('agent.json') ?? root('agent.yaml') ?? root('agent.yml');
-  }
-
-  private async renamedPublication(slug:string, anchor?:FilesRow) {
-    const canonical = newerBuiltinAgentSlug(slug);
-    // Never redirect a custom package just because its folder matches a historical name.
-    return canonical && anchor ? postgresClient.queryOne<PublishedAgentRow & {slug:string}>(
-      `SELECT id,slug,source_kind,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor,use_case_file_id,use_case_version_id
-         FROM agent_definitions WHERE slug=$1 AND is_builtin AND use_case_file_id=$2`, [canonical, anchor.id]) : null;
+  /** The first published root wins content; any live root can prove package ownership. */
+  private static rootAgentAnchors(slug:string, packageRows:FilesRow[]):FilesRow[] {
+    const roots = ['agent.json', 'agent.yaml', 'agent.yml'].map(name =>
+      packageRows.find(row => row.path === `${ ROOT }/agents/${ slug }/${ name }` && activePublishedVersion(row)));
+    return roots.filter((row): row is FilesRow => !!row);
   }
 
   /** True only when Files holds a human-approved publish request for exactly this file version. */
@@ -443,7 +437,7 @@ export class SullaUseCaseFiles {
   }
 
   private async scanPendingMigration(collectionId:string, unresolvedMappings:string[] = []):Promise<void> {
-    const rows = (await this.list(collectionId)).filter(row => row.path.startsWith(`${ ROOT }/agents/`));
+    const rows = (await this.list(collectionId)).filter(row => !row.deleted_at && row.path.startsWith(`${ ROOT }/agents/`));
     const signature = `pending|${ rows.map(row => `${ row.id }:${ activePublishedVersion(row) ?? '-' }:${ row.path }`).sort().join('|') }`;
     if (signature === this.lastSignature && !unresolvedMappings.length) return;
     const groups = new Map<string,FilesRow[]>();
@@ -455,8 +449,11 @@ export class SullaUseCaseFiles {
     for (const [slug, packageRows] of groups) {
       if (!packageRows.some(row => activePublishedVersion(row))) continue;
       if (isRetiredCodingManagerSlug(slug)) continue;
-      const anchor = SullaUseCaseFiles.rootAgentAnchor(slug, packageRows);
-      const existing = await this.renamedPublication(slug, anchor) ?? await postgresClient.queryOne<{ use_case_file_id: string | null; use_case_version_id: string | null; removed_from_editor: boolean }>(
+      const roots = SullaUseCaseFiles.rootAgentAnchors(slug, packageRows);
+      const anchor = roots[0];
+      const renamed = await this.renamedPublications.find(slug, roots.map(row => row.id));
+      if (renamed?.split) { deferred.push(`agents/${ slug } (root manifests have different owners)`); continue }
+      const existing = renamed ?? await postgresClient.queryOne<{ use_case_file_id: string | null; use_case_version_id: string | null; removed_from_editor: boolean }>(
         `SELECT use_case_file_id,use_case_version_id,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor FROM agent_definitions WHERE slug=$1`, [slug]);
       if (existing?.removed_from_editor) continue;
       // The same indexed anchor version is a permanent no-op: owner edits to it are never undone.
@@ -486,7 +483,7 @@ export class SullaUseCaseFiles {
       const state = await postgresClient.queryOne('SELECT initial_export_completed_at FROM use_case_files_state WHERE singleton=TRUE');
       if (!state?.initial_export_completed_at) return await this.scanPendingMigration(area.id, await this.settlePendingRegistrations());
       let rows = await this.list(area.id); await this.initialExport(area.id, rows); rows = await this.list(area.id);
-      const relevant = rows.filter(row => row.path.startsWith(`${ ROOT }/`) && !row.path.startsWith(`${ ROOT }/_legacy-import/`));
+      const relevant = rows.filter(row => !(row.deleted_at && row.path.startsWith(`${ ROOT }/agents/`)) && row.path.startsWith(`${ ROOT }/`) && !row.path.startsWith(`${ ROOT }/_legacy-import/`));
       const signature = `completed|${ relevant.map(row => `${ row.id }:${ activePublishedVersion(row) ?? '-' }:${ row.path }`).sort().join('|') }`;
       if (signature === this.lastSignature) return;
       const groups = new Map<string,FilesRow[]>();
@@ -499,14 +496,21 @@ export class SullaUseCaseFiles {
         if (!packageRows.some(row => activePublishedVersion(row))) continue;
         if (type === 'agents' && isRetiredCodingManagerSlug(slug)) continue;
         // An invalid newly-published version never disables the last valid index row.
-        const renamed = type === 'agents' ? await this.renamedPublication(slug, SullaUseCaseFiles.rootAgentAnchor(slug, packageRows)) : null;
+        const roots = type === 'agents' ? SullaUseCaseFiles.rootAgentAnchors(slug, packageRows) : [];
+        const renamed = roots.length ? await this.renamedPublications.find(slug, roots.map(row => row.id)) : null;
         active.add(renamed ? `agents/${ renamed.slug }` : key);
+        if (renamed?.split) {
+          active.add(key); // Both proven owners keep their current enabled/archived state.
+          failedPackages.push(key);
+          await this.auditError(roots[0], String(activePublishedVersion(roots[0])), `${ key }: root manifests have different owners`);
+          continue;
+        }
         if (type === 'skills') {
           const existing = await postgresClient.queryOne<{enabled:boolean;deleted_at:string|null;use_case_file_id:string|null}>('SELECT enabled,deleted_at,use_case_file_id FROM skill_definitions WHERE slug=$1',[slug]);
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
         try { await this.activate(type,slug,packageRows,undefined,renamed ?? undefined); activated++ }
-        catch(error) { failedPackages.push(key); const anchor=type === 'agents' ? SullaUseCaseFiles.rootAgentAnchor(slug, packageRows) : packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
+        catch(error) { failedPackages.push(key); const anchor=type === 'agents' ? roots[0] : packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
       const enabledPackSkills = await postgresClient.query<{slug:string}>(`SELECT slug FROM skill_definitions WHERE enabled=TRUE AND deleted_at IS NULL AND use_case_version_id IS NOT NULL AND frontmatter->>'memory_pack'='true'`);
