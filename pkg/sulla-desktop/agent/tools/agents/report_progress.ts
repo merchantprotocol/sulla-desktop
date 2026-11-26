@@ -20,16 +20,17 @@ export class ReportProgressWorker extends BaseTool {
       return {
         successBoolean: false,
         responseString: 'report_progress is only available inside a delegated agent task (hidden or tab).',
+        errorCode:      'task_inactive',
       };
     }
     const step = String(input.step ?? 'progress').trim();
     const summary = String(input.summary ?? '').trim();
     if (!summary) {
-      return { successBoolean: false, responseString: 'a non-empty summary is required.' };
+      return { successBoolean: false, responseString: 'a non-empty summary is required.', errorCode: 'invalid_tool_input' };
     }
     const percent = input.percent === undefined ? undefined : Number(input.percent);
     if (percent !== undefined && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
-      return { successBoolean: false, responseString: 'percent must be between 0 and 100.' };
+      return { successBoolean: false, responseString: 'percent must be between 0 and 100.', errorCode: 'invalid_tool_input' };
     }
 
     const target = await AgentJobMessagingModel.taskForThread(threadId);
@@ -37,7 +38,7 @@ export class ReportProgressWorker extends BaseTool {
       const open = await agentJobProvider.reviewItems.itemsForTask(target.jobId, target.taskIndex, true);
       const updates = input.reviewUpdates;
       const error = new ReviewItemClosureValidator().validate(updates, open.map(item => item.id));
-      if (error) return { successBoolean: false, responseString: error };
+      if (error) return { successBoolean: false, responseString: error, errorCode: 'invalid_tool_input' };
       for (const update of updates) {
         if (update.status === 'acknowledged') await agentJobProvider.reviewItems.acknowledge(target.jobId, target.taskIndex, update.id);
         else await agentJobProvider.reviewItems.close(target.jobId, target.taskIndex, update.id, update.status, update.commit, update.reason, 'worker');
@@ -51,7 +52,7 @@ export class ReportProgressWorker extends BaseTool {
       percent,
     });
     if (!result) {
-      return { successBoolean: false, responseString: 'No running delegated job task is bound to this thread.' };
+      return { successBoolean: false, responseString: 'No running delegated job task is bound to this thread.', errorCode: 'task_inactive' };
     }
 
     agentJobProvider.states.touch();

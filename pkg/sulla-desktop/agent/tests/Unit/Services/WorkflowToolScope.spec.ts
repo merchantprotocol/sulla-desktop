@@ -26,6 +26,12 @@ describe('workflow tool category routing', () => {
     await client.call('unknown_tool', {});
     expect(paths).toEqual(['/internal/tools/observation/write_file', '/internal/tools/agents/check_agent_jobs', '/internal/tools/meta/dream_recent_memories', '/internal/tools/meta/unknown_tool']);
   });
+  it('surfaces the validation message from a structured HTTP 400 rejection', async() => {
+    const message = 'Input validation failed: missing workflow argument';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ error: { code: 'invalid_tool_input', message } }, { status: 400 })));
+    await expect(new Client('test-only-capability').call('agents/report_progress', {})).rejects.toThrow(message);
+  });
+
   it('still surfaces denied tool scopes instead of retrying a broader category', async() => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: 'tool is outside this run scope' }), { status: 403 }));
     vi.stubGlobal('fetch', fetch);
