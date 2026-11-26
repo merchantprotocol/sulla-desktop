@@ -254,6 +254,7 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
     if (!specs.some(spec => spec.slug === slug)) continue;
     const existing = await AgentDefinitionModel.findBySlug(slug);
     if (existing && !existing.is_builtin) collisions.set(slug, previous);
+    if (!existing && (await AgentDefinitionModel.findExactBySlug(previous))?.is_builtin) collisions.set(slug, previous);
   }
 
   for (const bundled of specs) {
