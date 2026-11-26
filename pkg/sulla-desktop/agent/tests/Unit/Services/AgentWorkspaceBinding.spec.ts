@@ -94,6 +94,25 @@ describe('durable Git workspace initialization', () => {
     expect(readFileSync(path.join(workspace, 'marker'), 'utf8')).toBe('uncommitted progress');
   });
 
+  it('preserves an exact pre-marker durable Git workspace during restart recovery', async() => {
+    const source = local('worktrees/repo');
+    const workspace = local('runtime/conversations/task/workspace');
+    rmSync(workspace, { recursive: true });
+    git(path.dirname(workspace), 'clone', source, workspace);
+    writeFileSync(path.join(workspace, 'uncommitted.txt'), 'restart-safe bytes');
+    rmSync(source, { recursive: true });
+
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target, 'job-1-0')).resolves.toBe(target);
+    expect(readFileSync(path.join(workspace, 'uncommitted.txt'), 'utf8')).toBe('restart-safe bytes');
+  });
+
+  it('does not treat an arbitrary nonempty folder as a recoverable durable workspace', async() => {
+    writeFileSync(local('runtime/conversations/task/workspace/unrelated.txt'), 'not a checkout');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target, 'job-1-0'))
+      .rejects.toThrow('refusing an unbound non-Git stable workspace');
+    expect(readFileSync(local('runtime/conversations/task/workspace/unrelated.txt'), 'utf8')).toBe('not a checkout');
+  });
+
   it('fails before publishing a workspace when the clone would cross the VM disk reserve', async() => {
     guest.freeKiB = 4096;
     await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toMatchObject({ name: 'GuestDiskFullError' });
