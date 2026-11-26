@@ -32,20 +32,21 @@ export class FilesEntryFormatter {
     if (mime.startsWith('audio/')) return { icon: icons.audio, className: 'aud' };
     if (mime === 'application/pdf') return { icon: icons.pdf, className: 'pdf' };
     if (this.isArchive(mime, ext)) return { icon: icons.zip, className: 'zip' };
-    if (/json|yaml|javascript|typescript|x-sh|x-python/.test(mime) || ['js', 'ts', 'json', 'yaml', 'yml', 'py', 'sh', 'vue', 'css', 'html'].includes(ext)) return { icon: icons.code, className: 'code' };
+    if (/json|yaml|javascript|typescript|x-sh|x-python/.test(mime) || ['js', 'ts', 'json', 'yaml', 'yml', 'py', 'sh', 'vue', 'css', 'html', 'htm'].includes(ext)) return { icon: icons.code, className: 'code' };
     if (mime.startsWith('text/') || /document|msword|rtf|opendocument/.test(mime)) return { icon: icons.doc, className: 'doc' };
     return { icon: icons.file, className: 'zip' };
   };
 
   readonly isArchive = (mime:string, ext:string):boolean => /zip|x-tar|gzip|x-7z|x-rar|compressed/.test(mime) || ['zip', 'tar', 'gz', 'tgz', '7z', 'rar'].includes(ext);
 
-  readonly mimeFromName = (name:string):string => { const ext = name.split('.').at(-1)?.toLowerCase() ?? ''; return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', mp4: 'video/mp4', mov: 'video/quicktime', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', pdf: 'application/pdf', zip: 'application/zip', md: 'text/markdown', txt: 'text/plain' } as Record<string, string>)[ext] ?? 'application/octet-stream' };
+  readonly mimeFromName = (name:string):string => { const ext = name.split('.').at(-1)?.toLowerCase() ?? ''; return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', mp4: 'video/mp4', mov: 'video/quicktime', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', pdf: 'application/pdf', zip: 'application/zip', md: 'text/markdown', html: 'text/html', htm: 'text/html', txt: 'text/plain' } as Record<string, string>)[ext] ?? 'application/octet-stream' };
 
   readonly kindLabel = (mime:string, path = ''):string => {
     const ext = path.split('.').at(-1)?.toLowerCase() ?? '';
 
     if (mime === 'inode/directory') return 'Folder';
     if (mime.includes('markdown') || ext === 'md') return 'Markdown';
+    if (mime === 'text/html' || ext === 'html' || ext === 'htm') return 'HTML';
     if (mime.startsWith('image/')) return (ext || mime.split('/')[1]).toUpperCase();
     if (mime.startsWith('video/')) return 'Video';
     if (mime.startsWith('audio/')) return 'Audio';

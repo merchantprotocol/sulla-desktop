@@ -22,33 +22,49 @@
       <div v-if="error" class="error" role="alert">{{ error }}</div>
       <div class="detail-grid">
         <section class="card preview-card">
-          <div class="player">
-            <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
-            <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
-            <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name" @error="onMediaError">
-            <iframe v-else-if="mediaUrl && item.mime === 'application/pdf'" :src="mediaUrl" :title="name" sandbox="" />
-            <div v-else-if="dataSource.syntheticPreview" class="synthetic-frame" aria-label="Synthetic media preview"><div class="window"><i /><i /><i /><div class="sidebar" /><div class="lines" /></div><span class="play" v-html="icons.play" /></div>
-            <div v-else class="preview-unavailable"><span class="unavailable-icon" v-html="fileIcon(item.mime)" /><b>Preview unavailable</b><small>{{ previewStatus }}</small></div>
-          </div>
-          <div class="preview-bar">
-            <div class="seg"><button v-for="tab in mediaTabs" :key="tab" type="button" :class="{ on: mediaTab === tab }" @click="mediaTab = tab">{{ tab }}</button></div>
-            <span class="meta">{{ mediaMeta }}</span><span class="pill" :class="item.syncState === 'online-only' ? 'idle' : 'ok'">{{ syncLabel }}</span>
-          </div>
-          <div class="media-pane">
-            <template v-if="mediaTab === 'Preview'">
-              <h3>Preview <span class="muted">{{ item.mime }}</span></h3><p v-if="mediaUrl && item.mime === 'application/pdf'" class="preview-note">This PDF preview is sandboxed. Download the file if it cannot be displayed.</p><p v-else class="preview-note">{{ mediaUrl ? 'Use the player above to review this file.' : previewStatus }}</p><button v-if="mediaUrl && item.mime === 'application/pdf'" class="btn sm" type="button" :disabled="busy" @click="download">Download PDF</button>
-            </template>
-            <template v-else-if="mediaTab === 'Transcript'">
-              <h3>Transcript <span class="pill idle">{{ detail?.recording?.generator || 'Not generated' }}</span><small>Click a time to jump</small></h3>
-              <div v-if="transcript.length" class="timeline"><template v-for="segment in transcript" :key="segment.start"><button type="button" @click="seek(segment.start)">{{ duration(segment.start) }}</button><p>{{ segment.text }}</p></template></div>
-              <p v-else class="empty">No transcript is available for this version.</p>
-            </template>
-            <template v-else>
-              <h3>Chapters <span class="pill idle">{{ chapters.length }}</span></h3>
-              <div v-if="chapters.length" class="chapters"><button v-for="chapter in chapters" :key="chapter.start" type="button" @click="seek(chapter.start)"><b>{{ chapter.title }}</b><span>{{ duration(chapter.start) }}–{{ duration(chapter.end) }}</span></button></div>
-              <p v-else class="empty">No chapters are available for this version.</p>
-            </template>
-          </div>
+          <template v-if="documentType">
+            <div class="document-preview">
+              <div v-if="documentPreviewLoading" class="document-state">Loading document preview…</div>
+              <div v-else-if="documentPreviewError" class="document-state preview-error" role="alert">{{ documentPreviewError }}</div>
+              <!-- renderMarkdown sanitizes before content enters the Files page DOM. -->
+              <div v-else-if="documentType === 'markdown'" class="document-markdown" v-html="renderedMarkdown" />
+              <pre v-else-if="documentType === 'text'" class="document-text">{{ documentContent }}</pre>
+              <iframe v-else :srcdoc="documentContent" :title="name" sandbox="" loading="lazy" />
+            </div>
+            <div class="preview-bar">
+              <b>{{ documentTypeLabel }} preview</b>
+              <span class="meta">{{ mediaMeta }}</span><span class="pill" :class="item.syncState === 'online-only' ? 'idle' : 'ok'">{{ syncLabel }}</span>
+            </div>
+          </template>
+          <template v-else>
+            <div class="player">
+              <video v-if="mediaUrl && item.mime.startsWith('video/')" ref="video" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
+              <audio v-else-if="mediaUrl && item.mime.startsWith('audio/')" ref="audio" :src="mediaUrl" controls preload="metadata" @error="onMediaError" />
+              <img v-else-if="mediaUrl && item.mime.startsWith('image/')" :src="mediaUrl" :alt="name" @error="onMediaError">
+              <iframe v-else-if="mediaUrl && item.mime === 'application/pdf'" :src="mediaUrl" :title="name" sandbox="" />
+              <div v-else-if="dataSource.syntheticPreview" class="synthetic-frame" aria-label="Synthetic media preview"><div class="window"><i /><i /><i /><div class="sidebar" /><div class="lines" /></div><span class="play" v-html="icons.play" /></div>
+              <div v-else class="preview-unavailable"><span class="unavailable-icon" v-html="fileIcon(item.mime)" /><b>Preview unavailable</b><small>{{ previewStatus }}</small></div>
+            </div>
+            <div class="preview-bar">
+              <div class="seg"><button v-for="tab in availableMediaTabs" :key="tab" type="button" :class="{ on: mediaTab === tab }" @click="mediaTab = tab">{{ tab }}</button></div>
+              <span class="meta">{{ mediaMeta }}</span><span class="pill" :class="item.syncState === 'online-only' ? 'idle' : 'ok'">{{ syncLabel }}</span>
+            </div>
+            <div class="media-pane">
+              <template v-if="mediaTab === 'Preview'">
+                <h3>Preview <span class="muted">{{ item.mime }}</span></h3><p v-if="mediaUrl && item.mime === 'application/pdf'" class="preview-note">This PDF preview is sandboxed. Download the file if it cannot be displayed.</p><p v-else class="preview-note">{{ mediaUrl ? 'Use the player above to review this file.' : previewStatus }}</p><button v-if="mediaUrl && item.mime === 'application/pdf'" class="btn sm" type="button" :disabled="busy" @click="download">Download PDF</button>
+              </template>
+              <template v-else-if="mediaTab === 'Transcript'">
+                <h3>Transcript <span class="pill idle">{{ detail?.recording?.generator || 'Not generated' }}</span><small>Click a time to jump</small></h3>
+                <div v-if="transcript.length" class="timeline"><template v-for="segment in transcript" :key="segment.start"><button type="button" @click="seek(segment.start)">{{ duration(segment.start) }}</button><p>{{ segment.text }}</p></template></div>
+                <p v-else class="empty">No transcript is available for this version.</p>
+              </template>
+              <template v-else>
+                <h3>Chapters <span class="pill idle">{{ chapters.length }}</span></h3>
+                <div v-if="chapters.length" class="chapters"><button v-for="chapter in chapters" :key="chapter.start" type="button" @click="seek(chapter.start)"><b>{{ chapter.title }}</b><span>{{ duration(chapter.start) }}–{{ duration(chapter.end) }}</span></button></div>
+                <p v-else class="empty">No chapters are available for this version.</p>
+              </template>
+            </div>
+          </template>
         </section>
 
         <aside class="side">
@@ -120,6 +136,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { filesItemHasActiveProtection } from './types';
 import { supportsDocumentEditor } from './editor/editorTypes';
+import { FileDetailPreviewRouter } from './FileDetailPreviewRouter';
+import { renderMarkdown } from '../chat/messages/markdown';
 
 import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesTrashFile, FilesVersion, ShareActivity, ShareLink } from './types';
 
@@ -129,12 +147,19 @@ const item = reactive<FilesItem>({ ...props.item });
 const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
+const documentContent = ref(''); const documentPreviewLoading = ref(false); const documentPreviewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
 const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs = ['Details', 'Versions', 'Access', 'Activity'] as const;
+const previewRouter = new FileDetailPreviewRouter();
 const viewVersionId = computed(() => props.viewVersion?.id ?? item.currentVersionId);
 const viewVersionLabel = computed(() => props.viewVersion?.versionNumber || (props.viewVersion?.current ? 'Current version' : 'Referenced version'));
 watch(() => props.initialTab, tab => { if (tab) sideTab.value = tab });
 const name = computed(() => item.path.split('/').at(-1) || item.path); const isUseCase = computed(() => item.path.startsWith('Sulla/Use Cases/')); const activeVersionId = computed(() => item.publishedVersionId || null); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
+const previewRoute = computed(() => previewRouter.resolve(item.path, item.mime));
+const documentType = computed(() => previewRoute.value.kind === 'document' ? previewRoute.value.documentType : undefined);
+const documentTypeLabel = computed(() => documentType.value === 'html' ? 'HTML' : documentType.value === 'markdown' ? 'Markdown' : 'Text');
+const renderedMarkdown = computed(() => documentType.value === 'markdown' ? renderMarkdown(documentContent.value) : '');
+const availableMediaTabs = computed(() => previewRoute.value.kind === 'video' || previewRoute.value.kind === 'audio' ? mediaTabs : ['Preview'] as const);
 const transcript = computed(() => detail.value?.recording?.transcript || []); const chapters = computed(() => detail.value?.recording?.chapters || []);
 const activeLink = computed(() => links.value.find(link => !link.revokedAt && (!link.expiresAt || Date.parse(link.expiresAt) > Date.now()) && link.targetId === item.id && (!link.targetType || link.targetType === 'file') && (!link.collectionId || link.collectionId === props.collection.id))); const owner = computed(() => item.ownerDisplayName || props.collection.accountName || item.createdById || 'Unknown owner');
 const deniedPermissions = Object.freeze({ canEdit: false, canManage: false, canViewDraft: false, canPublish: false });
@@ -149,12 +174,13 @@ const itemHasActiveProtection = computed(() => filesItemHasActiveProtection(item
 const canPurge = computed(() => Boolean(trashItem.value && item.deletedAt && props.dataSource.purgeTrashItem && permissions.value.canManage && itemDisposalApproved.value && !itemHasActiveProtection.value));
 const syncLabel = computed(() => item.syncState === 'online-only' ? 'Online only · streams from server' : props.collection.home === 'synced' ? 'Synced with server' : 'Kept on this computer');
 const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${ duration(detail.value.recording.duration_seconds) } · ${ detail.value.recording.language?.toUpperCase() || 'Auto' } transcript` : `${ formatBytes(props.viewVersion?.size ?? item.size) } · ${ item.mime }`);
-const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
+const supportsMedia = computed(() => previewRoute.value.kind === 'video' || previewRoute.value.kind === 'audio' || previewRoute.value.kind === 'image' || previewRoute.value.kind === 'pdf');
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
 const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
 const allActivity = computed(() => [...(detail.value?.activity || []).map(event => ({ id: event.id, who: event.who_id, action: event.action, at: event.at, detail: event.device_or_run_id })), ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
 
 onMounted(async() => {
+  documentPreviewLoading.value = documentType.value !== undefined;
   const [metadata] = await Promise.allSettled([props.dataSource.detail(item.id)]);
 
   if (metadata.status === 'fulfilled') {
@@ -167,13 +193,19 @@ onMounted(async() => {
 
   if (history.status === 'fulfilled') versions.value = history.value;
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
-  const [publicLinks, source] = await Promise.allSettled([
+  const hasDocumentPreview = documentType.value !== undefined;
+  documentPreviewLoading.value = hasDocumentPreview;
+  const [publicLinks, source, documentSource] = await Promise.allSettled([
     props.dataSource.listPublicLinks?.() || Promise.resolve([]),
     supportsMedia.value ? props.dataSource.mediaUrl(item.id, viewVersionId.value) : Promise.resolve(''),
+    hasDocumentPreview ? props.dataSource.preview(item.id, viewVersionId.value) : Promise.resolve(undefined),
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
   else onMediaError();
+  if (documentSource.status === 'fulfilled' && documentSource.value) documentContent.value = new TextDecoder().decode(documentSource.value.data);
+  else if (documentSource.status === 'rejected') documentPreviewError.value = documentSource.reason instanceof Error ? documentSource.reason.message : String(documentSource.reason);
+  documentPreviewLoading.value = false;
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
@@ -350,4 +382,17 @@ const icons = {
 .file-glyph :deep(svg){width:15px;height:15px}.bi{display:grid;width:13px;height:13px;flex:none}.bi :deep(svg),.unavailable-icon :deep(svg){width:100%;height:100%}.play :deep(svg){width:28px;height:28px}.preview-unavailable{display:grid;justify-items:center;gap:8px;color:var(--text-muted);text-align:center}.preview-unavailable b{color:#dbe3ea;font-size:13px}.preview-unavailable small{max-width:320px}.unavailable-icon{width:38px;height:38px}.pill.draft{background:rgba(217,64,58,.11);color:#b1302b}.pill.published{background:var(--bg-info);color:var(--accent-primary-hover)}.version-actions{display:flex;gap:6px;margin-bottom:8px}.lifecycle-settings,.lifecycle-form{margin-bottom:16px;padding:12px;border:1px solid var(--bg-info);border-radius:9px;background:var(--bg-info)}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.section-heading h4{margin:0 0 8px}.lifecycle-settings form,.lifecycle-form form{display:grid;gap:8px}.check{display:flex;align-items:center;gap:7px}.lifecycle-form label{display:grid;gap:4px;color:var(--text-secondary);font-size:12px}.lifecycle-form input,.lifecycle-form select{min-height:28px;padding:4px 7px;border:1px solid var(--border-default);border-radius:6px;background:var(--bg-surface);color:inherit}.field-error{color:#b1302b}.irreversible-control{display:grid;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid rgba(217,64,58,.18)}.inline-date{display:inline-flex;align-items:center;gap:4px;margin-left:8px;color:var(--text-secondary);font-size:11px}.inline-date input{width:130px;padding:2px 4px;border:1px solid var(--border-default);border-radius:5px}
 .retention-reason{margin:-6px 0 16px;padding:8px 10px;border-radius:7px;background:rgba(217,64,58,.08);color:#8c302b;font-size:11.5px}
 .purge-form{border-color:rgba(217,64,58,.32);background:rgba(217,64,58,.05)}.purge-form p{margin:0 0 8px;color:#8c302b;font-size:11.5px}
+.document-preview{box-sizing:border-box;min-height:420px;max-height:calc(100vh - 190px);overflow:auto;background:var(--bg-surface)}
+.document-preview>iframe{display:block;width:100%;height:70vh;min-height:420px;border:0;background:#fff}
+.document-state{display:grid;min-height:420px;place-items:center;padding:24px;color:var(--text-muted);text-align:center}
+.document-state.preview-error{color:var(--status-error,#b1302b)}
+.document-markdown{box-sizing:border-box;max-width:960px;margin:0 auto;padding:28px 36px;color:var(--text-primary);font:14px/1.7 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;overflow-wrap:anywhere}
+.document-markdown :deep(h1),.document-markdown :deep(h2),.document-markdown :deep(h3){font-family:var(--font-display);line-height:1.25}
+.document-markdown :deep(a){color:var(--accent-primary-hover)}
+.document-markdown :deep(pre){overflow:auto;padding:14px;border:1px solid var(--border-default);border-radius:8px;background:var(--bg-surface-alt)}
+.document-markdown :deep(code){font-family:var(--font-mono)}
+.document-markdown :deep(img){max-width:100%;height:auto}
+.document-markdown :deep(table){border-collapse:collapse;max-width:100%}
+.document-markdown :deep(th),.document-markdown :deep(td){padding:7px 9px;border:1px solid var(--border-default);text-align:left}
+.document-text{box-sizing:border-box;margin:0;padding:24px 32px;color:var(--text-primary);font:13px/1.6 var(--font-mono,ui-monospace,monospace);white-space:pre-wrap;overflow-wrap:anywhere}
 </style>
