@@ -95,7 +95,10 @@ class TranscriptFixture {
     return { reply, state, node };
   }
 
-  async replayAgentProvider(provider: { getModel(): string; chatStream(messages: ChatMessage[], callbacks: any): Promise<any> }): Promise<any> {
+  async replayAgentProvider(
+    provider: { getModel(): string; chatStream(messages: ChatMessage[], callbacks: any): Promise<any> },
+    outcome: 'done' | 'continue' = 'continue',
+  ): Promise<any> {
     const node = this.createNode(AgentNode.prototype, 'text');
     node.id = 'fixture-agent';
     node.currentNodeRunContext = { messages: [] };
@@ -104,7 +107,9 @@ class TranscriptFixture {
       if (reply) node.appendResponse(state, reply.content, reply.metadata.rawProviderContent);
       return reply;
     };
-    node.extractAgentOutcome = () => ({ status: 'done' });
+    node.extractAgentOutcome = () => ({
+      status: outcome, summary: null, statusReport: null, blockerReason: null, unblockRequirements: null,
+    });
     node.toUserVisibleAgentMessage = (content: string) => content;
     node.processPendingToolCalls = async() => {};
     node.logConversationMessage = (_state: unknown, _role: string, content: string) => this.conversationLogs.push(content);
@@ -129,7 +134,6 @@ class TranscriptFixture {
     });
     node.voiceLog = () => {};
     node.recordedReplyAttribution = () => ({ model: 'fixture-model' });
-    node.replyReporting = () => undefined;
     node.bumpStateVersion = () => {};
     node.wsChatMessage = async (_state: unknown, content: string, role: string, kind: string, extras: Record<string, unknown> = {}) => {
       fixture.emit({ content, role, kind, thread_id: 'fixture-thread', ...extras });
@@ -161,6 +165,105 @@ class TranscriptFixture {
     expect(trace.every(turn => info.some(entry => entry.id === turn.anchorEntryId))).toBe(true);
   }
 }
+
+// risk: data accuracy — legacy streaming producers without a reply ID must update one open bubble.
+it('updates one legacy streaming bubble in place when the producer omits its reply ID', () => {
+  const fixture = new TranscriptFixture();
+  fixture.emit({ kind: 'streaming', content: 'He' });
+  const firstBubbleId = fixture.context.messages[0].id;
+  fixture.emit({ kind: 'streaming', content: 'Hello' });
+  fixture.emit({ kind: 'streaming', content: 'Hello world.' });
+  fixture.emit({ kind: 'streaming_complete' });
+
+  const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
+  expect(segments).toHaveLength(1);
+  expect(segments[0]).toMatchObject({ id: firstBubbleId, content: 'Hello world.' });
+  expect(fixture.replyTexts()).toEqual(['Hello world.']);
+});
+
+// risk: data accuracy — container-produced messages with distinct IDs must remain distinct bubbles.
+it('keeps container-style streaming segments separate when reply IDs rotate at message boundaries', () => {
+  const fixture = new TranscriptFixture();
+  fixture.emit({ kind: 'streaming', content: 'Container message', replyStreamId: 'container-message-1' });
+  fixture.emit({ kind: 'streaming', content: 'Container message one.', replyStreamId: 'container-message-1' });
+  fixture.emit({ kind: 'streaming_complete', replyStreamId: 'container-message-1' });
+  fixture.emit({ kind: 'streaming', content: 'Container message', replyStreamId: 'container-message-2' });
+  fixture.emit({ kind: 'streaming', content: 'Container message two.', replyStreamId: 'container-message-2' });
+  fixture.emit({ kind: 'streaming_complete', replyStreamId: 'container-message-2' });
+
+  const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
+  expect(segments.map(message => [message.replyStreamId, message.content])).toEqual([
+    ['container-message-1', 'Container message one.'],
+    ['container-message-2', 'Container message two.'],
+  ]);
+  expect(fixture.replyTexts()).toEqual(['Container message one.', 'Container message two.']);
+});
+
+// risk: reporting accuracy — DONE/BLOCKED intent must classify even already-closed stream segments as Brief.
+it('applies the final brief classification to every completed agent segment', async() => {
+  const fixture = new TranscriptFixture();
+  const first = 'The handoff is complete.';
+  const last = 'Everything is ready.';
+  const reply = `${ first } ${ last }`;
+  await fixture.replayAgentProvider({
+    getModel: () => 'fixture-model',
+    async chatStream(_messages, callbacks) {
+      callbacks.onToken(first);
+      callbacks.onMessageBoundary();
+      callbacks.onToken(last);
+      callbacks.onMessageBoundary();
+      return { content: reply, metadata: { model: 'fixture-model' } };
+    },
+  }, 'done');
+
+  const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
+  const reportedClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete' && message.agentReporting === 'brief');
+  expect(segments.map(message => message.agentReporting)).toEqual(['brief', 'brief']);
+  expect(reportedClosures.map(message => message.replyStreamId)).toEqual(segments.map(message => message.replyStreamId));
+  expect(fixture.replyTexts()).toEqual([first, last]);
+  const brief = fixture.reporting.entries(fixture.chat.messages.value, 'fatal')
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
+  const standard = fixture.reporting.entries(fixture.chat.messages.value, 'info')
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
+  const detailed = fixture.reporting.entries(fixture.chat.messages.value, 'debug')
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
+  expect(brief).toEqual([first, last]);
+  expect(standard).toEqual([first, last]);
+  expect(detailed).toEqual([first, last]);
+});
+
+// risk: reporting accuracy — CONTINUE narration must remain Standard, not leak into Brief.
+it('applies the final standard classification to every completed agent segment', async() => {
+  const fixture = new TranscriptFixture();
+  const first = 'I checked the first item.';
+  const last = 'I will continue with the next item.';
+  const reply = `${ first } ${ last }`;
+  await fixture.replayAgentProvider({
+    getModel: () => 'fixture-model',
+    async chatStream(_messages, callbacks) {
+      callbacks.onToken(first);
+      callbacks.onMessageBoundary();
+      callbacks.onToken(last);
+      callbacks.onMessageBoundary();
+      return { content: reply, metadata: { model: 'fixture-model' } };
+    },
+  }, 'continue');
+
+  const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
+  const reportedClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete' && message.agentReporting === 'standard');
+  expect(segments.map(message => message.agentReporting)).toEqual(['standard', 'standard']);
+  expect(reportedClosures.map(message => message.replyStreamId)).toEqual(segments.map(message => message.replyStreamId));
+  expect(fixture.replyTexts()).toEqual([first, last]);
+  const brief = fixture.reporting.entries(fixture.chat.messages.value, 'fatal')
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
+  const standard = fixture.reporting.entries(fixture.chat.messages.value, 'info')
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
+  const detailed = fixture.reporting.entries(fixture.chat.messages.value, 'debug')
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
+  expect(brief).toEqual([]);
+  expect(standard).toEqual([first, last]);
+  expect(detailed).toEqual([first, last]);
+});
 
 // risk: data accuracy — provider tool/activity boundaries must not merge the text replies around them.
 it('keeps every assistant segment around interleaved tool activity as a separate Standard and Detailed reply', async() => {
@@ -250,7 +353,9 @@ it('does not repeat Claude text when a stream resumes after tool activity and re
   expect(fixture.emitted.filter(message => message.kind === 'text')).toHaveLength(0);
   const claudeSegments = fixture.context.messages.filter(message => message.kind === 'streaming');
   expect(claudeSegments.every(message => (message as any)._completed)).toBe(true);
-  expect(fixture.emitted.filter(message => message.kind === 'streaming_complete').map(message => message.replyStreamId))
+  const claudeClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete');
+  expect(new Set(claudeClosures.map(message => message.replyStreamId))).toEqual(new Set(claudeSegments.map(message => message.replyStreamId)));
+  expect(claudeClosures.filter(message => message.agentReporting === 'standard').map(message => message.replyStreamId))
     .toEqual(claudeSegments.map(message => message.replyStreamId));
 });
 
@@ -285,7 +390,9 @@ it('does not repeat Codex delta text when a stream resumes after tool activity a
   expect(fixture.emitted.filter(message => message.kind === 'text')).toHaveLength(0);
   const codexSegments = fixture.context.messages.filter(message => message.kind === 'streaming');
   expect(codexSegments.every(message => (message as any)._completed)).toBe(true);
-  expect(fixture.emitted.filter(message => message.kind === 'streaming_complete').map(message => message.replyStreamId))
+  const codexClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete');
+  expect(new Set(codexClosures.map(message => message.replyStreamId))).toEqual(new Set(codexSegments.map(message => message.replyStreamId)));
+  expect(codexClosures.filter(message => message.agentReporting === 'standard').map(message => message.replyStreamId))
     .toEqual(codexSegments.map(message => message.replyStreamId));
 });
 

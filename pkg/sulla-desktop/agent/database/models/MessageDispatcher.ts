@@ -260,11 +260,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
     if (target === 'streaming' && replyStreamId) {
       const reportedModel = typeof data.reportedModel === 'string' ? data.reportedModel.trim() : '';
-      // Only the segment being closed gets the producer's intent. Model attribution still
-      // updates all segments of this stream without reclassifying earlier narration.
+      // Final turn intent may arrive after the provider already closed this
+      // segment; apply it by ID to the completed bubble as well as the live one.
       const closing = agentReporting ? ctx.messages.findLast(message =>
         message.kind === 'streaming' && message.channelId === agentId && message.threadId === msgThreadId &&
-        message.replyStreamId === replyStreamId && !(message as ChatMessage & { _completed?: boolean })._completed) : undefined;
+        message.replyStreamId === replyStreamId) : undefined;
       if (closing) closing.agentReporting = agentReporting;
       for (const message of ctx.messages) {
         if (message.kind !== 'streaming' || message.channelId !== agentId || message.threadId !== msgThreadId ||
@@ -559,7 +559,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const belongsToReply = (message: ChatMessage) => message.channelId === agentId &&
     message.decisionFollowUpId === decisionFollowUpId &&
     message.agentReporting === agentReporting &&
-    (kind !== 'streaming' || (replyStreamId !== undefined && message.replyStreamId === replyStreamId)) &&
+    (kind !== 'streaming' || (replyStreamId === undefined
+      ? message.replyStreamId === undefined
+      : message.replyStreamId === replyStreamId)) &&
     message.replyAttribution?.agent === replyAttribution?.agent && message.replyAttribution?.model === replyAttribution?.model;
 
   if (kind === 'speak') {

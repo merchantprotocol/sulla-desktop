@@ -1709,16 +1709,18 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let wsStreamingSendCount = 0;
     let lastWsStreamingSendAt = 0;
     let replyStreamId = randomUUID();
+    let lastSegmentId: string | undefined;
     const replyStreamIds = new Set<string>();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
       replyStreamIds.add(replyStreamId);
+      lastSegmentId = replyStreamId;
       this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
       streamingOpen = true;
     };
-    const flushStreamingSegment = (startNextSegment: boolean): void => {
+    const flushStreamingSegment = (): void => {
       if (isVoiceMode) return;
       if (contentBuffer.trim()) {
         const stripped = stripProtocolTagsStreaming(displayBuffer);
@@ -1733,7 +1735,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       streamingOpen = false;
       contentBuffer = '';
       displayBuffer = '';
-      if (startNextSegment) replyStreamId = randomUUID();
+      replyStreamId = randomUUID();
     };
 
     const onToken = (token: string): void => {
@@ -1799,7 +1801,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       RunActivity.touch(state.metadata);
 
       const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
-      flushStreamingSegment(true);
+      flushStreamingSegment();
 
       const parentWsCh = (state.metadata as any).parentWsChannel;
       const willForward = !!(parentWsCh && (state.metadata as any).isSubAgent);
@@ -1829,7 +1831,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       new TurnOutputCounter(state.metadata as any).record();
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
-      flushStreamingSegment(true);
+      flushStreamingSegment();
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
@@ -1899,7 +1901,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
       reply = await provider.chatStream(messages, {
-        onToken, onActivity, onMessageBoundary: () => flushStreamingSegment(true),
+        onToken, onActivity, onMessageBoundary: () => flushStreamingSegment(),
         onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness,
       }, { ...options, state, executionContext });
       TurnHopTiming.mark(state, 'provider.chatStream.end');
@@ -1931,15 +1933,31 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           displayBuffer = '';
         }
         const reportedModel = this.recordedReplyAttribution(state, reply?.metadata.model).model;
-        if (streamingOpen) {
+        const agentReporting = reply ? this.replyReporting(reply.content) : undefined;
+        const reportedEverySegment = !!(reply && streamingWsSent && lastSegmentId);
+        if (reportedEverySegment) {
+          // Segments are a rendering detail of one provider reply. Classify all
+          // of them with its final intent, matching the pre-segmentation view.
+          for (const segmentId of replyStreamIds) {
+            if (segmentId === lastSegmentId) continue;
+            this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
+              replyStreamId: segmentId, reportedModel, agentReporting,
+            });
+          }
           this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
-            replyStreamId, reportedModel,
-            agentReporting: reply ? this.replyReporting(reply.content) : undefined,
+            replyStreamId: lastSegmentId, reportedModel, agentReporting,
           });
+          streamingOpen = false;
+        } else if (streamingOpen) {
+          this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
+            replyStreamId, reportedModel, agentReporting,
+          });
+          streamingOpen = false;
         }
         // Provider-selected model attribution is known only after completion.
-        // Update every segment emitted by this call, not just the final segment.
-        if (reportedModel && reportedModel !== replyAttribution.model) {
+        // If there was no completed streamed reply above, still update every
+        // earlier segment emitted by this call with its selected model.
+        if (!reportedEverySegment && reportedModel && reportedModel !== replyAttribution.model) {
           for (const segmentId of replyStreamIds) {
             if (streamingOpen && segmentId === replyStreamId) continue;
             this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId: segmentId, reportedModel });
