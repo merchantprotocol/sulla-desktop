@@ -79,6 +79,14 @@ class SeedSourceRepository:
             shutil.copyfile(paths['index'], gitdir / 'index')
         self.git.run('cat-file', '-e', self.head + '^{commit}')
         # Read only this pinned file. Never adopt it as Git configuration or follow includes.
+        version = self.git.run('config', '--no-includes', '--file', paths['config'], '--get-all',
+                               'core.repositoryformatversion', check=False)
+        if version.returncode or version.stdout.strip() not in (b'0', b'1'):
+            raise ValueError('unsupported source repository format')
+        extensions = self.git.run('config', '--no-includes', '--file', paths['config'], '--name-only',
+                                  '--get-regexp', r'^extensions\.', check=False)
+        if extensions.returncode not in (0, 1) or set(extensions.stdout.splitlines()) - {b'extensions.worktreeconfig'}:
+            raise ValueError('unsupported source repository format')
         result = self.git.run('config', '--no-includes', '--file', paths['config'], '--get-all',
                               'remote.origin.url', check=False)
         if result.returncode not in (0, 1):
@@ -109,6 +117,8 @@ class SeedSourceRepository:
 
 def read_seed(operation, paths, ref, expected):
     with tempfile.TemporaryDirectory() as scratch:
+        if operation != 'bundle':
+            paths['checkout'] = scratch
         repo = SeedSourceRepository(SeedGit(scratch), paths, ref)
         if operation == 'bundle':
             if repo.metadata() != json.loads(expected):
