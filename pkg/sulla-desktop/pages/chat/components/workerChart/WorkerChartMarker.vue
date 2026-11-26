@@ -15,7 +15,7 @@
   >
     <svg v-if="state === 'done'" viewBox="0 0 10 10"><path d="M2 5.300 4.200 7.500 8 3" /></svg>
     <svg v-else-if="state === 'failed'" viewBox="0 0 10 10"><path d="M2.500 2.500l5 5M7.500 2.500l-5 5" /></svg>
-    <span v-else>{{ state === 'needs-you' ? '!' : content || initials }}</span>
+    <span v-else>{{ state === 'needs-you' ? '!' : initials }}</span>
     <i class="worker-chart__ring" />
   </span>
 </template>
@@ -31,7 +31,6 @@ const props = defineProps<{
   role: WorkerChartRole;
   ping?: boolean;
   pingDelay?: string;
-  content?: string;
 }>();
 
 const visualState = computed(() => {
