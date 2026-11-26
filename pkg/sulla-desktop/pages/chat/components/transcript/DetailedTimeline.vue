@@ -133,10 +133,10 @@ function registerLine(id: string, element: unknown): void { props.registerElemen
 .dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"])::before { content: ''; grid-column: 1; grid-row: 1; z-index: 1; width: 24px; height: 24px; margin: 0 auto; border-radius: 50%; background: var(--bg-page); }
 .dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"])::after { content: ''; grid-column: 1; grid-row: 1; z-index: 2; width: 9px; height: 9px; margin: 7.5px auto; border-radius: 50%; background: var(--accent); }
 .dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"]) .dtr-message-content { grid-column: 2; margin-left: 0; max-width: 720px; padding-top: 1px; color: var(--text-primary); font-size: 15px; line-height: 1.6; }
-.dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla) { margin: 0; max-width: none; gap: 0; }
-.dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla .chat-body) { color: var(--text-primary); font-family: var(--font-body); font-size: 15px; line-height: 1.6; letter-spacing: 0; }
-.dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla .chat-body p) { margin: 0 0 8px; }
-.dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla .chat-body p:last-child) { margin-bottom: 0; }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"]) :deep(.chat-turn.sulla) { margin: 0; max-width: none; gap: 0; }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"]) :deep(.chat-turn.sulla .chat-body) { color: var(--text-primary); font-family: var(--font-body); font-size: 15px; line-height: 1.6; letter-spacing: 0; }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"]) :deep(.chat-turn.sulla .chat-body p) { margin: 0 0 8px; }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"]) :deep(.chat-turn.sulla .chat-body p:last-child) { margin-bottom: 0; }
 .dtr-activity { display: flex; gap: 8px; padding: 2px 0 2px 34px; color: var(--text-secondary); font-size: 13px; line-height: 20px; list-style: none; overflow-wrap: anywhere; }
 .dtr-activity-label { color: var(--text-muted); font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em; text-transform: uppercase; }
 .dtr-waiting { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 10px; align-items: start; padding: 2px 0; list-style: none; }
