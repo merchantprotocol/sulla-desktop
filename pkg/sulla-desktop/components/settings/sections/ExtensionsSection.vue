@@ -32,8 +32,9 @@ const names=computed(()=>Object.fromEntries(extensions.value.map(e=>[e.extension
 // Paints the installed list from disk. Skipped once the DB list has landed, so it never overwrites grants.
 async function loadLocal(){ try { const local=await ipcRenderer.invoke('extension-permissions:local'); if(!permissionsReady.value) extensions.value=local; } catch(e){ error.value=String(e) } }
 const { error: permissionsLoadError, start: loadPermissions } = useConfigurationLoad(async() => {
+  permissionsReady.value = false;
   const rows = await ipcRenderer.invoke('extension-permissions:list');
-  if (!rows) { permissionsReady.value = false; return false }
+  if (!rows) return false;
   extensions.value = rows;
   permissionsReady.value = true;
   void loadAudit();
