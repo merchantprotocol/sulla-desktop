@@ -248,7 +248,7 @@ export class ChatCompletionsServer {
 
   }
 
-  private async loadApiToken(): Promise<void> {
+  private async loadApiToken(port: number): Promise<void> {
     const tokenPath = path.join(paths.appHome, API_TOKEN_FILE);
 
     // 1. Try reading from the token file (source of truth)
@@ -258,14 +258,14 @@ export class ChatCompletionsServer {
       if (data.token) {
         this.apiToken = data.token;
         console.log('[ChatCompletionsAPI] Bearer token loaded from file');
-        return;
+        if (data.pid === process.pid && data.port === port) return;
       }
     } catch {
       // File doesn't exist yet — fall through to generate
     }
 
     // 2. Try reading from DB (migration from older version)
-    const dbToken = await SullaSettingsModel.get('sullaApiToken');
+    const dbToken = this.apiToken || await SullaSettingsModel.get('sullaApiToken');
     if (dbToken) {
       this.apiToken = dbToken;
     } else {
@@ -278,7 +278,7 @@ export class ChatCompletionsServer {
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenPath, JSON.stringify({
       token: this.apiToken,
-      port:  await chatCompletionsPort(),
+      port,
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
@@ -2038,8 +2038,8 @@ export class ChatCompletionsServer {
   }
 
   async start(requestedPort?: number): Promise<void> {
-    await this.loadApiToken();
     const port = requestedPort ?? await chatCompletionsPort();
+    await this.loadApiToken(port);
 
     // Loopback only: the guest reaches it through the runtime's forwarder,
     // which dials 127.0.0.1 on the Mac.
