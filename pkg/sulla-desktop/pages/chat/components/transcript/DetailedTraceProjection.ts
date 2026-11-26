@@ -183,7 +183,9 @@ export class DetailedTraceProjection {
   }
 
   private rowsForApproval(message: ToolApprovalMessage, anchor: string): TraceRow[] {
-    const status: TraceRowStatus = message.decision === 'pending' ? 'waiting' : message.decision;
+    const status: TraceRowStatus = message.decision === 'pending' ? 'waiting'
+      : message.decision === 'timed_out' ? 'failed'
+        : message.decision;
     return [this.row(message.id, 'approval', 'Approval', message.command, status, anchor, message.createdAt, undefined, message.reason, this.serializer.lazy(message))];
   }
 

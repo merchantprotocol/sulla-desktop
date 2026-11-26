@@ -104,6 +104,19 @@ describe('DetailedTraceProjection', () => {
     expect(rows[0]).toMatchObject({ kind: 'approval', status: 'denied' });
   });
 
+  it('maps an expired approval to the failed trace state', () => {
+    // risk: an expired approval renders an unstyled status outside the trace state vocabulary.
+    const expired = {
+      id: asMessageId('expired-approval'), kind: 'tool_approval', createdAt: 4,
+      reason: 'Approval expired', command: 'run check', decision: 'timed_out',
+    } satisfies Message;
+
+    const rows = new DetailedTraceProjection().projectRows([expired], []);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'approval', status: 'failed' });
+  });
+
   it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
     // risk: shared transcript mutation and incorrect insertion order.
     const messages = Object.freeze([
