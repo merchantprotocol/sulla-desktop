@@ -146,6 +146,8 @@ describe('live reply segments around provider tool activity', () => {
       final: 'Run this:\n\n    echo one\n    echo two',
       shown: ['Run this:', 'echo one\necho two', 'Run this:\n\n    echo one\n    echo two'],
     },
+    { name: 'when only a leading blank line differs on the final', streams: [['r', 'Build passed.']], final: '\nBuild passed.', shown: ['\nBuild passed.'] },
+    { name: 'when only a leading blank line differs on the stream', streams: [['r', '\nBuild passed.']], final: 'Build passed.', shown: ['Build passed.'] },
     { name: 'after several segments', streams: [['r', 'Checked files.'], ['r', 'Build']], final: 'Checked files.\n\nBuild passed.', shown: ['Checked files.', 'Build passed.'] },
     { name: 'keeping an indented code block', streams: [['r', 'Here is the example:'], ['r', '    echo']], final: 'Here is the example:\n\n    echo ok', shown: ['Here is the example:', '    echo ok'] },
     { name: 'after one segment with different spacing', streams: [['r', 'Build  passed']], final: 'Build passed today', shown: ['Build passed today'] },
