@@ -966,6 +966,7 @@ async function loadAgentConfig(agentId: string): Promise<AgentGraphState['metada
 
     return {
       ...parsed,
+      definitionBuiltin: definition.is_builtin,
       name:         definition.name || agentId,
       description:  definition.description || '',
       type:         (parsed.type as string) || 'worker',
