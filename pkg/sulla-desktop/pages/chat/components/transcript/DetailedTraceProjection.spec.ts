@@ -91,8 +91,47 @@ describe('DetailedTraceProjection', () => {
     expect(after).toEqual(before);
   });
 
-  it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
-    // risk: shared transcript mutation and incorrect insertion order.
+  it('keeps a denied approval in the warning state instead of reporting a tool failure', () => {
+    // risk: a user denial is mislabeled as an execution failure in Detailed.
+    const denied = {
+      id: asMessageId('denied-approval'), kind: 'tool_approval', createdAt: 3,
+      reason: 'Requires review', command: 'run check', decision: 'denied',
+    } satisfies Message;
+
+    const rows = new DetailedTraceProjection().projectRows([denied], []);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'approval', status: 'denied' });
+  });
+
+  it('maps an expired approval to the failed trace state', () => {
+    // risk: an expired approval renders an unstyled status outside the trace state vocabulary.
+    const expired = {
+      id: asMessageId('expired-approval'), kind: 'tool_approval', createdAt: 4,
+      reason: 'Approval expired', command: 'run check', decision: 'timed_out',
+    } satisfies Message;
+
+    const rows = new DetailedTraceProjection().projectRows([expired], []);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'approval', status: 'failed' });
+  });
+
+  it('keeps raw thought whitespace in the trace row and rendered text', () => {
+    // risk: collapsing or trimming an agent's exact thought changes the reasoning event shown to an engineer.
+    const thought = '\nTHOUGHT_START:\n  repeated   spaces stay\nTHOUGHT_END\n';
+    const message = { id: asMessageId('thought-raw'), kind: 'thinking', createdAt: 10,
+      startedAt: 10, completed: true, thoughts: [thought] } satisfies Message;
+    const row = new DetailedTraceProjection().projectRows([message], [])[0];
+    const rendered = mount(TraceRow, { props: { row } });
+
+    expect(row.target).toBe(thought);
+    expect(rendered.find('.dtr-what').element.textContent).toBe(thought);
+    rendered.unmount();
+  });
+
+  it('projects ordered per-message rows for status mapping without mutating frozen messages', () => {
+    // risk: shared transcript mutation or trace rows losing their source message identity.
     const messages = Object.freeze([
       Object.freeze({ id: asMessageId('user-1'), kind: 'user', createdAt: 1, text: 'run it' }),
       Object.freeze({ id: asMessageId('thinking-1'), kind: 'thinking', createdAt: 2, thoughts: ['Searching files'], reportingActivity: 'tool', startedAt: 2, completed: true }),
@@ -103,9 +142,8 @@ describe('DetailedTraceProjection', () => {
     const reporting = new TranscriptReporting();
     const standard = reporting.entries(messages, 'info');
     const [turn] = new DetailedTraceProjection().project(messages, standard);
-    expect(turn.anchorEntryId).toBe('reply-1');
     expect(turn.rows.map(row => row.kind)).toEqual(['thought', 'tool']);
-    expect(turn.rows.every(row => row.anchorEntryId === 'reply-1')).toBe(true);
+    expect(turn.rows.map(row => row.anchorEntryId)).toEqual(['thinking-1', 'tool-1']);
     expect(turn.usage).toMatchObject({ model: 'test-model', totalTokens: 3 });
     expect(JSON.stringify(messages)).toBe(before);
   });
@@ -183,6 +221,28 @@ describe('DetailedTraceProjection', () => {
     expect(loaded.output).toBe(result);
     expect(loaded.output).toHaveLength(result.length);
     expect(invoke).toHaveBeenCalledWith('chat-messages:tool-payload', { threadId: 'thread-provider', toolRunId: 'run-provider' });
+  });
+
+  it('retains the complete tool arguments in row data for CSS-only visual ellipsizing', () => {
+    // risk: truncating a long tool call before it reaches the expandable payload or row data.
+    const input = JSON.stringify({ query: 'synthetic '.repeat(100) });
+    const tool = { kind: 'tool', id: 'provider-long-args', createdAt: 2, tool: 'MCP tool', recordedToolName: 'mcp__search__run',
+      desc: 'Searching', status: 'ok', input, output: 'found' } as const;
+    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+
+    expect(row.keyArgs).toBe(input);
+    expect(row.keyArgs).toHaveLength(input.length);
+    expect(JSON.parse(row.payload!.serialize()).input).toBe(input);
+  });
+
+  it('keeps long event summaries complete in row data for CSS-only visual ellipsizing', () => {
+    // risk: silently truncating recorded event details before they reach the timeline.
+    const summary = 'x'.repeat(301);
+    const memory = { kind: 'memory', id: 'memory-long-summary', createdAt: 2, action: 'Saved', memId: 'memory-1', summary } as const;
+    const [row] = new DetailedTraceProjection().projectRows([memory as never], []);
+
+    expect(row.keyArgs).toBe(summary);
+    expect(row.keyArgs).toHaveLength(summary.length);
   });
 
   it('presents inline image bytes as an image resource, never as visible base64 text', () => {

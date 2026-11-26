@@ -91,7 +91,7 @@ export class TracePayloadSerializer {
   }
 
   preview(value: string | undefined): string {
-    // Tool input is already recorded as text. Bound the work before normalizing it.
-    return this.summary(value?.slice(0, 300));
+    // Keep the source data complete; the row may visually ellipsize this string with CSS.
+    return this.summary(value);
   }
 }

@@ -14,21 +14,14 @@ describe('TraceDisclosureController', () => {
     expect(open.value).toBe(false);
   });
 
-  it('closes just one payload in all-open mode and resets exceptions on bulk changes', () => {
+  it('toggles only the selected payload while other rows retain their state', () => {
     // risk: reviewing one payload collapses unrelated evidence.
     const controller = new TraceDisclosureController();
-    controller.openAll();
+    controller.toggle('second');
+    controller.toggle('first');
     controller.toggle('first');
     expect(controller.isOpen('first')).toBe(false);
     expect(controller.isOpen('second')).toBe(true);
-    expect(controller.isOpen('new-row')).toBe(true);
-    controller.toggle('first');
-    expect(controller.isOpen('first')).toBe(true);
-    controller.toggle('first');
-    controller.openAll();
-    expect(controller.isOpen('first')).toBe(true);
-    controller.toggleAll();
-    expect(controller.isOpen('first')).toBe(false);
-    expect(controller.isOpen('second')).toBe(false);
+    expect(controller.isOpen('new-row')).toBe(false);
   });
 });
