@@ -301,11 +301,11 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
     const target = kindRaw === 'streaming_complete' ? 'streaming' : 'thinking';
     if (target === 'streaming' && replyStreamId) {
       const reportedModel = typeof data.reportedModel === 'string' ? data.reportedModel.trim() : '';
-      // Only the segment being closed gets the producer's intent. Model attribution still
-      // updates all segments of this stream without reclassifying earlier narration.
+      // Final turn intent may arrive after the provider already closed this
+      // segment; apply it by ID to the completed bubble as well as the live one.
       const closing = agentReporting ? ctx.messages.findLast(message =>
         message.kind === 'streaming' && message.channelId === agentId && message.threadId === msgThreadId &&
-        message.replyStreamId === replyStreamId && !(message as ChatMessage & { _completed?: boolean })._completed) : undefined;
+        message.replyStreamId === replyStreamId) : undefined;
       if (closing) closing.agentReporting = agentReporting;
       for (const message of ctx.messages) {
         if (message.kind !== 'streaming' || message.channelId !== agentId || message.threadId !== msgThreadId ||
@@ -600,7 +600,9 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const belongsToReply = (message: ChatMessage) => message.channelId === agentId &&
     message.decisionFollowUpId === decisionFollowUpId &&
     message.agentReporting === agentReporting &&
-    (kind !== 'streaming' || message.replyStreamId === replyStreamId) &&
+    (kind !== 'streaming' || (replyStreamId === undefined
+      ? message.replyStreamId === undefined
+      : message.replyStreamId === replyStreamId)) &&
     message.replyAttribution?.agent === replyAttribution?.agent && message.replyAttribution?.model === replyAttribution?.model;
 
   if (kind === 'speak') {
@@ -654,42 +656,10 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       return;
     }
 
-    // No open bubble. Before creating a new one, check whether this chunk is
-    // a continuation of a previously-sealed streaming bubble in the same turn
-    // (i.e. tool_call/thinking interjected mid-stream and sealed the bubble,
-    // and the next chunk arrived carrying the same prefix plus more text).
-    // Resurrect that bubble in place so the response keeps growing where the
-    // user was already reading it, instead of creating a duplicate below.
-    const trimmedIncoming = finalContent.trim();
-    let resurrectedIdx = -1;
-    for (let i = ctx.messages.length - 1; i >= 0; i--) {
-      const m = ctx.messages[i];
-      if (replyBoundary(m)) break;
-      if (m.role !== 'assistant') continue;
-      if (m.kind !== 'streaming' || m.threadId !== msgThreadId || !belongsToReply(m)) continue;
-      const prev = (m.content || '').trim();
-      if (!prev) continue;
-      // Only the latest segment can continue, never an older one above tool
-      // cards that came after it. When the producer numbers its segments,
-      // identity decides: a new segment never reopens the previous bubble,
-      // even when it opens with that bubble's whole text ("Same" then
-      // "Same word…"). Unnumbered producers fall back to the text check: a
-      // chunk that extends the latest segment continues it, a shorter one is
-      // a new paragraph that merely opens with the same word.
-      if (replySegment !== undefined && m.replySegment !== undefined) {
-        if (m.replySegment === replySegment) resurrectedIdx = i;
-      } else if (trimmedIncoming.startsWith(prev)) resurrectedIdx = i;
-      break;
-    }
-    if (resurrectedIdx !== -1) {
-      const existing = ctx.messages[resurrectedIdx];
-      ctx.messages[resurrectedIdx] = { ...existing, content: finalContent, ...referenceUpdate };
-      (ctx.messages[resurrectedIdx] as any)._completed = false;
-      return;
-    }
-
-    // Fresh streaming segment with no prefix relationship to any prior bubble
-    // — collapse any open thinking bubble and start a new one.
+    // A streaming bubble belongs only to the provider segment identified by
+    // replyStreamId. Text similarity cannot reconnect a sealed segment: the
+    // next assistant message may legitimately start with the same words.
+    // Fresh streaming segment — collapse any open thinking bubble and start a new one.
     for (let i = ctx.messages.length - 1; i >= 0; i--) {
       const m = ctx.messages[i];
       if (m.kind === 'thinking' && m.role === 'assistant' && !(m as any)._completed) {

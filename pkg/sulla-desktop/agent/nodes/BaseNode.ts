@@ -1710,8 +1710,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let lastWsStreamingSendAt = 0;
     const replyStreamId = randomUUID();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
-    // Numbers the text segments of this reply. The chat reopens a closed
-    // bubble only for the same segment, never because the text matches.
+    // Distinguish open segments of this reply even if a close event was missed.
     let replySegment = 0;
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
@@ -1739,23 +1738,26 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         return false;
       }
     }, STREAM_THROTTLE_MS);
-    // Publish the open text segment, close its bubble and start a fresh one.
-    // Returns whether there was text to close.
-    const closeTextSegment = (): boolean => {
+    const flushStreamingSegment = (): boolean => {
       streamThrottle.reset();
-      if (isVoiceMode || !contentBuffer.trim()) return false;
-      const stripped = stripProtocolTagsStreaming(displayBuffer);
-      if (stripped.trim()) {
-        sendStreamingUpdate(stripped);
-        streamingWsSent = true;
+      if (isVoiceMode) return false;
+      const hadText = contentBuffer.trim().length > 0;
+      if (hadText) {
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
+        if (stripped.trim()) {
+          sendStreamingUpdate(stripped);
+          streamingWsSent = true;
+        }
       }
-      if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
+      if (streamingOpen) {
+        this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
+      }
       streamingOpen = false;
       contentBuffer = '';
       displayBuffer = '';
-      replySegment++;
+      if (hadText) replySegment++;
 
-      return true;
+      return hadText;
     };
 
     const onToken = (token: string): void => {
@@ -1809,7 +1811,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // suppressed and don't split the reply.
       const hasText = !isVoiceMode && stripProtocolTagsStreaming(displayBuffer).trim().length > 0;
       if (message === lastActivity && !(reportingActivity === 'tool' && hasText)) return;
-      const flushedStreaming = closeTextSegment();
+      const flushedStreaming = flushStreamingSegment();
       if (!firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
       lastActivity = message;
 
@@ -1846,7 +1848,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       new TurnOutputCounter(state.metadata as any).record();
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
-      closeTextSegment();
+      flushStreamingSegment();
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
@@ -1915,7 +1917,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
-      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness }, { ...options, state, executionContext });
+      reply = await provider.chatStream(messages, {
+        onToken, onActivity, onMessageBoundary: () => flushStreamingSegment(),
+        onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness,
+      }, { ...options, state, executionContext });
       TurnHopTiming.mark(state, 'provider.chatStream.end');
     } catch (error) {
       // Once a provider-owned tool began, replaying this call could repeat a side effect,
@@ -1946,11 +1951,16 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           displayBuffer = '';
         }
         const reportedModel = this.recordedReplyAttribution(state, reply?.metadata.model).model;
-        if (streamingOpen || (streamingWsSent && reportedModel && reportedModel !== replyAttribution.model)) {
+        const agentReporting = reply ? this.replyReporting(reply.content) : undefined;
+        // Always send the final metadata for a streamed provider call, even
+        // when its last segment was already closed at a message/tool boundary.
+        // MessageDispatcher applies intent only to the last same-ID bubble and
+        // propagates model attribution/completion across every segment.
+        if ((reply && streamingWsSent) || streamingOpen) {
           this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
-            replyStreamId, reportedModel,
-            agentReporting: streamingOpen && reply ? this.replyReporting(reply.content) : undefined,
+            replyStreamId, reportedModel, agentReporting,
           });
+          streamingOpen = false;
         }
         if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }

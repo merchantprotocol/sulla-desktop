@@ -14,13 +14,14 @@
 // token batch "ticks" (110 ms, at most every 230 ms). Done settles once (420 ms) then fades.
 
 import { reactive, readonly } from 'vue';
+import type { AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 export type ComposerGlowPulse = 'hit' | 'soft' | 'tick' | 'settle';
 
 export interface ComposerGlowState {
   /** A run is active: the glow sits at its activity level. Off fades it out. */
   active:    boolean;
-  /** 0-3, from the number of actions in the last 6 seconds (level 1 is the active-run floor). */
+  /** 0-3, from the number of actions in the last 6 seconds (level 0 is the active-run floor). */
   level:     0 | 1 | 2 | 3;
   streaming: boolean;
   /** A single tool call has been running for a while. */
@@ -50,6 +51,14 @@ export const browserGlowClock: ComposerGlowClock = {
 };
 
 export class ComposerGlow {
+  static isRunning(rootIsRunning: boolean, agents: readonly { state: AgentRowState }[]): boolean {
+    return rootIsRunning || agents.some(agent => agent.state === 'working');
+  }
+
+  static resolveColor(primaryColor: string | null | undefined, accent: string): string {
+    return primaryColor?.trim() || `var(--primary-color-override, ${ accent })`;
+  }
+
   static readonly windowMs = 6_000;
   static readonly deepAfterMs = 2_500;
   static readonly stalledAfterMs = 90_000;
@@ -168,7 +177,7 @@ export class ComposerGlow {
     const now = this.clock.now();
     this.hits = this.hits.filter(at => now - at < ComposerGlow.windowMs);
     const n = this.hits.length;
-    this.mutable.level = !this.mutable.active ? 0 : n > 7 ? 3 : n > 3 ? 2 : 1;
+    this.mutable.level = !this.mutable.active ? 0 : n > 7 ? 3 : n > 3 ? 2 : n > 0 ? 1 : 0;
     let oldestTool = Number.POSITIVE_INFINITY;
     for (const at of this.runningTools.values()) oldestTool = Math.min(oldestTool, at);
     this.mutable.deep = this.mutable.active && now - oldestTool >= ComposerGlow.deepAfterMs;

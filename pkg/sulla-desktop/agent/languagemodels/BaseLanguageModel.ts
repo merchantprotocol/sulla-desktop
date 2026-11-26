@@ -86,6 +86,8 @@ export interface StreamCallbacks {
    * simply never call this. Callers that don't care can omit it.
    */
   onActivity?:  (message: string, reportingActivity?: 'status' | 'tool') => void;
+  /** Called when the provider completes one assistant message. A new callback starts a new reply segment. */
+  onMessageBoundary?: () => void;
   /**
    * Emitted when the provider's agent loop performs a file edit/write that
    * the UI should surface as a post-hoc PatchBlock in chat. Currently only
