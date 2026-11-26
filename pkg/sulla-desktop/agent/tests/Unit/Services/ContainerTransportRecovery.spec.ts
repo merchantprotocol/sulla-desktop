@@ -14,6 +14,7 @@ import { toolDecisionPort } from '../../../tools/toolDecisionPort';
 import { GitStatusWorker } from '../../../tools/github/git_status';
 import { ExecWorker } from '../../../tools/meta/exec';
 import { AgentContainerRuntimeRegistry, agentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
+import { toolSessionOrigin } from '../../../services/ToolSessionOrigin';
 import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -62,24 +63,27 @@ const clerkAllowed = (id: string) => resolver.resolveSession(id, 'clerk_get_user
   .then(() => true, error => { if (error.status !== 403) throw error; return false; });
 
 describe('session registration authority', () => {
-  it('admits a paired launcher and provider only while their original pair is live', async() => {
-    const port = host['port']; host['port'] = 1;
-    const issuer = new ContainerSessionLeases(binding, host, ['clerk_get_user'], 'fixture', key, 60_000,
-      { replace: async() => {}, remove: async() => {} });
-    const launcher = host.registerSession(state, 60_000, binding);
-    const provider = host.registerSession(state, 60_000, binding);
-    try {
-      expect(await clerkAllowed(launcher.id)).toBe(false);
-      issuer.issue(launcher.id);
-      await issuer.prepare(provider.id);
-      expect(await clerkAllowed(launcher.id)).toBe(true);
-      expect(await clerkAllowed(provider.id)).toBe(true);
-      const held = await resolver.resolveSession(provider.id, 'clerk_get_user', new AbortController().signal);
-      launcher.revoke();
-      await expect(held.revalidate!()).rejects.toMatchObject({ status: 403 });
-      expect(await clerkAllowed(provider.id)).toBe(false);
-    } finally { launcher.revoke(); provider.revoke(); await issuer.close(); host['port'] = port; }
-  });
+  it.each(['projected', 'direct', 'forwarded', 'nested with launcher credentials'] as const)(
+    'denies a live v2 container pair at %s', async route => {
+      const port = host['port']; host['port'] = 1;
+      const name = 'clerk_get_user';
+      const issuer = new ContainerSessionLeases(binding, host, ['meta/ping', name], 'fixture', key, 60_000,
+        { replace: async() => {}, remove: async() => {} });
+      const launcher = host.registerSession(state, 60_000, binding);
+      try {
+        const claims = await verifyCapabilityToken(issuer.issue(launcher.id), key, { category: 'meta', tool: 'ping' });
+        expect(claims.tool_session_generation).toBe(host.peekToolSession(launcher.id)!.executionContext!.jti);
+        const signal = new AbortController().signal;
+        const direct = () => resolver.resolve({ headers: { authorization: launcher.header } }, name, signal);
+        // Supply the same in-memory fixture to an ordinary tool; no credential files or Clerk requests.
+        const check = route === 'nested with launcher credentials' ? toolSessionOrigin.withinTool(direct) :
+          route === 'direct' ? direct() : route === 'projected' ? resolver.resolveSession(launcher.id, name, signal, state) :
+          resolver.bindForwarded(worker(), name, launcher.id, { ...claims, request_id: 'fixture' }, signal);
+        const outcome = await check.then(() => 'allowed', err => [err.status, err.message]);
+        expect(outcome).toEqual([403, 'clerk_container_isolation_unavailable']);
+        expect(host.peekToolSession(launcher.id)!.clerk).toBe('ordinary');
+      } finally { launcher.revoke(); await issuer.close(); host['port'] = port; }
+    });
 
   it('keeps tool-created MCP sessions and their descendants ordinary even with a live issuer', async() => {
     const port = host['port']; host['port'] = 1;
@@ -114,7 +118,7 @@ describe('session registration authority', () => {
       // A host-side rebind cannot promote this child into an eligible local graph.
       host.rebindSession(child.id, state, 60_000);
       expect(await clerkAllowed(child.id)).toBe(false);
-      expect(await clerkAllowed(launcher.id)).toBe(true);
+      expect(await clerkAllowed(launcher.id)).toBe(false);
     } finally { decisions.mockRestore(); created.forEach(child => child.revoke()); launcher.revoke(); await issuer.close(); host['port'] = port; }
   });
 });
@@ -162,7 +166,7 @@ describe('launcher compatibility', () => {
 });
 
 describe('owned lease renewal', () => {
-  it('recovers a swept default after 16 minutes without reviving a provider, revoked launcher, or held call', async() => {
+  it('recovers a swept default after 16 minutes without reviving a provider, revoked launcher, or Clerk authority', async() => {
     const clock = vi.spyOn(Date, 'now'); const start = Date.now();
     const port = host['port']; host['port'] = 1;
     const files = new Map<string, string>();
@@ -174,7 +178,7 @@ describe('owned lease renewal', () => {
     try {
       const proof = { ...await verifyCapabilityToken(leases.issue(a.id), key), request_id: 'held' };
       const held = worker();
-      await resolver.bindForwarded(held, held.name, a.id, proof, new AbortController().signal);
+      await expect(resolver.bindForwarded(held, held.name, a.id, proof, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
       await leases.prepare(b.id); b.revoke();
       clock.mockReturnValue(start + 960_000);
       expect(host.peekToolSession(a.id)).toBeNull(); // Sweep before timer callback.
@@ -183,7 +187,7 @@ describe('owned lease renewal', () => {
       expect(fresh.tool_session_generation).toBe(host.peekToolSession(a.id)?.executionContext?.jti);
       expect(fresh.tool_session_generation).not.toBe(proof.tool_session_generation);
       expect(host.peekToolSession(b.id)).toBeNull();
-      await expect(held['clerkCaller']!.revalidate!()).rejects.toThrow();
+      expect(await clerkAllowed(a.id)).toBe(false);
       a.revoke(); await expect(renew()).rejects.toThrow();
       expect(host.peekToolSession(a.id)).toBeNull();
     } finally { a.revoke(); b.revoke(); await leases.close(); clock.mockRestore(); host['port'] = port; }
