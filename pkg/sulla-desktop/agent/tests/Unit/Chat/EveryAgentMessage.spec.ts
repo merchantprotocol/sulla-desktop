@@ -158,7 +158,7 @@ class TranscriptFixture {
     const segmentIds = rawSegments.map(message => message.replyStreamId);
     expect(rawSegments.map(message => message.content.trim())).toEqual(expected);
     expect(segmentIds.every(id => typeof id === 'string' && id.length > 0)).toBe(true);
-    expect(new Set(segmentIds).size).toBe(expected.length);
+    expect(new Set(segmentIds).size).toBe(1);
     // DetailedTraceProjection is additive: it must anchor supplemental rows to Standard entries
     // without replacing or combining the reply entries rendered alongside them.
     const trace = new DetailedTraceProjection().project(this.chat.messages.value, info);
@@ -199,8 +199,8 @@ it('keeps container-style streaming segments separate when reply IDs rotate at m
   expect(fixture.replyTexts()).toEqual(['Container message one.', 'Container message two.']);
 });
 
-// risk: reporting accuracy — DONE/BLOCKED intent must classify even already-closed stream segments as Brief.
-it('applies the final brief classification to every completed agent segment', async() => {
+// risk: reporting accuracy — DONE/BLOCKED keeps all segments visible but classifies only the last.
+it('classifies only the last DONE segment while keeping every reply visible in all views', async() => {
   const fixture = new TranscriptFixture();
   const first = 'The handoff is complete.';
   const last = 'Everything is ready.';
@@ -218,8 +218,8 @@ it('applies the final brief classification to every completed agent segment', as
 
   const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
   const reportedClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete' && message.agentReporting === 'brief');
-  expect(segments.map(message => message.agentReporting)).toEqual(['brief', 'brief']);
-  expect(reportedClosures.map(message => message.replyStreamId)).toEqual(segments.map(message => message.replyStreamId));
+  expect(segments.map(message => message.agentReporting)).toEqual([undefined, 'brief']);
+  expect(reportedClosures.map(message => message.replyStreamId)).toEqual([segments[1].replyStreamId]);
   expect(fixture.replyTexts()).toEqual([first, last]);
   const brief = fixture.reporting.entries(fixture.chat.messages.value, 'fatal')
     .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
@@ -232,8 +232,8 @@ it('applies the final brief classification to every completed agent segment', as
   expect(detailed).toEqual([first, last]);
 });
 
-// risk: reporting accuracy — CONTINUE narration must remain Standard, not leak into Brief.
-it('applies the final standard classification to every completed agent segment', async() => {
+// risk: reporting accuracy — CONTINUE must classify only its final segment as Standard.
+it('classifies only the last CONTINUE segment as Standard', async() => {
   const fixture = new TranscriptFixture();
   const first = 'I checked the first item.';
   const last = 'I will continue with the next item.';
@@ -251,8 +251,8 @@ it('applies the final standard classification to every completed agent segment',
 
   const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
   const reportedClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete' && message.agentReporting === 'standard');
-  expect(segments.map(message => message.agentReporting)).toEqual(['standard', 'standard']);
-  expect(reportedClosures.map(message => message.replyStreamId)).toEqual(segments.map(message => message.replyStreamId));
+  expect(segments.map(message => message.agentReporting)).toEqual([undefined, 'standard']);
+  expect(reportedClosures.map(message => message.replyStreamId)).toEqual([segments[1].replyStreamId]);
   expect(fixture.replyTexts()).toEqual([first, last]);
   const brief = fixture.reporting.entries(fixture.chat.messages.value, 'fatal')
     .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
@@ -260,7 +260,7 @@ it('applies the final standard classification to every completed agent segment',
     .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
   const detailed = fixture.reporting.entries(fixture.chat.messages.value, 'debug')
     .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla').map(entry => entry.message.text);
-  expect(brief).toEqual([]);
+  expect(brief).toEqual([first]);
   expect(standard).toEqual([first, last]);
   expect(detailed).toEqual([first, last]);
 });
@@ -290,6 +290,53 @@ it('splits adjacent provider assistant messages at explicit message boundaries',
     { type: 'message-boundary' },
   ], 'First assistant message. Second assistant message.');
   fixture.expectVisibleReplies(['First assistant message.', 'Second assistant message.']);
+});
+
+// risk: transcript continuity — segments in one reply need paragraph spacing without
+// adding a gap before a distinct reply from a later provider call.
+it('keeps paragraph spacing within one provider call but not across calls', async() => {
+  const fixture = new TranscriptFixture();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
+  onTestFinished(() => clock.mockRestore());
+  const first = 'First assistant message.';
+  const second = 'Second assistant message.';
+  let sameCallContinuation = false;
+  await fixture.replayProvider({
+    getModel: () => 'fixture-model',
+    async chatStream(_messages, callbacks) {
+      callbacks.onToken(first);
+      callbacks.onMessageBoundary();
+      clock.mockReturnValue(1100);
+      callbacks.onToken(second);
+      const entries = fixture.reporting.entries(fixture.chat.messages.value, 'info');
+      const secondIndex = entries.findIndex(entry => entry.kind === 'card' && entry.message.kind === 'streaming' && entry.message.text === second);
+      sameCallContinuation = fixture.reporting.isStreamingContinuation(entries, secondIndex);
+      return { content: `${ first } ${ second }`, metadata: { model: 'fixture-model' } };
+    },
+  });
+
+  const sameCall = fixture.context.messages.filter(message => message.kind === 'streaming');
+  expect(sameCall.map(message => message.content)).toEqual([first, second]);
+  expect(sameCall.every(message => typeof message.replyStreamId === 'string' && message.replyStreamId.length > 0)).toBe(true);
+  expect(new Set(sameCall.map(message => message.replyStreamId)).size).toBe(1);
+  expect(sameCallContinuation).toBe(true);
+
+  const nextCall = 'A separate provider reply.';
+  clock.mockReturnValue(1200);
+  let laterCallContinuation = true;
+  await fixture.replayProvider({
+    getModel: () => 'fixture-model',
+    async chatStream(_messages, callbacks) {
+      callbacks.onToken(nextCall);
+      const entries = fixture.reporting.entries(fixture.chat.messages.value, 'info');
+      const nextIndex = entries.findIndex(entry => entry.kind === 'card' && entry.message.kind === 'streaming' && entry.message.text === nextCall);
+      laterCallContinuation = fixture.reporting.isStreamingContinuation(entries, nextIndex);
+      return { content: nextCall, metadata: { model: 'fixture-model' } };
+    },
+  });
+  const allSegments = fixture.context.messages.filter(message => message.kind === 'streaming');
+  expect(allSegments[2].replyStreamId).not.toBe(allSegments[1].replyStreamId);
+  expect(laterCallContinuation).toBe(false);
 });
 
 // risk: data accuracy — text similarity must never resurrect and overwrite an earlier sealed reply.
@@ -356,7 +403,7 @@ it('does not repeat Claude text when a stream resumes after tool activity and re
   const claudeClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete');
   expect(new Set(claudeClosures.map(message => message.replyStreamId))).toEqual(new Set(claudeSegments.map(message => message.replyStreamId)));
   expect(claudeClosures.filter(message => message.agentReporting === 'standard').map(message => message.replyStreamId))
-    .toEqual(claudeSegments.map(message => message.replyStreamId));
+    .toEqual([claudeSegments[claudeSegments.length - 1].replyStreamId]);
 });
 
 // risk: data accuracy — Codex deltas after a tool must start a fresh UI segment without duplicating the accumulated reply.
@@ -393,7 +440,7 @@ it('does not repeat Codex delta text when a stream resumes after tool activity a
   const codexClosures = fixture.emitted.filter(message => message.kind === 'streaming_complete');
   expect(new Set(codexClosures.map(message => message.replyStreamId))).toEqual(new Set(codexSegments.map(message => message.replyStreamId)));
   expect(codexClosures.filter(message => message.agentReporting === 'standard').map(message => message.replyStreamId))
-    .toEqual(codexSegments.map(message => message.replyStreamId));
+    .toEqual([codexSegments[codexSegments.length - 1].replyStreamId]);
 });
 
 // risk: data accuracy — the completed Codex transcript must retain all message separators when deltas were streamed.

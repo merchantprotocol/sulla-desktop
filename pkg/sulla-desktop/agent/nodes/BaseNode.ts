@@ -1708,7 +1708,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let suppressedDeltaCount = 0;
     let wsStreamingSendCount = 0;
     let lastWsStreamingSendAt = 0;
-    let replyStreamId = randomUUID();
+    const replyStreamId = randomUUID();
     let lastSegmentId: string | undefined;
     const replyStreamIds = new Set<string>();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
@@ -1735,7 +1735,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       streamingOpen = false;
       contentBuffer = '';
       displayBuffer = '';
-      replyStreamId = randomUUID();
     };
 
     const onToken = (token: string): void => {
