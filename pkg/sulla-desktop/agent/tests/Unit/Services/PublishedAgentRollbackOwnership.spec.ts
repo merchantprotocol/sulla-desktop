@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A failed package activation may roll back only the exact mapping it created. An owner edit
-// saved while the activation's SQL was still running must survive that rollback.
+// Projection commits the definition and binding together. A concurrent owner save survives
+// a failed projection, and an owner save ahead of projection makes its observed mapping stale.
 /* eslint-disable @typescript-eslint/require-await */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +32,7 @@ vi.mock('@pkg/agent/services/SkillDefinitionService', () => ({ hashSkillContent:
 vi.mock('@pkg/agent/memory/MemoryPackLoader', () => ({ installMemoryPackForSkill: vi.fn(), listPacks: async() => [], uninstallPack: vi.fn() }));
 vi.mock('@pkg/agent/database/registry/SkillsRegistry', () => ({ skillsRegistry: { invalidate: vi.fn() } }));
 
+import { postgresClient } from '../../../database/PostgresClient';
 import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel';
 import { modelRouter, recommendedState } from '../../../languagemodels/modelRouter';
 import { assertWorkerBindingsUnchanged, withWorkerBindingWrite } from '../../../languagemodels/workerBindingAuthority';
@@ -43,6 +44,7 @@ const packageText = `slug: ${ SLUG }\nname: Grok PR Reviewer\nprovider: grok\nmo
 function files(endpoint: string): Promise<Response> {
   if (endpoint === '/v1/local/system-areas') return Promise.resolve(Response.json([{ id: 'home', systemArea: 'sulla' }]));
   if (endpoint.startsWith('/v1/files?')) return Promise.resolve(Response.json(rows));
+  if (endpoint === `/v1/files/${ rows[0].id }`) return Promise.resolve(Response.json(rows[0]));
   if (endpoint.startsWith(`/v1/files/${ rows[0].id }/preview`)) return Promise.resolve(new Response(packageText, { status: 200 }));
   if (endpoint === '/v1/local/system-areas/audit') return Promise.resolve(Response.json({ ok: true }));
   throw new Error(`Unexpected Files request ${ endpoint }`);
@@ -57,6 +59,12 @@ beforeEach(() => {
     if (key === 'modelRouting') assertWorkerBindingsUnchanged(f.store.get(key)?.workerBindings, (value as any)?.workerBindings);
     f.store.set(key, structuredClone(value));
   });
+  vi.spyOn(SullaSettingsModel, 'projectModelRouting').mockImplementation(async project => {
+    const previous = structuredClone(f.store.get('modelRouting'));
+    const next = await postgresClient.transaction(client => project(client, previous));
+    assertWorkerBindingsUnchanged(previous?.workerBindings, (next as typeof previous)?.workerBindings);
+    f.store.set('modelRouting', structuredClone(next));
+  });
   vi.spyOn(modelRouter, 'providerInfo').mockResolvedValue([
     { id: 'grok', connected: true, models: [{ id: 'grok-4.7' }] },
     { id: 'codex', connected: true, models: [{ id: 'gpt-6-luna', efforts: [{ id: 'max' }] }] },
@@ -65,27 +73,58 @@ beforeEach(() => {
 });
 
 describe('failed package activation rollback ownership', () => {
-  it('preserves a newer owner edit for the same agent saved while activation SQL was running', async() => {
-    let release!: () => void; f.sqlGate = new Promise(resolve => { release = resolve });
+  const ownerSave = () => withWorkerBindingWrite(() => modelRouter.replaceWorkerBinding(SLUG, 'agent-existing', { token: '', revision: 0 }, {
+    editToken: 'owner-edit', connections: { codex: 'codex-subscription' }, candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'max' }],
+  }));
+
+  it('keeps an uncommitted mapping invisible and preserves the owner save queued during failed projection', async() => {
+    let release!: () => void;
+    f.sqlGate = new Promise(resolve => { release = resolve });
     const scan = new SullaUseCaseFiles(files).scan();
-    await vi.waitFor(() => expect(f.sqlEntered).toBe(true));
-    const created = structuredClone(binding());
-    expect(created).toMatchObject({ agentId: 'agent-existing', revision: 1, candidates: [{ provider: 'grok', model: 'grok-4.7' }] });
-
-    // Owner opens the newly created mapping in AI Models and saves a different model (same agent id).
-    await withWorkerBindingWrite(() => modelRouter.replaceWorkerBinding(SLUG, 'agent-existing', { token: created.editToken, revision: 1 }, {
-      editToken: 'owner-edit', connections: { codex: 'codex-subscription' }, candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'max' }],
-    }));
-    const ownerEdit = structuredClone(binding());
-
-    release();
-    await expect(scan).rejects.toThrow('activation will retry');
-    expect(binding()).toEqual(ownerEdit);
-    expect(ownerEdit).toMatchObject({ editToken: 'owner-edit', revision: 2, agentId: 'agent-existing' });
+    const failed = expect(scan).rejects.toThrow('activation will retry');
+    try {
+      await vi.waitFor(() => expect(f.sqlEntered).toBe(true));
+      expect(binding()).toBeUndefined();
+      const ownerWrite = ownerSave();
+      expect(binding()).toBeUndefined();
+      release();
+      await failed;
+      await ownerWrite;
+      expect(binding()).toMatchObject({ editToken: 'owner-edit', revision: 1, agentId: 'agent-existing', candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'max' }] });
+      expect(binding()).not.toHaveProperty('filePublication');
+    } finally {
+      release();
+    }
   });
 
-  it('still removes its own untouched mapping when activation fails', async() => {
+  it('rejects a stale mapping write when the owner saves during provider validation', async() => {
+    const providerInfo = await modelRouter.providerInfo();
+    let release!: () => void;
+    let validating = false;
+    const catalogGate = new Promise<void>(resolve => { release = resolve });
+    vi.mocked(modelRouter.providerInfo).mockImplementationOnce(async() => {
+      validating = true;
+      await catalogGate;
+      return providerInfo;
+    });
+    const scan = new SullaUseCaseFiles(files).scan();
+    const failed = expect(scan).rejects.toThrow('activation will retry');
+    try {
+      await vi.waitFor(() => expect(validating).toBe(true));
+      await ownerSave();
+      const owner = structuredClone(binding());
+      release();
+      await failed;
+      expect(f.sqlEntered).toBe(false);
+      expect(binding()).toEqual(owner);
+    } finally {
+      release();
+    }
+  });
+
+  it('keeps an untouched mapping absent when activation fails', async() => {
     await expect(new SullaUseCaseFiles(files).scan()).rejects.toThrow('activation will retry');
+    expect(f.sqlEntered).toBe(true);
     expect(binding()).toBeUndefined();
   });
 

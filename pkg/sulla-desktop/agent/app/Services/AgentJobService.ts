@@ -4,6 +4,7 @@
 import { Service, type Clock } from '@sulla/foundation';
 import { AgentJobRepository } from '../Repositories/AgentJobRepository';
 import type { AgentStateService } from './AgentStateService';
+import { AgentModelStatusRegistry } from '../../services/AgentModelStatusRegistry';
 import { JobIdGenerator } from './JobIdGenerator';
 import { JobRecoveryService } from './JobRecoveryService';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
@@ -132,7 +133,14 @@ async completeJob(jobId: string, results: AgentJobResult[]): Promise<void> {
     if (current.status === 'stopped') return { ...current, results, tasks: current.tasks.map(task => ['running','queued','parked'].includes(task.status) ? { ...task, status: 'stopped', finishedAt: this.clock.now().getTime() } : task) };
     const failed = results.find(result => result.status === 'error');
     return { ...current, status: failed ? 'failed' : 'completed', finishedAt: this.clock.now().getTime(), results, error: failed?.output,
-      tasks: current.tasks.map((task, index) => { const result = results[index]; return !result || task.status === 'stopped' ? task : { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime() }; }) };
+      tasks: current.tasks.map((task, index) => {
+        const result = results[index];
+        if (!result || task.status === 'stopped') return task;
+        // Recovered workers can finish through completeJob directly, without an original runner.
+        const responseModels = task.responseModels?.length ? task.responseModels : AgentModelStatusRegistry.responsesFor(task.threadId || result.threadId);
+        return { ...task, status: result.status, threadId: result.threadId || task.threadId, finishedAt: task.finishedAt ?? this.clock.now().getTime(),
+          ...(responseModels?.length ? { responseModels } : {}) };
+      }) };
   });
   if (job) void import('../../extensions/HookRegistry').then(({ extensionHooks }) => extensionHooks.runAction('on_agent_job_finish', { jobId, status: job.status, results }));
 }
@@ -141,6 +149,8 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
   this.wrapUp.taskSettled(jobId, taskIndex);
   await this.states.mutateJob(jobId, job => {
     if (!job.tasks[taskIndex]) return job;
+    const task = job.tasks[taskIndex];
+    const responseModels = AgentModelStatusRegistry.responsesFor(task.threadId || result.threadId);
     job.results[taskIndex] = result;
     job.tasks[taskIndex] = { ...job.tasks[taskIndex],
 
@@ -148,7 +158,8 @@ async recordTaskCompletion(jobId: string, taskIndex: number, result: AgentJobRes
 
       threadId: result.threadId || job.tasks[taskIndex].threadId,
       finishedAt: job.tasks[taskIndex].finishedAt ?? this.clock.now().getTime(),
-      completion: result };
+      completion: result,
+      ...(responseModels?.length ? { responseModels } : {}) };
     return job;
   });
 }

@@ -79,6 +79,8 @@ export interface RoutingModelInfo {
 /** The part of the routing state the human edits (and Reset restores). */
 export interface EditableRoutingState {
  workerBindings?:     import('./workerModelBindings').WorkerModelBindings;
+ /** Owner choices to keep an agent on shared routing; guarded like workerBindings. */
+ workerInheritance?:  import('./workerModelBindings').WorkerInheritanceChoices;
  agentsList: RoutingRow[];
  subconsciousList: RoutingRow[];
  classes: Record<ModelClass, ClassModel[]>;
@@ -108,6 +110,8 @@ export const MODEL_ROUTING_IPC = {
  cliCheck: 'model-routing:cli-check',
  cliUpdate: 'model-routing:cli-update',
  workerSet: 'model-routing:worker-set',
+ preview: 'model-routing:preview',
+ changed: 'model-routing:changed',
  get: 'model-routing:get', // () => ModelRoutingState (with `recommended`)
  set: 'model-routing:set', // (patch: Partial<Pick<ModelRoutingState, 'agentsList'|'subconsciousList'|'classes'|'followProviderOrder'|'neverUse'>>) => ModelRoutingState
   refresh:   'model-routing:refresh', // () => ModelRoutingState, after re-fetching every connected provider's model list

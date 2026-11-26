@@ -6,7 +6,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  editorDraftSignature,
+  editorProfileSignature,
   editorFormFromAgent,
   editorPatchFromForm,
   emptyAgentEditorForm,
@@ -93,15 +93,6 @@ describe('agent editor lifecycle contract', () => {
 
   it('round-trips routing, capability refs, paused state, and unknown references without dropping fields or model snapshots', () => {
     const form = editorFormFromAgent(agent as any);
-    const choice = {
-      mode:     'pin' as const,
-      provider: 'grok',
-      model:    'unlisted-model',
-      effort:   'high',
-    };
-    const fallbacks = [
-      { provider: 'codex', model: 'unlisted-fallback', effort: 'low' },
-    ];
     expect(editorPatchFromForm(form)).toMatchObject({
       whenToCall:   'When review is needed.',
       canCall:      [],
@@ -110,12 +101,8 @@ describe('agent editor lifecycle contract', () => {
       skillRefs:    ['missing/skill'],
       routineRefs:  ['routine.review'],
     });
-    expect(editorDraftSignature(form, choice, fallbacks)).toContain(
-      'unlisted-fallback',
-    );
-    expect(editorDraftSignature(form, choice, fallbacks)).toBe(
-      editorDraftSignature(editorFormFromAgent(agent as any), choice, fallbacks),
-    );
+    expect(editorProfileSignature(form)).toBe(editorProfileSignature(editorFormFromAgent(agent as any)));
+    expect(editorPatchFromForm(form)).not.toHaveProperty('modelChoice');
     const blank = emptyAgentEditorForm();
     expect(blank.canCall).toEqual([]);
     expect(blank.allowedTools).toEqual([]);
@@ -125,6 +112,52 @@ describe('agent editor lifecycle contract', () => {
     expect(agentEditorTeamLabel([])).toBe('Default team · unrestricted');
     expect(teamScopeLabel([])).toBe('Default team · unrestricted');
     expect(matchesQuery(agent as any, 'artifact and criteria')).toBe(true);
+  });
+
+  it('saves a team member through its existing worker mapping without changing the owner routing card', async() => {
+    const owner = { ...agent, id: 'owner-1', slug: 'account-manager', name: 'Product Owner', canCall: ['builder'] };
+    const builder = { ...agent, id: 'builder-1', slug: 'builder', name: 'Builder', canCall: [], modelChoice: { mode: 'class', class: 'coding' } };
+    const savedTiers = { version: 1, tiers: [{ candidates: [{ provider: 'codex', model: 'gpt-6.2-sol', effort: 'medium' }] }], crossCompanyFallback: true, allowLaunchOverride: 'listed' };
+    let currentRouting: any = {
+      ...routing,
+      workers: [{ id: owner.id, slug: owner.slug }, { id: builder.id, slug: builder.slug }],
+      workerBindings: { builder: { agentId: builder.id, revision: 1, editToken: 'builder-token', candidates: savedTiers.tiers[0].candidates, modelTiers: savedTiers } },
+      providers: [{ id: 'codex', name: 'OpenAI Codex', connected: true, local: false, subscription: true, status: 'ready', coolingUntil: null, lastError: null,
+        models: [{ id: 'gpt-6.2-sol', label: 'GPT-6.2-Sol', efforts: [{ id: 'medium' }, { id: 'high' }] }] }],
+    };
+    f.invoke.mockImplementation((name: string, ...args: any[]) => {
+      if (name === 'agent-definitions:list') return Promise.resolve([structuredClone(owner), structuredClone(builder)]);
+      if (name === 'agent-definitions:export') return Promise.resolve({ spec: { skills: [], tools: [] } });
+      if (name === 'model-routing:get') return Promise.resolve(structuredClone(currentRouting));
+      if (name === 'model-routing:worker-set') {
+        currentRouting = { ...currentRouting, workerBindings: { ...currentRouting.workerBindings, builder: {
+          ...currentRouting.workerBindings.builder, revision: 2, editToken: 'next-token', candidates: args[0].modelTiers.tiers.flatMap((tier: any) => tier.candidates), modelTiers: args[0].modelTiers,
+        } } };
+        return Promise.resolve(structuredClone(currentRouting));
+      }
+      if (name === 'agent-definitions:update') return Promise.resolve({ updated_at: '2026-11-20T18:00:00.000Z' });
+      if (name === 'model-routing:preview') return Promise.resolve({ status: 'ready', candidates: [] });
+      if (name === 'library-list-skills' || name === 'tools-list-by-category') return Promise.resolve([]);
+      return Promise.resolve([]);
+    });
+    const wrapper = mount(StudioAgentsPage, { global: { stubs: {
+      StudioTopbar: { template: '<div />' },
+      AgentDirectoryTab: { props: ['agents'], emits: ['edit'], template: '<button @click="$emit(\'edit\', agents[0])">Edit owner</button>' },
+    } } });
+    await flushPromises();
+    await wrapper.findAll('button').find(button => button.text() === 'Edit owner')!.trigger('click');
+    await wrapper.findAll('button').find(button => button.text() === 'Team')!.trigger('click');
+    await wrapper.find('[aria-label="Tier 1, model 1 effort"]').setValue('high');
+    await wrapper.findAll('button').find(button => button.text() === 'Save')!.trigger('click');
+    await flushPromises();
+    const saved = f.invoke.mock.calls.find(call => call[0] === 'model-routing:worker-set');
+    expect(saved?.[1]).toMatchObject({ slug: 'builder', agentId: builder.id, expectedRevision: 1, expectedToken: 'builder-token',
+      modelTiers: { tiers: [{ candidates: [{ provider: 'codex', model: 'gpt-6.2-sol', effort: 'high' }] }] } });
+    const ownerUpdate = f.invoke.mock.calls.find(call => call[0] === 'agent-definitions:update');
+    expect(ownerUpdate?.[2].canCall).toEqual(['builder']);
+    expect(ownerUpdate?.[2]).not.toHaveProperty('modelTiers');
+    expect(wrapper.find('.team-shell').exists()).toBe(true);
+    wrapper.unmount();
   });
 
   it('sends all editable routing and capability fields through the existing update IPC', async() => {

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { formatModelCandidate, resolveTierEntries, type AgentModelTiers } from './agentModelTiers';
 import { effectiveEffort, isPairBlocked } from './modelCatalogRules';
 import { InfrastructureFailure } from './providerRecovery';
 
@@ -7,10 +8,24 @@ import type { RoutingProviderInfo, NeverUsePair } from './modelRoutingTypes';
 
 export interface WorkerModelBinding {
   editToken?: string; agentId: string; revision: number; candidates: ModelCandidate[]; connections?: Record<string, string>;
+  modelTiers?: AgentModelTiers;
   /** Written with a pending-migration package mapping until its definition settles; any owner edit drops it. */
   pendingPublication?: { fileId: string; versionId: string };
+  /**
+   * The approved Use Cases file version that last wrote this mapping and the binding revision it
+   * produced. An owner edit advances the binding revision, so only an unedited mapping follows a newer file.
+   */
+  filePublication?: { fileId: string; versionId: string; revision: number };
 }
-export interface WorkerModelRoute extends WorkerModelBinding { version: 1; slug: string; selected: number; connections?: Record<string, string>; }
+/** The owner explicitly returned this exact agent to shared routing; a file publication never overrides it. */
+export interface WorkerInheritanceChoice { agentId: string; revision: number; editToken?: string }
+export type WorkerInheritanceChoices = Record<string, WorkerInheritanceChoice>;
+
+/** True when the mapping is still exactly what a file publication wrote. */
+export function fileOwnedBinding(binding: WorkerModelBinding | undefined, agentId: string): boolean {
+  return !!binding?.filePublication && binding.agentId === agentId && binding.filePublication.revision === binding.revision;
+}
+export interface WorkerModelRoute extends WorkerModelBinding { version: 1; slug: string; selected: number; candidateTiers?: number[]; requestedModel?: ModelCandidate; }
 export interface WorkerModelInfo { id: string; slug: string; name: string; class: string; runLocation: string; }
 export type WorkerModelBindings = Record<string, WorkerModelBinding>;
 
@@ -37,6 +52,15 @@ function liveCatalogVerified(provider: RoutingProviderInfo): boolean {
 /** Closed list: never substitute a class/list when every configured candidate is unavailable. */
 export function workerRouteCandidates(route: WorkerModelRoute, providers: RoutingProviderInfo[], neverUse: NeverUsePair[]): ModelCandidate[] {
   if (route.version !== 1 || !Array.isArray(route.candidates) || !Number.isInteger(route.selected) || route.selected < 0 || route.selected >= route.candidates.length) throw new Error('Worker model selection is invalid; refusing another route.');
+  if (route.modelTiers) {
+    const entries = route.candidates.slice(route.selected).map((candidate, offset) => ({ candidate, tier: route.candidateTiers?.[route.selected + offset] ?? 1 }));
+    const { available, skipped } = resolveTierEntries(route.modelTiers, entries, providers, neverUse);
+    if (available.length) return available.map(entry => entry.candidate);
+    const reasons = skipped.map(entry => formatModelCandidate(entry.candidate) + ': ' + entry.reason).join(', ');
+    const message = route.slug + ' has no available configured model. ' + reasons;
+    if (skipped.some(entry => entry.transient)) throw new WorkerCatalogUnavailable(message);
+    throw new Error(message);
+  }
   let waitingForCatalog = false;
   const result = route.candidates.slice(route.selected).filter(candidate => {
     if (!['codex', 'claude-code', 'grok'].includes(candidate.provider)) return false;

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { describe, expect, it } from 'vitest';
-import { hashManagedContent, type BuiltinManagedContent } from '../../builtinAgents';
+import { BuiltinAgentHasher, type BuiltinManagedContent } from '../../builtinAgents';
 import { decideBuiltinSeedAction } from '../../builtinAgents/seedBuiltinAgents';
 import type { AgentDefinition } from '../../database/models/AgentDefinitionModel';
 
@@ -32,13 +32,14 @@ describe('decideBuiltinSeedAction', () => {
       returns:          'Result',
       cost_tier:        'low',
       can_call:         [],
+      agent_awareness:  true,
     };
     const currentBundleContent = {
       ...lastSeedContent,
       system_prompt:  'Updated prompt from the current bundle',
       prompt_content: 'Updated prompt from the current bundle',
     };
-    const lastSeedHash = hashManagedContent(lastSeedContent);
+    const lastSeedHash = BuiltinAgentHasher.hashManagedContent(lastSeedContent);
     const row: AgentDefinition = {
       ...lastSeedContent,
       id:                      'agent-row-1',
@@ -64,8 +65,8 @@ describe('decideBuiltinSeedAction', () => {
       updated_at:              '2026-01-01T00:00:00.000Z',
     };
 
-    expect(hashManagedContent(currentBundleContent)).not.toBe(lastSeedHash);
-    expect(hashManagedContent(row)).toBe(lastSeedHash);
+    expect(BuiltinAgentHasher.hashManagedContent(currentBundleContent)).not.toBe(lastSeedHash);
+    expect(BuiltinAgentHasher.hashManagedContent(row)).toBe(lastSeedHash);
     expect(decideBuiltinSeedAction(currentBundleContent, row, false)).toEqual({ kind: 'kept' });
   });
 });
