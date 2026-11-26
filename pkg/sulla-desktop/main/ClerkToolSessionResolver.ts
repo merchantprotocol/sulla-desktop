@@ -7,6 +7,8 @@ import { ClerkError, type ClerkCaller } from '@pkg/agent/integrations/clerk/Cler
 import { CLERK_ACCOUNT, CLERK_DEADLINE_MS } from '@pkg/agent/integrations/clerk/ClerkEndpoints';
 import { sessionAllowsTool } from './toolSessionPolicy';
 
+import type { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
+
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import type { ToolSession } from './mcpToolSessions';
 
@@ -30,6 +32,7 @@ export class ClerkToolSessionResolver {
     private readonly sessions: ToolSessionLookup,
     private readonly localContexts: LocalContextIssuer,
     private readonly installationToken: () => string | null,
+    private readonly awarenessPolicy: AgentAwarenessPolicy,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -71,7 +74,7 @@ export class ClerkToolSessionResolver {
       if (!session) throw new ClerkError(403, 'The Clerk tool session is invalid or expired.');
       const metadata = session.state?.metadata as Record<string, unknown> | undefined;
       const allowed = metadata?.allowedToolNames;
-      if (!Array.isArray(allowed) || allowed.length === 0 || !sessionAllowsTool(allowed, name)) {
+      if (!Array.isArray(allowed) || allowed.length === 0 || !sessionAllowsTool(allowed, name, metadata, this.awarenessPolicy)) {
         throw new ClerkError(403, 'This tool session is not authorized for Clerk.');
       }
       const agentId = String(metadata?.agentId ?? session.executionContext?.agent_id ?? '').trim();

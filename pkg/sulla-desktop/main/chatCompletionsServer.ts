@@ -1275,7 +1275,7 @@ export class ChatCompletionsServer {
 
   private clerkRoute(): ClerkApiRoute {
     const callerResolver = new ClerkToolSessionResolver(
-      getMCPServerHost(), configuredVaultBrokerProvider, () => this.apiToken,
+      getMCPServerHost(), configuredVaultBrokerProvider, () => this.apiToken, this.agentAwarenessPolicy,
     );
     return new ClerkApiRoute(createDesktopClerkClient, (request, name, signal) => callerResolver.resolve(request, name, signal));
   }
@@ -1372,7 +1372,7 @@ export class ChatCompletionsServer {
           res.once('close', clerkDisconnectHandler);
           res.once('finish', cleanupClerkDisconnect);
           try {
-            clerkCaller = await new ClerkToolSessionResolver(host, configuredVaultBrokerProvider, () => this.apiToken)
+            clerkCaller = await new ClerkToolSessionResolver(host, configuredVaultBrokerProvider, () => this.apiToken, this.agentAwarenessPolicy)
               .resolve(req, registeredClerkName, clerkDisconnect.signal);
           } catch (error) {
             cleanupClerkDisconnect();

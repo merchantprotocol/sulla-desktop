@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ClerkToolSessionResolver } from './ClerkToolSessionResolver';
+import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
 import type { ToolSession } from './mcpToolSessions';
@@ -25,7 +26,7 @@ function fixture(session: ToolSession | null = {
   const getToolSession = vi.fn(() => session);
   const issueLocalBrokerContext = vi.fn(async() => context);
   const resolver = new ClerkToolSessionResolver(
-    { getToolSession }, { issueLocalBrokerContext }, () => 'installation-token', () => now,
+    { getToolSession }, { issueLocalBrokerContext }, () => 'installation-token', new AgentAwarenessPolicy(), () => now,
   );
   return { resolver, getToolSession, issueLocalBrokerContext, setSession: (next: ToolSession | null) => { session = next } };
 }
