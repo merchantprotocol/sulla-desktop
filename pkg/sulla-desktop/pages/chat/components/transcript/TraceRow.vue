@@ -206,10 +206,11 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 
 <style scoped>
 /* Approved Detailed row format (chat-subagent-items.html / chat-detailed-clean.html). */
-.dtr-row { position: relative; padding: 2px 0; list-style: none; }
+.dtr-row { position: relative; padding: 2px 0; list-style: none; scroll-margin-top: 16px; }
+.dtr-row:target .dtr-line, .dtr-row.dtr-flash .dtr-line { background: color-mix(in oklab, var(--accent) 8%, transparent); }
 .dtr-row[data-kind="thought"] { margin-top: 6px; }
 .dtr-row[data-kind="thought"]:first-child { margin-top: 0; }
-.dtr-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 24px; column-gap: 10px; align-items: start; border-radius: 6px; }
+.dtr-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto 24px; column-gap: 10px; align-items: start; border-radius: 6px; transition: background .24s cubic-bezier(.22, 1, .36, 1); }
 .dtr-ic { position: relative; z-index: 1; grid-column: 1; grid-row: 1; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--bg-page); color: var(--text-muted); }
 .dtr-ic svg, .dtr-x svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .dtr-what { grid-column: 2; grid-row: 1; min-width: 0; padding: 2px 0; color: var(--text-secondary); font: 13px/20px var(--font-body); overflow-wrap: anywhere; }
@@ -237,8 +238,7 @@ code.dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface
 .dtr-note { margin: 0 34px 2px; color: var(--text-secondary); font: 13px/19px var(--font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dtr-row[data-status="failed"] .dtr-note, .dtr-row[data-status="blocked"] .dtr-note { color: var(--text-primary); }
 .dtr-raw { margin: 4px 34px 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg-surface); color: var(--text-primary); font: 12px/1.6 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
-/* Sub-agent row: marker is the worker chart's agent marker. */
-.dtr-agent { margin-top: 4px; }
+/* Sub-agent row: marker is the worker chart's agent marker; row spacing follows the shared rail grammar. */
 .dtr-marker { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 600 10px/1 var(--font-body); }
 .dtr-marker[data-role="wrk"] { background: var(--border-muted); color: var(--text-secondary); }
 .dtr-marker[data-role="rev"] { background: var(--bg-page); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--border-default); }

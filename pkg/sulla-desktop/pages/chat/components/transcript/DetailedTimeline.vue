@@ -103,6 +103,7 @@ function registerLine(id: string, element: unknown): void { props.registerElemen
 <style scoped>
 .dtr-conversation { box-sizing: border-box; width: 100%; max-width: 948px; margin: 0 auto; padding: 8px 24px 28px; }
 .dtr-turn { margin: 0 0 8px; }
+/* Approved row geometry: 24px icon column plus 10px text gap; the opaque icon backplate masks the centered rail. */
 .dtr-trace { position: relative; margin: 6px 0 0; padding: 0; list-style: none; }
 .dtr-trace::before { content: ''; position: absolute; left: 11.5px; top: 14px; bottom: 14px; width: 1px; background: var(--border-muted); }
 .dtr-th { position: relative; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding-left: 34px; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
