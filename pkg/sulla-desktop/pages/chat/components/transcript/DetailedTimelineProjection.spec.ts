@@ -188,6 +188,20 @@ describe('DetailedTimelineProjection', () => {
       .map(item => item.kind === 'message' ? item.entry.id : ''))).toEqual([['reply-one'], ['reply-two']]);
   });
 
+  it('keeps a turn segment key stable when its first agent event arrives', () => {
+    // risk: remounting the user bubble and losing component state on the first streamed event.
+    const user = { id: asMessageId('user'), kind: 'user', createdAt: 100, text: 'question' } as const;
+    const reply = { id: asMessageId('reply'), kind: 'sulla', createdAt: 200, text: 'answer' } as const;
+    const reporting = new TranscriptReporting();
+    const projection = new DetailedTimelineProjection(undefined, reporting);
+    const segmenter = new DetailedTimelineSegmenter();
+    const before = segmenter.segment(projection.project([user], reporting.standardEntries([user], 'info')))[0]?.id;
+    const after = segmenter.segment(projection.project([user, reply], reporting.standardEntries([user, reply], 'info')))[0]?.id;
+
+    expect(after).toBe(before);
+    expect(after).toBe('message:user');
+  });
+
   it('places a returned sub-agent result at its own later timestamp instead of under the launch', () => {
     // risk: a long-running worker result being accumulated above the reply that launched it.
     const messages = [

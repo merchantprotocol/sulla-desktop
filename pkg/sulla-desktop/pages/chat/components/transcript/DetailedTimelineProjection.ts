@@ -44,7 +44,7 @@ export class DetailedTimelineSegmenter {
     let content: DetailedTimelineItem[] = [];
     const flush = (): void => {
       if (!leading.length && !header && !content.length) return;
-      segments.push({ id: header?.id ?? leading[0]?.id ?? content[0]?.id ?? `segment:${segments.length}`,
+      segments.push({ id: leading[0]?.id ?? header?.id ?? content[0]?.id ?? `segment:${segments.length}`,
         leading, ...(header ? { header } : {}), items: content });
       leading = [];
       header = undefined;
