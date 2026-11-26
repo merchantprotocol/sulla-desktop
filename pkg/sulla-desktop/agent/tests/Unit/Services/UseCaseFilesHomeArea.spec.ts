@@ -34,6 +34,7 @@ vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
   removeBindingForDefinition: vi.fn(async() => undefined),
 } }));
 
+import { up as renameBuiltins } from '@pkg/agent/database/migrations/0174_builtin_agent_identities';
 import { SullaUseCaseFiles } from '@pkg/main/sullaUseCaseFiles';
 
 const OWNER = 'owner-principal';
@@ -109,6 +110,36 @@ describe('Use Cases home collection from the Files system-areas producer', () =>
     expect(calls.some(call => call.startsWith('GET /v1/files?') && call.includes(`collectionId=${ HOME }`))).toBe(true);
     expect(await agents()).toEqual([{ slug: SLUG, use_case_file_id: FILE }]);
     expect(f.routes).toHaveLength(1);
+  });
+
+  it('keeps the migrated built-in active across a scan and a legacy-path republish', async() => {
+    await f.app.exec(`
+      ALTER TABLE agent_definitions ADD COLUMN is_builtin boolean DEFAULT false, ADD COLUMN builtin_hash text;
+      CREATE TABLE agent_builtin_seed_ledger(slug text PRIMARY KEY);
+      CREATE TABLE sulla_settings(property text PRIMARY KEY,value text);
+      CREATE TABLE skill_definitions(slug text, enabled boolean, deleted_at timestamptz, updated_at timestamptz, use_case_file_id uuid, use_case_version_id uuid, frontmatter jsonb);
+      CREATE TABLE workflows(id text,enabled boolean,status text,updated_at timestamptz,use_case_file_id uuid);
+      CREATE TABLE function_definitions(slug text,enabled boolean,updated_at timestamptz,use_case_file_id uuid,use_case_version_id uuid);
+      CREATE TABLE recipe_definitions(LIKE function_definitions);
+      UPDATE use_case_files_state SET initial_export_completed_at=now();
+    `);
+    await f.app.query(`INSERT INTO agent_definitions(id,slug,name,is_builtin,use_case_file_id,use_case_version_id)
+      VALUES ('original','opus-worker','Opus Worker',true,$1,$2)`, [FILE,V1]);
+    await renameBuiltins(f.app);
+    let version = V1;
+    const scanner = new SullaUseCaseFiles(async(endpoint) => {
+      const row = { id:FILE, path:'Use Cases/agents/opus-worker/agent.yaml', published_version_id:version };
+      if (endpoint === '/v1/local/system-areas') return Response.json([{ id:HOME, systemArea:'sulla' }]);
+      if (endpoint.startsWith('/v1/files?')) return Response.json([row]);
+      if (endpoint.startsWith(`/v1/files/${ FILE }/preview`)) return new Response(`slug: opus-worker\nname: Opus Worker\nsystemPrompt: ${ version }\n`);
+      if (endpoint === `/v1/files/${ FILE }`) return Response.json(row);
+      throw new Error(endpoint);
+    });
+    for (version of [V1, '00000000-0000-4000-8000-000000000002']) {
+      await scanner.scan();
+      expect((await f.app.query('SELECT id,slug,name,enabled,status,system_prompt FROM agent_definitions')).rows)
+        .toEqual([{ id:'original',slug:'advisor',name:'Advisor',enabled:true,status:'production',system_prompt:version }]);
+    }
   });
 
   it.each([
