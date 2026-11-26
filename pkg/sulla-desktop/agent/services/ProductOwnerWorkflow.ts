@@ -95,7 +95,9 @@ async function shippedWorkflowAgent(slug: string | null | undefined): Promise<st
   const rename = BUILTIN_AGENT_RENAMES.find(([, next]) => next === slug);
   if (!rename) return slug ?? undefined;
   const agent = await agentDefinitionService.findBySlug(rename[1]);
-  return agent && !agent.is_builtin ? rename[0] : rename[1];
+  if (agent) return agent.is_builtin ? rename[1] : rename[0];
+  const retained = await agentDefinitionService.findBySlug(rename[0]);
+  return retained?.slug === rename[0] && retained.is_builtin ? rename[0] : rename[1];
 }
 
 /** Resolve selectors against the full directory before excluding inactive targets.
