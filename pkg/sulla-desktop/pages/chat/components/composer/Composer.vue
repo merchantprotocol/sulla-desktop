@@ -184,7 +184,7 @@
           :class="glowClasses" :style="{ '--glow-c': glowColor }"
           :data-glow-level="glow.state.level"
         >
-          <div class="composer-halo composer-halo--breathing" aria-hidden="true" />
+          <div class="composer-halo composer-halo--breathing" aria-hidden="true" :style="{ animation: glow.state.active && !glow.state.paused ? 'composer-glow-breathe 3.2s ease-in-out infinite' : 'none' }" />
           <div class="composer-halo" aria-hidden="true" />
           <div class="composer-halo composer-halo--stalled" aria-hidden="true" />
           <div
@@ -979,13 +979,13 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
 /* Breathing glow: pre-painted layers; only opacity and transform change (ComposerGlow.ts drives the classes). */
 .composer-capsule {
-  --glow-o: .2; --glow-c: var(--primary-color-override, var(--accent));
+  --glow-level-o: .2; --glow-o: .2; --glow-c: var(--primary-color-override, var(--accent));
   --glow-ease: cubic-bezier(.22, 1, .36, 1); --glow-ease-in: cubic-bezier(.16, 1, .3, 1);
 }
-.composer-capsule[data-glow-level="1"] { --glow-o: .36; }
-.composer-capsule[data-glow-level="2"] { --glow-o: .52; }
-.composer-capsule[data-glow-level="3"] { --glow-o: .66; }
-.composer-capsule.glow-stream { --glow-o: max(var(--glow-o), .62); }
+.composer-capsule[data-glow-level="1"] { --glow-level-o: .36; }
+.composer-capsule[data-glow-level="2"] { --glow-level-o: .52; }
+.composer-capsule[data-glow-level="3"] { --glow-level-o: .66; }
+.composer-capsule.glow-on { --glow-o: max(.56, var(--glow-level-o)); } .composer-capsule.glow-stream { --glow-o: max(var(--glow-o), .62); }
 .composer-capsule.glow-deep { --glow-o: max(var(--glow-o), .56); }
 .composer-halo {
   position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
@@ -995,10 +995,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-halo--stalled { --glow-c: var(--status-warning, #f0a020); }
 .composer-capsule.glow-on .composer-halo--breathing {
   opacity: var(--glow-o);
-  animation: composer-glow-breathe 3.2s ease-in-out infinite;
   transition-duration: 1600ms;
 }
-.composer-capsule.glow-on .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: var(--glow-o); transition-duration: 1600ms; }
+.composer-capsule.glow-on .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 0; transition-duration: 1600ms; }
 .composer-capsule.glow-on .composer-halo--stalled { opacity: 0; }
 .composer-capsule.glow-soft .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: .72; transition-duration: 280ms; }
 .composer-capsule.glow-tick .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: .88; transition-duration: 110ms; }
@@ -1009,10 +1008,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-capsule.glow-stalled .composer-halo--breathing { --glow-c: var(--status-warning, #f0a020); --glow-o: .55; }
 .composer-capsule.glow-stalled .composer-halo--stalled { opacity: .55; transition-duration: 1600ms; }
 .composer-capsule.glow-settle .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 1; transform: scale(1.03, 1.2); transition-duration: 320ms; }
-.composer-capsule.document-hidden .composer-halo { visibility: hidden; transition: none; }
+.composer-capsule.document-hidden .composer-halo { visibility: hidden; transition: none; animation-play-state: paused; }
 @keyframes composer-glow-breathe {
   0%, 100% { opacity: var(--glow-o); transform: scale(.98, 1.02); }
-  50% { opacity: min(.8, calc(var(--glow-o) + .12)); transform: scale(1.04, 1.12); }
+  50% { opacity: min(.88, calc(var(--glow-o) + .2)); transform: scale(1.03, 1.2); }
 }
 .composer {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
@@ -1055,9 +1054,9 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 @media (prefers-reduced-motion: reduce) {
   /* Steady glow at the activity level: no pulses, no scale. */
   .composer-capsule .composer-halo { transform: none !important; animation: none !important; transition: opacity .6s linear !important; }
-  .composer-capsule.glow-on:not(.glow-stalled) .composer-halo:not(.composer-halo--stalled) { opacity: var(--glow-o) !important; }
+  .composer-capsule.glow-on:not(.glow-stalled) .composer-halo--breathing { opacity: var(--glow-o) !important; }
   .composer-capsule.glow-on.glow-stalled .composer-halo--breathing { opacity: .55 !important; }
-  .composer-capsule.glow-settle:not(.glow-on) .composer-halo { opacity: 0 !important; }
+  .composer-capsule.glow-on:not(.glow-stalled) .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 0 !important; } .composer-capsule.glow-settle:not(.glow-on) .composer-halo { opacity: 0 !important; }
 }
 @keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
