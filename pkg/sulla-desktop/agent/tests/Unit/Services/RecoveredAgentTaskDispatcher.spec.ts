@@ -8,7 +8,8 @@ import { JobRuntimeRegistry } from '../../../app/Services/JobRuntimeRegistry';
 import { JobStopService } from '../../../app/Services/JobStopService';
 import { StopPrincipal } from '../../../app/ValueObjects/StopPrincipal';
 import { AbortService } from '../../../services/AbortService';
-import { AbortSignalBridge, RecoveredAgentTaskDispatcher } from '../../../services/RecoveredAgentTaskDispatcher';
+import { AbortSignalBridge } from '../../../app/Services/AbortSignalBridge';
+import { RecoveredAgentTaskDispatcher } from '../../../services/RecoveredAgentTaskDispatcher';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 
 class InMemoryJobs implements AgentStateStore {

@@ -53,7 +53,8 @@ import { DecisionAnswerDelivery, type DecisionAnswerDeliveryInput } from './Deci
 import { workerModelRouting, installWorkerRoute, detachTerminalWorkerChat, isWorkerMappingHumanTurn } from './WorkerModelRouting';
 import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import { AgentTurnStopper } from './AgentTurnStopper';
-import { AbortSignalBridge, RecoveredAgentTaskDispatcher } from './RecoveredAgentTaskDispatcher';
+import { AbortSignalBridge } from '../app/Services/AbortSignalBridge';
+import { RecoveredAgentTaskDispatcher } from './RecoveredAgentTaskDispatcher';
 import { AgentOrchestratorMessageFormatter } from './AgentOrchestratorMessageFormatter';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';

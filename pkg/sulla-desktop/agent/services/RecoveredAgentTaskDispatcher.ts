@@ -3,24 +3,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { AgentJob } from '../tools/agents/jobRegistry';
+import { AbortSignalBridge } from '../app/Services/AbortSignalBridge';
 
 export interface RecoveredAgentTaskJobs {
   getJob(jobId: string): Promise<AgentJob | undefined>;
   ensureTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal;
-}
-
-export interface AbortTarget { abort(): void; }
-
-/** Forwards a durable task-stop signal into the currently executing run. */
-export class AbortSignalBridge {
-  private readonly abort = () => this.target.abort();
-
-  constructor(private readonly signal: AbortSignal, private readonly target: AbortTarget) {
-    if (signal.aborted) this.abort();
-    else signal.addEventListener('abort', this.abort, { once: true });
-  }
-
-  dispose(): void { this.signal.removeEventListener('abort', this.abort); }
 }
 
 export type RecoveredAgentTaskDispatch = (job: AgentJob, taskIndex: number, controller: AbortController) => Promise<unknown>;
