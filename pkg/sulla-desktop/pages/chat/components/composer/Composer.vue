@@ -949,13 +949,6 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   container-name: composer-wrap; container-type: inline-size;
 }
 .composer-inner { position: relative; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
-/* ChatPage clips its column; keep the halo inside the wrapper's safe x padding on narrow panes. */
-@container composer-wrap (max-width: 780px) {
-  .composer-halo { left: -20px; right: -20px; }
-}
-@container composer-wrap (max-width: 680px) {
-  .composer-halo { left: -10px; right: -10px; }
-}
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
 .chat-root.artifact-open .composer-inner { max-width: 760px; }
 .composer-up-row { display: flex; align-items: flex-end; gap: 12px; min-width: 0; margin-bottom: 12px; padding: 0 10px; }
@@ -999,6 +992,13 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
   position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--glow-c) 56%, transparent), color-mix(in srgb, var(--glow-c) 22%, transparent) 55%, transparent);
   opacity: 0; transform: none; transition: opacity 2600ms var(--glow-ease), transform 2600ms var(--glow-ease); will-change: opacity, transform;
+}
+/* ChatPage clips its column; keep the halo inside the wrapper's safe x padding on narrow panes. */
+@container composer-wrap (max-width: 780px) {
+  .composer-halo { left: -20px; right: -20px; }
+}
+@container composer-wrap (max-width: 680px) {
+  .composer-halo { left: -10px; right: -10px; }
 }
 .composer-halo--stalled { --glow-c: var(--status-warning, #f0a020); }
 .composer-capsule.glow-on .composer-halo--breathing {
