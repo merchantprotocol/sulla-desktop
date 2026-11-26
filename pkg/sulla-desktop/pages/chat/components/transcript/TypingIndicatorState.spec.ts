@@ -2,7 +2,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { MessageId } from '../../types/chat';
+import type { UserMessage } from '../../models/Message';
 import type { RunState } from '../../models/RunState';
+import { waitingOn } from '../../messages/waitingStatus';
 import { TypingIndicatorState, type TypingIndicatorAgent, type TypingIndicatorInput } from './TypingIndicatorState';
 
 const messageId = 'message-1' as MessageId;
@@ -15,6 +17,7 @@ function input(runState: RunState, overrides: Partial<TypingIndicatorInput> = {}
   return {
     runState,
     agents: [],
+    waiting: false,
     assistantStreaming: false,
     finalReply: false,
     retryAvailable: false,
@@ -85,6 +88,29 @@ describe('TypingIndicatorState', () => {
     expect(state.state.kind).toBe('stopped');
     expect(state.state.shouldRender).toBe(true);
     expect(state.state.bubbleVisible).toBe(false);
+    state.dispose();
+  });
+
+  it('does not render the legacy waiting row beside the bubble for a running user turn', () => {
+    const userMessage: UserMessage = {
+      id: messageId,
+      kind: 'user',
+      createdAt: Date.now(),
+      text: 'Hello',
+    };
+    const waiting = waitingOn([userMessage], true);
+    expect(waiting).not.toBeNull();
+
+    const state = new TypingIndicatorState();
+    state.update(input({ phase: 'thinking', startedAt: Date.now(), messageId }, { waiting: Boolean(waiting) }));
+
+    expect(state.state.kind).toBe('running');
+    expect(state.state.shouldRender).toBe(true);
+    expect(state.state.waitingFallbackVisible).toBe(false);
+
+    state.update(input({ phase: 'awaiting_approval', startedAt: Date.now(), messageId }, { waiting: Boolean(waiting) }));
+    expect(state.state.kind).toBe('hidden');
+    expect(state.state.waitingFallbackVisible).toBe(true);
     state.dispose();
   });
 

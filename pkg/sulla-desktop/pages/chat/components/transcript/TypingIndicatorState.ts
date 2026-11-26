@@ -6,6 +6,7 @@
 import { reactive, readonly } from 'vue';
 
 import type { AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
+import type { Message } from '../../models/Message';
 import type { RunState } from '../../models/RunState';
 
 export type TypingIndicatorKind = 'hidden' | 'running' | 'streaming' | 'tool' | 'parked' | 'stalled' | 'error' | 'stopped';
@@ -22,6 +23,8 @@ export interface TypingIndicatorAgent {
 export interface TypingIndicatorInput {
   readonly runState: RunState;
   readonly agents: readonly TypingIndicatorAgent[];
+  /** A user message is still waiting for a response, as determined by waitingOn(). */
+  readonly waiting: boolean;
   readonly assistantStreaming: boolean;
   /** A terminal assistant reply for the latest user turn is already in the transcript. */
   readonly finalReply: boolean;
@@ -36,6 +39,8 @@ export interface TypingIndicatorSnapshot {
   kind: TypingIndicatorKind;
   /** Whether a tail row should render; streaming text already occupies that position. */
   shouldRender: boolean;
+  /** Keep the legacy timer/Stop/Resend row only when no typing-indicator row replaces it. */
+  waitingFallbackVisible: boolean;
   /** True only for the three-dot/tool bubble; parked and stopped/error are text rows. */
   bubbleVisible: boolean;
   toolName: string | null;
@@ -61,6 +66,13 @@ export class TypingIndicatorState {
   /** The approved typing-indicator mockup marks a no-event loop stalled at 60 seconds. */
   static readonly stalledAfterMs = 60_000;
 
+  /** A Sulla message is final only after it closes the current user turn. */
+  static hasTerminalReply(currentTurn: readonly Message[], runState: RunState): boolean {
+    const lastMessage = currentTurn[currentTurn.length - 1];
+    if (lastMessage?.kind !== 'sulla') return false;
+    return runState.phase === 'idle' || runState.phase === 'error' || runState.phase === 'paused';
+  }
+
   static timestamp(value: string | null | undefined): number {
     if (!value) return 0;
     const parsed = Date.parse(value);
@@ -68,7 +80,7 @@ export class TypingIndicatorState {
   }
 
   private readonly mutable: TypingIndicatorSnapshot = reactive({
-    kind: 'hidden', shouldRender: false, bubbleVisible: false, toolName: null,
+    kind: 'hidden', shouldRender: false, waitingFallbackVisible: false, bubbleVisible: false, toolName: null,
     agents: [], retryAvailable: false, errorMessage: null,
   }) as TypingIndicatorSnapshot;
   readonly state = readonly(this.mutable) as Readonly<TypingIndicatorSnapshot>;
@@ -172,6 +184,7 @@ export class TypingIndicatorState {
     const shouldRender = kind !== 'hidden' && kind !== 'streaming';
     this.mutable.kind = kind;
     this.mutable.shouldRender = shouldRender;
+    this.mutable.waitingFallbackVisible = Boolean(this.input?.waiting && !shouldRender);
     this.mutable.bubbleVisible = kind === 'running' || kind === 'tool' || kind === 'stalled';
     this.mutable.toolName = options.toolName ?? null;
     this.mutable.agents = options.agents ?? [];
