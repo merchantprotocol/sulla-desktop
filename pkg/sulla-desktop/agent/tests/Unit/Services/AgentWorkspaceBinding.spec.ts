@@ -94,6 +94,27 @@ describe('durable Git workspace initialization', () => {
     expect(readFileSync(path.join(workspace, 'marker'), 'utf8')).toBe('uncommitted progress');
   });
 
+  it.each(['branch', 'detached'])('seeds only approved %s history on first use with mixed ownership', async(mode) => {
+    const source = local('worktrees/repo');
+    const workspace = local('runtime/conversations/task/workspace');
+    git(source, 'checkout', '-b', 'unpublished');
+    writeFileSync(path.join(source, 'other'), 'unpublished fixture');
+    git(source, 'add', 'other');
+    git(source, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'other history');
+    const unrelated = git(source, 'rev-parse', 'HEAD');
+    git(source, 'checkout', 'worker-branch');
+    if (mode === 'detached') git(source, 'checkout', '--detach', 'HEAD');
+    const approved = git(source, 'rev-parse', 'HEAD');
+    guest.assumeDifferentGitOwner = true;
+
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+
+    expect(git(workspace, 'rev-parse', 'HEAD')).toBe(approved);
+    expect(git(workspace, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(mode === 'detached' ? 'HEAD' : 'worker-branch');
+    expect(git(workspace, 'for-each-ref', '--format=%(refname)')).not.toContain('unpublished');
+    expect(() => git(workspace, 'cat-file', '-e', unrelated)).toThrow();
+  });
+
   it('preserves an exact pre-marker durable Git workspace during restart recovery', async() => {
     const source = local('worktrees/repo');
     const workspace = local('runtime/conversations/task/workspace');
