@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { computed, getCurrentScope, onScopeDispose, ref, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -36,6 +36,8 @@ export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
   /** Undelivered events for this chat's own transcript and proven sub-agent tree, oldest first. */
   readonly checkIns: ComputedRef<StatusRollupItem[]>;
+  /** Authorized full check-in history for each scoped task, shared with Detailed's inline trace. */
+  readonly traceHistories: ComputedRef<ReadonlyMap<string, AgentTraceHistoryData>>;
   /** Marks the status-rollup as the active consumer of buffered events. */
   attachConsumer(): void;
   /** Stops buffering events when the status-rollup is not mounted. */
@@ -67,6 +69,8 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const previousRows = new Map<string, PresentedThreadAgent>();
   const snapshotCheckinDiffs = new Map<string, ThreadAgentEventProjectionDiff>();
   const historyCursors = new Map<string, ThreadAgentHistoryCursor>();
+  const traceHistoryData = shallowRef<ReadonlyMap<string, AgentTraceHistoryData>>(new Map());
+  const traceHistories = computed(() => traceHistoryData.value);
   const historyPrimed = new Set<string>();
   const historyAvailable = new Set<string>();
   const historyPending = new Set<string>();
@@ -95,6 +99,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     previousRows.clear();
     snapshotCheckinDiffs.clear();
     historyCursors.clear();
+    traceHistoryData.value = new Map();
     historyPrimed.clear();
     historyAvailable.clear();
     historyPending.clear();
@@ -193,6 +198,11 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     void load(threadId, agent.row.jobId, agent.row.taskIndex).then(data => {
       if (activeThreadId !== threadId) return;
       if (data === null) {
+        if (traceHistoryData.value.has(key)) {
+          const histories = new Map(traceHistoryData.value);
+          histories.delete(key);
+          traceHistoryData.value = histories;
+        }
         const latest = eventPresenter.project(sources.snapshot.value, threadId, now(), sources.decisions?.value ?? [])
           .agents.find(candidate => `${candidate.row.jobId}:${candidate.row.taskIndex}` === key);
         const item = latest && mapper.snapshotCheckin(latest, threadId);
@@ -204,6 +214,19 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
         return;
       }
       historyAvailable.add(key);
+      const current = traceHistoryData.value.get(key);
+      const previousCheckin = current?.checkins.at(-1);
+      const nextCheckin = data.checkins.at(-1);
+      const previousMessage = current?.messages.at(-1);
+      const nextMessage = data.messages.at(-1);
+      const changed = !current || current.checkins.length !== data.checkins.length || current.messages.length !== data.messages.length ||
+        previousCheckin?.createdAt !== nextCheckin?.createdAt || previousCheckin?.summary !== nextCheckin?.summary ||
+        previousMessage?.createdAt !== nextMessage?.createdAt || previousMessage?.message !== nextMessage?.message;
+      if (changed) {
+        const histories = new Map(traceHistoryData.value);
+        histories.set(key, data);
+        traceHistoryData.value = histories;
+      }
       historyEvents(agent, data, threadId);
     }).catch(() => {
       // The live snapshot and transcript remain usable if the optional history IPC is unavailable.
@@ -305,6 +328,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   return {
     projection,
     checkIns: computed(() => eventItems.value),
+    traceHistories,
     attachConsumer: () => { consumerAttached = true; },
     detachConsumer: () => {
       consumerAttached = false;
