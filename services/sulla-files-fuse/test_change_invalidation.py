@@ -2,6 +2,7 @@
 """FUSE invalidation must evict both kernel names and adapter-side stale rows."""
 import tempfile
 import asyncio
+import errno
 import threading
 import time
 import types
@@ -78,6 +79,34 @@ class ChangeInvalidationTests(unittest.TestCase):
         self.assertEqual(self.ops.path_inode[path], inode)
         self.assertEqual(asyncio.run(self.ops.getattr(inode)).st_size, 13)
         self.assertEqual(reads, [("home", path)])
+
+    def test_getattr_on_remote_unlink_preserves_only_the_open_inode(self):
+        async def missing(_collection, _path):
+            raise FileNotFoundError(errno.ENOENT, "removed")
+        self.ops.api = types.SimpleNamespace(entry=missing, actor_resolver=None)
+        self.pyfuse3.FileInfo = types.SimpleNamespace
+        parent = self.ops._node("folder", True)
+
+        for opened in (True, False):
+            with self.subTest(opened=opened):
+                path = "folder/file.txt"
+                inode = self.ops._node(path, False)
+                self.ops.nodes[inode].update({"collectionId": "home", "size": 3})
+                if opened:
+                    handle = asyncio.run(self.ops._open_handle(inode, 0, None, b"abc", "v1", ""))
+                asyncio.run(self.ops.invalidate_path(path))
+
+                if opened:
+                    attrs = asyncio.run(self.ops.getattr(inode))
+                    self.assertEqual((attrs.st_ino, attrs.st_size), (inode, 3))
+                    self.assertEqual(asyncio.run(self.ops.read(handle.fh, 0, 3)), b"abc")
+                else:
+                    with self.assertRaises(self.pyfuse3.FUSEError) as absent:
+                        asyncio.run(self.ops.getattr(inode))
+                    self.assertEqual(absent.exception.errno, errno.ENOENT)
+                with self.assertRaises(self.pyfuse3.FUSEError) as absent:
+                    asyncio.run(self.ops.lookup(parent, b"file.txt"))
+                self.assertEqual(absent.exception.errno, errno.ENOENT)
 
     # risk: namespace correctness — only membership-changing events evict directory listings.
     def test_membership_events_discard_directory_complete(self):
