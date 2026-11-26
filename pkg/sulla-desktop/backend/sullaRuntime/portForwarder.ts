@@ -16,6 +16,7 @@ const console = Logging.sullaRuntime;
 // userland proxy listens for every published port.
 const FORWARD_STREAM_PORT = 2376;
 const RECONNECT_DELAY_MS = 2_000;
+const FILES_RELAY_IDLE_TIMEOUT_MS = 120_000;
 /** How often a port another Mac process held is tried again. */
 const UNAVAILABLE_RETRY_MS = 30_000;
 
@@ -24,6 +25,13 @@ interface ContainerPort {
   PrivatePort: number;
   PublicPort?: number;
   Type:        string;
+}
+
+interface PortForwarderPolicy {
+  /** The published host port used by Desktop main for Sulla Files over TLS. */
+  filesPort: number;
+  /** Idle timeout applies only to the Files relay; other ports remain long-lived. */
+  filesIdleTimeoutMs?: number;
 }
 
 /**
@@ -42,8 +50,13 @@ export class SullaRuntimePortForwarder {
   #reconnectTimer: NodeJS.Timeout | undefined;
   #retryTimer: NodeJS.Timeout | undefined;
   #syncing: Promise<void> = Promise.resolve();
+  readonly #filesPort: number;
+  readonly #filesIdleTimeoutMs: number;
 
-  constructor(private readonly dockerSocket: string, private readonly guestSocket: string) {}
+  constructor(private readonly dockerSocket: string, private readonly guestSocket: string, policy: PortForwarderPolicy) {
+    this.#filesPort = policy.filesPort;
+    this.#filesIdleTimeoutMs = policy.filesIdleTimeoutMs ?? FILES_RELAY_IDLE_TIMEOUT_MS;
+  }
 
   start(): void {
     this.#stopped = false;
@@ -194,19 +207,31 @@ export class SullaRuntimePortForwarder {
 
   protected relay(client: net.Socket, port: number): void {
     const guest = net.connect({ path: this.guestSocket, allowHalfOpen: true });
+    let closed = false;
+    const destroyBoth = () => {
+      if (closed) return;
+      closed = true;
+      client.unpipe(guest);
+      guest.unpipe(client);
+      client.destroy();
+      guest.destroy();
+    };
+
+    client.on('error', destroyBoth);
+    guest.on('error', destroyBoth);
+    client.on('close', destroyBoth);
+    guest.on('close', destroyBoth);
+    // Only Desktop's Files listener (30124) needs stale keep-alive cleanup.
+    // Other published ports include WebSockets, SSE, DB connections and
+    // protocols that legitimately remain idle or half-close one direction.
+    if (port === this.#filesPort) {
+      client.setTimeout(this.#filesIdleTimeoutMs, destroyBoth);
+      guest.setTimeout(this.#filesIdleTimeoutMs, destroyBoth);
+    }
 
     // Queued in order ahead of any client bytes.
     guest.write(`${ FORWARD_STREAM_PORT }\n${ JSON.stringify({ port }) }\n`);
     client.pipe(guest);
     guest.pipe(client);
-    const destroy = () => {
-      client.destroy();
-      guest.destroy();
-    };
-
-    client.on('error', destroy);
-    guest.on('error', destroy);
-    client.on('close', () => guest.destroy());
-    guest.on('close', () => client.destroy());
   }
 }

@@ -881,6 +881,16 @@ export function initSullaEvents(): void {
   // ─────────────────────────────────────────────────────────────
 
   const { powerMonitor, BrowserWindow, app } = require('electron') as typeof import('electron');
+  const resetFilesConnections = ():void => {
+    try {
+      const { resetFilesPinnedSessionConnections } = require('@pkg/main/sullaFilesTls');
+      void resetFilesPinnedSessionConnections().catch((err:unknown) => {
+        console.warn('[Power] Failed to reset local Files connections:', err);
+      });
+    } catch (err) {
+      console.warn('[Power] Failed to reset local Files connections:', err);
+    }
+  };
   app.once('will-quit', () => {
     const { releaseAllSleepPrevention } = require('@pkg/main/SleepPreventionService');
     releaseAllSleepPrevention();
@@ -915,8 +925,12 @@ export function initSullaEvents(): void {
     }
   });
 
+  // Unlock can restore a network path without a full system resume.
+  powerMonitor.on('unlock-screen', resetFilesConnections);
+
   powerMonitor.on('resume', () => {
     console.log('[Power] System resumed');
+    resetFilesConnections();
 
     // Reconnect the mobile relay right away with fresh backoff — otherwise
     // recovery waits on the stale-socket watchdog plus accumulated backoff.

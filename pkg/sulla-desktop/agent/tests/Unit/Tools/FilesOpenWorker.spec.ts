@@ -18,13 +18,22 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('@pkg/window', () => ({ getWindow: () => state.window }));
+vi.mock('@pkg/window/agentWindows', () => ({ getActiveAgentWindow: () => state.window }));
+vi.mock('@pkg/window/agentWindowTrust', () => ({ agentWindowFromSender: () => null }));
 
 import { FilesOpenWorker } from '../../../tools/files/open';
+import type { ToolResponse } from '../../../tools/base';
+import type { RecentFileOpenCoordinator } from '../../../tools/files/RecentFileOpenRegistry';
+
+class UncachedRecentFileOpenRegistry implements RecentFileOpenCoordinator {
+  openOnce(_key:string, open:() => Promise<ToolResponse>):Promise<ToolResponse> { return open(); }
+}
 
 class ResolvedFileOpenWorker extends FilesOpenWorker {
   protected override async resolvePath() {
     return { collectionId: 'collection-1', fileId: 'file-1', folderPath: 'Projects/sulla-desktop/qa-two-device/editor-repro', kind: 'file' as const };
   }
+  constructor() { super(undefined, undefined, undefined, new UncachedRecentFileOpenRegistry()); }
   execute(input: unknown) { return this._validatedCall(input); }
 }
 

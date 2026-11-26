@@ -774,7 +774,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     this.#containerEngineClient = new MobyClient(this, `unix://${ dockerSocket }`);
     await this.progressTracker.action('Setting docker context', 50,
       dockerDirManager.ensureDockerContextConfigured(false, dockerSocket));
-    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest);
+    this.#sullaRuntimeForwarder = new SullaRuntimePortForwarder(dockerSocket, sullaRuntimeSockets.guest, { filesPort: hostPort(30124) });
     this.#sullaRuntimeForwarder.start();
 
     await this.progressTracker.action('Writing sulla environment', 50, this.writeGuestSullaEnv());
