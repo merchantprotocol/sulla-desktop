@@ -17,6 +17,9 @@ export class ClerkWorker extends BaseTool {
 
   bindClerkCaller(caller: ClerkCaller): void {
     this.clerkCaller = caller;
+    this.executionContext = caller.execution;
+    this.approvalSignal = caller.signal;
+    if (caller.deadlineAt !== undefined) this.deadlineAt = Math.min(this.deadlineAt ?? Infinity, caller.deadlineAt);
   }
 
   protected async _validatedCall(input: Record<string, unknown>): Promise<ToolResponse> {

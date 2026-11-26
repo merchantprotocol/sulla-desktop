@@ -119,7 +119,7 @@ app.post('/v1/proxy/:accountId/:slug', async(request, response) => {
   try {
     ctx = await scopeToolExecutionContext(ctx, tool, args);
     const deadlineMs = toolDeadlines.deadlineMs(tool.name, tool.operationTypes, { category: tool.category, manifestDeadlineMs: tool.deadlineMs, args });
-    const result = await desktop.execute(ctx, 'clerk', 'raw_request', args, { deadlineMs, operationTypes: tool.operationTypes });
+    const result = await desktop.execute(ctx, 'clerk', 'raw_request', args, { deadlineMs, operationTypes: tool.operationTypes, clerkToolSession: request.header('X-Sulla-Tool-Session') });
     if (!result.success) {
       const details = result.error?.details && typeof result.error.details === 'object' ? result.error.details as Record<string, unknown> : {};
       const resultStatus = (result as typeof result & { status?: unknown }).status;
@@ -211,7 +211,9 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
           clearTimeout(timer!);
         }
       })()
-      : await desktop.execute(ctx, category, requested, args, { deadlineMs, operationTypes: tool.operationTypes });
+      : await desktop.execute(ctx, category, requested, args, { deadlineMs, operationTypes: tool.operationTypes,
+        ...(category === 'clerk' ? { clerkToolSession: request.header('X-Sulla-Tool-Session') } : {}),
+      });
     if (tool.executionTarget !== 'catalog') {
       const forwarded = result as Awaited<ReturnType<typeof desktop.execute>>;
       const details = forwarded.error?.details && typeof forwarded.error.details === 'object' ? forwarded.error.details as Record<string, unknown> : {};

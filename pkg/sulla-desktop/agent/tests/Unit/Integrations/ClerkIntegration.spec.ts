@@ -14,6 +14,10 @@ import { ClerkAuthority, ClerkSavedPairRejectedError } from '../../../../../../s
 import { BrokerAuditRecorder } from '../../../../../../services/sulla-vault/src/localAuthority/BrokerAuditRecorder';
 import { IntegrationAccountService } from '../../../../../../services/sulla-vault/src/localAuthority/IntegrationAccountService';
 import { LocalVaultError } from '../../../../../../services/sulla-vault/src/localAuthority/LocalVaultError';
+import { AgentAwarenessPolicy } from '../../../services/AgentAwarenessPolicy';
+import { ClerkToolSessionResolver } from '../../../../main/ClerkToolSessionResolver';
+import { ToolSessionRegistry } from '../../../../main/mcpToolSessions';
+import type { BaseThreadState } from '../../../nodes/Graph';
 import { ClerkApiRoute } from '../../../../main/ClerkApiRoute';
 import { LocalVaultBrokerClient } from '../../../../vault-broker';
 import { ClerkClient, ClerkError, clerkSettings } from '../../../integrations/clerk/ClerkClient';
@@ -476,6 +480,38 @@ describe('Clerk guarded egress', () => {
     expect(refreshed).toHaveBeenCalledTimes(3);
     expect(f.authorize).toHaveBeenCalledTimes(1);
     expect(f.send).not.toHaveBeenCalled();
+  });
+
+  it('private Clerk dispatch requires a live agent proof matching the canonical worker and forwarded identity', async() => {
+    const sessions = new ToolSessionRegistry();
+    const name = 'clerk_get_user';
+    const state = { metadata: { agentId: context.agent_id, threadId: context.thread_id, allowedToolNames: [name] } } as BaseThreadState;
+    const session = sessions.register(state, 60_000, context);
+    const resolver = new ClerkToolSessionResolver({ getToolSession: id => sessions.get(id) },
+      { issueLocalBrokerContext: async() => { throw new Error('Unexpected host-local context'); } }, () => 'installation', new AgentAwarenessPolicy());
+    const f = fixture(caller => caller.revalidate());
+    const worker = new ClerkWorker(() => f.client);
+    worker.name = name;
+    worker.schemaDef = clerkToolManifests.find(manifest => manifest.name === name)!.schemaDef;
+    const signal = new AbortController().signal;
+    const dispatch = async(proof: string | undefined, forwarded = context, canonical = name) => {
+      await resolver.bindForwarded(worker, canonical, proof, forwarded, signal);
+      return worker.call({ user_id: 'user_a' });
+    };
+    const saved = toolDecisionPort.resolve();
+    toolDecisionPort.register({ request: f.decide, requiresApproval: async() => false });
+    try {
+      await expect(dispatch(undefined)).rejects.toMatchObject({ status: 403 });
+      await expect(dispatch('installation')).rejects.toMatchObject({ status: 403 });
+      await expect(dispatch(session, { ...context, thread_id: 'different' })).rejects.toMatchObject({ status: 403 });
+      await expect(dispatch(session, context, 'clerk_delete_user')).rejects.toMatchObject({ status: 403 });
+      expect(f.requests).toHaveLength(0);
+      await expect(dispatch(session)).resolves.toMatchObject({ success: true });
+      expect(f.send).toHaveBeenCalledTimes(1);
+      sessions.revoke(session);
+      await expect(worker.call({ user_id: 'user_a' })).resolves.toMatchObject({ success: false, status: 403 });
+      expect(f.requests).toHaveLength(1);
+    } finally { toolDecisionPort.register(saved); }
   });
 
   it('keeps the internal Clerk worker bound to its live session across explicit retry', async() => {
