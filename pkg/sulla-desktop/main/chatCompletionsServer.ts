@@ -1545,7 +1545,7 @@ export class ChatCompletionsServer {
           const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
-          const callTool = () => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
+          const callTool = (): Promise<AgentToolResult> => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
           const result = runtime ? await withAgentContainerRuntime(runtime, callTool) : await callTool();
           if (sendToolRejection(res, result)) return;
           return res.json({ success: true, result });
