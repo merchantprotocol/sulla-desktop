@@ -44,6 +44,7 @@ vi.mock('../../../services/ContainerProviderFileTransport', () => ({
   ContainerProviderFileTransport: { create: async() => ({ bindMount: 'fixture', dispose: async() => {} }) },
 }));
 vi.mock('@pkg/vault-broker', async original => ({ ...await original<object>(), usesContainerVaultAuthority: () => false }));
+vi.mock('../../../database/models/WorkFileClaimModel', () => ({ WorkFileClaimModel: { listActive: async() => [] } }));
 vi.mock('../../../database/RedisClient', () => ({ redisClient: { set: async() => {} } }));
 
 const binding = { podId: 'sulla-agent-clock-0', subject: 'owner', agentId: 'agent', threadId: 'thread', jobId: 'clock',
