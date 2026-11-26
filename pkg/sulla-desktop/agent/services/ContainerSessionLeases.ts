@@ -36,13 +36,12 @@ export class ContainerSessionLeases {
   /** Establish the single launcher default. Process leases never acquire ownership. */
   issue(id: string): string {
     if (this.launcher && (this.launcher.id !== id || !this.launcher.owned())) throw new Error('Launcher session not owned');
-    const signed = this.sign(id, true);
+    const token = this.sign(id);
     this.launcher ??= { id, owned: this.sessions.ownLauncherSession(id) };
-    signed.publish();
-    return signed.token;
+    return token;
   }
 
-  private sign(id: string, root = false) {
+  private sign(id: string): string {
     const session = this.sessions.peekToolSession(id);
     const ctx = session?.executionContext;
     const b = this.binding;
@@ -55,31 +54,12 @@ export class ContainerSessionLeases {
     const exp = Math.min(this.ceiling, ctx.exp, Math.floor(session.expiresAt / 1000), now + Math.ceil(this.ttlMs / 1000));
     if (exp <= now) throw new Error('Container tool session expired');
     this.expiresAt = Math.max(this.expiresAt, exp);
-    const token = issueCapabilityToken({
+    // The v2 generation binds ordinary CLI traffic; signing must never grant Clerk.
+    return issueCapabilityToken({
       sub: b.subject, org_id: b.orgId, agent_id: b.agentId, pod_id: b.podId, thread_id: b.threadId,
       job_id: b.jobId, task_index: b.taskIndex, device_id: b.deviceId, scopes: this.scopes,
       ...(this.version === '2' ? { tool_session_generation: ctx.jti } : {}), jti: this.lifecycleId, expiresInSeconds: exp - now,
     }, this.signingKey);
-
-    const parent = !root && this.launcher?.owned() ? this.sessions.peekToolSession(this.launcher.id) : null;
-    const parentPair = parent?.clerk;
-    const authority = session.clerk;
-    const generation = ctx.jti;
-    // Capture the original pair, not a future rebind of the mutable launcher record.
-    const parentRef = parent && parentPair && typeof parentPair === 'object' && !parentPair.parent &&
-      parent.executionContext?.jti === parentPair.generation && parentPair.expiresAt > Date.now()
-      ? { id: parent.id, generation: parentPair.generation } : undefined;
-    return { token, publish: () => {
-      if (this.closed || this.sessions.peekToolSession(id) !== session ||
-          session.executionContext?.jti !== generation || session.clerk !== authority) return;
-      if (this.version !== '2' || !(authority === 'unpaired' || (authority && typeof authority === 'object')) || (!root && !parentRef)) {
-        session.clerk = 'ordinary';
-        return;
-      }
-      // Renewal must not upgrade a child into a replacement parent's generation.
-      const pinnedParent = typeof authority === 'object' ? authority.parent : parentRef;
-      session.clerk = { generation, expiresAt: exp * 1000, parent: pinnedParent };
-    } };
   }
 
   private file(id: string): string {
@@ -96,8 +76,7 @@ export class ContainerSessionLeases {
     return this.enqueue(async() => {
       const lease = this.sign(id);
       this.processes.add(id);
-      await this.files.replace(this.file(id), lease.token);
-      lease.publish();
+      await this.files.replace(this.file(id), lease);
     });
   }
 
@@ -115,9 +94,8 @@ export class ContainerSessionLeases {
       if (this.launcher?.id !== id || !this.launcher.owned() || !rebindLauncher()) {
         throw new Error('Launcher tool session revoked or not owned');
       }
-      const launcher = this.sign(id, true);
-      await this.files.replace('SULLA_API_TOKEN', launcher.token);
-      launcher.publish();
+      const launcher = this.sign(id);
+      await this.files.replace('SULLA_API_TOKEN', launcher);
       for (const process of this.processes) {
         const live = this.sessions.peekToolSession(process);
         if (!live?.executionContext || Math.floor(Math.min(live.expiresAt / 1000, live.executionContext.exp)) <= Math.floor(Date.now() / 1000)) {
@@ -126,8 +104,7 @@ export class ContainerSessionLeases {
         } else {
           // Do not slide the session, change its graph, or rebind its generation.
           const signed = this.sign(process);
-          await this.files.replace(this.file(process), signed.token);
-          signed.publish();
+          await this.files.replace(this.file(process), signed);
         }
       }
     });

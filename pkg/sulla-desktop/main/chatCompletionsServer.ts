@@ -23,7 +23,7 @@ import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../v
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { createDesktopClerkClient, type ClerkCaller } from '@pkg/agent/integrations/clerk/ClerkClient';
 import { CLERK_DEADLINE_MS } from '@pkg/agent/integrations/clerk/ClerkEndpoints';
-import { ClerkToolSessionResolver } from './ClerkToolSessionResolver';
+import { CLERK_CONTAINER_DENIAL, ClerkToolSessionResolver } from './ClerkToolSessionResolver';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
@@ -517,7 +517,7 @@ export class ChatCompletionsServer {
             await this.clerkSessionResolver().bindForwarded(worker, toolName, req.headers['x-sulla-tool-session'], ctx,
               AbortSignal.any([deadline, disconnected.signal]));
           } catch {
-            return res.status(403).json({ success: false, error: { code: 'clerk_session_forbidden', message: 'An authorized Clerk agent session is required.' } });
+            return res.status(403).json({ success: false, error: { code: CLERK_CONTAINER_DENIAL, message: 'Clerk is unavailable from container agents.', details: { httpStatus: 403 } } });
           }
         } else {
           worker.executionContext = ctx;

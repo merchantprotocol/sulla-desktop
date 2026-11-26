@@ -13,7 +13,7 @@
       Clerk connection
     </h3>
     <p class="text-sm text-[var(--text-secondary)]">
-      Enter both keys for any environment you want to use. Unchanged sections keep their saved keys. Staging is the default for agent calls.
+      Enter both keys for any environment you want to use. Unchanged sections keep their saved keys. Agent calls default to staging and require a host-local session. Container agents can’t use Clerk.
     </p>
     <div
       v-if="errors.length"
