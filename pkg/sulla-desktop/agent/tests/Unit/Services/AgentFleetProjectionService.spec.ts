@@ -2,11 +2,14 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it } from 'vitest';
+import '../../Support/TestHomeEnv';
+import { describe, expect, it, vi } from 'vitest';
+vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 import { AgentFleetProjectionService } from '../../../app/Services/AgentFleetProjectionService';
 import { AgentLineageIndex } from '../../../app/Services/AgentLineageIndex';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActivityProjector';
+import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
 
 const task = (threadId: string, agentId = 'worker') => ({ agentId, label: agentId, prompt: 'work', status: 'running' as const, threadId });
 const job = (jobId: string, parentThreadId: string, tasks: ReturnType<typeof task>[], createdAt: number, parentAgentId = 'sulla'): AgentJob => ({
@@ -18,6 +21,7 @@ class FleetStateReader {
   listReads: Array<[number, boolean]> = [];
   constructor(private readonly values: AgentJob[]) {}
   async jobs() { this.fullReads++; return this.values; }
+  async jobsForProjection() { return this.values; }
   async list(limit = 25, includeFinished = true) { this.listReads.push([limit, includeFinished]); return this.values; }
   // Mirrors AgentStateService.descendants(): the lineage of one parent thread, resolved by the real index.
   async descendants(parentThreadId: string) { return new AgentLineageIndex(this.values).descendants(parentThreadId); }
@@ -30,6 +34,10 @@ class FleetTelemetryReader {
 class FleetTitleReader {
   calls: string[][] = [];
   async titlesForThreadIds(ids: string[]) { this.calls.push(ids); return Object.fromEntries(ids.map(id => [id, `Title ${ id }`])); }
+}
+
+class CheckAgentJobsHarness extends CheckAgentJobsWorker {
+  call(input: unknown) { return this._validatedCall(input); }
 }
 
 describe('AgentFleetProjectionService', () => {
@@ -119,5 +127,23 @@ describe('AgentFleetProjectionService open review items', () => {
 
     const [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
     expect((projected.tasks[0] as any).openReviewItems).toEqual([]);
+  });
+});
+
+describe('check_agent_jobs stall evidence', () => {
+  it('returns the durable diagnostic from the detailed job/task projection', async() => {
+    // risk: the service records why a worker stalled but its parent cannot inspect the evidence
+    const evidence = {
+      recordedAt: '2026-11-26T05:00:00.000Z', provider: 'codex' as const, jobId: 'stalled-job', taskIndex: 0, threadId: 'stalled-thread',
+      events: [{ timestamp: '2026-11-26T04:59:00.000Z', type: 'item.started' }], toolsInFlight: [{ name: 'command_execution', startedAt: '2026-11-26T04:58:00.000Z' }],
+      child: { pid: 72, providerPid: 91, alive: true, exitCode: null, signal: null }, stderrTail: 'provider stream closed', lastProviderRetry: null,
+      promptLength: 256, processRssBytes: 1048576, cgroupMemory: { currentBytes: 4096, maxBytes: 8192 },
+      suspendMarks: { lastSuspendAt: null, lastResumeAt: null }, appStartedAt: '2026-11-26T04:00:00.000Z',
+    };
+    const stalled = { ...job('stalled-job', 'parent-thread', [task('stalled-thread')], 1), tasks: [{ ...task('stalled-thread'), cliStallEvidence: evidence }] };
+    const fleet = new AgentFleetProjectionService(new FleetStateReader([stalled]) as any, new FleetTelemetryReader(), new FleetTitleReader() as any, () => 10_000);
+    const checked = await new CheckAgentJobsHarness(fleet).call({ jobId: 'stalled-job' });
+
+    expect(JSON.parse(checked.responseString).tasks[0].cliStallEvidence).toEqual(evidence);
   });
 });

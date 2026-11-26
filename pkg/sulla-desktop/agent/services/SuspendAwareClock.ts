@@ -8,6 +8,8 @@ export class SuspendAwareClock {
   private previousWallTime: number;
   private previousMonotonicTime: number;
   private suspendedTimeMs = 0;
+  private lastSuspendAt: number | null = null;
+  private lastResumeAt: number | null = null;
 
   constructor(
     private readonly wallTime: () => number = Date.now,
@@ -23,6 +25,10 @@ export class SuspendAwareClock {
     const wallElapsed = Math.max(0, wall - this.previousWallTime);
     const monotonicElapsed = Math.max(0, monotonic - this.previousMonotonicTime);
     const suspendedGap = Math.max(0, wallElapsed - monotonicElapsed - this.clockSkewToleranceMs);
+    if (suspendedGap > 0) {
+      this.lastSuspendAt = this.previousWallTime;
+      this.lastResumeAt = wall;
+    }
     this.suspendedTimeMs += suspendedGap;
     this.logicalTime += Math.max(0, wallElapsed - suspendedGap);
     this.previousWallTime = wall;
@@ -40,5 +46,10 @@ export class SuspendAwareClock {
   toLogicalTime(wallTime: number): number {
     this.now();
     return wallTime - this.suspendedTimeMs;
+  }
+
+  suspendMarks(): { lastSuspendAt: number | null; lastResumeAt: number | null } {
+    this.now();
+    return { lastSuspendAt: this.lastSuspendAt, lastResumeAt: this.lastResumeAt };
   }
 }

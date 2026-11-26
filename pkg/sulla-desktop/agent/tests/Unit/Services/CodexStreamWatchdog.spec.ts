@@ -9,6 +9,7 @@ import { createCodexService } from '../../../languagemodels/CodexService';
 import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
 import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
 import { LONG_TOOL_CEILING_MS } from '../../../services/RunLivenessClock';
+import type { AgentCliStallEvidence } from '../../../tools/agents/jobRegistry';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
@@ -42,6 +43,8 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
     stdin:    new PassThrough(),
     stdout:   new PassThrough(),
     stderr:   new PassThrough(),
+    pid:      12345,
+    signalCode: null,
     exitCode: null,
     kill:     vi.fn(() => true),
   });
@@ -52,7 +55,8 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
     spawn:     vi.fn(() => proc),
     terminate: vi.fn(async() => {}),
   } as any);
-  const service = createCodexService('gpt-6-luna', 'max') as any;
+  const evidenceWriter = { records: [] as AgentCliStallEvidence[], async save(_jobId: string, _taskIndex: number, evidence: AgentCliStallEvidence) { this.records.push(evidence) } };
+  const service = createCodexService('gpt-6-luna', 'max', evidenceWriter) as any;
   vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
   const abortController = new AbortController();
   let outcome: any;
@@ -60,11 +64,11 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
   const liveness = vi.fn();
   const finished = service.runCodex([
     { role: 'system', content: 'A synthetic watchdog test.' }, { role: 'user', content: 'Test only.' },
-  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test', signal: abortController.signal })
+  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test', signal: abortController.signal, state: { metadata: { modelDecisionTask: { jobId: 'evidence-job', taskIndex: 2, threadId: 'evidence-thread' } } } })
     .then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
   await vi.advanceTimersByTimeAsync(0);
   proc.emit('spawn');
-  return { proc, finished, outcome: () => outcome, activities, liveness, abortController };
+  return { proc, finished, outcome: () => outcome, activities, liveness, abortController, evidence: evidenceWriter.records };
 }
 
 describe('Codex quiet stream watchdog', () => {
@@ -85,7 +89,8 @@ describe('Codex quiet stream watchdog', () => {
     await run.finished;
     expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
     expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)', retrySafe: true, unsafeToFallback: false });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', retrySafe: true, unsafeToFallback: false });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)');
   });
 
   it('terminates a silent process at three minutes and settles after teardown', async() => {
@@ -97,7 +102,57 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes', retrySafe: true, unsafeToFallback: false });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', retrySafe: true, unsafeToFallback: false });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes');
+  });
+
+  it('persists sanitized stall evidence before teardown and points the parent to the job task record', async() => {
+    // risk: a Codex worker dies without evidence explaining whether the CLI, provider, memory or an in-flight tool stalled
+    const run = await launch();
+    for (let index = 0; index < 25; index++) run.proc.stdout.write(`${ JSON.stringify({ type: 'item.completed', item: { id: `reasoning-${ index }`, type: 'reasoning' } }) }\n`);
+    run.proc.stderr.write('Authorization: Bearer synthetic-secret-do-not-persist');
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
+    providerBridgeActivity.publishRetryStatus('codex-watchdog-test-pod', { status: 429 });
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
+    providerBridgeActivity.publishRetryStatus('codex-watchdog-test-pod', { status: 503 });
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 30_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+
+    expect(run.evidence).toHaveLength(1);
+    const [record] = run.evidence;
+    expect(record).toMatchObject({
+      provider: 'codex', jobId: 'evidence-job', taskIndex: 2, threadId: 'evidence-thread',
+      events: expect.arrayContaining([
+        expect.objectContaining({ type: 'provider_retry_429' }),
+        expect.objectContaining({ type: 'provider_retry_503' }),
+        expect.objectContaining({ type: 'stderr_chunk' }),
+      ]),
+      toolsInFlight: [],
+      child: { pid: 12345, providerPid: null, alive: true, exitCode: null, signal: null },
+      lastProviderRetry: { status: 503, timestamp: expect.any(String) },
+      promptLength: expect.any(Number), processRssBytes: expect.any(Number),
+      appStartedAt: expect.any(String), recordedAt: expect.any(String),
+    });
+    expect(record.suspendMarks).toHaveProperty('lastSuspendAt');
+    expect(record.suspendMarks).toHaveProperty('lastResumeAt');
+    expect(record.events).toHaveLength(20);
+    expect(record.events[record.events.length - 1].type).toBe('provider_retry_503');
+    expect(record.stderrTail).not.toContain('synthetic-secret-do-not-persist');
+    expect(record).toHaveProperty('cgroupMemory');
+    expect(run.outcome().message).toContain('check_agent_jobs(jobId="evidence-job")');
+    expect(run.outcome().message).toContain('tasks[2].cliStallEvidence');
+  });
+
+  it('does not persist stall evidence after a normal CLI completion', async() => {
+    // risk: normal successful turns are mislabeled or clutter job history with false stall evidence
+    const run = await launch();
+    run.proc.stdout.write(`${ JSON.stringify({ type: 'item.completed', item: { id: 'msg', type: 'agent_message', text: 'finished normally' } }) }\n`);
+    run.proc.stdout.write(`${ JSON.stringify({ type: 'turn.completed' }) }\n`);
+    run.proc.exitCode = 0;
+    run.proc.emit('close', 0, null);
+    await run.finished;
+    expect(run.evidence).toEqual([]);
   });
 
   it('resets the silence clock when stdout arrives at 2:59', async() => {
@@ -110,7 +165,8 @@ describe('Codex quiet stream watchdog', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes');
   });
 
   // Jonathon (2026-11-24): an agent is stalled only when its WHOLE loop is idle.
@@ -150,6 +206,7 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.outcome().message).toContain('tool still running for 120m: command_execution');
     expect(run.outcome()).toMatchObject({ retrySafe: false, unsafeToFallback: true });
     expect(run.outcome().message).not.toContain('no output for 3 minutes');
+    expect(run.evidence[0].toolsInFlight).toEqual([{ name: 'command_execution', startedAt: expect.any(String) }]);
   });
 
   it('does not stop a real 40-minute command while it is still running', async() => {
@@ -179,7 +236,8 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes');
   });
 
   it('keeps a run waiting on the human alive past the tool ceiling', async() => {
@@ -210,6 +268,7 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)');
   });
 });

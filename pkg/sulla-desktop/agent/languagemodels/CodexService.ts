@@ -25,6 +25,7 @@ import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
+import { CliStallEvidenceRecorder, durableCliStallEvidenceWriter, type CliStallEvidenceWriter } from '../services/CliStallEvidenceRecorder';
 import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
@@ -306,7 +307,7 @@ export class CodexService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) {
+  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy(), private readonly stallEvidenceWriter: CliStallEvidenceWriter = durableCliStallEvidenceWriter) {
     super({ id: 'codex', model: 'codex', baseUrl: 'local-vm' });
     this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
@@ -648,7 +649,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     let lastSetupMark = runPhaseStart;
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
-    const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
+    const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID(); const task = options.state?.metadata?.modelDecisionTask as { jobId?: string; taskIndex?: number; threadId?: string } | undefined; const stallEvidence = new CliStallEvidenceRecorder(this.stallEvidenceWriter, { provider: 'codex', jobId: task?.jobId, taskIndex: task?.taskIndex, threadId: task?.threadId ?? convId });
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -879,10 +880,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         if (settled) return;
         liveness.touch();
         if (event.status === 429) {
-          latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
+          stallEvidence.providerRetry(429); latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
           emitActivity('Codex is rate-limited, retrying', 'status');
         } else {
-          emitActivity('Codex is busy, retrying', 'status');
+          if (event.status === 503) stallEvidence.providerRetry(503); emitActivity('Codex is busy, retrying', 'status');
         }
       });
       let terminationPromise: Promise<void> | null = null;
@@ -964,7 +965,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
           : 'Codex stalled: no output for 3 minutes';
       const startStallWatchdog = () => {
-        liveness.start();
+        liveness.start(); stallEvidence.event('spawn');
         stallTimer = setInterval(() => {
           // Relayed model output (reasoning) is invisible on stdout; pass it up to the job clock.
           const bridgeOutputAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
@@ -981,10 +982,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           stalled = true;
           stopStallWatchdog();
-          cleanupMcp();
-          log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
-          killSpawn();
-          scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(stallErrorMessage(), liveness.toolsInFlight, unresolvedTool));
+          void stallEvidence.recordRunStall({ child: proc, providerPid: codexPid, stderr: stderrBuffer, promptLength: prompt.length, liveness, messages }).catch(() => { log.warn('[CodexService] Could not persist CLI stall evidence before teardown') }).then(() => {
+            cleanupMcp(); log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`); killSpawn();
+            scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(stallEvidence.failureMessage(stallErrorMessage()), liveness.toolsInFlight, unresolvedTool));
+          });
         }, STALL_CHECK_MS);
       };
       proc.once('spawn', startStallWatchdog);
@@ -1105,8 +1106,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         } catch {
           return;
         }
-
-        const limitSnapshot = normalizeCodexLimitSnapshot(parsed);
+        stallEvidence.event(typeof parsed.type === 'string' ? parsed.type : typeof parsed.msg?.type === 'string' ? parsed.msg.type : 'json_event'); const limitSnapshot = normalizeCodexLimitSnapshot(parsed);
         if (limitSnapshot) recordCliLimitSnapshot('codex', limitSnapshot).catch(() => {});
 
         // ── Thread-event schema (codex exec --json) ──────────────
@@ -1233,7 +1233,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       proc.stdout.on('data', (chunk) => {
         if (settled) return;
-        liveness.touch();
+        stallEvidence.event('stdout_chunk'); liveness.touch();
         try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
@@ -1243,7 +1243,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       proc.stderr.on('data', (chunk) => {
         if (settled) return;
-        liveness.touch();
+        stallEvidence.event('stderr_chunk'); liveness.touch();
         let text = chunk.toString('utf-8');
         if (!codexPid && text.includes(CODEX_PID_MARKER)) {
           const m = new RegExp(`${ CODEX_PID_MARKER }(\\d+)\\s*`).exec(text);
@@ -1277,7 +1277,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           processLine(stdoutBuffer);
           stdoutBuffer = '';
         }
-        const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
+        if (stalled && !terminationPromise) return; const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
         cleanupMcp();
@@ -1335,7 +1335,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // Stall-watchdog kill — surface the exact rule violation instead of
         // falling through to the generic no-output message.
         if (stalled) {
-          const stallError = stallRecoveryPolicy.createFault(stallErrorMessage(), liveness.toolsInFlight, unresolvedTool);
+          const stallError = stallRecoveryPolicy.createFault(stallEvidence.failureMessage(stallErrorMessage()), liveness.toolsInFlight, unresolvedTool);
           failureDiagnostics.failure({ error: stallError, fault: 'stall', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           reject(stallError);
           return;
@@ -1466,8 +1466,8 @@ export function getCodexService(): CodexService {
 }
 
 /** Create a fresh (non-singleton) CodexService with a specific model override. */
-export function createCodexService(model: string, effort?: string): CodexService {
-  const svc = new CodexService();
+export function createCodexService(model: string, effort?: string, stallEvidenceWriter: CliStallEvidenceWriter = durableCliStallEvidenceWriter): CodexService {
+  const svc = new CodexService(undefined, stallEvidenceWriter);
   svc.setModel(model);
   svc.setEffort(effort);
   return svc;

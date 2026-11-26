@@ -16,6 +16,8 @@ import { AgentTeamRollupProjector } from '../../../app/Services/AgentTeamRollupP
 import { SubagentDirectoryBuilder } from '../../../services/SubagentDirectory';
 import { CloudAgentStateProjection } from '../../../tools/agents/cloudProjection';
 import { AgentJobServiceProvider } from '../../../app/Providers/AgentJobServiceProvider';
+import { AgentJobTaskCliStallEvidenceWriter } from '../../../services/CliStallEvidenceRecorder';
+import type { AgentCliStallEvidence } from '../../../tools/agents/jobRegistry';
 
 // The static import chain reaches Electron-only modules; mock the package so
 // the suite never resolves the uninstalled binary (headless CI has no Electron).
@@ -69,6 +71,26 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     expect(await registry.delegationDepthForThread('thread-lifecycle')).toBe(2);
     expect(tab.visibility).toBe('tab');
     expect(registry.MAX_SUBAGENT_DEPTH).toBe(3);
+  });
+
+  it('persists CLI stall evidence on task JSON and exposes it through check_agent_jobs(jobId)', async() => {
+    // risk: a worker stall diagnosis is lost on restart or is not visible to the parent that must explain the death
+    const threadId = `stall-evidence-${ Date.now() }`;
+    const job = await registry.createJob([{ agentId: 'codex-sol-worker', label: 'diagnostic', prompt: 'synthetic task', status: 'running', threadId }]);
+    const evidence: AgentCliStallEvidence = {
+      recordedAt: new Date().toISOString(), provider: 'codex', jobId: job.jobId, taskIndex: 0, threadId,
+      events: [{ timestamp: new Date().toISOString(), type: 'item.started' }], toolsInFlight: [{ name: 'command_execution', startedAt: new Date().toISOString() }],
+      child: { pid: 72, providerPid: 91, alive: true, exitCode: null, signal: null }, stderrTail: 'synthetic provider diagnostic', lastProviderRetry: null,
+      promptLength: 123, processRssBytes: 4096, cgroupMemory: { currentBytes: 8192, maxBytes: 16384 },
+      suspendMarks: { lastSuspendAt: null, lastResumeAt: null }, appStartedAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+
+    await new AgentJobTaskCliStallEvidenceWriter().save(job.jobId, 0, evidence);
+
+    expect((await registry.getJob(job.jobId))?.tasks[0].cliStallEvidence).toEqual(evidence);
+    const check = new CheckAgentJobsHarness();
+    const inspected = await check.call({ jobId: job.jobId });
+    expect(JSON.parse(inspected.responseString).tasks[0].cliStallEvidence).toEqual(evidence);
   });
 
   it('queues messages in order and marks each delivered exactly once', async() => {

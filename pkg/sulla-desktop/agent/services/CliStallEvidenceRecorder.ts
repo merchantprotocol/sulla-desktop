@@ -1,0 +1,209 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
+import * as fs from 'node:fs';
+
+import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import type { AgentCliStallEvidence } from '../tools/agents/jobRegistry';
+import type { RunLivenessClock, RunToolInFlight } from './RunLivenessClock';
+
+export interface CliStallEvidenceWriter {
+  save(jobId: string, taskIndex: number, evidence: AgentCliStallEvidence): Promise<void>;
+}
+
+export interface CliStallIdentity {
+  provider: 'codex' | 'claude-code';
+  jobId?: string;
+  taskIndex?: number;
+  threadId?: string;
+}
+
+export interface CliStallMemorySnapshot {
+  processRssBytes: number | null;
+  cgroupMemory: { currentBytes: number | null; maxBytes: number | 'max' | null } | null;
+}
+
+export interface CliStallMemoryReader {
+  read(): CliStallMemorySnapshot;
+}
+
+export interface CliStallSnapshot {
+  childPid: number | null;
+  providerPid?: number | null;
+  childAlive: boolean;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  stderr: string;
+  promptLength: number;
+  toolsInFlight: RunToolInFlight[];
+  lastProviderRetry: { status: 429 | 503; at: number } | null;
+  suspendMarks: { lastSuspendAt: number | null; lastResumeAt: number | null };
+  messages?: ChatMessage[];
+  sensitiveContent?: string[];
+}
+
+export interface CliStallRunSnapshot {
+  child: { pid?: number; exitCode: number | null; signalCode?: NodeJS.Signals | null };
+  providerPid?: number | null;
+  stderr: string;
+  promptLength: number;
+  liveness: Pick<RunLivenessClock, 'toolsInFlightSnapshot' | 'suspendMarks'>;
+  messages?: ChatMessage[];
+}
+
+/** Reads only bounded process/cgroup memory metadata; unreadable cgroup values remain null. */
+export class NodeCliStallMemoryReader implements CliStallMemoryReader {
+  read(): CliStallMemorySnapshot {
+    return {
+      processRssBytes: this.rssBytes(),
+      cgroupMemory: this.cgroupMemory(),
+    };
+  }
+
+  private rssBytes(): number | null {
+    try { return process.memoryUsage().rss } catch { return null }
+  }
+
+  private cgroupMemory(): CliStallMemorySnapshot['cgroupMemory'] {
+    const current = this.readNumber('/sys/fs/cgroup/memory.current') ?? this.readNumber('/sys/fs/cgroup/memory/memory.usage_in_bytes');
+    const maxText = this.readText('/sys/fs/cgroup/memory.max') ?? this.readText('/sys/fs/cgroup/memory/memory.limit_in_bytes');
+    const maxBytes = maxText === 'max' ? 'max' : maxText && /^\d+$/.test(maxText) ? Number(maxText) : null;
+    return current === null && maxBytes === null ? null : { currentBytes: current, maxBytes };
+  }
+
+  private readText(path: string): string | null {
+    try { return fs.readFileSync(path, 'utf8').trim() } catch { return null }
+  }
+
+  private readNumber(path: string): number | null {
+    const value = this.readText(path);
+    return value && /^\d+$/.test(value) ? Number(value) : null;
+  }
+}
+
+/** Writes sanitized CLI stall evidence onto the existing durable job task JSON. */
+export class AgentJobTaskCliStallEvidenceWriter implements CliStallEvidenceWriter {
+  async save(jobId: string, taskIndex: number, evidence: AgentCliStallEvidence): Promise<void> {
+    const registry = await import('../tools/agents/jobRegistry');
+    await registry.updateJobTask(jobId, taskIndex, { cliStallEvidence: evidence });
+    const saved = (await registry.getJob(jobId))?.tasks[taskIndex]?.cliStallEvidence;
+    if (saved?.recordedAt !== evidence.recordedAt) throw new Error('CLI stall evidence was not persisted on the target task');
+  }
+}
+
+/** Per-process history and durable evidence writer used by both CLI providers. */
+export class CliStallEvidenceRecorder {
+  private readonly events: Array<{ timestamp: string; type: string }> = [];
+  private persisted = false;
+  private lastProviderRetry: { status: 429 | 503; at: number } | null = null;
+
+  constructor(
+    private readonly writer: CliStallEvidenceWriter,
+    private readonly identity: CliStallIdentity,
+    private readonly memory: CliStallMemoryReader = new NodeCliStallMemoryReader(),
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  event(type: string, at = this.now()): void {
+    this.events.push({ timestamp: this.iso(at), type: this.safeType(type) });
+    if (this.events.length > 20) this.events.splice(0, this.events.length - 20);
+  }
+
+  providerRetry(status: 429 | 503, at = this.now()): void {
+    this.lastProviderRetry = { status, at };
+    this.event(`provider_retry_${ status }`, at);
+  }
+
+  pointer(): string | undefined {
+    if (!this.identity.jobId || this.identity.taskIndex === undefined) return undefined;
+    const state = this.persisted ? 'Stall evidence is stored' : 'Stall evidence could not be confirmed';
+    return `${ state } on task ${ this.identity.taskIndex } of job ${ this.identity.jobId }; inspect check_agent_jobs(jobId="${ this.identity.jobId }") at tasks[${ this.identity.taskIndex }].cliStallEvidence.`;
+  }
+
+  failureMessage(message: string): string {
+    const pointer = this.pointer();
+    return pointer ? `${ message }\n${ pointer }` : message;
+  }
+
+  recordRunStall(snapshot: CliStallRunSnapshot): Promise<AgentCliStallEvidence | undefined> {
+    const child = snapshot.child;
+    return this.recordStall({
+      childPid: child.pid ?? null,
+      providerPid: snapshot.providerPid,
+      childAlive: child.pid !== undefined && child.exitCode === null && (child.signalCode ?? null) === null,
+      exitCode: child.exitCode,
+      signal: child.signalCode ?? null,
+      stderr: snapshot.stderr,
+      promptLength: snapshot.promptLength,
+      toolsInFlight: snapshot.liveness.toolsInFlightSnapshot(),
+      lastProviderRetry: this.lastProviderRetry,
+      suspendMarks: snapshot.liveness.suspendMarks(),
+      messages: snapshot.messages,
+    });
+  }
+
+  async recordStall(snapshot: CliStallSnapshot): Promise<AgentCliStallEvidence | undefined> {
+    const { jobId, taskIndex, threadId, provider } = this.identity;
+    if (!jobId || !Number.isInteger(taskIndex) || taskIndex! < 0 || !threadId) return undefined;
+    const memory = this.memory.read();
+    const evidence: AgentCliStallEvidence = {
+      recordedAt: this.iso(this.now()), provider, jobId, taskIndex: taskIndex!, threadId,
+      events: [...this.events],
+      toolsInFlight: snapshot.toolsInFlight.map(tool => ({ name: this.safeType(tool.name), startedAt: this.iso(tool.startedAt) })),
+      child: {
+        pid: Number.isInteger(snapshot.childPid) ? snapshot.childPid : null,
+        providerPid: Number.isInteger(snapshot.providerPid) ? snapshot.providerPid! : null,
+        alive: snapshot.childAlive,
+        exitCode: Number.isInteger(snapshot.exitCode) ? snapshot.exitCode : null,
+        signal: typeof snapshot.signal === 'string' && /^SIG[A-Z0-9]+$/.test(snapshot.signal) ? snapshot.signal : null,
+      },
+      stderrTail: this.sanitizeStderr(snapshot.stderr, [...(snapshot.sensitiveContent ?? []), ...this.messageText(snapshot.messages ?? [])]),
+      lastProviderRetry: snapshot.lastProviderRetry
+        ? { status: snapshot.lastProviderRetry.status, timestamp: this.iso(snapshot.lastProviderRetry.at) }
+        : null,
+      promptLength: Number.isFinite(snapshot.promptLength) ? Math.max(0, Math.trunc(snapshot.promptLength)) : 0,
+      processRssBytes: memory.processRssBytes,
+      cgroupMemory: memory.cgroupMemory,
+      suspendMarks: {
+        lastSuspendAt: snapshot.suspendMarks.lastSuspendAt === null ? null : this.iso(snapshot.suspendMarks.lastSuspendAt),
+        lastResumeAt: snapshot.suspendMarks.lastResumeAt === null ? null : this.iso(snapshot.suspendMarks.lastResumeAt),
+      },
+      appStartedAt: this.iso(this.now() - process.uptime() * 1000),
+    };
+    await this.writer.save(jobId, taskIndex!, evidence);
+    this.persisted = true;
+    return evidence;
+  }
+
+  private safeType(value: string): string {
+    return String(value).replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 80) || 'unknown';
+  }
+
+  private messageText(messages: ChatMessage[]): string[] {
+    return messages.flatMap(message => typeof message.content === 'string'
+      ? [message.content]
+      : message.content.flatMap(block => block.type === 'text' ? [block.text] : []))
+      .filter(text => text.trim().length >= 8);
+  }
+
+  private sanitizeStderr(value: string, sensitiveContent: string[]): string {
+    if (sensitiveContent.some(text => text.trim().length >= 8 && value.includes(text.trim()))) return '[omitted: stderr echoed request content]';
+    const redacted = value
+      .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gi, '[redacted private key]')
+      .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+      .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, '[redacted credential]')
+      .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
+      .replace(/\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted JWT]');
+    let tail = Buffer.from(redacted, 'utf8').subarray(-2048).toString('utf8');
+    while (Buffer.byteLength(tail, 'utf8') > 2048) tail = tail.slice(1);
+    return tail;
+  }
+
+  private iso(at: number): string {
+    return Number.isFinite(at) ? new Date(at).toISOString() : new Date(this.now()).toISOString();
+  }
+}
+
+export const durableCliStallEvidenceWriter = new AgentJobTaskCliStallEvidenceWriter();

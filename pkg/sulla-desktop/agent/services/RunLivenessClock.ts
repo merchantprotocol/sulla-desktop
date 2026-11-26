@@ -18,7 +18,7 @@ import { SuspendAwareClock } from './SuspendAwareClock';
 
 export const LONG_TOOL_CEILING_MS = 2 * 60 * 60_000;
 
-export interface RunToolInFlight { name: string; startedAt: number }
+export interface RunToolInFlight { name: string; startedAt: number; startedAtWall?: number }
 
 const HUMAN_WAIT_TOOL = /ask_user|approv|permission|question/i;
 
@@ -90,7 +90,8 @@ export class RunLivenessClock {
   toolStarted(id: string, name: string): boolean {
     this.touch();
     if (!id || this.tools.has(id)) return false;
-    this.tools.set(id, { name: name || 'a tool', startedAt: this.clock() });
+    const startedAt = this.clock();
+    this.tools.set(id, { name: name || 'a tool', startedAt, startedAtWall: this.suspendAwareClock?.toWallTime(startedAt) ?? startedAt });
     return true;
   }
 
@@ -100,6 +101,17 @@ export class RunLivenessClock {
   }
 
   get toolsInFlight(): number { return this.tools.size }
+
+  toolsInFlightSnapshot(): RunToolInFlight[] {
+    return [...this.tools.values()].map(tool => ({
+      ...tool,
+      startedAt: tool.startedAtWall ?? tool.startedAt,
+    }));
+  }
+
+  suspendMarks(): { lastSuspendAt: number | null; lastResumeAt: number | null } {
+    return this.suspendAwareClock?.suspendMarks() ?? { lastSuspendAt: null, lastResumeAt: null };
+  }
 
   /** The tool call the run is blocked on (a human wait first, then the oldest), if any. */
   oldestTool(): RunToolInFlight | undefined {
