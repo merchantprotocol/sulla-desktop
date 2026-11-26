@@ -51,6 +51,12 @@ export class WindowTabStripState {
     return { snapshot, working: this.running.has(tabId) || snapshot?.state === 'working' };
   }
 
+  readHeaderActivity(tab: { id: string; mode: string }) {
+    const { working, snapshot } = tab.mode === 'chat' ? this.readActivity(tab.id) : { working: false, snapshot: undefined };
+
+    return { working, activity: snapshot?.state ?? (working ? 'working' as const : undefined), detail: snapshot?.detail };
+  }
+
   setSnapshot(tabId: string, activity: ChatTabActivitySnapshot): void {
     const previous = this.snapshots.get(tabId);
 
