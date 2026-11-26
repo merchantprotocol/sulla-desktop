@@ -158,7 +158,8 @@ provide(LineTimeKey, id => times.value.get(id));
 const jumper = new TranscriptJump();
 function onJump(event: Event): void {
   const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
-  if (messageId) jumper.jump(transcriptEntries.value, String(messageId), matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (messageId) jumper.jump(props.reportingLevel === 'debug' ? detailedJumpEntries() : transcriptEntries.value,
+    String(messageId), matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 let loadingOlder = false;
 let historyExhausted = false;
@@ -205,6 +206,16 @@ const detailedTimeline = computed(() => timelineProjection.project(
   agentState?.snapshot.value.rows,
   waiting.value,
 ));
+function detailedJumpEntries(): Array<{ id: string; sourceId?: string }> {
+  const entries: Array<{ id: string; sourceId?: string }> = [];
+  for (const item of detailedTimeline.value) {
+    if (item.kind === 'header') continue;
+    if (item.kind === 'trace') entries.push({ id: item.row.id, sourceId: item.row.sourceMessageId });
+    else if (item.kind === 'message') entries.push({ id: item.entry.id, sourceId: item.entry.sourceId });
+    else entries.push({ id: item.id, sourceId: String(item.message.id) });
+  }
+  return entries;
+}
 function resend(): void {
   const text = waiting.value?.message.text;
   controller.stop();

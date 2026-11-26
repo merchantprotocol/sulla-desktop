@@ -732,3 +732,61 @@ it('ticks only a mounted working sub-agent and stops ticking when it settles', a
     vi.useRealTimers();
   }
 });
+
+// risk: jump-to cannot reach Detailed-only thought, running-tool, or sub-agent events.
+it('jumps to detailed trace rows by their source message ids', async() => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true }));
+  onTestFinished(() => vi.unstubAllGlobals());
+  const fixture = new ReportingFixture();
+  fixture.chat.appendMessage({ id: asMessageId('jump-user'), kind: 'user', createdAt: 10, text: 'inspect' });
+  fixture.chat.appendMessage({ id: asMessageId('jump-thought'), kind: 'thinking', createdAt: 20, startedAt: 20,
+    completed: false, thoughts: ['Thinking'] });
+  fixture.chat.appendMessage({ id: asMessageId('jump-tool'), kind: 'tool', createdAt: 30,
+    tool: 'Shell', recordedToolName: 'exec', desc: 'Running', status: 'running', input: 'echo fixture' });
+  fixture.chat.appendMessage({ id: asMessageId('jump-launch'), kind: 'subagent_exchange', createdAt: 40,
+    direction: 'to_agent', jobId: 'jump-job', taskIndex: 0, conversationId: 'jump-child', agentId: 'worker',
+    label: 'Worker', summary: 'Started', detail: 'Full brief', status: 'running' });
+  const wrapper = fixture.mount('debug');
+  document.body.append(wrapper.element);
+  await flushPromises();
+  const thought = wrapper.get('li.dtr-row[data-kind="thought"]').element as HTMLElement;
+  const tool = wrapper.get('li.dtr-row[data-kind="tool"]').element as HTMLElement;
+  const handoff = wrapper.get('li.dtr-row[data-kind="handoff"]').element as HTMLElement;
+  thought.scrollIntoView = vi.fn();
+  tool.scrollIntoView = vi.fn();
+  handoff.scrollIntoView = vi.fn();
+  const jump = (messageId: string) => window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId } }));
+
+  jump('jump-thought');
+  jump('jump-tool');
+  jump('jump-launch');
+
+  expect(thought.scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+  expect(tool.scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+  expect(handoff.scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+});
+
+// risk: a trace row's source alias steals the reply card's jump target or deletes it when unmounted.
+it('keeps the reply card as the jump target when its trace row shares the source message', async() => {
+  vi.stubGlobal('matchMedia', () => ({ matches: true }));
+  onTestFinished(() => vi.unstubAllGlobals());
+  const fixture = new ReportingFixture();
+  const replyId = asMessageId('reply-with-trace');
+  const marker = `⟦SULLA_A2A:${ Buffer.from(JSON.stringify({
+    id: 'outgoing-1', to: 'worker', targetId: 'job-1', body: 'inspect', status: 'sent',
+  })).toString('base64url') }⟧`;
+  fixture.chat.appendMessage({ id: asMessageId('reply-user'), kind: 'user', createdAt: 10, text: 'inspect' });
+  fixture.chat.appendMessage({ id: replyId, kind: 'sulla', createdAt: 20, text: `Delegating. ${marker}` });
+  const wrapper = fixture.mount('debug');
+  document.body.append(wrapper.element);
+  await flushPromises();
+  const reply = wrapper.get('.dtr-message[data-kind="sulla"]').element as HTMLElement;
+  const trace = wrapper.get('li.dtr-row[data-kind="activity"]').element as HTMLElement;
+  reply.scrollIntoView = vi.fn();
+  trace.scrollIntoView = vi.fn();
+
+  window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId: replyId } }));
+
+  expect(reply.scrollIntoView).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+  expect(trace.scrollIntoView).not.toHaveBeenCalled();
+});

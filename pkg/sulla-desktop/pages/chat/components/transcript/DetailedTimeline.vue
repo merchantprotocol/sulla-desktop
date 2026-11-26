@@ -91,10 +91,20 @@ const props = defineProps<{
 defineEmits<{ (event: 'stop'): void; (event: 'resend'): void }>();
 const segmenter = new DetailedTimelineSegmenter();
 const segments = computed(() => segmenter.segment(props.items));
+const ownedMessageIds = computed(() => {
+  const ids = new Set<string>();
+  for (const item of props.items) if (item.kind === 'message') {
+    ids.add(item.entry.id);
+    ids.add(item.entry.sourceId);
+  }
+  return ids;
+});
 
 function registerTrace(row: TraceRowModel, element: unknown): void {
   props.registerElement(row.id, element);
-  if (row.sourceMessageId) props.registerElement(row.sourceMessageId, element);
+  if (row.sourceMessageId && !ownedMessageIds.value.has(row.sourceMessageId)) {
+    props.registerElement(row.sourceMessageId, element);
+  }
 }
 
 function registerLine(id: string, element: unknown): void { props.registerElement(id, element); }
