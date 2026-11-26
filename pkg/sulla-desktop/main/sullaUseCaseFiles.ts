@@ -271,10 +271,10 @@ export class SullaUseCaseFiles {
     const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }`);
     if (!anchor) throw new Error(`${ type }/${ packageSlug } is missing ${ anchorName }`);
     if (renamed && anchor.id !== renamed.checkedRootId) {
-      // The loader can skip an empty root. Check ownership against the manifest it actually selected.
-      const otherRootIds = SullaUseCaseFiles.rootAgentAnchors(packageSlug, packageRows).map(row => row.id).filter(id => id !== anchor.id);
-      const owner = await this.renamedPublications.find(packageSlug, [anchor.id, ...otherRootIds]);
-      if (!owner || owner.split) throw new RenamedRootMismatch(anchor);
+      // The loader skipped the checked root. Only project if no folder-slug row owns any live root.
+      const rootIds = SullaUseCaseFiles.rootAgentAnchors(packageSlug, packageRows).map(row => row.id);
+      const owner = await this.renamedPublications.find(packageSlug, rootIds);
+      if (!owner || owner.folder_owns_root) throw new RenamedRootMismatch(anchor);
       renamed = { ...owner, checkedRootId: anchor.id };
     }
     const slug = renamed?.slug ?? packageSlug;
