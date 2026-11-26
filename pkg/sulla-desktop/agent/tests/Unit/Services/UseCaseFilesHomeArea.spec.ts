@@ -195,6 +195,17 @@ describe('publication ownership after the identity migration', () => {
     expect(announce).not.toHaveBeenCalled();
   });
 
+  it('projects the sole owner’s updated YAML when the loader skips an unclaimed empty JSON root', async() => {
+    await migratedPackage(true);
+    const updatedYaml = { ...yamlRoot, published_version_id: '00000000-0000-4000-8000-000000000005' };
+    const { scan, audits } = publication([updatedYaml, jsonRoot], '');
+
+    await scan();
+    expect(await readRows()).toEqual([{ ...original, system_prompt: 'YAML prompt', use_case_version_id: updatedYaml.published_version_id }]);
+    expect(audits).toEqual([]);
+    expect((await f.app.query('SELECT last_error FROM use_case_files_state')).rows[0].last_error).toBeNull();
+  });
+
   it('preserves both published rows when the loader skips the checked root', async() => {
     await migratedPackage(true);
     const yml = { ...yamlRoot, path: folder + 'agent.yml' };
