@@ -4,8 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { agentJobProvider } from '../../../app/Providers/AgentJobServiceProvider';
 import { waitForAutomaticAgentExecution } from '../../../services/AgentExecutionReadiness';
-import { AgentOrchestratorMessageFormatter } from '../../../services/AgentOrchestratorMessageFormatter';
 import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
+import { AgentOrchestratorMessageFormatter } from '../../../services/AgentOrchestratorMessageFormatter';
 import { BackendGraphWebSocketService } from '../../../services/BackendGraphWebSocketService';
 import { ChatHeartbeatDeliveryService } from '../../../services/ChatHeartbeatDeliveryService';
 import { GraphRegistry } from '../../../services/GraphRegistry';
