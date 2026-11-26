@@ -181,7 +181,7 @@
 
         <div
           class="composer-capsule"
-          :class="glowClasses"
+          :class="glowClasses" :style="{ '--glow-c': glowColor }"
           :data-glow-level="glow.state.level"
         >
           <div class="composer-halo composer-halo--breathing" aria-hidden="true" />
@@ -279,8 +279,8 @@ import { useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import type { SuggestedUseCase, SuggestedUseCaseType, UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { usePrimaryColor } from '@pkg/composables/usePrimaryColor';
 const controller = useChatController();
-
 // Injected by ChatPage when nested inside a browser tab — lets us open the
 // browser directly when the user types a bare URL instead of a chat message.
 const navigateUrl = inject<((url: string) => void) | undefined>('chat:navigate-url', undefined);
@@ -317,7 +317,7 @@ const remoteTransport: RemoteChatTransport = {
 const remoteChat = new RemoteChatSession(controller, remoteTransport, text => {
   if (draft.value.trim() === text) draft.value = '';
 }, () => tabActive?.value !== false);
-const isRunActive = computed(() => remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value);
+const isRunActive = computed(() => ComposerGlow.isRunning(remoteChat.remote.value ? remoteChat.running.value : controller.isRunning.value, threadActivity?.projection.value.agents ?? []));
 const isDocumentHidden = ref(false);
 function updateDocumentVisibility(): void {
   isDocumentHidden.value = document.visibilityState === 'hidden' || !document.hasFocus();
@@ -326,7 +326,7 @@ function updateDocumentVisibility(): void {
 // ─── Breathing glow (approved Capsule mockup) ───────────────────────
 // Driven only by events the app already emits: ChatController's run state and
 // transcript events, plus the thread's sub-agent check-ins from ChatPage.
-const glow = new ComposerGlow();
+const { primaryColor } = usePrimaryColor(), glow = new ComposerGlow(), glowColor = computed(() => ComposerGlow.resolveColor(primaryColor.value, 'var(--accent)'));
 const glowClasses = computed(() => ({
   'is-running':      isRunActive.value,
   'document-hidden': isDocumentHidden.value,
@@ -979,12 +979,12 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
 /* Breathing glow: pre-painted layers; only opacity and transform change (ComposerGlow.ts drives the classes). */
 .composer-capsule {
-  --glow-o: .45; --glow-c: var(--accent);
+  --glow-o: .2; --glow-c: var(--primary-color-override, var(--accent));
   --glow-ease: cubic-bezier(.22, 1, .36, 1); --glow-ease-in: cubic-bezier(.16, 1, .3, 1);
 }
-.composer-capsule[data-glow-level="1"] { --glow-o: .54; }
-.composer-capsule[data-glow-level="2"] { --glow-o: .67; }
-.composer-capsule[data-glow-level="3"] { --glow-o: .76; }
+.composer-capsule[data-glow-level="1"] { --glow-o: .36; }
+.composer-capsule[data-glow-level="2"] { --glow-o: .52; }
+.composer-capsule[data-glow-level="3"] { --glow-o: .66; }
 .composer-capsule.glow-stream { --glow-o: max(var(--glow-o), .62); }
 .composer-capsule.glow-deep { --glow-o: max(var(--glow-o), .56); }
 .composer-halo {
@@ -995,7 +995,7 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-halo--stalled { --glow-c: var(--status-warning, #f0a020); }
 .composer-capsule.glow-on .composer-halo--breathing {
   opacity: var(--glow-o);
-  animation: composer-glow-breathe 3.8s ease-in-out infinite;
+  animation: composer-glow-breathe 3.2s ease-in-out infinite;
   transition-duration: 1600ms;
 }
 .composer-capsule.glow-on .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: var(--glow-o); transition-duration: 1600ms; }
