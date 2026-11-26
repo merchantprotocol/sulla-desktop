@@ -23,9 +23,10 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useFocusGuard } from '@pkg/composables/useFocusGuard';
+import { ComposerInputAutosizer } from './ComposerInputAutosizer';
 
 const props = defineProps<{
   modelValue: string;
@@ -39,6 +40,7 @@ const emit = defineEmits<{
 }>();
 
 const taRef = ref<HTMLTextAreaElement | null>(null);
+let autosizer: ComposerInputAutosizer | undefined;
 useFocusGuard(taRef);
 const model = ref(props.modelValue);
 
@@ -54,17 +56,15 @@ watch(() => props.modelValue, v => {
 });
 watch(model, v => emit('update:modelValue', v));
 
-onMounted(autogrow);
+onMounted(() => {
+  if (!taRef.value) return;
+  autosizer = new ComposerInputAutosizer(taRef.value);
+  autosizer.observe();
+});
 
-function autogrow(): void {
-  const el = taRef.value; if (!el) return;
-  el.style.overflowY = 'hidden';
-  el.style.height = 'auto';
-  // scrollHeight includes padding, but a border-box height also needs the border.
-  const borderHeight = el.offsetHeight - el.clientHeight;
-  el.style.height = Math.min(160, el.scrollHeight + borderHeight) + 'px';
-  el.style.overflowY = el.scrollHeight > el.clientHeight ? 'auto' : 'hidden';
-}
+onBeforeUnmount(() => autosizer?.dispose());
+
+function autogrow(): void { autosizer?.resize() }
 
 function onKeydown(e: KeyboardEvent): void {
   emit('keydown', e);
