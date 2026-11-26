@@ -13,6 +13,11 @@ describe('model and effort status', () => {
     expect(AgentModelStatus.label({ model: 'gpt-6-luna', effort: null, source: 'requested' })).toContain('Effort not reported');
     expect(AgentModelStatus.label({ model: 'grok-4.7', provider: 'grok', effort: null, source: 'resolved' })).toContain('No effort setting');
   });
+  it('labels selected aliases whose response has no provider model receipt', () => {
+    const selected = { model: 'opus', provider: 'claude-code', effort: 'high', source: 'resolved' as const };
+    expect(AgentModelStatus.label({ ...selected, modelEvidence: 'unconfirmed' })).toContain('response model unconfirmed');
+    expect(AgentModelStatus.label({ ...selected, model: 'provider-version', modelEvidence: 'provider' })).toBe('provider-version · High');
+  });
   it('publishes only changed runtime settings and keeps separate threads isolated', () => {
     let updates = 0; const stop = AgentModelStatusRegistry.onChange(() => { updates++ });
     const value = { model: 'gpt-6-luna', effort: 'max', source: 'resolved' as const };
