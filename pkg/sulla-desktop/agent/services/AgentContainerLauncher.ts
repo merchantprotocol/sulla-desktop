@@ -394,14 +394,16 @@ export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRunti
       if (details?.State?.Running !== true && details?.State?.Status !== 'running') continue;
       const labels = details?.Config?.Labels ?? {}; const jobId = labels['com.sulla.job-id'];
       if (!jobId) continue;
-      const taskIndex = Number(labels['com.sulla.task-index']);
-      const legacy = (!labels['com.sulla.subject'] || !labels['com.sulla.device-id']) && Number.isInteger(taskIndex)
+      const label = labels['com.sulla.task-index'];
+      const parsed = typeof label === 'string' && /^\d+$/.test(label) ? Number(label) : NaN;
+      const taskIndex = Number.isSafeInteger(parsed) ? parsed : undefined;
+      const legacy = (!labels['com.sulla.subject'] || !labels['com.sulla.device-id']) && taskIndex !== undefined
         ? await this.legacyIdentity?.resolve(jobId, taskIndex) : undefined;
       const subject = labels['com.sulla.subject'] || legacy?.subject; const deviceId = labels['com.sulla.device-id'] || legacy?.deviceId;
       if (!subject || !deviceId) continue;
       bindings.push({ podId: details.Name?.replace(/^\//, '') ?? container.Names, subject,
         orgId: labels['com.sulla.org-id'] || legacy?.orgId, agentId: labels['com.sulla.agent-id'] || legacy?.agentId,
-        jobId, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' });
+        jobId, taskIndex, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' });
     }
     return bindings;
   }
@@ -1310,7 +1312,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     const scopes = allowed === undefined || allowed.includes('exec') ? ['*'] : allowed;
     const toolBinding: AgentContainerRuntimeBinding = {
       podId: containerName, subject, orgId: metadata.orgId, agentId, jobId: run.jobId,
-      threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
+      taskIndex: run.taskIndex, threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
     };
     const issueLease = () => issueCapabilityToken({
       sub:              subject,
@@ -1477,6 +1479,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       orgId:         metadata.orgId,
       agentId,
       jobId:         run.jobId,
+      taskIndex:     run.taskIndex,
       threadId:      metadata.threadId,
       deviceId,
       workspacePath: providerWorkspace,
@@ -1754,7 +1757,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
     const toolBinding: AgentContainerRuntimeBinding = {
       podId: containerName, subject, orgId: metadata.orgId,
       agentId: metadata.agentId ?? run.state.metadata.wsChannel, jobId: run.jobId,
-      threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
+      taskIndex: run.taskIndex, threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
     };
     session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);
     const toolsServiceHealthy = await waitForToolsService();
@@ -1818,6 +1821,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       orgId:         metadata.orgId,
       agentId:       metadata.agentId ?? run.state.metadata.wsChannel,
       jobId:         run.jobId,
+      taskIndex:     run.taskIndex,
       threadId:      metadata.threadId,
       deviceId,
       workspacePath,

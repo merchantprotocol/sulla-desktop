@@ -20,14 +20,14 @@ export class ContainerExecutionContextFactory {
     return {
       v: 1, iss: 'sulla-desktop', aud: 'sulla-tools', sub: runtime.subject,
       org_id: runtime.orgId, agent_id: runtime.agentId, pod_id: runtime.podId,
-      thread_id: runtime.threadId, job_id: runtime.jobId, device_id: runtime.deviceId,
+      thread_id: runtime.threadId, job_id: runtime.jobId, task_index: runtime.taskIndex, device_id: runtime.deviceId,
       scopes: allowed.length === 0 || allowed.includes('exec') ? ['*'] : [...allowed],
       iat: now, exp: now + Math.ceil(ttlMs / 1000), jti: crypto.randomUUID(), request_id: crypto.randomUUID(),
     };
   }
 }
 
-export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; threadId?: string; deviceId: string; workspacePath: string; }
+export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; taskIndex?: number; threadId?: string; deviceId: string; workspacePath: string; }
 export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<AgentContainerRuntimeBinding[]>; }
 
 /** Injectible owner of container bindings and fail-closed boot rehydration. */
