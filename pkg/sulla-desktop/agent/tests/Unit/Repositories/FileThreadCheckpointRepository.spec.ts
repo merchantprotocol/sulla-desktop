@@ -12,11 +12,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FallbackThreadStateRepository,
   FileThreadCheckpointRepository,
+  LogRecoveryThreadStateRepository,
   MemoryThreadStateRepository,
   RedisThreadStateRepository,
   type ThreadStateRepository,
 } from '../../../app/Repositories/ThreadStateRepository';
 
+import type { ConversationHistoryRecord } from '../../../database/models/ConversationHistoryModel';
 import type { BaseThreadState } from '../../../nodes/Graph';
 
 const MIB = 1024 * 1024;
@@ -135,6 +137,59 @@ describe('large thread checkpoints', () => {
     }
     expect(await store.exists('thread/../secret-id')).toBe(true);
     expect((await store.load('thread/../secret-id'))?.messages[0].content).toBe('private');
+  });
+
+  it.each(['stat', 'rename'])('uses Redis for small saves and memory for oversized saves after checkpoint %s fails', async(failure) => {
+    const store = path.join(directory, 'store');
+    const saved = path.join(directory, 'saved');
+    const files = new FileThreadCheckpointRepository(() => store);
+    const client = redisClient();
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const memory = new MemoryThreadStateRepository();
+    const repository = new FallbackThreadStateRepository(
+      new RedisThreadStateRepository({ getClient: () => client }), memory, memory, logger, files,
+    );
+    for (const thread of ['small', 'large']) await files.save(thread, JSON.stringify(state(thread, 'old')));
+    await fs.promises.rename(store, saved);
+    if (failure === 'stat') {
+      await fs.promises.writeFile(store, '');
+    } else {
+      await fs.promises.mkdir(store);
+      for (const file of await fs.promises.readdir(saved)) await fs.promises.mkdir(path.join(store, file));
+    }
+
+    const large = 'private-body'.repeat(MIB / 10);
+    await repository.save(state('small', 'private-body'));
+    await repository.save(state('large', large));
+    expect(client.setex).toHaveBeenCalledTimes(1);
+    expect((await repository.load('small'))?.messages[0].content).toBe('private-body');
+    await fs.promises.rm(store, { recursive: true });
+    await fs.promises.rename(saved, store);
+
+    expect((await repository.load('large'))?.messages[0].content === large).toBe(true);
+    expect((await repository.load('small'))?.messages[0].content).toBe('private-body');
+    await repository.save(state('small', 'new disk save'));
+    expect((await repository.load('small'))?.messages[0].content).toBe('new disk save');
+    expect(logger.error).toHaveBeenCalled();
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private-body');
+  });
+
+  it('recovers the transcript after a malformed checkpoint without logging its contents', async() => {
+    const files = new FileThreadCheckpointRepository(() => directory);
+    await files.save('thread', 'private-body: not JSON');
+    const log = path.join(directory, 'recovery.jsonl');
+    await fs.promises.writeFile(log, JSON.stringify({ type: 'message', role: 'user', content: 'from log' }));
+    const recovery = new LogRecoveryThreadStateRepository({
+      getByThread: () => Promise.resolve({ id: 'tab', log_file: log } as ConversationHistoryRecord),
+    });
+    const client = redisClient();
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const repo = new FallbackThreadStateRepository(
+      new RedisThreadStateRepository({ getClient: () => client }), new MemoryThreadStateRepository(), recovery, logger, files,
+    );
+    expect((await repo.load('thread'))?.messages[0].content).toBe('from log');
+    expect(logger.error).toHaveBeenCalled();
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private-body');
   });
 
   it('refuses oversized Redis writes and keeps the checkpoint out of the error log', async() => {

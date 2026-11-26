@@ -197,20 +197,30 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
     const json = JSON.stringify(snapshot);
     return await this.sequence(snapshot.metadata.threadId, () => this.saveSnapshot(snapshot, json));
   }
-  private async saveSnapshot(state: BaseThreadState, json: string): Promise<void> {
-    const threadId = state.metadata.threadId;
+  private async saveCheckpoint(threadId: string, json: string): Promise<boolean> {
     const hasCheckpoint = await this.checkpoints?.exists(threadId);
     if (this.checkpoints && (hasCheckpoint || Buffer.byteLength(json) > MAX_REDIS_CHECKPOINT_BYTES)) {
       // Keep later, smaller saves on disk too so a stale copy cannot win after restart.
       await this.checkpoints.save(threadId, json);
       await this.memory.delete(threadId);
       if (!hasCheckpoint) await this.deleteCachedState(threadId);
-      return;
+      return true;
     }
-    if (await this.redis.available()) {
+    return false;
+  }
+
+  private async saveSnapshot(state: BaseThreadState, json: string): Promise<void> {
+    const threadId = state.metadata.threadId;
+    const saved = await this.saveCheckpoint(threadId, json).catch(() => {
+      this.logger.error('[ThreadStateStore] Checkpoint write unavailable; using fallback');
+      return null;
+    });
+    if (saved) return;
+    if (Buffer.byteLength(json) <= MAX_REDIS_CHECKPOINT_BYTES && await this.redis.available()) {
       try {
         await this.redis.saveSerialized(threadId, json);
-        await this.memory.delete(threadId);
+        if (saved === null) await this.memory.save(state); // Shadow a stale file until disk writes succeed again.
+        else await this.memory.delete(threadId);
         this.logger.log(`[ThreadStateStore] Saved thread ${ threadId } to Redis`);
         return;
       } catch (error) {
@@ -224,10 +234,13 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
     return await this.sequence(threadId, () => this.loadSnapshot(threadId));
   }
   private async loadSnapshot(threadId: string): Promise<BaseThreadState | null> {
-    const checkpoint = await this.checkpoints?.load(threadId);
-    if (checkpoint) return checkpoint;
     const fallback = await this.memory.load(threadId);
     if (fallback) return fallback;
+    const checkpoint = await this.checkpoints?.load(threadId).catch(() => {
+      this.logger.error('[ThreadStateStore] Checkpoint read unavailable; trying recovery');
+      return null;
+    });
+    if (checkpoint) return checkpoint;
     if (await this.redis.available()) {
       try {
         const state = await this.redis.load(threadId);
