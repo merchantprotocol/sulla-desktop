@@ -19,7 +19,7 @@
         v-for="(item, index) in trailItems"
         :key="item.key"
         class="status-rollup__trail-item"
-        :class="index === 0 ? 'is-older' : 'is-newer'"
+        :class="index === 0 ? 'is-older' : 'is-newer'" :style="{ '--rollup-exit-stagger': `${ Math.max(0, trailItems.length - index - 1) * 24 }ms`, '--rollup-exit-drift': `${ index % 2 ? 3 : -3 }px` }"
       >
         <span class="status-rollup__dot" :data-role="item.role" />
         <span class="status-rollup__who">{{ item.agentName }}</span>
@@ -517,8 +517,8 @@ onBeforeUnmount(() => {
 }
 
 .rollup-trail-enter-from { opacity: 0; transform: translateY(22px); }
-.rollup-trail-leave-to { opacity: 0; transform: translateY(-22px); }
-.rollup-trail-leave-active { position: absolute; left: 0; right: 0; }
+.rollup-trail-leave-to { opacity: 0; transform: translateY(-22px) translateX(var(--rollup-exit-drift, 0px)); }
+.rollup-trail-leave-active { position: absolute; left: 0; right: 0; transition-delay: var(--rollup-exit-stagger, 0ms), 0ms; }
 
 .rollup-history-enter-active,
 .rollup-history-leave-active {
