@@ -2,9 +2,16 @@
 // Exercise actual page action bodies in an isolated context: no Electron,
 // mounted media devices, database, or live user mutations.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+
 import { transformSync } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
+
+import {
+  FallbackThreadStateRepository, FileThreadCheckpointRepository, MemoryThreadStateRepository,
+  RedisThreadStateRepository,
+} from '../../../app/Repositories/ThreadStateRepository';
 
 const root = process.cwd();
 const ref = <T>(value: T) => ({ value });
@@ -121,12 +128,13 @@ describe('miscellaneous screen error feedback', () => {
 });
 
 describe('history IPC acknowledgements', () => {
-  function captureHandlers(clearHistory = vi.fn().mockResolvedValue([])) {
+  function captureHandlers(clearHistory = vi.fn().mockResolvedValue([]), repository?: FallbackThreadStateRepository) {
     const handlers = new Map<string, (...args: any[]) => any>();
     const emit = vi.fn();
     const modules: Record<string, any> = {
       electron: { ipcMain: { on: vi.fn(), handle: (name: string, fn: any) => handlers.set(name, fn) } },
-      'node:fs': { promises: { unlink: vi.fn() } },
+      'node:fs': fs,
+      '@pkg/agent/app/Providers/ThreadStateServiceProvider': { threadStateProvider: { repository } },
       '@pkg/agent/database/PostgresClient': { postgresClient: {} },
       '@pkg/agent/database/models/ConversationHistoryModel': { ConversationHistoryModel: { clearHistory } },
       '@pkg/main/DatabaseReadGuard': { getDatabaseReadGuard: () => ({ run: vi.fn().mockRejectedValue(new Error('invalid query')) }) },
@@ -146,6 +154,42 @@ describe('history IPC acknowledgements', () => {
 
     return { handlers, emit };
   }
+
+  it('permanently clears only removed checkpoints and rejects inaccessible checkpoint storage', async() => {
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'history-clear-'));
+    const files = new FileThreadCheckpointRepository(() => path.join(dir, 'checkpoints'));
+    const memory = new MemoryThreadStateRepository();
+    const client = { status: 'end', ping: vi.fn(), setex: vi.fn(), get: vi.fn(), del: vi.fn() };
+    const redis = new RedisThreadStateRepository({ getClient: () => client });
+    const repo = new FallbackThreadStateRepository(redis, memory, memory, console, files);
+    const records = [
+      { type: 'chat', id: 'tab', thread_id: 'removed' },
+      { type: 'chat', id: 'another-tab', thread_id: 'kept' },
+    ];
+    const clear = vi.fn(async(_cutoff, cleanup) => {
+      await cleanup?.(records, new Set(['kept']));
+
+      return records;
+    });
+    const { handlers, emit } = captureHandlers(clear, repo);
+    const invokeClear = () => handlers.get('conversation-history:clear-confirmed')!({}, '2026-01-01');
+    try {
+      for (const id of ['removed', 'kept']) {
+        await files.save(id, JSON.stringify({ messages: [{ content: 'x'.repeat(1024 * 1024) }] }));
+      }
+      await invokeClear();
+      expect(await repo.load('removed')).toBeNull();
+      expect(await files.exists('kept')).toBe(true);
+
+      await fs.promises.rename(path.join(dir, 'checkpoints'), path.join(dir, 'saved'));
+      await fs.promises.writeFile(path.join(dir, 'checkpoints'), '');
+      emit.mockClear();
+      await expect(invokeClear()).rejects.toMatchObject({ code: 'ENOTDIR' });
+      expect(emit).not.toHaveBeenCalled();
+    } finally {
+      await fs.promises.rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it('acknowledges clear only when storage succeeds', async() => {
     const { handlers, emit } = captureHandlers();
