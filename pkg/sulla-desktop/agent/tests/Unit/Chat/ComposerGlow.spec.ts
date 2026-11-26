@@ -11,14 +11,23 @@ describe('Capsule composer glow', () => {
   afterEach(() => vi.useRealTimers());
 
   // risk: availability — sub-agent work must keep the glow active while the primary agent is idle.
-  it('stays active for a working thread agent and turns off when every agent is idle', () => {
+  it('follows root or working-agent run state, then clears activity when the run idles', () => {
     vi.useFakeTimers();
     const glow = new ComposerGlow();
+    expect(ComposerGlow.isRunning(true, [])).toBe(true);
+    expect(ComposerGlow.isRunning(false, [{ state: 'working' }])).toBe(true);
+
     glow.setActive(ComposerGlow.isRunning(false, [{ state: 'working' }]));
+    glow.action();
     expect(glow.state.active).toBe(true);
+    expect(glow.state.pulses.hit).toBe(true);
 
     glow.setActive(ComposerGlow.isRunning(false, [{ state: 'quiet' }, { state: 'done' }]));
     expect(glow.state.active).toBe(false);
+    expect(glow.state.pulses.hit).toBe(false);
+    vi.advanceTimersByTime(1_000);
+    expect(glow.state.active).toBe(false);
+    expect(glow.state.pulses.hit).toBe(false);
     glow.dispose();
   });
 
