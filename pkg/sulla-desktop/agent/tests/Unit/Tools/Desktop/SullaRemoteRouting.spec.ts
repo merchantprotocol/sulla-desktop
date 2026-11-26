@@ -67,8 +67,10 @@ grep -qx 'Authorization: Bearer synthetic' <&3 && printf '%s' "$*"
 `, { mode: 0o755 });
     const invoke = execute('bash', ['resources/darwin/bin/sulla', 'desktop/snapshot', '{}'], {
       env: {
-        HOME: this.directory, PATH: `${ this.directory }:${ process.env.PATH }`,
-        BASH_ENV: shim, SULLA_TOOL_SESSION: 'synthetic',
+        HOME:               this.directory,
+        PATH:               `${ this.directory }:${ process.env.PATH }`,
+        BASH_ENV:           shim,
+        SULLA_TOOL_SESSION: 'synthetic',
       },
     });
     if (pid === process.pid && listenerPid === pid) {

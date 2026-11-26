@@ -62,6 +62,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   async save(state: BaseThreadState): Promise<void> {
     await this.saveSerialized(state.metadata.threadId, JSON.stringify(structuredClone(state)));
   }
+
   async saveSerialized(threadId: string, json: string): Promise<void> {
     if (Buffer.byteLength(json) > MAX_REDIS_CHECKPOINT_BYTES) {
       throw new Error('Thread checkpoint exceeds the Redis size limit');
@@ -197,6 +198,7 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
     const json = JSON.stringify(snapshot);
     return await this.sequence(snapshot.metadata.threadId, () => this.saveSnapshot(snapshot, json));
   }
+
   private async saveCheckpoint(threadId: string, json: string): Promise<boolean> {
     const hasCheckpoint = await this.checkpoints?.exists(threadId);
     if (this.checkpoints && (hasCheckpoint || Buffer.byteLength(json) > MAX_REDIS_CHECKPOINT_BYTES)) {
@@ -233,6 +235,7 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
   async load(threadId: string): Promise<BaseThreadState | null> {
     return await this.sequence(threadId, () => this.loadSnapshot(threadId));
   }
+
   private async loadSnapshot(threadId: string): Promise<BaseThreadState | null> {
     const fallback = await this.memory.load(threadId);
     if (fallback) return fallback;
@@ -263,6 +266,7 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
       await this.memory.delete(threadId);
     });
   }
+
   private async deleteCachedState(threadId: string): Promise<void> {
     if (await this.redis.available()) {
       try {
@@ -271,6 +275,7 @@ export class FallbackThreadStateRepository extends Service implements ThreadStat
       } catch (error) { this.logger.error('[ThreadStateStore] Redis delete failed:', error); }
     }
   }
+
   private async sequence<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
     const pending = this.operations.get(threadId);
     const current = pending ? pending.then(operation, operation) : operation();

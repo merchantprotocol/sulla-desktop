@@ -5,11 +5,13 @@
 
 import path from 'node:path';
 
-import { FallbackThreadStateRepository, FileThreadCheckpointRepository, LogRecoveryThreadStateRepository, MemoryThreadStateRepository,
-  RedisThreadStateRepository } from '../Repositories/ThreadStateRepository';
 import { redisClient } from '../../database/RedisClient';
 import { ConversationHistoryModel } from '../../database/models/ConversationHistoryModel';
 import { resolveSullaHomeDir } from '../../utils/sullaPaths';
+import {
+  FallbackThreadStateRepository, FileThreadCheckpointRepository, LogRecoveryThreadStateRepository,
+  MemoryThreadStateRepository, RedisThreadStateRepository,
+} from '../Repositories/ThreadStateRepository';
 
 export class ThreadStateServiceProvider {
   readonly memory = new MemoryThreadStateRepository();
