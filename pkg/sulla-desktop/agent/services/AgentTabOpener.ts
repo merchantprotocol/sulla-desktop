@@ -112,6 +112,7 @@ export interface OpenAgentTabInput {
   workerModelRoute?: WorkerModelRoute;
   modelDecision?: ModelDecision;
   modelOverride?: { provider: string; model: string; connections?: Record<string, string> };
+  workflowStep?: import('../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
   providerCliSnapshot?: import('../../shared/providerCliSelection').ProviderCliSnapshot;
   runOverrides?: { model?: string; provider?: string; effort?: string; runLocation?: 'vm' | 'container' };
 }
@@ -135,6 +136,7 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
   meta.activityKeys = input.activityKeys;
   meta.delegatedJobId = input.jobId;
   meta.delegatedTaskIndex = 0;
+  meta.productOwnerWorkflowStep = input.workflowStep;
   if (input.providerCliSnapshot) meta.providerCliSnapshot = input.providerCliSnapshot;
   await saveThreadState(state);
 

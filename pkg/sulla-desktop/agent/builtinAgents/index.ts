@@ -18,6 +18,7 @@
  * {{GIT_COMMIT_COMMAND}} (a commit command carrying their git identity).
  */
 
+import { BUILTIN_AGENT_RENAMES } from '../../shared/agentJobNames';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -278,4 +279,30 @@ export class BuiltinAgentHasher {
     if (value && typeof value === 'object') return `{${ Object.keys(value).sort().map(key => `${ JSON.stringify(key) }:${ this.canonicalJson((value as any)[key]) }`).join(',') }}`;
     return JSON.stringify(value ?? null);
   }
+}
+
+/** Exact managed content from known shipped predecessors that used raw hashes.
+ * Normalize only the two tokens the seeder expanded on that installation.
+ */
+export function matchesKnownLegacyRoutingPrompt(row: AgentDefinition, home: string, git: GitIdentity): boolean {
+  const predecessors = new Map([
+    // 2986b9ab6
+    ['coding-manager', 'sha256-v2:4e00832b307bd85a0d0e8e15e171daba273e9623c2adc157cd81bebb28afdfbb'],
+    // 43c99a288
+    ['generalist', 'sha256-v2:e6737aa337e4b80ef9bdaa7c64b60589abdd8ea7d90315a460b6fe8317c23e21'],
+    ['lookup', 'sha256-v2:62a430752e6218fcbbf67c817042eaa36ebb46e73312132cbdcfe73f79534952'],
+    ['quick-fixer', 'sha256-v2:b555da519de03166b00867cda9a570f9fdce020530e07fa845407adc0ac2437a'],
+    ['builder', 'sha256-v2:0739e1730dfeaba5e4abdea2de2d5bdc3717a0d597f7dd0469c8aa2e810c0f89'],
+  ]);
+  const rename = BUILTIN_AGENT_RENAMES.find(([previous, slug]) => row.slug === slug || row.slug === previous);
+  const expected = predecessors.get(rename?.[1] ?? row.slug);
+  if (!expected || !row.is_builtin || !row.builtin_hash?.startsWith('sha256:')) return false;
+  const fields = Object.fromEntries(MANAGED_FIELDS.map(field => [field, row[field]])) as unknown as BuiltinManagedContent;
+  // The name migration has already run when the seeder sees this exact predecessor.
+  if (rename && fields.name === rename[3]) fields.name = rename[2];
+  fields.can_call = fields.can_call.map(callee => BUILTIN_AGENT_RENAMES.find(([, slug]) => slug === callee)?.[0] ?? callee);
+  return BuiltinAgentHasher.hashManagedContentBeforeAgentAwareness(renderTokens(fields, [
+    [gitCommitCommand(git), gitCommitCommand({ name: '', email: '' })],
+    [home, BUILTIN_HOME_TOKEN],
+  ])) === expected;
 }

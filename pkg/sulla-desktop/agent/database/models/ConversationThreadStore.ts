@@ -16,6 +16,7 @@
 // All logic takes an injected Queryable so tests can run it against a real
 // pg client; the exported ConversationThreadStore wraps it in a transaction.
 
+import type { AgentResultItem, SavedOutcomeReport } from '../../../shared/agentResults/AgentResultCard';
 import { postgresClient } from '../PostgresClient';
 
 export interface Queryable {
@@ -395,6 +396,22 @@ export async function loadThreadStateWith(db: Queryable, idOrThreadId: string): 
   return { ...state, thread: { ...(state.thread ?? {} as any), messages } } as ChatThreadState;
 }
 
+/** Reads only report cards for this chat, including pages the transcript has released. */
+export async function loadReportMessagesWith(db: Queryable, idOrThreadId: string): Promise<SavedOutcomeReport[]> {
+  const headerId = await resolveHeaderId(db, idOrThreadId);
+  if (!headerId) return [];
+  const result = await db.query(`
+    SELECT payload->>'id' AS message_id, payload#>'{result,items}' AS items
+    FROM conversation_messages
+    WHERE conversation_id = $1 AND kind = 'proactive' AND deleted_at IS NULL
+      AND jsonb_typeof(payload#>'{result,items}') = 'array'
+    ORDER BY position, seq
+  `, [headerId]);
+  return result.rows.flatMap(row => (row.items as AgentResultItem[])
+    .filter(item => item && typeof item.jobId === 'string' && Number.isInteger(item.taskIndex) && typeof item.report === 'string')
+    .map(item => ({ item, messageId: row.message_id || undefined })));
+}
+
 export async function loadMessagesBeforeWith(db: Queryable, idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
   const headerId = await resolveHeaderId(db, idOrThreadId);
   if (!headerId || !beforeMessageId) return [];
@@ -500,6 +517,10 @@ export class ConversationThreadStore {
     return postgresClient.transaction(client => loadThreadStateWith(client, idOrThreadId));
   }
 
+  static loadReportMessages(idOrThreadId: string): Promise<SavedOutcomeReport[]> {
+    return postgresClient.transaction(client => loadReportMessagesWith(client, idOrThreadId));
+  }
+
   static loadMessagesBefore(idOrThreadId: string, beforeMessageId: string, limit = 50): Promise<any[]> {
     return postgresClient.transaction(client => loadMessagesBeforeWith(client, idOrThreadId, beforeMessageId, limit));
   }
@@ -520,7 +541,10 @@ export class ConversationThreadStore {
     return postgresClient.transaction(client => adoptThreadMessagesWith(client, tabId, threadId));
   }
 
-  static findSelectedAgent(backendThreadId: string): Promise<string | null> {
+  static async findSelectedAgent(backendThreadId: string, afterPendingChatSave?: string): Promise<string | null> {
+    // The picker saves the renderer chat first. If that snapshot is still in flight, wait for
+    // its receipt, then verify the selected persona against the exact backend thread as usual.
+    if (afterPendingChatSave) await threadStateSaveTails.get(afterPendingChatSave);
     return postgresClient.transaction(client => findSelectedAgentWith(client, backendThreadId));
   }
 }
