@@ -28,7 +28,12 @@ import Logging from '@pkg/utils/logging';
  * Kept as a dynamic import so the main process doesn't eagerly pull in the DB layer
  * at startup — matches the pattern used for WorkflowSchedulerService.
  */
-async function importWorkflowModel() {
+async function importWorkflowModel(waitForDatabase = false) {
+  if (waitForDatabase) {
+    // Strict reads need migrated tables, but must report a failed migration to the renderer.
+    const { getDatabaseManager } = await import('@pkg/agent/database/DatabaseManager');
+    await getDatabaseManager().initialize();
+  }
   const mod = await import('@pkg/agent/database/models/WorkflowModel');
 
   return mod.WorkflowModel;
@@ -425,7 +430,6 @@ export function initSullaWorkflowEvents(): void {
 
   ipcMainProxy.handle('workflow-db-list', async(_event, options?: { strict?: boolean }) => {
     const strict = options?.strict === true;
-    if (strict) await (await import('./dbBootGate')).awaitDatabaseReady();
     const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
     const manager = getWorkflowManagerClient();
     if (await manager.isHealthy()) return manager.request('GET', '/v1/workflows');
@@ -435,7 +439,7 @@ export function initSullaWorkflowEvents(): void {
     // renderer catches into useRoutines.error and can surface a diagnostic.
     // Only "database not reachable yet" (VM booting or restarting) returns
     // [] after a short retry; renderers reload on `database:available`.
-    const WorkflowModel = await importWorkflowModel();
+    const WorkflowModel = await importWorkflowModel(strict);
 
     const rows = await getDatabaseReadGuard().run('workflow-db-list', () => WorkflowModel.listAll(), strict ? null : []);
     if (rows === null) throw new Error('Workflows are temporarily unavailable while the database reconnects.');
@@ -445,7 +449,6 @@ export function initSullaWorkflowEvents(): void {
   ipcMainProxy.handle('workflow-db-get', async(_event: unknown, workflowId: string, options?: { strict?: boolean }) => {
     const strict = options?.strict === true;
     try {
-      if (strict) await (await import('./dbBootGate')).awaitDatabaseReady();
       const { getWorkflowManagerClient } = await import('@pkg/agent/services/WorkflowManagerClient');
       const manager = getWorkflowManagerClient();
       if (await manager.isHealthy()) {
@@ -453,7 +456,7 @@ export function initSullaWorkflowEvents(): void {
         return { ...model.definition, _status: model.status, location: model.location };
       }
 
-      const WorkflowModel = await importWorkflowModel();
+      const WorkflowModel = await importWorkflowModel(strict);
       const model = await WorkflowModel.findById(workflowId);
 
       if (!model) return null;
