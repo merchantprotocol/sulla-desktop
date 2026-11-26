@@ -24,7 +24,8 @@ import { providerSessionStore } from './providerSessionStore';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
-import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
+import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { CodexToolEventEmitter } from './codexToolEvents';
@@ -865,8 +866,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Container runs record bridge activity under the runtime pod; VM runs on a
       // bridge lease (vault authority, first-run pending bridge) under the lease's pod.
       const providerBridgePodId = currentAgentContainerRuntime()?.podId ?? executionAuth?.podId;
-      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, () => Date.now(),
+      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, undefined,
         () => providerBridgeActivity.lastModelOutputAt(providerBridgePodId));
+      const stallRecoveryPolicy = new CliStallRecoveryPolicy();
       let hungTool: RunToolInFlight | undefined;
       let lastBridgeOutputReportedAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
       let sawToolExecution = false;
@@ -875,6 +877,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Surface provider retry state to the job, but never refresh the watchdog clock here.
       unsubscribeProviderBridgeRetryStatus = providerBridgeActivity.subscribeRetryStatus(providerBridgePodId, event => {
         if (settled) return;
+        liveness.touch();
         if (event.status === 429) {
           latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
           emitActivity('Codex is rate-limited, retrying', 'status');
@@ -941,8 +944,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Jonathon's rules: Codex must not sit silent for more than three
       // minutes (2026-11-23), and silence means the WHOLE loop is idle
       // (2026-11-24): no stream byte, no JSONL event, no provider stream chunk
-      // and no tool call still running. Provider retry status (429/503) never
-      // counts. A tool running past LONG_TOOL_CEILING_MS is reported as a hung
+      // and no tool call still running. Provider retry/backoff status (429/503)
+      // counts as activity; a tool past LONG_TOOL_CEILING_MS is reported as hung
       // tool, not a dead agent.
       const STALL_CHECK_MS = 30 * 1_000;
       let stalled = false;
@@ -956,7 +959,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         unsubscribeProviderBridgeRetryStatus = () => {};
       };
       const stallErrorMessage = () => hungTool
-        ? `Codex ${ describeHungTool(hungTool) }, with no other activity. Recovery was not attempted because replay could duplicate side effects.`
+        ? `Codex ${ liveness.describeHungTool(hungTool) }, with no other activity.`
         : latestRateLimitReason
           ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
           : 'Codex stalled: no output for 3 minutes';
@@ -981,13 +984,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           cleanupMcp();
           log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
           killSpawn();
-          scheduleForcedSettlement(() => new CliFaultError(
-            'stall',
-            stallErrorMessage(),
-            undefined,
-            false,
-            unresolvedTool,
-          ));
+          scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(stallErrorMessage(), liveness.toolsInFlight, unresolvedTool));
         }, STALL_CHECK_MS);
       };
       proc.once('spawn', startStallWatchdog);
@@ -1338,13 +1335,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // Stall-watchdog kill — surface the exact rule violation instead of
         // falling through to the generic no-output message.
         if (stalled) {
-          const stallError = new CliFaultError(
-            'stall',
-            stallErrorMessage(),
-            undefined,
-            false,
-            unresolvedTool,
-          );
+          const stallError = stallRecoveryPolicy.createFault(stallErrorMessage(), liveness.toolsInFlight, unresolvedTool);
           failureDiagnostics.failure({ error: stallError, fault: 'stall', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           reject(stallError);
           return;

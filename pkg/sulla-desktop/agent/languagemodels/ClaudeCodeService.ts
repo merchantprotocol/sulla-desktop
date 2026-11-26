@@ -53,7 +53,8 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
 import { TurnHopTiming } from '../utils/turnHopTiming';
-import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
+import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
@@ -1132,15 +1133,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             cleanupMcp();
             log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
             killSpawn();
-            scheduleForcedSettlement(() => new CliFaultError(
-              'stall',
-              unresolvedTool
-                ? hungToolMessage()
-                : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
-              undefined,
-              !unresolvedTool,
-              unresolvedTool,
-            ));
+            scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(
+              unresolvedTool ? hungToolMessage() : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
+              liveness.toolsInFlight, unresolvedTool));
           }, STALL_CHECK_MS);
         };
 
@@ -1284,10 +1279,11 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
         const STALL_CHECK_MS = 30 * 1_000;
         const liveness = new RunLivenessClock(STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS);
+        const stallRecoveryPolicy = new CliStallRecoveryPolicy();
         let hungTool: RunToolInFlight | undefined;
         const hungToolMessage = () => hungTool
-          ? `Claude Code ${ describeHungTool(hungTool) }, with no other activity. Recovery was not attempted because replay could duplicate side effects.`
-          : 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.';
+          ? `Claude Code ${ liveness.describeHungTool(hungTool) }, with no other activity.`
+          : 'Claude Code stopped reporting activity while a tool was unresolved.';
         let stalled = false;
         let stallTimer: NodeJS.Timeout | null = null;
         const stopStallWatchdog = () => {
@@ -1931,15 +1927,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // falling through to the generic no-output message.
           if (stalled) {
             const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
-            reject(new CliFaultError(
-              'stall',
-              unresolvedTool
-                ? hungToolMessage()
-                : `Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
-              undefined,
-              !unresolvedTool,
-              unresolvedTool,
-            ));
+            reject(stallRecoveryPolicy.createFault(
+              unresolvedTool ? hungToolMessage() : `Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
+              liveness.toolsInFlight, unresolvedTool));
             return;
           }
 

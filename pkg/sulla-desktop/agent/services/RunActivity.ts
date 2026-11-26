@@ -42,12 +42,14 @@ export const RunActivity = {
   },
 
   lastActivityAt(key: string): number | undefined {
-    return lastActivity.get(key);
+    const activityAt = lastActivity.get(key);
+    return activityAt === undefined ? undefined : clock.toWallTime(activityAt);
   },
 
   /** The oldest tool call still running for this key (a long command emits nothing until it ends). */
   toolInFlight(key: string): ToolInFlight | undefined {
-    return runTools.inFlight(key);
+    const tool = runTools.inFlight(key);
+    return tool ? { ...tool, startedAt: clock.toWallTime(tool.startedAt) } : undefined;
   },
 
   end(key: string): void {
@@ -96,12 +98,12 @@ export function watchForDeadRun(
       const now = clock.now();
       // A tool still running (a long shell command emits nothing until it ends) is
       // activity, up to the ceiling; a wait on the human (approval, question) always is.
-      const tool = RunActivity.toolInFlight(key);
+      const tool = runTools.inFlight(key);
       if (toolHoldsRunAlive(tool, now)) return;
       const clock = {
         createdAt: liveness.createdAt,
         startedAt: liveness.createdAt,
-        lastActivityAt: RunActivity.lastActivityAt(key) ?? now,
+        lastActivityAt: lastActivity.get(key) ?? now,
         now,
       };
       if (!policy.isStalled({ ...clock, hasCheckin: await liveness.hasCheckin(), stallMs: minutes * 60_000 })) return;

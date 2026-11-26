@@ -67,28 +67,24 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
 }
 
 describe('Codex quiet stream watchdog', () => {
-  it('shows retry state but still stalls at three minutes with the last rate-limit reason', async() => {
-    // risk: stalled Codex run hangs indefinitely while unrelated bridge activity masks silence
+  it('counts 429/503 provider retry states as activity, then stalls after retries go quiet', async() => {
+    // risk: provider backoff is misclassified as silence and kills a healthy run mid-retry.
     const run = await launch();
     const bridgePodId = 'codex-watchdog-test-pod';
-    providerBridgeActivity.mark(bridgePodId);
-    const bridgeHeartbeat = setInterval(() => providerBridgeActivity.mark(bridgePodId), 30_000);
-    try {
-      await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
-      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, retryAfterSeconds: 9 });
-      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, reason: 'request rate limit exceeded', retryAfterSeconds: 9 });
-      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 503 });
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(providerBridgeActivity.lastActivityAt(bridgePodId)).toBe(Date.now());
-      expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
-      await vi.advanceTimersByTimeAsync(5_000);
-      await run.finished;
-      expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
-      expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
-      expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
-    } finally {
-      clearInterval(bridgeHeartbeat);
-    }
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
+    providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, reason: 'request rate limit exceeded', retryAfterSeconds: 9 });
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 503 });
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
+    expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)', retrySafe: true, unsafeToFallback: false });
   });
 
   it('terminates a silent process at three minutes and settles after teardown', async() => {
@@ -100,7 +96,7 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes', retrySafe: true, unsafeToFallback: false });
   });
 
   it('resets the silence clock when stdout arrives at 2:59', async() => {
@@ -151,6 +147,7 @@ describe('Codex quiet stream watchdog', () => {
     await run.finished;
     expect(run.outcome()).toMatchObject({ kind: 'stall' });
     expect(run.outcome().message).toContain('tool still running for 120m: command_execution');
+    expect(run.outcome()).toMatchObject({ retrySafe: false, unsafeToFallback: true });
     expect(run.outcome().message).not.toContain('no output for 3 minutes');
   });
 

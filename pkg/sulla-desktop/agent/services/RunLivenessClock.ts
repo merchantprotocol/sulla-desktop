@@ -65,6 +65,7 @@ export function describeHungTool(tool: RunToolInFlight, now: number = Date.now()
 export class RunLivenessClock {
   private lastActivityAt: number;
   private readonly clock: () => number;
+  private readonly suspendAwareClock?: SuspendAwareClock;
   private readonly tools = new Map<string, RunToolInFlight>();
 
   constructor(
@@ -72,9 +73,10 @@ export class RunLivenessClock {
     private readonly toolCeilingMs: number = LONG_TOOL_CEILING_MS,
     clock?: () => number,
     private readonly externalActivityAt: () => number = () => 0,
+    suspendAwareClock?: SuspendAwareClock,
   ) {
-    const suspendAwareClock = new SuspendAwareClock();
-    this.clock = clock ?? (() => suspendAwareClock.now());
+    this.suspendAwareClock = clock ? undefined : (suspendAwareClock ?? new SuspendAwareClock());
+    this.clock = clock ?? (() => this.suspendAwareClock!.now());
     this.lastActivityAt = this.clock();
   }
 
@@ -106,7 +108,13 @@ export class RunLivenessClock {
 
   /** Last time anything in the loop happened, including relayed provider output. */
   lastSeenAt(): number {
-    return Math.max(this.lastActivityAt, this.externalActivityAt() || 0);
+    const external = this.externalActivityAt();
+    const adjustedExternal = external && this.suspendAwareClock ? this.suspendAwareClock.toLogicalTime(external) : external;
+    return Math.max(this.lastActivityAt, adjustedExternal || 0);
+  }
+
+  describeHungTool(tool: RunToolInFlight | undefined = this.oldestTool()): string {
+    return tool ? describeHungTool(tool, this.clock()) : 'no tool is unresolved';
   }
 
   verdict(): RunLivenessVerdict {

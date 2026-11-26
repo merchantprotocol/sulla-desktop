@@ -7,6 +7,7 @@ export class SuspendAwareClock {
   private logicalTime: number;
   private previousWallTime: number;
   private previousMonotonicTime: number;
+  private suspendedTimeMs = 0;
 
   constructor(
     private readonly wallTime: () => number = Date.now,
@@ -22,9 +23,22 @@ export class SuspendAwareClock {
     const wallElapsed = Math.max(0, wall - this.previousWallTime);
     const monotonicElapsed = Math.max(0, monotonic - this.previousMonotonicTime);
     const suspendedGap = Math.max(0, wallElapsed - monotonicElapsed - this.clockSkewToleranceMs);
+    this.suspendedTimeMs += suspendedGap;
     this.logicalTime += Math.max(0, wallElapsed - suspendedGap);
     this.previousWallTime = wall;
     this.previousMonotonicTime = monotonic;
     return this.logicalTime;
+  }
+
+  /** Convert this clock's adjusted time back to wall-epoch for external projections. */
+  toWallTime(logicalTime: number): number {
+    this.now();
+    return logicalTime + this.suspendedTimeMs;
+  }
+
+  /** Convert wall-epoch timestamps (such as provider bridge output) into this run's time domain. */
+  toLogicalTime(wallTime: number): number {
+    this.now();
+    return wallTime - this.suspendedTimeMs;
   }
 }

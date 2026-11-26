@@ -27,6 +27,34 @@ describe('suspend-aware worker recovery', () => {
     expect(run.verdict()).toEqual({ kind: 'alive' });
   });
 
+  it('maps provider bridge wall timestamps into the awake clock without masking later silence', () => {
+    // risk: wall-epoch bridge timestamps keep a resumed CLI alive forever after the run clock shifts.
+    let wall = 1_000, monotonic = 1_000, externalActivityAt = 1_000;
+    const clock = new SuspendAwareClock(() => wall, () => monotonic, 50);
+    const run = new RunLivenessClock(1_000, 10_000, undefined, () => externalActivityAt, clock);
+    wall += 60_000;
+    monotonic += 5;
+    externalActivityAt = wall;
+    expect(run.verdict()).toEqual({ kind: 'alive' });
+
+    wall += 1_500;
+    monotonic += 1_500;
+    expect(run.verdict()).toMatchObject({ kind: 'silent' });
+  });
+
+  it('keeps tool duration on the same sleep-adjusted clock as stall detection', () => {
+    // risk: an ordinary long command is mislabeled hung because its age includes time asleep.
+    let wall = 1_000, monotonic = 1_000;
+    const clock = new SuspendAwareClock(() => wall, () => monotonic, 50);
+    const run = new RunLivenessClock(1_000, 2 * 60 * 60_000, () => clock.now());
+    run.toolStarted('build', 'command_execution');
+    wall += 60 * 60_000;
+    monotonic += 5;
+
+    expect(run.verdict()).toEqual({ kind: 'alive' });
+    expect(run.describeHungTool()).toBe('tool still running for 0m: command_execution');
+  });
+
   it('interrupts and re-drives only an active hidden worker on resume', async() => {
     // risk: lifecycle — hidden graph.execute work must continue after sleep aborts its stream.
     const job = taskJob();
