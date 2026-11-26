@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!-- Sulla Desktop · https://sulladesktop.com
+     Copyright (c) 2026 Merchant Protocol LLC.
+     SPDX-License-Identifier: GPL-2.0-or-later -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tab status</title>
+  <style>
+    html, body { margin: 0; background: transparent; overflow: hidden; color-scheme: light dark; }
+    body.above { display: flex; flex-direction: column; justify-content: flex-end; min-height: 100vh; }
+    article {
+      box-sizing: border-box; margin: 2px; padding: 10px 12px;
+      color: var(--text-primary, CanvasText); background: var(--bg-elevated, Canvas);
+      border: 1px solid var(--border-default, ButtonBorder); border-radius: 10px;
+      font: 12px/1.35 system-ui, sans-serif;
+      overflow-wrap: anywhere;
+    }
+    strong { display: block; margin-bottom: 4px; font-size: 13px; }
+    p { margin: 0; color: var(--text-muted, GrayText); }
+    #detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <article>
+    <strong id="title" dir="auto"></strong>
+    <p id="status"></p>
+    <p id="detail" dir="auto"></p>
+  </article>
+  <script>
+    const { ipcRenderer } = require("electron");
+
+    ipcRenderer.on("tab-hover:data", (_event, data) => {
+      document.body.classList.toggle("above", data.above);
+      const style = document.documentElement.style;
+      for (const token of ["bg-elevated", "border-default", "text-primary", "text-muted"]) {
+        style.setProperty("--" + token, data.palette?.[token] || "");
+      }
+      for (const field of ["title", "status", "detail"]) {
+        document.getElementById(field).textContent = data[field];
+      }
+    });
+  </script>
+</body>
+</html>
