@@ -367,6 +367,16 @@ export class WorkerModelRoutingService extends WorkerModelSelection {
     return withWorkerBindingWrite(() => modelRouter.removeWorkerBindingIfOwned(slug, agentId, created));
   }
 
+  /** Only an expressly stored tier policy constrains an ordinary explicit launch. */
+  async explicitTierRoute(definition: { slug:string; id:string }, request: Partial<ModelCandidate>): Promise<WorkerModelRoute | undefined> {
+    const { workerBindings } = await modelRouter.getEditableState();
+    const binding = workerBindings?.[definition.slug];
+    if (!binding?.modelTiers || binding.agentId !== definition.id) return undefined;
+    if (binding.pendingPublication) throw new InfrastructureFailure('This agent’s tier policy is still being registered.');
+    const route = captureWorkerRoute(definition.slug, definition.id, { [definition.slug]:binding })!;
+    return this.orderNewRoute(route, request);
+  }
+
   /** Called only at a new job/new unpinned human turn, never during recovery. */
   async newRoute(slug: string, request?: Partial<ModelCandidate>): Promise<WorkerModelRoute | undefined> {
     if (!slug) return undefined;

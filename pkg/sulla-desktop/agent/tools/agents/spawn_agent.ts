@@ -187,6 +187,17 @@ export class SpawnAgentWorker extends BaseTool {
 
   private assertDeduplicatedEffort(tasks: SpawnTask[], existing: AgentJobTask[]): void {
     tasks.forEach((task, index) => {
+      const route = this.workerRoutes.get(task);
+      const exact = route?.requestedModel;
+      if (exact && route) {
+        const saved = existing[index]?.workerModelRoute;
+        const pin = saved?.candidates[saved.selected];
+        if (saved?.agentId !== route.agentId || saved?.candidates.length !== 1 ||
+            pin?.provider !== exact.provider || pin.model !== exact.model || pin.effort !== exact.effort ||
+            saved.connections?.[exact.provider] !== route.connections?.[exact.provider]) {
+          throw new Error('An existing job with this label has a different approved model or account. Use a new task label.');
+        }
+      }
       if (task.effort !== undefined && (existing[index]?.effort !== task.effort || existing[index]?.model !== task.model?.trim())) {
         throw new Error('An existing job with this label has a different model or effort. Use a new task label to request a new run.');
       }
@@ -327,11 +338,19 @@ export class SpawnAgentWorker extends BaseTool {
       }
       try {
         const hasOverride = Boolean(tasks[i].model?.trim() || tasks[i].provider?.trim());
-        // An explicit launch choice is a hard boundary: never read or attach a worker mapping.
-        const workerRoute = hasOverride ? undefined : configuredRoute ?? await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
+        const channel = taskGraphAgentChannel(tasks[i], parentChannel);
+        const currentDefinition = await agentDefinitionService.findBySlug(channel);
+        let workerRoute = configuredRoute;
+        if (!workerRoute && hasOverride && currentDefinition) {
+          workerRoute = await workerModelRouting.explicitTierRoute(currentDefinition, {
+            provider: tasks[i].provider?.trim(), model: tasks[i].model?.trim(), effort: tasks[i].effort,
+          });
+        } else if (!workerRoute && !hasOverride) {
+          workerRoute = await workerModelRouting.newRoute(channel);
+        }
         if (workerRoute) this.workerRoutes.set(tasks[i], workerRoute);
-        const selector = taskAgentSelector(tasks[i]) || parentChannel;
-        const currentDefinition = selector ? await agentDefinitionService.findBySlug(selector) : null;
+        // Persist the validated candidate (including the tier's effort when omitted at launch).
+        if (hasOverride && workerRoute?.requestedModel) Object.assign(tasks[i], workerRoute.requestedModel);
         const { resolveLaunchModelPrecedence } = await import('../../languagemodels/modelPrecedence');
         const precedence = resolveLaunchModelPrecedence({
           override: { provider: tasks[i].provider, model: tasks[i].model, effort: tasks[i].effort },
@@ -356,7 +375,8 @@ export class SpawnAgentWorker extends BaseTool {
           tasks[i].provider = requested.provider;
           tasks[i].model = requested.model;
           const modelOverride: { provider: string; model: string; connections?: Record<string, string> } = { provider: requested.provider, model: requested.model };
-          if (requested.provider === 'grok') modelOverride.connections = await workerModelRouting.subscriptionConnections([{ provider: requested.provider, model: requested.model }]);
+          if (workerRoute?.requestedModel) modelOverride.connections = workerRoute.connections;
+          else if (requested.provider === 'grok') modelOverride.connections = await workerModelRouting.subscriptionConnections([{ provider: requested.provider, model: requested.model }]);
           this.modelOverrides.set(tasks[i], modelOverride);
         } else if (tasks[i].effort !== undefined && !workerRoute) {
           const { effectiveModelChoice } = await import('../../languagemodels/threadModelChoice');
