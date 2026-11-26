@@ -13,7 +13,12 @@ const { createAgentContainerLifecycle } = vi.hoisted(() => ({
 const { getJob, SAVED_CLI } = vi.hoisted(() => {
   const saved = { 'claude-code': { mode: 'versioned', version: '2.1.0' }, codex: { mode: 'image-default' }, opencode: { mode: 'image-default' }, cursor: { mode: 'image-default' } };
   // The durable job row is the only source of a delegated task's creation-time CLI selection.
-  return { SAVED_CLI: saved, getJob: vi.fn((jobId: string) => Promise.resolve(jobId === 'job-1' ? { jobId, tasks: [{ providerCliSnapshot: saved }] } : null)) };
+  return {
+    SAVED_CLI: saved,
+    getJob:    vi.fn((jobId: string) => Promise.resolve(jobId === 'job-1'
+      ? { jobId, tasks: Array.from({ length: 4 }, (_, index) => ({ providerCliSnapshot: saved, workspacePath: index === 3 ? '/mnt/worktrees/saved' : undefined })) }
+      : null)),
+  };
 });
 const { captureProviderCliSnapshot, CURRENT_CLI } = vi.hoisted(() => ({
   CURRENT_CLI: { 'claude-code': { mode: 'versioned', version: '2.2.0' }, codex: { mode: 'versioned', version: '0.170.0' }, opencode: { mode: 'image-default' }, cursor: { mode: 'image-default' } },
@@ -32,10 +37,10 @@ const THREAD_ID = 'spawn-agent-merge-train-11-perf-audit-prs-staging-17947114213
 const ORIGINAL_FOLDER = '3f18ac0d000fd6df9f3f27daf8dfb18d';
 const folderOf = (key: string) => crypto.createHash('sha256').update(key).digest('hex').slice(0, 32);
 
-const parkedIdentity = (visibility: 'hidden' | 'tab' | undefined, threadId = THREAD_ID) => ({
+const parkedIdentity = (visibility: 'hidden' | 'tab' | undefined, threadId = THREAD_ID, taskIndex = 0) => ({
   job:       { jobId: 'job-1', status: 'running', parentChannel: 'sulla-desktop', visibility, tasks: [] },
   task:      { agentId: 'codex-sol-worker', threadId, status: 'parked', depth: 1, visibility },
-  taskIndex: 0,
+  taskIndex,
   agentId:   'codex-sol-worker',
 }) as any;
 
@@ -73,7 +78,9 @@ describe('conversation container persistence key after a parked delegated wake',
     // A woken worker keeps the CLI versions saved when its job was created.
     expect(getJob).toHaveBeenCalledWith('job-1');
     expect(captureProviderCliSnapshot).not.toHaveBeenCalled();
-    expect(createAgentContainerLifecycle.mock.calls.at(-1)![0].providerCliSnapshot).toEqual(SAVED_CLI);
+    expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({
+      jobId: 'job-1', taskIndex: 0, providerCliSnapshot: SAVED_CLI,
+    });
   });
 
   it('treats a legacy job without a visibility field as hidden (spawn_agent default)', async() => {
@@ -83,6 +90,19 @@ describe('conversation container persistence key after a parked delegated wake',
     parkedAgentRehydrator.apply(state, parkedIdentity(undefined));
 
     expect(folderOf(await containerKeyFor('sulla-desktop', THREAD_ID, state))).toBe(ORIGINAL_FOLDER);
+  });
+
+  it('keeps a delegated task index above zero when rebuilding its runtime authority', async() => {
+    const { parkedAgentRehydrator } = await import('../../../services/ParkedAgentRehydrator');
+    const state = chatState(THREAD_ID);
+    parkedAgentRehydrator.apply(state, parkedIdentity('hidden', THREAD_ID, 3));
+
+    await containerKeyFor('sulla-desktop', THREAD_ID, state);
+
+    expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({
+      jobId: 'job-1', taskIndex: 3, workspacePath: '/mnt/worktrees/saved', recoverExistingWorkspace: true,
+      legacyConversationJobId: `chat-${ THREAD_ID }`,
+    });
   });
 
   it('keeps the chat key for a visible tab job, which always ran as a chat', async() => {
@@ -101,6 +121,7 @@ describe('conversation container persistence key after a parked delegated wake',
     expect(getJob).not.toHaveBeenCalled();
     expect(captureProviderCliSnapshot).toHaveBeenCalledTimes(1);
     expect(createAgentContainerLifecycle.mock.calls.at(-1)![0].providerCliSnapshot).toEqual(CURRENT_CLI);
+    expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({ jobId: 'chat-chat-thread', taskIndex: 0 });
   });
 
   it('reuses an ordinary active container and its CLI snapshot after selection changes', async() => {
