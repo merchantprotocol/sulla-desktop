@@ -42,7 +42,8 @@ class ReportingFixture {
       controller: chat, ci: { messages: ref(this.ctx.messages), graphRunning: this.ctx.graphRunning, threadId: ref('fixture-thread') },
       seen: new Set(), seenRunning: new Set(), optimisticUserMessages: new Map(), pendingA2aStatuses: new Map(),
       firstSeenAt: new Map(), firstCompletedAt: new Map(), lastMappedHash: new Map(), lastRawSignature: new Map(),
-      persistentArtifacts: new Set(),
+      persistentArtifacts: new Set(), decisionStatus: new Map(), decisionExpiry: new Map(),
+      voiceTranscriptTagger: { userText: (text: string) => text },
     });
   }
 
@@ -224,7 +225,7 @@ it.each(['Yes', 'No'])('attributes only the explicit %s answer reply live and af
   onTestFinished(() => clock.mockRestore());
   clock.mockReturnValue(Date.parse('2026-10-14T12:00:00Z'));
   const live = new ReportingFixture();
-  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply', replyStreamId: 'reply-ordinary' });
   const question = {
     id: asMessageId('question-line'), createdAt: Date.now(), kind: 'tool_question', status: 'pending',
     questionId: 'question-1', questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }, { label: 'No' }] }],
@@ -233,10 +234,10 @@ it.each(['Yes', 'No'])('attributes only the explicit %s answer reply live and af
   live.chat.updateMessage(question.id, {
     status: 'answered', answers: [{ question: 'Proceed?', selected: [answer] }],
   });
-  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply, updated' });
-  live.emit('assistant_message', { kind: 'streaming_complete' });
-  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up', decisionFollowUpId: 'question-1' });
-  live.emit('assistant_message', { kind: 'streaming_complete', decisionFollowUpId: 'question-1' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply, updated', replyStreamId: 'reply-ordinary' });
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'reply-ordinary' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up', decisionFollowUpId: 'question-1', replyStreamId: 'reply-decision' });
+  live.emit('assistant_message', { kind: 'streaming_complete', decisionFollowUpId: 'question-1', replyStreamId: 'reply-decision' });
   live.emit('assistant_message', { kind: 'text', content: 'Decision follow-up', decisionFollowUpId: 'question-1' });
   live.emit('assistant_message', { kind: 'text', content: 'Separate neighboring reply' });
   live.ctx.graphRunning.value = false;
@@ -478,6 +479,48 @@ it('keeps producer-classified narration and deliverables apart across streaming 
   expect(reopened.entries('fatal')[1]).toMatchObject({ message: {
     text: 'Opening it now', agentReporting: 'brief', replyAttribution: { model: 'actual-model' },
   } });
+  expect(reopened.chat.messages.value.filter(message =>
+    (message.kind === 'sulla' || message.kind === 'streaming') && message.replyStreamId === 'producer-turn',
+  ).map(message => message.replyAttribution?.model)).toEqual(['actual-model', 'actual-model']);
+});
+
+// risk: data accuracy — a user/approval/question boundary must split one provider call into bubbles
+// without letting final classification overwrite earlier narration or lose model attribution.
+it.each(['user', 'tool_approval', 'tool_question'] as const)('keeps same-ID segments sane across a %s boundary', boundary => {
+  const live = new ReportingFixture();
+  const replyStreamId = `boundary-${ boundary }`;
+  const first = 'Narration before the boundary.';
+  const last = 'Narration after the boundary.';
+  live.ctx.graphRunning.value = true;
+  live.emit('assistant_message', { kind: 'streaming', content: first, replyStreamId });
+
+  if (boundary === 'user') {
+    live.ctx.messages.push({ id: 'user-boundary', channelId: 'fixture-agent', threadId: 'fixture-thread',
+      role: 'user', kind: 'user', content: 'User turn boundary' } as any);
+  }
+  else if (boundary === 'tool_approval') {
+    live.emit('assistant_message', { kind: 'tool_approval', toolApproval: {
+      approvalId: 'fixture-approval', reason: 'Approve fixture command', command: 'echo fixture',
+    } });
+  }
+  else {
+    live.emit('assistant_message', { kind: 'tool_question', toolQuestion: {
+      questionId: 'fixture-question', questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }] }],
+    } });
+  }
+
+  live.emit('assistant_message', { kind: 'streaming', content: last, replyStreamId });
+  const segments = live.ctx.messages.filter(message => message.kind === 'streaming');
+  expect(segments.map(message => message.content)).toEqual([first, last]);
+  live.emit('assistant_message', {
+    kind: 'streaming_complete', replyStreamId, agentReporting: 'brief', reportedModel: 'selected-fixture-model',
+  });
+
+  expect(segments.map(message => message.agentReporting)).toEqual([undefined, 'brief']);
+  expect(segments.every(message => (message as any)._completed)).toBe(true);
+  expect(segments.map(message => message.replyAttribution?.model)).toEqual(['selected-fixture-model', 'selected-fixture-model']);
+  expect(live.entries('fatal').filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla')
+    .map(entry => entry.message.text)).toEqual([first, last]);
 });
 
 // risk: a hidden operation leaks across threads or exposes private arguments/results;
