@@ -4,6 +4,11 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import '../../Support/TestHomeEnv';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -20,11 +25,21 @@ vi.mock('electron', () => {
   return { default: { app }, app, ipcMain: { handle: vi.fn(), on: vi.fn() }, safeStorage: {} };
 });
 
-import { MCPServerHost } from '../../../../main/MCPServerHost';
+vi.mock('@pkg/agent/services/WebSocketClientService', () => ({
+  getWebSocketClientService: () => ({ connect: () => {}, onMessage: () => () => {}, send: async() => true }),
+}));
+
+import { ChatCompletionsServer } from '../../../../main/chatCompletionsServer';
+import { ExecWorker } from '../../../tools/meta/exec';
+import * as commandRunner from '../../../tools/util/CommandRunner';
+import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
+import { agentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
+import { deriveCapabilitySigningKey, verifyCapabilityToken, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
+import { HttpDesktopExecutor } from '../../../../../../packages/runtime-protocol/src/desktopExecutor';
+import { getMCPServerHost, MCPServerHost } from '../../../../main/MCPServerHost';
 import { toolRegistry } from '../../../tools/registry';
 import { AgentAwarenessPolicy } from '../../../services/AgentAwarenessPolicy';
 import { ClerkToolSessionResolver } from '../../../../main/ClerkToolSessionResolver';
-import { ToolSessionRegistry } from '../../../../main/mcpToolSessions';
 import type { BaseThreadState } from '../../../nodes/Graph';
 import { ClerkApiRoute } from '../../../../main/ClerkApiRoute';
 import { configuredVaultBrokerProvider, LocalVaultBrokerClient } from '../../../../vault-broker';
@@ -492,36 +507,204 @@ describe('Clerk guarded egress', () => {
     expect(f.send).not.toHaveBeenCalled();
   });
 
-  it('private Clerk dispatch requires a live agent proof matching the canonical worker and forwarded identity', async() => {
-    const sessions = new ToolSessionRegistry();
+  it('authorizes a container read for trusted task index zero and only its live session issuance', async() => {
     const name = 'clerk_get_user';
-    const state = { metadata: { agentId: context.agent_id, threadId: context.thread_id, allowedToolNames: [name] } } as BaseThreadState;
-    const session = sessions.register(state, 60_000, context);
-    const resolver = new ClerkToolSessionResolver({ getToolSession: id => sessions.get(id) },
-      { issueLocalBrokerContext: async() => { throw new Error('Unexpected host-local context'); } }, () => 'installation', new AgentAwarenessPolicy());
+    const binding = { podId: 'fixture-pod', subject: context.sub, agentId: 'worker', threadId: 'thread', jobId: 'job', taskIndex: 0, deviceId: 'device', workspacePath: '/fixture' };
+    const state = { metadata: { agentId: binding.agentId, threadId: binding.threadId, allowedToolNames: [name] } } as BaseThreadState;
+    const host = getMCPServerHost();
+    const originalPort = host['port'];
+    host['port'] = 1; // The listening transport is in-process; no socket is opened.
+    const serviceBearer = 'fixture-desktop';
+    const key = deriveCapabilitySigningKey(serviceBearer);
+    const written = new Map<string, string>();
+    const leases = new ContainerSessionLeases(binding, host, [name], 'lifecycle', key, 60_000, {
+      replace: async(key, value) => { written.set(key, value); },
+      remove: async key => { written.delete(key); },
+    });
+    const a = host.registerSession(state, 120_000, binding);
+    const unregister = agentContainerRuntimeRegistry.register(binding, leases);
+    const b = agentContainerRuntimeRegistry.withRuntime(binding, () => host.registerSession(state, 120_000));
+    const f = fixture();
+    const saved = toolDecisionPort.resolve();
+    const broker = vi.spyOn(configuredVaultBrokerProvider, 'requireConfiguredCredentialBroker').mockReturnValue(f.broker);
+    const local = vi.spyOn(configuredVaultBrokerProvider, 'issueLocalBrokerContext');
+    toolRegistry.registerManifests(clerkToolManifests);
+    let needsApproval = false;
+    let approve!: () => void;
+    const decide: typeof f.decide = vi.fn(async(...args: Parameters<typeof f.decide>) => {
+      const { record } = await f.decide(...args);
+      return { record, result: new Promise<DecisionOutcome>(resolve => {
+        approve = () => resolve({ status: 'approved', answers: [] });
+      }) };
+    });
+    toolDecisionPort.register({ request: decide, requiresApproval: async() => needsApproval });
+
+    const server = new ChatCompletionsServer();
+    server['apiToken'] = serviceBearer;
+    // Invoke the mounted private Express handler with serialized HTTP bytes, without listening or starting service storage.
+    const endpoint = server['app'].router.stack.find((layer: { route?: { path?: string } }) =>
+      layer.route?.path === '/internal/desktop-executor/:category/:tool').route.stack[0].handle;
+    const http = new HttpDesktopExecutor('http://fixture.invalid', serviceBearer, async(url, init) => {
+      const [, , , category, tool] = new URL(String(url)).pathname.split('/');
+      const req = { params: { category, tool }, socket: { remoteAddress: '127.0.0.1' },
+        headers: Object.fromEntries(new Headers(init?.headers)), body: JSON.parse(String(init?.body)) };
+      const res = proxyResponse();
+      const result = await endpoint(req, res);
+      return Response.json(result, { status: vi.mocked(res.status).mock.calls.at(-1)?.[0] ?? 200 });
+    });
+    const call = async(lease: string, session?: string) => {
+      const claims = await verifyCapabilityToken(lease, key, { category: 'clerk', tool: name });
+      return http.execute({ ...claims, request_id: 'fixture-request' }, 'clerk', 'get_user', { user_id: 'user_a' },
+        { deadlineMs: 10_000, clerkToolSession: session });
+    };
+    try {
+      const first = leases.issue(a.id);
+      await b.prepareCliLease!();
+      const second = [...written.values()][0];
+      await expect(call(first, a.id)).resolves.toMatchObject({ success: true });
+      await expect(call(second, b.id)).resolves.toMatchObject({ success: true });
+      const forbidden = { success: false, error: { code: 'clerk_session_forbidden' } };
+      await expect(call(first, b.id)).resolves.toMatchObject(forbidden);
+      await expect(call(second, a.id)).resolves.toMatchObject(forbidden);
+      await expect(call(first)).resolves.toMatchObject(forbidden);
+      await expect(call(first, serviceBearer)).resolves.toMatchObject(forbidden);
+      const legacy = issueCapabilityToken({ sub: binding.subject, scopes: [name] }, key);
+      await expect(call(legacy, a.id)).resolves.toMatchObject(forbidden);
+      expect(f.requests).toHaveLength(2);
+
+      // The same issuer/renewal routine used by the launcher rebinds only its own session.
+      let currentState = state;
+      for (const differentGraph of [true, false]) {
+        const preceding = written.get('SULLA_API_TOKEN') ?? first;
+        needsApproval = true;
+        const held = call(preceding, a.id);
+        const approvals = differentGraph ? 1 : 2;
+        await vi.waitFor(() => expect(f.decide).toHaveBeenCalledTimes(approvals));
+        if (differentGraph) currentState = { ...state, metadata: { ...state.metadata } };
+        await leases.renew(a.id, () => host.rebindSession(a.id, currentState, 120_000, binding));
+        approve();
+        await expect(held).resolves.toMatchObject({ success: false });
+        await expect(call(preceding, a.id)).resolves.toMatchObject(forbidden);
+        expect(f.requests).toHaveLength(approvals + 1);
+        needsApproval = false;
+        await expect(call(written.get('SULLA_API_TOKEN')!, a.id)).resolves.toMatchObject({ success: true });
+      }
+      expect(f.requests).toHaveLength(4);
+      expect(f.send).toHaveBeenCalledTimes(4);
+      expect(local).not.toHaveBeenCalled();
+      b.revoke();
+      await expect(call(second, b.id)).resolves.toMatchObject(forbidden);
+      await vi.waitFor(() => expect(written.size).toBe(1));
+    } finally {
+      a.revoke(); b.revoke(); unregister(); await leases.close();
+      host['port'] = originalPort;
+      local.mockRestore(); broker.mockRestore(); toolDecisionPort.register(saved);
+    }
+  });
+
+  it('pins state, identity and the earliest expiry at the forwarded authorization boundary', async() => {
+    let now = Date.now();
+    const host = new MCPServerHost();
+    const name = 'clerk_get_user';
+    const state = { metadata: { agentId: 'worker', threadId: 'thread', allowedToolNames: [name] } } as BaseThreadState;
+    const binding = { podId: 'pod', jobId: 'job', subject: context.sub, taskIndex: 0, deviceId: 'device', agentId: 'worker', threadId: 'thread', workspacePath: '/fixture' };
+    host.rebindSession('a', state, 120_000, binding);
+    const key = deriveCapabilitySigningKey('local fixture');
+    const issuer = new ContainerSessionLeases(binding, host, [name], 'lifecycle', key, 2000,
+      { replace: async() => {}, remove: async() => {} });
+    const proof = { ...await verifyCapabilityToken(issuer.issue('a'), key), request_id: 'test' };
+    const local = { issueLocalBrokerContext: vi.fn(async() => context) };
+    const resolver = new ClerkToolSessionResolver(host, local, () => null, new AgentAwarenessPolicy(), () => now);
     const f = fixture(caller => caller.revalidate());
     const worker = new ClerkWorker(() => f.client);
     worker.name = name;
-    worker.schemaDef = clerkToolManifests.find(manifest => manifest.name === name)!.schemaDef;
+    worker.schemaDef = clerkToolManifests.find(tool => tool.name === name)!.schemaDef;
     const signal = new AbortController().signal;
-    const dispatch = async(proof: string | undefined, forwarded = context, canonical = name) => {
-      await resolver.bindForwarded(worker, canonical, proof, forwarded, signal);
-      return worker.call({ user_id: 'user_a' });
-    };
     const saved = toolDecisionPort.resolve();
     toolDecisionPort.register({ request: f.decide, requiresApproval: async() => false });
     try {
-      await expect(dispatch(undefined)).rejects.toMatchObject({ status: 403 });
-      await expect(dispatch('installation')).rejects.toMatchObject({ status: 403 });
-      await expect(dispatch(session, { ...context, thread_id: 'different' })).rejects.toMatchObject({ status: 403 });
-      await expect(dispatch(session, context, 'clerk_delete_user')).rejects.toMatchObject({ status: 403 });
+      await expect(resolver.bindForwarded(worker, 'clerk_delete_user', 'a', proof, signal)).rejects.toMatchObject({ status: 403 });
+      await expect(resolver.bindForwarded(worker, name, 'a', { ...proof, thread_id: 'other' }, signal)).rejects.toMatchObject({ status: 403 });
+      await resolver.bindForwarded(worker, name, 'a', proof, signal);
+      expect(worker.deadlineAt).toBe(proof.exp * 1000);
+      now = proof.exp * 1000;
+      expect(await worker.call({ user_id: 'user_a' })).toMatchObject({ success: false, status: 403 });
+      now = Date.now();
+      host.rebindSession('a', state, 120_000); // Local (unprojected) session, same graph.
+      await expect(resolver.bindForwarded(worker, name, 'a', proof, signal)).rejects.toMatchObject({ status: 403 });
+      expect(local.issueLocalBrokerContext).not.toHaveBeenCalled();
       expect(f.requests).toHaveLength(0);
-      await expect(dispatch(session)).resolves.toMatchObject({ success: true });
-      expect(f.send).toHaveBeenCalledTimes(1);
-      sessions.revoke(session);
-      await expect(worker.call({ user_id: 'user_a' })).resolves.toMatchObject({ success: false, status: 403 });
-      expect(f.requests).toHaveLength(1);
     } finally { toolDecisionPort.register(saved); }
+  });
+
+  it('selects the launcher, provider and nested-exec leases independently on every shell call', async() => {
+    const dir = mkdtempSync(join(tmpdir(), 'clerk-lease-spec-'));
+    const helper = fileURLToPath(new URL('../../../../../../services/sulla-agent/secret-env.sh', import.meta.url));
+    const host = getMCPServerHost();
+    const originalPort = host['port'];
+    host['port'] = 1;
+    const running = vi.spyOn(host, 'running', 'get').mockReturnValue(true);
+    const binding = { podId: 'pod', jobId: 'job', subject: 'owner', deviceId: 'device', taskIndex: 0, workspacePath: '/fixture' };
+    const key = deriveCapabilitySigningKey('shell fixture');
+    const leases = new ContainerSessionLeases(binding, host, ['clerk/*'], 'lifecycle', key, 60_000, {
+      replace: async(name, value) => { writeFileSync(join(dir, name), value, { mode: 0o600 }); },
+      remove: async name => { rmSync(join(dir, name), { force: true }); },
+    });
+    const state = { metadata: { threadId: 'nested-thread' } } as BaseThreadState;
+    const unregister = agentContainerRuntimeRegistry.register(binding, leases);
+    for (const id of ['launcher', 'provider', 'nested']) host.rebindSession(id, state, 120_000, binding);
+    const read = (id?: string) => spawnSync('sh', ['-ec',
+      '. "$1"; load_sulla_tool_session "$2"; load_sulla_api_token "$2"; printf %s "$SULLA_API_TOKEN"',
+      'test', helper, dir], { encoding: 'utf8', env: { PATH: '/bin:/usr/bin', SULLA_API_TOKEN: 'stale', ...(id ? { SULLA_TOOL_SESSION: id } : {}) } });
+    const generation = async(id?: string) => {
+      const result = read(id);
+      expect(result.status).toBe(0);
+      return (await verifyCapabilityToken(result.stdout, key)).tool_session_generation;
+    };
+    try {
+      writeFileSync(join(dir, 'SULLA_TOOL_SESSION'), 'launcher');
+      writeFileSync(join(dir, 'SULLA_API_TOKEN'), leases.issue('launcher'));
+      await leases.prepare('provider');
+      await leases.prepare('nested');
+      expect(await generation()).toBe(host.peekToolSession('launcher')!.executionContext!.jti);
+      const provider = await generation('provider');
+      expect(provider).toBe(host.peekToolSession('provider')!.executionContext!.jti);
+      expect(await generation('nested')).toBe(host.peekToolSession('nested')!.executionContext!.jti);
+      expect(read('no-pair').status).not.toBe(0);
+
+      // Run the real meta/exec registration and finally cleanup. Only the guest process boundary is replaced.
+      const guest = vi.spyOn(commandRunner, 'runCommand').mockImplementation(async cmd => {
+        const out = spawnSync('sh', ['-ec', cmd, 'fixture', helper, dir], { encoding: 'utf8', env: { PATH: '/bin:/usr/bin' } });
+        if (out.status !== 0) return { stdout: '', stderr: 'nested lease unavailable', exitCode: 1 };
+        const [id, lease] = out.stdout.split('\n');
+        const signed = await verifyCapabilityToken(lease, key);
+        const live = host.peekToolSession(id);
+        const matched = live?.state === state && live.executionContext?.jti === signed.tool_session_generation;
+        return { stdout: matched ? 'paired' : 'unpaired', stderr: '', exitCode: matched ? 0 : 1 };
+      });
+      try {
+        const exec = new ExecWorker();
+        exec.setState(state);
+        const result = await agentContainerRuntimeRegistry.withRuntime(binding, () => exec['_validatedCall']({
+          command: '. "$1"; load_sulla_tool_session "$2"; load_sulla_api_token "$2"; printf "%s\\n%s" "$SULLA_TOOL_SESSION" "$SULLA_API_TOKEN"',
+        }));
+        expect(result).toMatchObject({ successBoolean: true, responseString: 'paired' });
+      } finally { guest.mockRestore(); }
+
+      host.rebindSession('nested', state, 120_000, binding);
+      await leases.renew('launcher', () => host.rebindSession('launcher', state, 120_000, binding));
+      expect(await generation('nested')).toBe(host.peekToolSession('nested')!.executionContext!.jti);
+      expect(await generation('provider')).toBe(provider);
+      host.revokeSession('nested');
+      await leases.renew('launcher', () => host.rebindSession('launcher', state, 120_000, binding));
+      expect(read('nested').status).not.toBe(0);
+      await leases.close();
+      expect(host.peekToolSession('provider')).toBeNull();
+    } finally {
+      for (const id of ['launcher', 'provider', 'nested']) host.revokeSession(id);
+      unregister(); running.mockRestore(); host['port'] = originalPort;
+      await leases.close(); rmSync(dir, { recursive: true });
+    }
   });
 
   it.each(['host-local', 'container'])('projected %s MCP handler runs an authorized read and refuses revocation during dispatch', async(mode) => {
