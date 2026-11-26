@@ -6,6 +6,7 @@
 import { reactive, readonly } from 'vue';
 
 import type { AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
+import type { Message } from '../../models/Message';
 import type { RunState } from '../../models/RunState';
 
 export type TypingIndicatorKind = 'hidden' | 'running' | 'streaming' | 'tool' | 'parked' | 'stalled' | 'error' | 'stopped';
@@ -65,6 +66,13 @@ export class TypingIndicatorState {
   /** The approved typing-indicator mockup marks a no-event loop stalled at 60 seconds. */
   static readonly stalledAfterMs = 60_000;
 
+  /** A reply closes the current turn only when it is last and the root run is terminal. */
+  static hasTerminalReply(currentTurn: readonly Message[], runState: RunState): boolean {
+    const lastMessage = currentTurn[currentTurn.length - 1];
+    if (lastMessage?.kind !== 'sulla') return false;
+    return runState.phase === 'idle' || runState.phase === 'error' || runState.phase === 'paused';
+  }
+
   static timestamp(value: string | null | undefined): number {
     if (!value) return 0;
     const parsed = Date.parse(value);
@@ -105,11 +113,16 @@ export class TypingIndicatorState {
     const input = this.input;
     if (!input) { this.apply('hidden'); return }
 
-    // A completed assistant turn wins even if a terminal controller event and
-    // the final message land in the same renderer update.
-    if (input.finalReply) { this.apply('hidden'); return }
-
     const run = input.runState;
+    const workingAgents = input.agents.filter(agent => agent.state === 'working');
+
+    // A completed root turn suppresses its own tail state, but the bubble
+    // remains useful when the root is idle and scoped agents still work.
+    if (input.finalReply && !(run.phase === 'idle' && workingAgents.length)) {
+      this.apply('hidden');
+      return;
+    }
+
     if (run.phase === 'error') {
       this.apply('error', { retryAvailable: input.retryAvailable, errorMessage: run.message });
       return;
@@ -123,7 +136,6 @@ export class TypingIndicatorState {
       return;
     }
 
-    const workingAgents = input.agents.filter(agent => agent.state === 'working');
     if (run.phase === 'idle') {
       if (workingAgents.length) this.apply('parked', { agents: workingAgents });
       else this.apply('hidden');

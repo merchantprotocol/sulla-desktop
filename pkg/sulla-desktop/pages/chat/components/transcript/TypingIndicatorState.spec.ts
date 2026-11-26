@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { MessageId } from '../../types/chat';
-import type { UserMessage } from '../../models/Message';
+import type { Message, SullaMessage, UserMessage } from '../../models/Message';
 import type { RunState } from '../../models/RunState';
 import { waitingOn } from '../../messages/waitingStatus';
 import { TypingIndicatorState, type TypingIndicatorAgent, type TypingIndicatorInput } from './TypingIndicatorState';
@@ -68,19 +68,47 @@ describe('TypingIndicatorState', () => {
     state.dispose();
   });
 
-  it('hides after finish or stop and suppresses a live bubble beside a terminal reply', () => {
+  it('keeps the bubble for a Sulla message until the current run is terminal', () => {
+    const reply: SullaMessage = {
+      id: messageId, kind: 'sulla', createdAt: Date.now(), text: 'Launching workers…', model: 'fixture',
+    };
+    const currentTurn = [reply];
+    const runStates: RunState[] = [
+      { phase: 'thinking', startedAt: Date.now(), messageId },
+      { phase: 'tool', startedAt: Date.now(), messageId, tool: 'read_file' },
+    ];
     const state = new TypingIndicatorState();
 
-    state.update(input({ phase: 'idle' }));
+    for (const runState of runStates) {
+      const finalReply = TypingIndicatorState.hasTerminalReply(currentTurn, runState);
+      expect(finalReply).toBe(false);
+      state.update(input(runState, { finalReply }));
+      expect(state.state.shouldRender).toBe(true);
+      expect(state.state.bubbleVisible).toBe(true);
+      expect(state.state.kind).toBe(runState.phase === 'tool' ? 'tool' : 'running');
+    }
+
+    state.dispose();
+  });
+
+  it('hides a final reply with idle or error in the same update', () => {
+    const state = new TypingIndicatorState();
+    const reply: SullaMessage = {
+      id: messageId, kind: 'sulla', createdAt: Date.now(), text: 'Done.', model: 'fixture',
+    };
+    const currentTurn = [reply];
+
+    const idle = { phase: 'idle' } as const;
+    const idleFinalReply = TypingIndicatorState.hasTerminalReply(currentTurn, idle);
+    expect(idleFinalReply).toBe(true);
+    state.update(input(idle, { finalReply: idleFinalReply }));
     expect(state.state.kind).toBe('hidden');
     expect(state.state.bubbleVisible).toBe(false);
 
-    state.update(input({ phase: 'thinking', startedAt: Date.now(), messageId }, { finalReply: true }));
-    expect(state.state.kind).toBe('hidden');
-    expect(state.state.shouldRender).toBe(false);
-    expect(state.state.bubbleVisible).toBe(false);
-
-    state.update(input({ phase: 'error', message: 'late terminal event', at: Date.now() }, { finalReply: true }));
+    const error = { phase: 'error', message: 'late terminal event', at: Date.now() } as const;
+    const errorFinalReply = TypingIndicatorState.hasTerminalReply(currentTurn, error);
+    expect(errorFinalReply).toBe(true);
+    state.update(input(error, { finalReply: errorFinalReply }));
     expect(state.state.kind).toBe('hidden');
     expect(state.state.shouldRender).toBe(false);
 
@@ -89,6 +117,33 @@ describe('TypingIndicatorState', () => {
     expect(state.state.shouldRender).toBe(true);
     expect(state.state.bubbleVisible).toBe(false);
     state.dispose();
+  });
+
+  it('keeps scoped working agents parked after the root reply', () => {
+    const reply: SullaMessage = {
+      id: messageId, kind: 'sulla', createdAt: Date.now(), text: 'The root reply is ready.', model: 'fixture',
+    };
+    const runState = { phase: 'idle' } as const;
+    const finalReply = TypingIndicatorState.hasTerminalReply([reply], runState);
+    const state = new TypingIndicatorState();
+
+    expect(finalReply).toBe(true);
+    state.update(input(runState, { finalReply, agents: [workingAgent('worker-1')] }));
+
+    expect(state.state.kind).toBe('parked');
+    expect(state.state.shouldRender).toBe(true);
+    expect(state.state.bubbleVisible).toBe(false);
+    expect(state.state.agents.map(agent => agent.key)).toEqual(['worker-1']);
+    state.dispose();
+  });
+
+  it('requires the Sulla reply to be the last message in the current turn', () => {
+    const reply: SullaMessage = {
+      id: messageId, kind: 'sulla', createdAt: Date.now(), text: 'Launching workers…', model: 'fixture',
+    };
+    const tool = { id: 'tool-message' as MessageId, kind: 'tool', createdAt: Date.now(), tool: 'read_file', desc: '', status: 'ok' } as const;
+
+    expect(TypingIndicatorState.hasTerminalReply([reply, tool as Message], { phase: 'idle' })).toBe(false);
   });
 
   it('does not render the legacy waiting row beside the bubble for a running user turn', () => {
