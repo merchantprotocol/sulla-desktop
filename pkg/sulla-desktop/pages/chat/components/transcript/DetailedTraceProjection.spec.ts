@@ -1,5 +1,7 @@
+// @vitest-environment jsdom
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
+import { mount } from '@vue/test-utils';
 
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn(async() => ({ success: false })) } }));
 import { DetailedTraceProjection } from './DetailedTraceProjection';
@@ -8,8 +10,87 @@ import type { Message } from '../../models/Message';
 import { asMessageId } from '../../types/chat';
 import { ToolPayloadRepository } from '../../services/ToolPayloadRepository';
 import { TracePayloadSerializer } from './TracePayloadSerializer';
+import InlineReplyBody from './InlineReplyBody.vue';
+import TraceRow from './TraceRow.vue';
+
+const a2aMarker = (card: object) => `⟦SULLA_A2A:${ Buffer.from(JSON.stringify(card)).toString('base64url') }⟧`;
 
 describe('DetailedTraceProjection', () => {
+  it('keeps peer messages out of Standard and renders their complete bodies as Detailed trace rows', () => {
+    // risk: agent-to-agent messages leaking into Standard or losing/truncating content in Detailed.
+    const incomingBody = `INCOMING_START:${ 'peer status and full report · '.repeat(160) }:INCOMING_END`;
+    const outgoingBody = `OUTGOING_START:${ 'review this complete task · '.repeat(160) }:OUTGOING_END`;
+    const markerOnlyBody = 'MARKER_ONLY_OUTGOING:full text remains visible in Detailed';
+    const card = a2aMarker({ id: 'outgoing-1', to: 'coding-manager', targetId: 'job-8', body: outgoingBody, status: 'delivered' });
+    const markerOnly = a2aMarker({ id: 'outgoing-2', to: 'heartbeat', body: markerOnlyBody, status: 'sent' });
+    const messages = [
+      { id: asMessageId('user-1'), kind: 'user', createdAt: 1, text: 'review' },
+      { id: asMessageId('peer-incoming'), kind: 'channel', createdAt: 2, agent: 'Heartbeat', channel: 'heartbeat', text: incomingBody },
+      { id: asMessageId('reply-1'), kind: 'sulla', createdAt: 3, text: `I delegated this review. ${card} I will share the result.` },
+      { id: asMessageId('user-2'), kind: 'user', createdAt: 4, text: 'another message' },
+      { id: asMessageId('reply-2'), kind: 'sulla', createdAt: 5, text: markerOnly },
+    ] satisfies Message[];
+
+    const reporting = new TranscriptReporting();
+    const standard = reporting.standardEntries(messages, 'info');
+    expect(standard.map(entry => entry.sourceId)).toEqual(['user-1', 'reply-1', 'user-2']);
+    expect(standard.some(entry => entry.kind === 'card' && entry.message.kind === 'channel')).toBe(false);
+    expect(standard.some(entry => entry.sourceId === 'reply-2')).toBe(false);
+
+    const prose = mount(InlineReplyBody, { props: { text: messages[2]!.text, agentMessagesAsTrace: true } });
+    expect(prose.text()).toContain('I delegated this review.');
+    expect(prose.text()).toContain('I will share the result.');
+    expect(prose.find('.a2a-inline-card').exists()).toBe(false);
+    expect(prose.text()).not.toContain('SULLA_A2A');
+    prose.unmount();
+
+    const turns = new DetailedTraceProjection().project(messages, standard);
+    const rows = turns.flatMap(turn => turn.rows).filter(row => row.verb === 'Received' || row.verb === 'Sent');
+    expect(rows.map(row => row.verb)).toEqual(['Received', 'Sent', 'Sent']);
+    expect(rows.map(row => row.note)).toEqual([incomingBody, outgoingBody, markerOnlyBody]);
+    expect(rows[1]).toMatchObject({ target: 'coding-manager · job-8', keyArgs: 'delivered', status: 'ok' });
+
+    for (const [row, body] of [[rows[0]!, incomingBody], [rows[1]!, outgoingBody], [rows[2]!, markerOnlyBody]] as const) {
+      const rendered = mount(TraceRow, { props: { row } });
+      expect(rendered.find('.dtr-note').text()).toBe(body);
+      rendered.unmount();
+    }
+  });
+
+  it.each(['brief', 'standard'] as const)('keeps channel traffic out of Standard for %s agent reporting', agentReporting => {
+    // risk: a producer classification accidentally promotes agent traffic into the human-facing transcript.
+    const body = `CHANNEL_START:${ 'complete peer report · '.repeat(160) }:CHANNEL_END`;
+    const message = {
+      id: asMessageId(`channel-${agentReporting}`), kind: 'channel', createdAt: 1,
+      agent: 'Heartbeat', channel: 'heartbeat', text: body, agentReporting,
+    } satisfies Message;
+    const reporting = new TranscriptReporting();
+    const standard = reporting.standardEntries([message], 'info');
+
+    expect(standard).toEqual([]);
+    const rows = new DetailedTraceProjection().project([message], standard).flatMap(turn => turn.rows);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ verb: 'Received', note: body });
+  });
+
+  it('preserves every pre-existing Standard item when peer-message metadata is present', () => {
+    // risk: transcript regression — filtering agent messages must not alter human-facing messages, approvals, or evidence.
+    const user = { id: asMessageId('standard-user'), kind: 'user', createdAt: 1, text: 'please run this' } as const;
+    const reply = { id: asMessageId('standard-reply'), kind: 'sulla', createdAt: 2, text: 'I will run it.' } as const;
+    const approval = { id: asMessageId('standard-approval'), kind: 'tool_approval', createdAt: 3, reason: 'Needs approval', command: 'run check', decision: 'pending' } as const;
+    const citation = { id: asMessageId('standard-citation'), kind: 'citation', createdAt: 4, sources: [{ num: 1, title: 'Local report', origin: 'report.md' }] } as const;
+    const baseline = [user, reply, approval, citation] satisfies Message[];
+    const additions = [
+      { id: asMessageId('standard-peer'), kind: 'channel', createdAt: 2.5, agent: 'Mobile', channel: 'mobile', text: 'not Standard' },
+      { id: asMessageId('standard-marker-only'), kind: 'sulla', createdAt: 5, text: a2aMarker({ body: 'only trace content', to: 'Mobile' }) },
+    ] satisfies Message[];
+
+    const reporting = new TranscriptReporting();
+    const before = reporting.standardEntries(baseline, 'info');
+    const after = reporting.standardEntries([user, additions[0]!, reply, approval, citation, additions[1]!], 'info');
+    expect(after).toEqual(before);
+  });
+
   it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
     // risk: shared transcript mutation and incorrect insertion order.
     const messages = Object.freeze([

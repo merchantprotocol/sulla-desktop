@@ -26,7 +26,7 @@
     @mousemove="onHoverBlock"
     @mouseleave="releaseBlock"
   >
-    <InlineReplyBody class="chat-body" :text="msg.text" agent-cards />
+    <InlineReplyBody class="chat-body" :text="msg.text" agent-messages-as-trace />
     <button
       v-if="hoverBlock"
       type="button"

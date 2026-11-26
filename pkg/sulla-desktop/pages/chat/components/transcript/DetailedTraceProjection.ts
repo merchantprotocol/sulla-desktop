@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Message, ToolMessage, ThinkingMessage, MemoryMessage, HeartbeatMessage, ToolApprovalMessage, CitationMessage, SullaMessage } from '../../models/Message';
+import { A2aCardMarkup } from '../../messages/a2aCardMarkup';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTraceProjection';
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
@@ -15,7 +16,13 @@ import type { SubAgentTraceStatus, TraceRow, TraceRowKind, TraceRowStatus, Trace
 export class DetailedTraceProjection {
   static readonly trailingAnchor = '__trace-trailing__';
 
-  constructor(private readonly reporting = new TranscriptReporting(), private readonly serializer = new TracePayloadSerializer(), private readonly subagents = new SubAgentTraceProjection(), private readonly toolPayloads = new ToolPayloadRepository()) {}
+  constructor(
+    private readonly reporting = new TranscriptReporting(),
+    private readonly serializer = new TracePayloadSerializer(),
+    private readonly subagents = new SubAgentTraceProjection(),
+    private readonly toolPayloads = new ToolPayloadRepository(),
+    private readonly agentMessages = new A2aCardMarkup(),
+  ) {}
 
   project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
     const activities = this.debugActivities(messages, standardEntries);
@@ -94,8 +101,25 @@ export class DetailedTraceProjection {
       case 'heartbeat': return rows.concat(this.rowsForHeartbeat(message, anchor));
       case 'tool_approval': return rows.concat(this.rowsForApproval(message, anchor));
       case 'citation': return rows.concat(this.rowsForCitation(message, anchor));
+      case 'channel': return rows.concat(this.rowsForChannel(message, anchor));
+      case 'sulla': case 'streaming': return rows.concat(this.rowsForA2a(message, anchor));
       default: return rows;
     }
+  }
+
+  private rowsForChannel(message: Extract<Message, { kind: 'channel' }>, anchor: string): TraceRow[] {
+    const target = `${message.agent} · #${message.channel}`;
+    return [{ ...this.row(message.id, 'activity', 'Received', target, 'ok', anchor, message.createdAt), note: message.text }];
+  }
+
+  private rowsForA2a(message: Extract<Message, { kind: 'sulla' | 'streaming' }>, anchor: string): TraceRow[] {
+    return this.agentMessages.messages(message.text).map((agentMessage, index) => {
+      const id = agentMessage.id ? `${message.id}:a2a:${agentMessage.id}` : `${message.id}:a2a:${index}`;
+      const target = `${agentMessage.recipient}${agentMessage.targetId ? ` · ${agentMessage.targetId}` : ''}`;
+      const status = agentMessage.deliveryStatus === 'failed' ? 'failed' : 'ok';
+      const note = agentMessage.reason ? `${agentMessage.body}\n${agentMessage.reason}` : agentMessage.body;
+      return { ...this.row(id, 'activity', 'Sent', target, status, anchor, message.createdAt, undefined, agentMessage.deliveryStatus), note };
+    });
   }
 
   private rowsForThinking(message: ThinkingMessage, anchor: string): TraceRow[] {
