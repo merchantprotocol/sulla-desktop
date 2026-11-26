@@ -52,9 +52,6 @@ const statusLabels: Record<SubAgentTraceStatus, string> = {
 
 /** Correlates a worker's records while emitting each visible event at its own timestamp. */
 export class SubAgentTraceProjection {
-  /** The one status word the approved row shows. */
-  static statusLabel(status: SubAgentTraceStatus): string { return statusLabels[status]; }
-
   /** "2 agents: 1 returned, 1 working" for the turn header, in first-seen status order. */
   static summary(statuses: readonly SubAgentTraceStatus[]): string | undefined {
     if (!statuses.length) return undefined;

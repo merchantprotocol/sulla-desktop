@@ -11,30 +11,6 @@
       <div class="dtr-what">{{ row.note || row.target }}</div>
     </div>
   </li>
-  <li v-else-if="row.subagent && row.kind === 'subagent'" class="dtr-row dtr-agent" data-kind="agent" :data-status="row.status">
-    <div class="dtr-line">
-      <span class="dtr-ic">
-        <span class="dtr-marker" :data-role="row.subagent.isReviewer ? 'rev' : 'wrk'" :data-status="row.status" aria-hidden="true">{{ row.subagent.marker }}</span>
-      </span>
-      <div class="dtr-what"><span v-if="row.verb" class="dtr-verb">{{ row.verb }}</span><span class="dtr-tg">{{ row.target }}</span><span v-if="row.subagent.agentId" class="dtr-agent-id">{{ row.subagent.agentId }}</span></div>
-      <span class="dtr-m"><span class="dtr-dur">{{ duration }}</span><span class="dtr-st" :data-s="row.status">{{ statusLabel }}</span></span>
-      <button
-        type="button" class="dtr-x" :aria-expanded="open" :aria-controls="payloadId"
-        :aria-label="`Brief, check-ins and report for ${row.target}`"
-        @click="toggle"
-      ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg></button>
-    </div>
-    <p v-if="row.note || row.subagent.followUpOf" class="dtr-note">
-      <time v-if="noteTime" class="dtr-when">{{ noteTime }}</time><span v-if="row.subagent.followUpOf">Follow-up of job {{ row.subagent.followUpOf.jobId }} task {{ row.subagent.followUpOf.taskIndex }}.{{ row.note ? ' ' : '' }}</span>{{ row.note }}
-    </p>
-    <div class="dtr-agent-meta">
-      <span v-if="agentMeta">{{ agentMeta }}</span>
-      <button v-if="row.subagent.conversationId && openConversation" type="button" @click="openAgent">Open agent</button>
-      <button type="button" :aria-expanded="open" :aria-controls="payloadId" @click="toggle">Brief</button>
-    </div>
-    <p v-if="open && historyError" class="dtr-note" role="status">Check-in history could not be loaded.</p>
-    <pre v-if="open" :id="payloadId" class="dtr-raw" tabindex="0">{{ payloadText }}</pre>
-  </li>
   <li v-else class="dtr-row" :data-kind="row.kind" :data-status="row.status">
     <div class="dtr-line">
       <span class="dtr-ic" aria-hidden="true"><svg viewBox="0 0 16 16" v-html="icon" /></span>
@@ -74,7 +50,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
-import type { SubAgentTraceStatus, TraceRow as TraceRowModel } from './traceTypes';
+import type { TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
 import { TracePayloadSerializer } from './TracePayloadSerializer';
 
@@ -169,15 +145,12 @@ const payloadPresentation = computed(() => loadedPresentation.value ?? payloadSe
 ));
 const payloadImages = computed(() => payloadPresentation.value.images);
 const payloadText = computed(() => payloadPresentation.value.text);
-const statusLabel = computed(() => SubAgentTraceProjection.statusLabel(props.row.status as SubAgentTraceStatus));
 const agentMeta = computed(() => {
   const agent = props.row.subagent;
   if (!agent) return '';
   return [agent.model, agent.runLocation ?? history.value?.runLocation, agent.jobId ? `job ${agent.jobId}` : undefined,
     agent.taskIndex !== undefined ? `task ${agent.taskIndex}` : undefined].filter(Boolean).join(' · ');
 });
-const noteTime = computed(() => props.row.subagent?.noteAt !== undefined
-  ? new Date(props.row.subagent.noteAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
 const rowNow = ref(Date.now());
 const ticking = computed(() => {
   const agent = props.row.subagent;
@@ -237,15 +210,6 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 .dtr-note { margin: 0 34px 2px; color: var(--text-secondary); font: 13px/19px var(--font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dtr-row[data-status="failed"] .dtr-note, .dtr-row[data-status="blocked"] .dtr-note { color: var(--text-primary); }
 .dtr-raw { margin: 4px 34px 8px; padding: 10px 12px; border-radius: 8px; background: var(--bg-surface); color: var(--text-primary); font: 12px/1.6 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
-/* Sub-agent row: marker is the worker chart's agent marker; row spacing follows the shared rail grammar. */
-.dtr-marker { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font: 600 10px/1 var(--font-body); }
-.dtr-marker[data-role="wrk"] { background: var(--border-muted); color: var(--text-secondary); }
-.dtr-marker[data-role="rev"] { background: var(--bg-page); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--border-default); }
-.dtr-marker[data-status="starting"], .dtr-marker[data-status="stopped"] { opacity: .45; }
-.dtr-marker[data-status="blocked"], .dtr-marker[data-status="quiet"] { background: var(--status-warning); color: var(--bg-page); box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-warning) 26%, transparent); }
-.dtr-marker[data-status="failed"] { background: var(--status-error); color: var(--bg-page); box-shadow: none; }
-.dtr-agent-id { margin-left: 6px; color: var(--text-secondary); font: 11.5px var(--font-mono, ui-monospace, monospace); white-space: nowrap; }
-.dtr-when { margin-right: 6px; color: var(--text-muted); font: 11px var(--font-mono, ui-monospace, monospace); }
 .dtr-agent-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; margin: 2px 34px 4px; color: var(--text-muted); font: 11.5px/18px var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
 .dtr-agent-meta button { padding: 0; border: 0; background: none; color: var(--primary-color-text-override, var(--accent)); font: 12.5px var(--font-body); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .dtr-row button:focus-visible { outline: 0; border-radius: 6px; box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 28%, transparent); }
