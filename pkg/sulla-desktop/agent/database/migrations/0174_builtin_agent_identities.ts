@@ -18,6 +18,7 @@ export class BuiltinAgentIdentitiesMigration {
     )).rows.length) return;
 
     const rows = (await client.query('SELECT * FROM agent_definitions FOR UPDATE')).rows.map(rowToDefinition);
+    const liveIds = new Set(rows.map(row => row.id));
     const bySlug = new Map(rows.map(row => [row.slug, row]));
     const renames = new Map<string, string>();
     const movedDefinitions = new Map<string, string>();
@@ -61,7 +62,17 @@ export class BuiltinAgentIdentitiesMigration {
           const entries = state[field];
           if (!entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
           for (const [old, slug] of renames) {
-            if (entries[old]?.agentId !== movedDefinitions.get(old) || Object.prototype.hasOwnProperty.call(entries, slug)) continue;
+            const agentId = movedDefinitions.get(old);
+            if (entries[old]?.agentId !== agentId) continue;
+            if (Object.prototype.hasOwnProperty.call(entries, slug)) {
+              const destinationId = entries[slug]?.agentId;
+              // A deleted Studio agent cannot own this key. Never displace an unknown or live owner:
+              // failing the migration transaction keeps the old slug and its working route together.
+              if (typeof destinationId !== 'string' || !destinationId ||
+                  (destinationId !== agentId && liveIds.has(destinationId))) {
+                throw new Error(`Cannot move ${ field } from ${ old } to ${ slug }: conflicting definition ownership.`);
+              }
+            }
             entries[slug] = entries[old];
             delete entries[old];
           }
