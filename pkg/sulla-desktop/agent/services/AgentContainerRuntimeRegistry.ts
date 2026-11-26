@@ -39,7 +39,15 @@ export class AgentContainerRuntimeRegistry {
   private readonly bindings = new Map<string, AgentContainerRuntimeBinding>();
   // Keep signing authority out of serializable runtime bindings and snapshots.
   private readonly leases = new WeakMap<AgentContainerRuntimeBinding, ContainerSessionLeases>();
+  // Only recovered dispatches need a caller-bounded issuer. Ordinary workers never request it.
+  private readonly recovered = new WeakSet<AgentContainerRuntimeBinding>();
+  private readonly dispatches = new WeakMap<AgentContainerRuntimeBinding, { binding: AgentContainerRuntimeBinding; caller: ToolExecutionContext }>();
   sessionLeases(binding: AgentContainerRuntimeBinding) {
+    const dispatch = this.dispatches.get(binding);
+    if (dispatch) {
+      if (this.bindings.get(dispatch.binding.podId) !== dispatch.binding) throw new Error('Recovered container binding changed');
+      return this.supervisor?.recoveredLeases?.(dispatch.binding, dispatch.caller);
+    }
     return this.leases.get(binding) ?? this.supervisor?.recoveredLeases?.(binding);
   }
   private readonly activeRuntime = new AsyncLocalStorage<AgentContainerRuntimeBinding>();
@@ -51,7 +59,10 @@ export class AgentContainerRuntimeRegistry {
     this.rebindPending = true;
     this.rehydrated = this.supervisor.liveBindings().then(bindings => {
       // Merge inventory with registrations created while Docker inspection was in flight.
-      for (const binding of bindings) if (!this.bindings.has(binding.podId)) this.bindings.set(binding.podId, binding);
+      for (const binding of bindings) if (!this.bindings.has(binding.podId)) {
+        this.bindings.set(binding.podId, binding);
+        this.recovered.add(binding);
+      }
       this.rebindPending = false;
     });
     return this.rehydrated;
@@ -87,11 +98,10 @@ export class AgentContainerRuntimeRegistry {
   forExecution(ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined {
     if (target !== 'agent-local' || !ctx.pod_id) return undefined;
     const binding = this.require(ctx);
-    const recovered = this.supervisor?.recoveredLeases?.(binding, ctx);
-    if (!recovered) return binding;
+    if (!this.recovered.has(binding)) return binding;
     // Never share a caller-bounded authority with a different concurrent dispatch.
     const dispatch = { ...binding };
-    this.leases.set(dispatch, recovered);
+    this.dispatches.set(dispatch, { binding, caller: structuredClone(ctx) });
     return dispatch;
   }
 }
