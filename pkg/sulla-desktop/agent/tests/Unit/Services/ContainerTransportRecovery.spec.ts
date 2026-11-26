@@ -74,7 +74,9 @@ describe('session registration authority', () => {
       await issuer.prepare(provider.id);
       expect(await clerkAllowed(launcher.id)).toBe(true);
       expect(await clerkAllowed(provider.id)).toBe(true);
+      const held = await resolver.resolveSession(provider.id, 'clerk_get_user', new AbortController().signal);
       launcher.revoke();
+      await expect(held.revalidate!()).rejects.toMatchObject({ status: 403 });
       expect(await clerkAllowed(provider.id)).toBe(false);
     } finally { launcher.revoke(); provider.revoke(); await issuer.close(); host['port'] = port; }
   });
@@ -103,6 +105,15 @@ describe('session registration authority', () => {
         expect((await register.invoke({}, state)).success).toBe(true);
       }
       expect(await Promise.all(created.map(child => clerkAllowed(child.id)))).toEqual([false, false]);
+      const child = created[0];
+      const signal = new AbortController().signal;
+      const ctx = host.peekToolSession(child.id)!.executionContext!;
+      await expect(resolver.resolve({ headers: { authorization: child.header } }, 'clerk_get_user', signal)).rejects.toMatchObject({ status: 403 });
+      await expect(resolver.bindForwarded(worker(), 'clerk_get_user', child.id, { ...ctx, tool_session_generation: ctx.jti }, signal))
+        .rejects.toMatchObject({ status: 403 });
+      // A host-side rebind cannot promote this child into an eligible local graph.
+      host.rebindSession(child.id, state, 60_000);
+      expect(await clerkAllowed(child.id)).toBe(false);
       expect(await clerkAllowed(launcher.id)).toBe(true);
     } finally { decisions.mockRestore(); created.forEach(child => child.revoke()); launcher.revoke(); await issuer.close(); host['port'] = port; }
   });

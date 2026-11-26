@@ -106,6 +106,9 @@ export class ClerkToolSessionResolver {
     const meta = root?.state.metadata;
     if (!root || !ctx || !rootPair || typeof rootPair !== 'object' || rootPair.parent ||
         rootPair.generation !== pair.parent.generation || ctx.jti !== rootPair.generation ||
+        !ctx.sub || !ctx.pod_id || !ctx.agent_id || !ctx.thread_id ||
+        ctx.agent_id !== String(meta?.agentId ?? ctx.agent_id).trim() ||
+        ctx.thread_id !== String(meta?.threadId ?? ctx.thread_id).trim() ||
         !Array.isArray(meta?.allowedToolNames) || !meta.allowedToolNames.length ||
         !sessionAllowsTool(meta.allowedToolNames, name, meta, this.awarenessPolicy)) throw deny();
     const deadline = Math.min(until, root.expiresAt, rootPair.expiresAt, ctx.exp * 1000);
