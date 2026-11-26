@@ -24,8 +24,11 @@ export class FileDetailRepository {
   }
 
   /** The file's latest 100 audit entries, newest first. */
-  async activity(fileId:string):Promise<any[]> {
-    return (await this.db.query('SELECT id::text,who_type,who_id,device_or_run_id,action,at FROM audit_log WHERE file_id=$1 ORDER BY at DESC LIMIT 100', [fileId])).rows;
+  async activity(fileId:string, includeModelConflicts = false):Promise<any[]> {
+    return (await this.db.query(`SELECT id::text,who_type,who_id,device_or_run_id,action,at,
+        CASE WHEN action='use-case-model-conflict' THEN details->>'message' END AS message,
+        CASE WHEN action='use-case-model-conflict' THEN version_id END AS version_id
+      FROM audit_log WHERE file_id=$1 AND ($2 OR action<>'use-case-model-conflict') ORDER BY at DESC LIMIT 100`, [fileId, includeModelConflicts])).rows;
   }
 
   /** Every version of the file, newest first, with its major.minor number. */

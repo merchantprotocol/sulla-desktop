@@ -5,3 +5,6 @@
 
 /** Theme used whenever persisted settings are unavailable. */
 export const DEFAULT_THEME_ID = 'noir-dark' as const;
+
+/** Window canvas before the app stylesheet and persisted theme can paint. */
+export const STARTUP_BACKGROUND = '#0d1117';
