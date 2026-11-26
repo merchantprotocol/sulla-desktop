@@ -116,6 +116,7 @@ describe('conversation container persistence key after a parked delegated wake',
 
     expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({
       jobId:                    'job-1',
+      kind:                     'delegated',
       taskIndex:                3,
       workspacePath:            '/mnt/worktrees/saved',
       recoverExistingWorkspace: true,
@@ -144,6 +145,7 @@ describe('conversation container persistence key after a parked delegated wake',
 
     expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({
       jobId:                    'job-1',
+      kind:                     'delegated',
       taskIndex:                3,
       workspacePath:            '/mnt/worktrees/saved',
       recoverExistingWorkspace: true,
@@ -176,7 +178,7 @@ describe('conversation container persistence key after a parked delegated wake',
     expect(getJob).not.toHaveBeenCalled();
     expect(captureProviderCliSnapshot).toHaveBeenCalledTimes(1);
     expect(createAgentContainerLifecycle.mock.calls.at(-1)![0].providerCliSnapshot).toEqual(CURRENT_CLI);
-    expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({ jobId: 'chat-chat-thread', taskIndex: 0 });
+    expect(createAgentContainerLifecycle.mock.calls.at(-1)![0]).toMatchObject({ kind: 'chat', jobId: 'chat-chat-thread', taskIndex: 0 });
   });
 
   it('reuses an ordinary active container and its CLI snapshot after selection changes', async() => {
