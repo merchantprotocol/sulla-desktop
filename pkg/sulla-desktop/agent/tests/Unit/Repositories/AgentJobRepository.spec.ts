@@ -55,6 +55,79 @@ dbDescribe('AgentJobRepository', () => {
       .toEqual([expect.objectContaining({ generation: 1, result: { answer: 1 }, completion: expect.objectContaining({ output: 'first' }) })]);
   });
 
+  it('finds an inline review only for the same saved reviewer selection', async() => {
+    // risk: a review launched for an earlier saved selection is returned as the answer to a later one.
+    // Every Workflow save writes binding revision 1, so only the edit token tells two saves apart.
+    const review = (jobId: string, editToken?: string): AgentJob => ({
+      ...job(jobId), parentThreadId: 'inline-review-parent',
+      tasks: [{
+        agentId: 'reviewer', label: 'Review', prompt: 'review', status: 'running', workflowStep: 'review',
+        followUpOf: { jobId: 'implementation', taskIndex: 1 }, inlineReviewDigest: 'same-bytes',
+        workerModelRoute: { version: 1, slug: 'reviewer', agentId: 'def-reviewer', revision: 1, selected: 0, candidates: [{ provider: 'codex', model: 'gpt-sol' }], ...(editToken ? { editToken } : {}) },
+      }],
+    });
+    const first = review('inline-review-save-1', 'save-1');
+    await repository.insertJob(first);
+    await repository.complete({ ...first, status: 'completed', finishedAt: Date.now() });
+
+    expect((await repository.findInlineReview('inline-review-parent', review('retry', 'save-1').tasks[0]))?.jobId).toBe(first.jobId);
+    expect(await repository.findInlineReview('inline-review-parent', review('next-save', 'save-2').tasks[0])).toBeUndefined();
+    expect(await repository.findInlineReview('inline-review-parent', review('no-token').tasks[0])).toBeUndefined();
+
+    // A route saved before tokens were recorded still matches itself.
+    const legacy = review('inline-review-legacy');
+    legacy.tasks[0].inlineReviewDigest = 'legacy-bytes';
+    await repository.insertJob(legacy);
+    expect((await repository.findInlineReview('inline-review-parent', legacy.tasks[0]))?.jobId).toBe(legacy.jobId);
+    expect(await repository.findInlineReview('inline-review-parent', { ...legacy.tasks[0], workerModelRoute: { ...legacy.tasks[0].workerModelRoute!, editToken: 'save-3' } })).toBeUndefined();
+  });
+
+  it('reads a chat lineage whose saved job has an empty task and result slot, keeping later indexes', async() => {
+    // risk: one legacy gap fails the whole chat's handoff history and outcomes read
+    const sparse = { ...job('lineage-sparse'), parentThreadId: 'lineage-sparse-root' };
+    await repository.insertJob(sparse);
+    const completion = { label: 'second', status: 'completed', output: 'report' };
+    const kept = { agentId: 'worker', label: 'second', prompt: 'work', status: 'completed', result: { large: true }, completion };
+    await database.query('UPDATE agent_jobs SET tasks = $2::jsonb, results = $3::jsonb, task_count = 2 WHERE job_id = $1',
+      [sparse.jobId, JSON.stringify([null, kept]), JSON.stringify([null, completion])]);
+
+    for (const includeReports of [false, true]) {
+      const rows = await repository.lineageForParentThread('lineage-sparse-root', 100, includeReports);
+      expect(rows.map(row => row.jobId)).toEqual([sparse.jobId]);
+      expect(rows[0].tasks).toHaveLength(2);
+      expect(rows[0].tasks[0]).toBeNull();
+      expect(rows[0].tasks[1]).toMatchObject({ agentId: 'worker', label: 'second' });
+      expect(rows[0].tasks[1]).not.toHaveProperty('result');
+      expect(rows[0].results).toEqual(includeReports ? [null, completion] : []);
+    }
+  });
+
+  it('lists active and finished jobs whose saved task array has an empty slot, keeping later indexes', async() => {
+    // risk: one legacy gap fails the fleet list and startup recovery for every job, not only its own
+    const base = Date.now();
+    const live = job('list-sparse-live', base);
+    const done = job('list-sparse-done', base - 1_000);
+    const healthy = job('list-sparse-healthy', base - 2_000);
+    for (const input of [live, done, healthy]) await repository.insertJob(input);
+    await repository.complete({ ...done, status: 'completed', finishedAt: Date.now() });
+    const kept = { agentId: 'worker', label: 'second', prompt: 'work', status: 'running', result: { large: true }, completion: { label: 'second', status: 'completed', output: 'report' } };
+    await database.query('UPDATE agent_jobs SET tasks = $2::jsonb, task_count = 2 WHERE job_id = ANY($1::text[])',
+      [[live.jobId, done.jobId], JSON.stringify([null, kept])]);
+
+    const listed = await repository.jobsForList(25, true);
+    expect(listed.map(row => row.jobId)).toEqual([live.jobId, done.jobId, healthy.jobId]);
+    for (const row of listed.slice(0, 2)) {
+      expect(row.tasks).toHaveLength(2);
+      // The gap stays at index 0 as an entry without fields; the real task stays at index 1.
+      expect(row.tasks[0]).toMatchObject({ agentId: null, label: null, status: null });
+      expect(row.tasks[1]).toMatchObject({ agentId: 'worker', label: 'second', status: 'running' });
+      expect(row.tasks[1]).not.toHaveProperty('result');
+    }
+    expect(listed[2].tasks).toEqual([expect.objectContaining({ agentId: 'worker', label: 'lane', status: 'running' })]);
+    // Startup recovery and the active-work readers use the same query without finished jobs.
+    expect((await repository.activeJobs()).map(row => row.jobId)).toEqual([live.jobId, healthy.jobId]);
+  });
+
   it('loads only the requested thread lineage for the subagent directory', async() => {
     // risk: subagent recall latency and cross-thread data leakage — do not scan unrelated agent jobs
     const rootThread = 'preloop-lineage-root';
@@ -233,6 +306,25 @@ dbDescribe('AgentJobRepository', () => {
       .toEqual([{ task_index: 0 }]);
   });
 
+  it('keeps a live task’s workflow stage in the compact projection and leaves an untagged sibling untagged', async() => {
+    // risk: the live snapshot reports no stage, which replaces the saved stage of a running or parked handoff in AI Team
+    const input = job('projection-workflow-step');
+    input.tasks = [
+      { agentId: 'builder', label: 'Implement export', prompt: 'work', status: 'running', workflowStep: 'implementation' },
+      { agentId: 'worker', label: 'Unrelated lookup', prompt: 'work', status: 'running' },
+      { agentId: 'reviewer', label: 'Review export', prompt: 'work', status: 'parked', workflowStep: 'review', followUpOf: { jobId: 'projection-workflow-step', taskIndex: 0 } },
+    ];
+    input.taskCount = 3;
+    await repository.insertJob(input);
+
+    const [projection] = await repository.jobsForProjection(120_000);
+    expect(projection.jobId).toBe(input.jobId);
+    expect(projection.tasks.map(task => task.label)).toEqual(['Implement export', 'Unrelated lookup', 'Review export']);
+    expect(projection.tasks.map(task => task.workflowStep ?? null)).toEqual(['implementation', null, 'review']);
+    // The stage sits beside the other routing fields the projection already preserves.
+    expect(projection.tasks[2]).toMatchObject({ status: 'parked', followUpOf: { jobId: input.jobId, taskIndex: 0 } });
+  });
+
   it('includes every ancestor beyond the old fixed recursion depth', async() => {
     // risk: live descendants detach from deep managers when an arbitrary ancestry cap is reached
     const base = Date.now() - 60 * 60_000;
@@ -274,7 +366,9 @@ dbDescribe('AgentJobRepository', () => {
   it('projects completion status separately from a stale task error status', async() => {
     // risk: a successfully completed task is rolled up as failed after compact projection
     const input = job('projection-completion-status');
-    input.tasks[0] = { ...input.tasks[0], status: 'error', completion: {
+    const responseModels = [{ model: 'gpt-6.2-sol', provider: 'codex', effort: 'high', source: 'resolved' as const }];
+    const decisionIds = ['decision-one'];
+    input.tasks[0] = { ...input.tasks[0], status: 'error', responseModels, decisionIds, completion: {
       label: 'lane', status: 'completed', output: 'synthetic success', threadId: 'projection-completion-thread',
     } };
     await repository.insertJob(input);
@@ -282,7 +376,7 @@ dbDescribe('AgentJobRepository', () => {
 
     const [projected] = await repository.jobsForProjection(120_000);
     expect(projected.tasks[0]).toMatchObject({
-      status: 'error', completion: { status: 'completed' },
+      status: 'error', completion: { status: 'completed' }, responseModels, decisionIds,
     });
   });
 
@@ -483,8 +577,8 @@ dbDescribe('AgentJobRepository', () => {
     await database.query(`UPDATE agent_jobs SET finished_at = now() - interval '8 days' WHERE job_id = $1`, [pendingAbandoned.jobId]);
 
     expect(await retention.drainExpired({ batchSize: 1, maxBatches: 5, pauseMs: 0 })).toBe(2);
-    const left = await database.query(`SELECT job_id FROM agent_jobs WHERE job_id = ANY($1::text[])`, [[nothingPending.jobId, pendingRecent.jobId, pendingAbandoned.jobId]]);
-    expect(left.map((row: { job_id: string }) => row.job_id)).toEqual([pendingRecent.jobId]);
+    const left = await database.query<{ job_id: string }>(`SELECT job_id FROM agent_jobs WHERE job_id = ANY($1::text[])`, [[nothingPending.jobId, pendingRecent.jobId, pendingAbandoned.jobId]]);
+    expect(left.map(row => row.job_id)).toEqual([pendingRecent.jobId]);
   });
 
   it('keeps the lineage recursion on typed task rows and returns each descendant once', async() => {

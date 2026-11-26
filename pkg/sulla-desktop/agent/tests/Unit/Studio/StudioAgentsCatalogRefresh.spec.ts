@@ -32,7 +32,7 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: {
       f.listArgs.push(args[0]);
       // The production list function behind the IPC channel, with its real database read guard.
       if (f.realHandler) { const { listAgentDefinitions } = await import('@pkg/main/agentsIpc'); return listAgentDefinitions(args[0]) }
-      if (f.failList) throw new Error('database unavailable');
+      if (f.failList) throw new Error('Agent definitions are temporarily unavailable while the database reconnects.');
       if (f.holdList) { const held = f.holdList; f.holdList = undefined; return held.promise }
       return structuredClone(f.agents);
     }
@@ -131,7 +131,7 @@ describe('Agents page catalog while it stays mounted', () => {
     const wrapper = await openPage();
     await wrapper.findAll('button.dir-edit').find(button => button.text() === 'Codex LUNA Worker')!.trigger('click');
     await wrapper.find('input').setValue('Renamed, not saved');
-    await wrapper.find('[aria-label="Reasoning effort"]').setValue('high');
+    await wrapper.find('[aria-label="Tier 1, model 1 effort"]').setValue('high');
     await wrapper.findAll('.tabs button').find(button => button.text() === 'Prompt')!.trigger('click');
     await wrapper.find('textarea').setValue('Unsaved prompt');
 
@@ -140,7 +140,7 @@ describe('Agents page catalog while it stays mounted', () => {
     expect((wrapper.find('textarea').element as HTMLTextAreaElement).value).toBe('Unsaved prompt');
     await wrapper.findAll('.tabs button').find(button => button.text() === 'Profile')!.trigger('click');
     expect((wrapper.find('input').element as HTMLInputElement).value).toBe('Renamed, not saved');
-    expect((wrapper.find('[aria-label="Reasoning effort"]').element as HTMLSelectElement).value).toBe('high');
+    expect((wrapper.find('[aria-label="Tier 1, model 1 effort"]').element as HTMLSelectElement).value).toBe('high');
     expect(f.calls.filter(call => MUTATIONS.includes(call))).toEqual([]);
   });
 
@@ -169,10 +169,11 @@ describe('Agents page catalog while it stays mounted', () => {
     f.failList = true;
     const wrapper = await openPage();
     await wrapper.findAll('button').find(button => button.text() === 'Manage')!.trigger('click');
-    expect(wrapper.text()).toContain('database unavailable');
+    expect(wrapper.get('[role=status]').text()).toBe('Loading agents…');
+    expect(wrapper.find('[role=alert]').exists()).toBe(false);
     f.failList = false;
     await tick();
-    expect(wrapper.text()).not.toContain('database unavailable');
+    expect(wrapper.find('[role=status]').exists()).toBe(false);
     expect(installed(wrapper)).toBe('16');
   });
 
@@ -286,11 +287,12 @@ describe('Agents page catalog during a database outage (real list handler and re
     databaseDown = true;
     const wrapper = await openPage();
     await wrapper.findAll('button').find(button => button.text() === 'Manage')!.trigger('click');
-    expect(wrapper.text()).toMatch(/temporarily unavailable/);
+    expect(wrapper.get('[role=status]').text()).toBe('Loading agents…');
+    expect(wrapper.find('[role=alert]').exists()).toBe(false);
     databaseDown = false;
     await tick();
     expect(installed(wrapper)).toBe('17');
-    expect(wrapper.text()).not.toMatch(/temporarily unavailable/);
+    expect(wrapper.find('[role=status]').exists()).toBe(false);
   });
 });
 
@@ -385,7 +387,7 @@ describe('saving while the catalog read is unavailable (real list handler and re
     await flushPromises();
     expect(nameInput(wrapper).value).toBe('Saved and reloaded');
     expect(wrapper.find('.hero h1').text()).toBe('Saved and reloaded');
-    expect(wrapper.text()).toContain('Saved. Model changes apply to new work');
+    expect(wrapper.text()).toContain('Saved.');
   });
 });
 
@@ -429,7 +431,7 @@ describe('a save that finishes after the editor moved to another agent', () => {
     // A model change saves the worker mapping first; the profile update follows that await.
     await wrapper.findAll('button.dir-edit').find(candidate => candidate.text() === 'Codex LUNA Worker')!.trigger('click');
     await wrapper.find('input').setValue('Luna renamed');
-    await wrapper.find('[aria-label="Reasoning effort"]').setValue('high');
+    await wrapper.find('[aria-label="Tier 1, model 1 effort"]').setValue('high');
     const mapping = held(); f.holdWorkerSet = mapping.promise;
     await button(wrapper, 'Save').trigger('click');
     await flushPromises();
@@ -466,16 +468,17 @@ describe('a save that finishes after the editor moved to another agent', () => {
 });
 
 describe('model validation on Save', () => {
-  it('shows the mapping validation for a pinned model on an agent without a worker mapping, and writes nothing', async() => {
+  it('shows the mapping validation for custom model tiers on an agent without a worker mapping, and writes nothing', async() => {
     const errors = vi.spyOn(console, 'error');
     const wrapper = await openPage();
     await wrapper.findAll('button.dir-edit').find(candidate => candidate.text() === 'Agent 1')!.trigger('click');
-    await wrapper.find('[role="switch"]').trigger('click');
-    await wrapper.find('[aria-label="Pinned model"]').setValue('gpt-6-luna');
+    await wrapper.findAll('button').find(candidate => candidate.text() === 'Set model tiers')!.trigger('click');
+    await wrapper.find('[aria-label="Tier 1, model 1 provider"]').setValue('codex');
+    await wrapper.find('[aria-label="Tier 1, model 1 version"]').setValue('gpt-6-luna');
     const save = wrapper.findAll('button').find(candidate => candidate.text() === 'Save')!;
     await save.trigger('click');
     await flushPromises();
-    expect(wrapper.text()).toContain('This exact model cannot be represented by an owner worker mapping');
+    expect(wrapper.text()).toContain('This agent cannot use custom model tiers');
     expect(f.calls.filter(call => MUTATIONS.includes(call))).toEqual([]);
     expect(save.attributes('disabled')).toBeUndefined();
     expect(errors.mock.calls.flat().map(String).join('\n')).not.toContain('cannot be represented');

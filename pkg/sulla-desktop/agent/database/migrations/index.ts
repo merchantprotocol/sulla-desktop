@@ -30,6 +30,7 @@ import { up as up_0165, down as down_0165 } from './0165_create_channel_bindings
 import { up as up_0167, down as down_0167 } from './0167_scoped_relay_receipts';
 import { up as up_0168, down as down_0168 } from './0168_scoped_terminal_delivery';
 import { up as up_0169, down as down_0169 } from './0169_scoped_history_delivery';
+import { up as up_0170 } from './0170_builtin_agent_identities';
 import { up as up_0166, down as down_0166 } from './0166_agent_job_custody';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
@@ -314,4 +315,5 @@ export const migrationsRegistry = [
   { name: '0167_scoped_relay_receipts', up: up_0167, down: down_0167 },
   { name: '0168_scoped_terminal_delivery', up: up_0168, down: down_0168 },
   { name: '0169_scoped_history_delivery', up: up_0169, down: down_0169 },
+  { name: '0170_builtin_agent_identities', up: up_0170, down: '' },
 ] as const;

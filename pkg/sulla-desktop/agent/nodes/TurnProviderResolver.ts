@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { getPrimaryService, getSubconsciousService, modelRouteService } from '../languagemodels';
+import { getServiceByProvider, getPrimaryService, getSubconsciousService, modelRouteService } from '../languagemodels';
 import { resolveModelSlot } from '../languagemodels/modelSlotRouting';
 import { effectiveModelChoice } from '../languagemodels/threadModelChoice';
 import type { AgentModelChoice } from '../languagemodels/modelRoutingTypes';
@@ -22,6 +22,13 @@ export class TurnProviderResolver {
     const memoized = turnProviderMemo.get(state);
     if (memoized) return { provider: memoized.provider, candidates: [...memoized.candidates] };
 
+    if (state.metadata.inheritedResumeModel && !(state.metadata as any).workerModelChatOverride) {
+      const { modelRouter } = await import('../languagemodels/modelRouter');
+      const candidate = await modelRouter.checkInheritedResume(state.metadata.inheritedResumeModel);
+      const provider = await getServiceByProvider(candidate.provider, candidate.model, candidate.effort);
+      turnProviderMemo.set(state, provider, [candidate]);
+      return { provider, candidates: [candidate] };
+    }
     const target = resolveModelSlot(state.metadata as any) === 'subconscious' ? 'subconscious' : 'agents';
     const explicitProvider = String((state.metadata as any).agent?.provider || '').trim();
     const explicitModel = String((state.metadata as any).agent?.model || '').trim();

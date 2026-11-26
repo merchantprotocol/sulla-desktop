@@ -39,6 +39,9 @@ export interface AgentStateRow extends ResultTracking {
  /** 0 = launched directly from the root chat. */
  depth: number;
  agentId: string | null;
+ /** Product Owner stage recorded when this task was delegated. */
+ workflowStep?: import('../productOwnerWorkflow').DelegatedWorkflowStep;
+ responseModels?: AgentModelStatusValue[];
  /** Explicit existing Projects task assignment. */
  taskId?:            string;
  modelStatus?:       AgentModelStatusValue;

@@ -107,6 +107,7 @@ export interface OpenAgentTabInput {
   /** Dead-run keys the child's activity must touch. */
   activityKeys:      string[];
   workerModelRoute?: WorkerModelRoute;
+  workflowStep?: import('../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
   providerCliSnapshot?: import('../../shared/providerCliSelection').ProviderCliSnapshot;
   runOverrides?: { model?: string; provider?: string; effort?: string; runLocation?: 'vm' | 'container' };
 }
@@ -125,6 +126,7 @@ export async function openAgentTab(input: OpenAgentTabInput): Promise<void> {
   meta.activityKeys = input.activityKeys;
   meta.delegatedJobId = input.jobId;
   meta.delegatedTaskIndex = 0;
+  meta.productOwnerWorkflowStep = input.workflowStep;
   if (input.providerCliSnapshot) meta.providerCliSnapshot = input.providerCliSnapshot;
   await saveThreadState(state);
 

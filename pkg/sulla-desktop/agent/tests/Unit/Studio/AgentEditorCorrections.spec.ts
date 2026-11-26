@@ -80,7 +80,7 @@ beforeEach(() => {
     if (name === 'model-routing:worker-set') {
       const change = args[0];
       if (change.candidates === null) delete f.routing.workerBindings[change.slug];
-      else f.routing.workerBindings[change.slug] = { agentId: change.agentId, revision: change.expectedRevision + 1, editToken: `token-${ f.stamp }`, candidates: change.candidates };
+      else f.routing.workerBindings[change.slug] = { agentId: change.agentId, revision: change.expectedRevision + 1, editToken: `token-${ f.stamp }`, modelTiers: change.modelTiers, candidates: change.modelTiers.tiers.flatMap((tier: any) => tier.candidates) };
       return structuredClone(f.routing);
     }
     return [];
@@ -178,7 +178,7 @@ describe('saved timestamp and baseline after a profile save', () => {
     const original = f.invoke.getMockImplementation()!;
     f.invoke.mockImplementation((name: string, ...args: any[]) => name === 'model-routing:worker-set' ? Promise.reject(new Error('Mapping store unavailable')) : original(name, ...args));
     const wrapper = await openEditor();
-    await wrapper.find('[role="switch"]').trigger('click');
+    await button(wrapper, 'Use shared defaults').trigger('click');
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     expect(updates()).toHaveLength(1);
     expect(wrapper.text()).toContain('Profile was saved; model settings could not be saved. Mapping store unavailable');
@@ -192,14 +192,16 @@ describe('disabled agent model settings', () => {
     f.agent = baseAgent({ enabled: false });
     f.routing.workers = []; // the runnable workers list excludes disabled definitions
     const wrapper = await openEditor();
-    await wrapper.find('[role="switch"]').trigger('click');
-    await wrapper.find('[aria-label="Reasoning effort"]').setValue('high');
-    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await button(wrapper, 'Set model tiers').trigger('click');
+    await wrapper.find('[aria-label="Tier 1, model 1 provider"]').setValue('codex');
+    await wrapper.find('[aria-label="Tier 1, model 1 version"]').setValue('gpt-6-luna');
+    await wrapper.find('[aria-label="Tier 1, model 1 effort"]').setValue('high');
+    await wrapper.findAll('input[type="checkbox"]').at(-1)!.setValue(true);
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     const names = f.invoke.mock.calls.map(call => call[0]);
     expect(names.indexOf('model-routing:worker-set')).toBeGreaterThan(-1);
     expect(names.indexOf('model-routing:worker-set')).toBeLessThan(names.indexOf('agent-definitions:update'));
-    expect(f.invoke.mock.calls.find(call => call[0] === 'model-routing:worker-set')![1]).toMatchObject({ slug: 'reviewer', agentId: 'agent-1', candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'high' }] });
+    expect(f.invoke.mock.calls.find(call => call[0] === 'model-routing:worker-set')![1]).toMatchObject({ slug: 'reviewer', agentId: 'agent-1', modelTiers: { tiers: [{ candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'high' }] }] } });
     expect(updates()[0][2]).toMatchObject({ enabled: true });
     expect(updates()[0][2]).not.toHaveProperty('modelChoice');
     expect(wrapper.text()).toContain('Saved. Model changes apply to new work');
@@ -277,16 +279,79 @@ describe('routine references keep raw typing', () => {
   });
 });
 
-describe('unpinning clears hidden fallbacks', () => {
-  it('the controls emit an empty fallback list when the pin is turned off', async() => {
-    const wrapper = mount(AgentModelControls, { props: { modelValue: { mode: 'pin', provider: 'codex', model: 'gpt-6-luna' }, baseChoice: { mode: 'list' }, fallbacks: [{ provider: 'claude-code', model: 'sonnet' }], state: { providers } as any } });
-    await wrapper.find('[role="switch"]').trigger('click');
-    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([{ mode: 'list' }]);
-    expect(wrapper.emitted('update:fallbacks')?.at(-1)).toEqual([[]]);
+describe('model tiers never choose a model for the owner', () => {
+  const empty = { provider: '', model: '' };
+  const chosen = { provider: 'codex', model: 'gpt-6-luna', effort: 'max' };
+  const controls = (tiers: any) => mount(AgentModelControls, { props: { modelValue: { mode: 'list' }, tiers, source: 'Model tiers', state: { providers } as any } });
+  const lastTiers = (wrapper: any) => wrapper.emitted('update:tiers')?.at(-1)?.[0]?.tiers;
+
+  it('starts every new tier and row empty and clears the model and effort when the provider changes', async() => {
+    const fresh = controls(null);
+    await button(fresh, 'Set model tiers').trigger('click');
+    // risk: an agent bound to the first catalog model, which nobody chose
+    expect(lastTiers(fresh)).toEqual([{ candidates: [empty] }]);
+    fresh.unmount();
+
+    const wrapper = controls({ version: 1, tiers: [{ candidates: [chosen] }] });
+    await button(wrapper, 'Add model').trigger('click');
+    expect(lastTiers(wrapper)).toEqual([{ candidates: [chosen, empty] }]);
+    await button(wrapper, 'Add tier').trigger('click');
+    expect(lastTiers(wrapper)).toEqual([{ candidates: [chosen] }, { candidates: [empty] }]);
+    await wrapper.find('[aria-label="Tier 1, model 1 provider"]').setValue('claude-code');
+    expect(lastTiers(wrapper)).toEqual([{ candidates: [{ provider: 'claude-code', model: '' }] }]);
     wrapper.unmount();
   });
 
-  it('a new agent pinned, given a fallback, then unpinned saves on its first save', async() => {
+  it('shows placeholders for an empty row and names the row that still needs a choice', async() => {
+    const wrapper = controls({ version: 1, tiers: [{ candidates: [chosen] }, { candidates: [{ provider: 'claude-code', model: '' }] }] });
+    const provider = wrapper.find('[aria-label="Tier 2, model 1 provider"]').element as HTMLSelectElement;
+    const model = wrapper.find('[aria-label="Tier 2, model 1 version"]').element as HTMLSelectElement;
+    expect(provider.value).toBe('claude-code');
+    expect(model.value).toBe('');
+    expect(model.selectedOptions[0].text).toBe('Choose model');
+    expect(wrapper.find('[aria-label="Tier 2, model 1 effort"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('Tier 2, model 1: choose a provider and model before saving.');
+    wrapper.unmount();
+
+    const blank = controls({ version: 1, tiers: [{ candidates: [empty] }] });
+    expect((blank.find('[aria-label="Tier 1, model 1 provider"]').element as HTMLSelectElement).selectedOptions[0].text).toBe('Choose provider');
+    expect((blank.find('[aria-label="Tier 1, model 1 version"]').element as HTMLSelectElement).disabled).toBe(true);
+    blank.unmount();
+  });
+
+  it('refuses to save an incomplete row from the agent page and saves it once the owner has chosen', async() => {
+    const wrapper = await openEditor();
+    const writes = () => f.invoke.mock.calls.filter(call => ['model-routing:worker-set', 'agent-definitions:update', 'agent-definitions:create'].includes(call[0]));
+    await button(wrapper, 'Set model tiers').trigger('click');
+    await button(wrapper, 'Save').trigger('click'); await flushPromises();
+    expect(wrapper.text()).toContain('Tier 1, model 1: choose a provider and model before saving.');
+    expect(writes()).toEqual([]);
+
+    // A provider without a model is still not a selection.
+    await wrapper.find('[aria-label="Tier 1, model 1 provider"]').setValue('claude-code');
+    await button(wrapper, 'Save').trigger('click'); await flushPromises();
+    expect(writes()).toEqual([]);
+
+    await wrapper.find('[aria-label="Tier 1, model 1 version"]').setValue('sonnet');
+    await button(wrapper, 'Save').trigger('click'); await flushPromises();
+    expect(f.invoke.mock.calls.find(call => call[0] === 'model-routing:worker-set')![1]).toMatchObject({
+      slug: 'reviewer', modelTiers: { tiers: [{ candidates: [{ provider: 'claude-code', model: 'sonnet' }] }] },
+    });
+    expect(wrapper.text()).toContain('Saved. Model changes apply to new work');
+    wrapper.unmount();
+  });
+});
+
+describe('restoring shared defaults clears draft tiers', () => {
+  it('the controls clear custom tiers and a legacy pin when using shared defaults', async() => {
+    const wrapper = mount(AgentModelControls, { props: { modelValue: { mode: 'pin', provider: 'codex', model: 'gpt-6-luna' }, tiers: { version: 1, tiers: [{ candidates: [{ provider: 'claude-code', model: 'sonnet' }] }] }, source: 'Saved model tiers', state: { providers } as any } });
+    await button(wrapper, 'Use shared defaults').trigger('click');
+    expect(wrapper.emitted('update:modelValue')?.at(-1)).toEqual([{ mode: 'list' }]);
+    expect(wrapper.emitted('update:tiers')?.at(-1)).toEqual([null]);
+    wrapper.unmount();
+  });
+
+  it('a new agent with discarded tiers creates with shared defaults on its first save', async() => {
     f.invoke.mockImplementation(async(name: string, ...args: any[]) => {
       await Promise.resolve();
       if (name === 'agent-definitions:list') return [];
@@ -299,30 +364,29 @@ describe('unpinning clears hidden fallbacks', () => {
     await button(wrapper, '＋ New agent').trigger('click');
     const fields = wrapper.findAll('.frow input');
     await fields[0].setValue('Unpinned'); await fields[1].setValue('unpinned');
-    await wrapper.find('[role="switch"]').trigger('click');
-    await button(wrapper, 'Add fallback').trigger('click');
-    await wrapper.find('[aria-label="Fallback provider 1"]').setValue('claude-code');
-    await wrapper.find('[role="switch"]').trigger('click');
+    await button(wrapper, 'Set model tiers').trigger('click');
+    await button(wrapper, 'Add tier').trigger('click');
+    await wrapper.find('[aria-label="Tier 2, model 1 provider"]').setValue('claude-code');
+    await button(wrapper, 'Use shared defaults').trigger('click');
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     const create = f.invoke.mock.calls.find(call => call[0] === 'agent-definitions:create')!;
-    expect(create[1]).toMatchObject({ modelChoice: { mode: 'list' }, modelFallbacks: [] });
+    expect(create[1]).toMatchObject({ modelChoice: { mode: 'list' } });
+    expect(create[1]).not.toHaveProperty('modelTiers');
     expect(wrapper.text()).not.toContain('require a pinned model choice');
     expect(wrapper.text()).toContain('Saved.');
     wrapper.unmount();
   });
 });
 
-describe('model class pin restores the latest unpinned class', () => {
-  it('pin on and pin off keep the class chosen in this session, and save writes that class', async() => {
+describe('returning to a shared class', () => {
+  it('drafting then discarding tiers keeps the class chosen in this session', async() => {
     const wrapper = await openEditor();
-    const select = () => wrapper.find('[aria-label="Model class"]').element as HTMLSelectElement;
+    const select = () => wrapper.find('[aria-label="Shared model defaults"]').element as HTMLSelectElement;
     expect(select().value).toBe('fast');
-    await wrapper.find('[aria-label="Model class"]').setValue('coding');
-    await wrapper.find('[role="switch"]').trigger('click');
-    expect(select().disabled).toBe(true);
-    expect(select().value).toBe('coding');
-    await wrapper.find('[role="switch"]').trigger('click');
-    expect(select().disabled).toBe(false);
+    await wrapper.find('[aria-label="Shared model defaults"]').setValue('coding');
+    await button(wrapper, 'Set model tiers').trigger('click');
+    expect(wrapper.find('[aria-label="Shared model defaults"]').exists()).toBe(false);
+    await button(wrapper, 'Use shared defaults').trigger('click');
     expect(select().value).toBe('coding');
     await button(wrapper, 'Save').trigger('click');
     await flushPromises();
@@ -349,17 +413,17 @@ describe('saved fallback effort stays visible when the catalog omits it', () => 
       },
     };
     const wrapper = await openEditor();
-    const effort = () => wrapper.find('[aria-label="Fallback effort 1"]');
+    const effort = () => wrapper.find('[aria-label="Tier 2, model 1 effort"]');
     expect((effort().element as HTMLSelectElement).value).toBe('max');
-    expect(effort().text()).toContain('max · not listed');
+    expect(effort().text()).toContain('max · unavailable');
     await wrapper.findAll('.frow input')[0].setValue('Reviewer renamed');
     await button(wrapper, 'Save').trigger('click');
     await flushPromises();
     expect(f.invoke.mock.calls.some(call => call[0] === 'model-routing:worker-set')).toBe(false);
     expect((effort().element as HTMLSelectElement).value).toBe('max');
-    expect(effort().text()).toContain('max · not listed');
-    await wrapper.find('[aria-label="Fallback model 1"]').setValue('gpt-6-luna');
-    expect(effort().text()).not.toContain('not listed');
+    expect(effort().text()).toContain('max · unavailable');
+    await wrapper.find('[aria-label="Tier 2, model 1 version"]').setValue('gpt-6-luna');
+    expect(effort().text()).not.toContain('unavailable');
     expect((effort().element as HTMLSelectElement).value).toBe('');
     wrapper.unmount();
   });
@@ -393,12 +457,12 @@ describe('owner binding recovery after a create whose list readback failed', () 
       if (name === 'agent-definitions:create') {
         const input = validateAgentEditorCreateInput(args[0]);
         a.definition = baseAgent({ id: 'qa-created-id', slug: input.slug, name: input.name, modelChoice: input.modelChoice, updatedAt: nextStamp() });
-        if (input.modelChoice?.mode === 'pin') {
-          const { provider, model, effort } = input.modelChoice;
-          f.routing.workerBindings[input.slug] = { agentId: 'qa-created-id', revision: 1, editToken: 'created-token', candidates: [{ provider, model, ...(effort ? { effort } : {}) }, ...input.modelFallbacks] };
+        const modelBindingReceipt = { revision: 1, editToken: 'created-token' };
+        if (input.modelTiers) {
+          f.routing.workerBindings[input.slug] = { agentId: 'qa-created-id', ...modelBindingReceipt, modelTiers: input.modelTiers, candidates: input.modelTiers.tiers.flatMap(tier => tier.candidates) };
           f.routing.workers.push({ id: 'qa-created-id', slug: input.slug });
         }
-        return { id: 'qa-created-id', slug: input.slug, enabled: true, updated_at: a.definition.updatedAt };
+        return { id: 'qa-created-id', slug: input.slug, enabled: true, updated_at: a.definition.updatedAt, modelBindingReceipt };
       }
       if (name === 'agent-definitions:update') {
         if (a.updateFails) { a.updateFails = false; throw new Error('Profile store unavailable') }
@@ -408,26 +472,29 @@ describe('owner binding recovery after a create whose list readback failed', () 
         return { id: a.definition.id, slug: a.definition.slug, enabled: true, updated_at: a.definition.updatedAt };
       }
       if (name === 'model-routing:worker-set') {
+        if (a.routingDown) throw new Error('Settings unavailable');
         const change = args[0]; const current = f.routing.workerBindings[change.slug];
         if (!current || current.agentId !== change.agentId || current.revision !== change.expectedRevision || current.editToken !== change.expectedToken) throw new Error('This mapping changed elsewhere. Reload before saving.');
-        f.routing.workerBindings[change.slug] = { ...current, revision: current.revision + 1, editToken: `token-${ current.revision + 1 }`, candidates: change.candidates };
+        f.routing.workerBindings[change.slug] = { ...current, revision: current.revision + 1, editToken: `token-${ current.revision + 1 }`, modelTiers: change.modelTiers, candidates: change.modelTiers.tiers.flatMap((tier: any) => tier.candidates) };
         return structuredClone(f.routing);
       }
       return [];
     });
   });
 
-  async function createPinnedWhileListFails() {
+  async function createWithTiersWhileListFails() {
     const wrapper = mount(StudioAgentsPage, { attachTo: document.body, global: { stubs } });
     await flushPromises();
     await button(wrapper, '＋ New agent').trigger('click');
     const fields = wrapper.findAll('.frow input');
     await fields[0].setValue('QA created reviewer'); await fields[1].setValue('qa-created');
-    await wrapper.find('[role="switch"]').trigger('click');
-    await wrapper.find('[aria-label="Pinned model"]').setValue('gpt-6-luna');
-    await wrapper.find('[aria-label="Reasoning effort"]').setValue('max');
-    await button(wrapper, 'Add fallback').trigger('click');
-    await wrapper.find('[aria-label="Fallback provider 1"]').setValue('grok');
+    await button(wrapper, 'Set model tiers').trigger('click');
+    await wrapper.find('[aria-label="Tier 1, model 1 provider"]').setValue('codex');
+    await wrapper.find('[aria-label="Tier 1, model 1 version"]').setValue('gpt-6-luna');
+    await wrapper.find('[aria-label="Tier 1, model 1 effort"]').setValue('max');
+    await button(wrapper, 'Add tier').trigger('click');
+    await wrapper.find('[aria-label="Tier 2, model 1 provider"]').setValue('grok');
+    await wrapper.find('[aria-label="Tier 2, model 1 version"]').setValue('grok-4.7');
     f.listDown = true;
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     expect(calls('agent-definitions:create')).toHaveLength(1);
@@ -435,14 +502,16 @@ describe('owner binding recovery after a create whose list readback failed', () 
     return wrapper;
   }
   async function editToSol(wrapper: any) {
-    await wrapper.find('[aria-label="Pinned model"]').setValue('gpt-6.1-sol');
-    await wrapper.find('[aria-label="Reasoning effort"]').setValue('high');
+    await wrapper.find('[aria-label="Tier 1, model 1 version"]').setValue('gpt-6.1-sol');
+    await wrapper.find('[aria-label="Tier 1, model 1 effort"]').setValue('high');
   }
 
   it('saves a later model, effort and fallback edit through the owner binding with the created revision', async() => {
-    const wrapper = await createPinnedWhileListFails();
+    const wrapper = await createWithTiersWhileListFails();
     await editToSol(wrapper);
-    await button(wrapper, 'Add fallback').trigger('click');
+    await button(wrapper, 'Add tier').trigger('click');
+    await wrapper.find('[aria-label="Tier 3, model 1 provider"]').setValue('codex');
+    await wrapper.find('[aria-label="Tier 3, model 1 version"]').setValue('gpt-6-luna');
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
     expect(calls('model-routing:worker-set')).toHaveLength(1);
     expect(calls('model-routing:worker-set')[0][1]).toMatchObject({ slug: 'qa-created', agentId: 'qa-created-id', expectedRevision: 1, expectedToken: 'created-token' });
@@ -455,21 +524,21 @@ describe('owner binding recovery after a create whose list readback failed', () 
   });
 
   it('refuses a model save while model settings are unreadable, keeps the draft, and saves it once they recover', async() => {
-    const wrapper = await createPinnedWhileListFails();
+    const wrapper = await createWithTiersWhileListFails();
     a.routingDown = true;
     await editToSol(wrapper);
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
-    expect(wrapper.text()).toContain('could not be loaded, so nothing was saved');
+    expect(wrapper.text()).toContain('Settings unavailable');
     expect(wrapper.text()).not.toContain('Saved.');
-    expect(calls('model-routing:worker-set')).toHaveLength(0);
+    expect(calls('model-routing:worker-set')).toHaveLength(1);
     expect(calls('agent-definitions:update')).toHaveLength(0);
-    expect(a.definition.modelChoice).toEqual({ mode: 'pin', ...luna });
+    expect(a.definition.modelChoice).toEqual({ mode: 'list' });
     expect(binding()).toMatchObject({ revision: 1, candidates: [luna, grok] });
-    expect((wrapper.find('[aria-label="Pinned model"]').element as HTMLSelectElement).value).toBe('gpt-6.1-sol');
+    expect((wrapper.find('[aria-label="Tier 1, model 1 version"]').element as HTMLSelectElement).value).toBe('gpt-6.1-sol');
     expect(button(wrapper, 'Try').attributes('disabled')).toBeDefined();
     a.routingDown = false;
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
-    expect(calls('model-routing:worker-set')).toHaveLength(1);
+    expect(calls('model-routing:worker-set')).toHaveLength(2);
     expect(binding()).toMatchObject({ revision: 2, candidates: [sol, grok] });
     expect(wrapper.text()).toContain('Saved. Model changes apply to new work');
     expect(calls('agent-definitions:create')).toHaveLength(1);
@@ -477,7 +546,7 @@ describe('owner binding recovery after a create whose list readback failed', () 
   });
 
   it('still saves a profile-only edit while model settings are unreadable, without touching the model', async() => {
-    const wrapper = await createPinnedWhileListFails();
+    const wrapper = await createWithTiersWhileListFails();
     a.routingDown = true;
     await wrapper.findAll('.frow input')[0].setValue('Renamed reviewer');
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
@@ -490,20 +559,20 @@ describe('owner binding recovery after a create whose list readback failed', () 
   });
 
   it('refuses rather than adopting a chain that changed elsewhere after the create', async() => {
-    const wrapper = await createPinnedWhileListFails();
+    const wrapper = await createWithTiersWhileListFails();
     const foreign = { agentId: 'qa-created-id', revision: 2, editToken: 'someone-else', candidates: [{ provider: 'codex', model: 'gpt-6-luna', effort: 'high' }] };
     f.routing.workerBindings['qa-created'] = structuredClone(foreign);
     await editToSol(wrapper);
     await button(wrapper, 'Save').trigger('click'); await flushPromises();
-    expect(wrapper.text()).toContain('model settings changed elsewhere, so nothing was saved');
-    expect(calls('model-routing:worker-set')).toHaveLength(0);
+    expect(wrapper.text()).toContain('This mapping changed elsewhere');
+    expect(calls('model-routing:worker-set')).toHaveLength(1);
     expect(calls('agent-definitions:update')).toHaveLength(0);
     expect(binding()).toEqual(foreign);
     wrapper.unmount();
   });
 
   it('reports a profile failure after the recovered model write honestly and finishes on retry without rewriting the model', async() => {
-    const wrapper = await createPinnedWhileListFails();
+    const wrapper = await createWithTiersWhileListFails();
     await editToSol(wrapper);
     await wrapper.findAll('.frow input')[0].setValue('Renamed reviewer');
     a.updateFails = true;
@@ -520,40 +589,41 @@ describe('owner binding recovery after a create whose list readback failed', () 
 
   it('writes the click-time primary and fallbacks after routing recovery, then saves the draft typed during that save', async() => {
     f.routing.providers.push({ id: 'claude-code', name: 'Claude Code', connected: true, models: [{ id: 'sonnet', label: 'Sonnet', efforts: [{ id: 'high' }] }] });
-    const wrapper = await createPinnedWhileListFails();
+    const wrapper = await createWithTiersWhileListFails();
     await editToSol(wrapper);
-    await wrapper.find('[aria-label="Fallback provider 1"]').setValue('claude-code');
+    await wrapper.find('[aria-label="Tier 2, model 1 provider"]').setValue('claude-code');
+    await wrapper.find('[aria-label="Tier 2, model 1 version"]').setValue('sonnet');
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
     let held = false;
     const original = f.invoke.getMockImplementation()!;
     f.invoke.mockImplementation(async(name: string, ...args: any[]) => {
-      if (name === 'model-routing:get' && !held) { held = true; await gate; }
+      if (name === 'model-routing:worker-set' && !held) { held = true; await gate; }
       return original(name, ...args);
     });
     await button(wrapper, 'Save').trigger('click');
     expect(held).toBe(true);
-    await wrapper.find('[aria-label="Pinned model"]').setValue('gpt-6-luna');
-    await wrapper.find('[aria-label="Fallback effort 1"]').setValue('high');
+    await wrapper.find('[aria-label="Tier 1, model 1 version"]').setValue('gpt-6-luna');
+    await wrapper.find('[aria-label="Tier 2, model 1 effort"]').setValue('high');
     release();
     await flushPromises();
     const sets = calls('model-routing:worker-set');
     expect(sets).toHaveLength(1);
-    expect(sets[0][1].candidates).toEqual([
-      { provider: 'codex', model: 'gpt-6.1-sol', effort: 'high' },
-      { provider: 'claude-code', model: 'sonnet' },
+    expect(sets[0][1].modelTiers.tiers).toEqual([
+      { candidates: [{ provider: 'codex', model: 'gpt-6.1-sol', effort: 'high' }] },
+      { candidates: [{ provider: 'claude-code', model: 'sonnet' }] },
     ]);
-    expect((wrapper.find('[aria-label="Pinned model"]').element as HTMLSelectElement).value).toBe('gpt-6-luna');
-    expect((wrapper.find('[aria-label="Fallback effort 1"]').element as HTMLSelectElement).value).toBe('high');
+    expect((wrapper.find('[aria-label="Tier 1, model 1 version"]').element as HTMLSelectElement).value).toBe('gpt-6-luna');
+    expect((wrapper.find('[aria-label="Tier 2, model 1 effort"]').element as HTMLSelectElement).value).toBe('high');
     expect(button(wrapper, 'Try').attributes('disabled')).toBeDefined();
     await button(wrapper, 'Save').trigger('click');
     await flushPromises();
     expect(calls('model-routing:worker-set')[1][1]).toMatchObject({
       expectedRevision: 2,
-      candidates: [
-        { provider: 'codex', model: 'gpt-6-luna' },
-        { provider: 'claude-code', model: 'sonnet', effort: 'high' },
-      ],
+      modelTiers: { tiers: [
+        { candidates: [{ provider: 'codex', model: 'gpt-6-luna' }] },
+        { candidates: [{ provider: 'claude-code', model: 'sonnet', effort: 'high' }] },
+      ] },
     });
     wrapper.unmount();
   });
