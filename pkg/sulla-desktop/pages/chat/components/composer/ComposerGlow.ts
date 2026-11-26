@@ -8,15 +8,15 @@
 // the state into classes on .composer-capsule and composer-field CSS animates opacity and
 // transform of the pre-painted .composer-halo layers.
 //
-// Activity level = actions in the last 6 s while a run is active:
-//   0 → .2 · 1-3 → .36 · 4-7 → .52 · >7 → .66 · long tool call ("deep") → .56 · streaming → .62
+// Activity level changes the opacity above a .72 active-run floor:
+//   0 → .72 · 1-3 → .76 · 4-7 → .80 · >7 → .84 · long tool call ("deep") → .72 · streaming → .76
 // Pulses: an action "hits" (220 ms), a sub-agent check-in is "soft" (280 ms), each streamed
-// token batch "ticks" (110 ms, at most every 230 ms). Done settles once (420 ms) then fades.
+// token batch "ticks" (110 ms, at most every 230 ms). When the run idles, pulses clear immediately.
 
 import { reactive, readonly } from 'vue';
 import type { AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
 
-export type ComposerGlowPulse = 'hit' | 'soft' | 'tick' | 'settle';
+export type ComposerGlowPulse = 'hit' | 'soft' | 'tick';
 
 export interface ComposerGlowState {
   /** A run is active: the glow sits at its activity level. Off fades it out. */
@@ -64,11 +64,11 @@ export class ComposerGlow {
   static readonly stalledAfterMs = 90_000;
   static readonly streamTickMs = 230;
   static readonly streamIdleMs = 900;
-  static readonly pulseMs: Readonly<Record<ComposerGlowPulse, number>> = { hit: 220, soft: 280, tick: 110, settle: 420 };
+  static readonly pulseMs: Readonly<Record<ComposerGlowPulse, number>> = { hit: 220, soft: 280, tick: 110 };
 
   private readonly mutable: ComposerGlowState = reactive({
     active: false, level: 0, streaming: false, deep: false, stalled: false, paused: false,
-    pulses: { hit: false, soft: false, tick: false, settle: false },
+    pulses: { hit: false, soft: false, tick: false },
   }) as ComposerGlowState;
 
   readonly state = readonly(this.mutable) as Readonly<ComposerGlowState>;
@@ -83,8 +83,8 @@ export class ComposerGlow {
 
   constructor(private readonly clock: ComposerGlowClock = browserGlowClock) {}
 
-  /** Run started or ended. `settle` flashes once on a normal finish before fading. */
-  setActive(active: boolean, settle = false): void {
+  /** Run started or ended. Idle clears all activity immediately; CSS handles the short fade. */
+  setActive(active: boolean): void {
     if (this.mutable.active === active) return;
     this.mutable.active = active;
     if (active) {
@@ -92,7 +92,7 @@ export class ComposerGlow {
       this.lastEventAt = this.clock.now();
     } else {
       this.reset();
-      if (settle) this.flash('settle');
+      this.clearPulses();
     }
     this.syncTicker();
     this.recompute();

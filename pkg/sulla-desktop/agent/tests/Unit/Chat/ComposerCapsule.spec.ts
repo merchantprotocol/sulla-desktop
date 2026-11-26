@@ -185,7 +185,7 @@ describe('Capsule chat composer', () => {
 
     const messageId = controller.messages.value[0]!.id;
     ['search', 'write'].forEach(tool => { controller.transitionRun({ type: 'spawnTool', messageId, tool }); expect(controller.isRunning.value).toBe(true); controller.transitionRun({ type: 'toolDone' }); expect(controller.isRunning.value).toBe(true); });
-    expect(capsule().get('.composer-halo--breathing').element.style.animation).toBe('composer-glow-breathe 3.2s ease-in-out infinite');
+    expect(capsule().get('.composer-halo--breathing').element.style.animation).toBe('composer-glow-breathe 3.8s ease-in-out infinite alternate');
 
     const visibilityState = vi.spyOn(document, 'visibilityState', 'get');
     visibilityState.mockReturnValue('hidden');
@@ -214,7 +214,7 @@ describe('Capsule chat composer', () => {
 
     const remote = fixture.remoteSessions.at(-1);
     activityFixture.projection.value.agents = [{ state: 'working' }]; await flushPromises();
-    expect([capsule().get('.composer-capsule').classes(), capsule().get('.composer-halo--breathing').element.style.animation]).toEqual([expect.arrayContaining(['is-running', 'glow-on']), 'composer-glow-breathe 3.2s ease-in-out infinite']);
+    expect([capsule().get('.composer-capsule').classes(), capsule().get('.composer-halo--breathing').element.style.animation]).toEqual([expect.arrayContaining(['is-running', 'glow-on']), 'composer-glow-breathe 3.8s ease-in-out infinite alternate']);
     activityFixture.projection.value.agents = [{ state: 'quiet' }]; remote.remote.value = true; remote.running.value = true;
     await flushPromises();
     expect(capsule().get('.composer-capsule').classes()).toContain('is-running');
