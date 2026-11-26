@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const f = vi.hoisted(() => ({
-  storedAgent: undefined as { id:string; source_kind:string; use_case_file_id:string|null } | undefined,
+  storedAgent: undefined as { id:string; source_kind:string; use_case_file_id:string|null; use_case_version_id:string|null } | undefined,
   failRegistrations: 1,
   insertParams: [] as any[][],
   insertSql: [] as string[],
@@ -25,8 +25,8 @@ vi.mock('@pkg/agent/database/PostgresClient', () => ({ postgresClient: {
       f.failRegistrations--;
       throw new Error('temporary projection failure');
     }
-    const [id, slug, , , , , , , , , , , , , , , , , , , , fileId] = params;
-    f.storedAgent = { id: String(id), source_kind: 'local', use_case_file_id: String(fileId) };
+    const [id, , , , , , , , , , , , , , , , , , , , , fileId, versionId] = params;
+    f.storedAgent = { id: String(id), source_kind: 'local', use_case_file_id: String(fileId), use_case_version_id: String(versionId) };
     // node-postgres returns rows for an upsert only when the statement asks for them.
     return { rows: /\bRETURNING\s+id\b/i.test(sql) ? [{ id: String(id) }] : [] };
   } })),
@@ -119,6 +119,12 @@ describe('published legacy agent registration retry', () => {
     expect(f.insertParams).toHaveLength(1);
     expect(f.insertParams[0][23]).toBeNull();
     expect(f.insertSql[0]).toContain('COALESCE($24,TRUE)');
-    expect(f.insertSql[0]).toContain('agent_awareness=COALESCE($24,agent_definitions.agent_awareness)');
+    expect(f.insertSql[0]).toContain('ON CONFLICT DO NOTHING');
+
+    // A fresh scanner observes the stored definition and takes the guarded update branch.
+    await new SullaUseCaseFiles(request).scan();
+    expect(f.insertParams).toHaveLength(2);
+    expect(f.insertParams[1][23]).toBeNull();
+    expect(f.insertSql[1]).toContain('agent_awareness=COALESCE($24,agent_definitions.agent_awareness)');
   });
 });
