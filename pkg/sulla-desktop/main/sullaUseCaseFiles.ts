@@ -8,10 +8,10 @@ import crypto from 'node:crypto';
 import { Notification } from 'electron';
 import yaml from 'yaml';
 
+import { RenamedAgentPublicationRepository, type PublishedAgentRow } from '@pkg/agent/database/repositories/RenamedAgentPublicationRepository';
 import { BUILTIN_AGENT_RENAMES } from '@pkg/shared/agentJobNames';
 import { AgentModelCategoryPolicy } from '@pkg/agent/languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
-import { RenamedAgentPublicationRepository, type PublishedAgentRow } from '@pkg/agent/database/repositories/RenamedAgentPublicationRepository';
 import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
 import { isRetiredCodingManagerSlug, RETIRED_CODING_MANAGER_SLUGS } from '@pkg/agent/builtinAgents/index';
 import { hashSkillContent, parseSkillMarkdown } from '@pkg/agent/services/SkillDefinitionService';
@@ -509,8 +509,14 @@ export class SullaUseCaseFiles {
           const existing = await postgresClient.queryOne<{enabled:boolean;deleted_at:string|null;use_case_file_id:string|null}>('SELECT enabled,deleted_at,use_case_file_id FROM skill_definitions WHERE slug=$1',[slug]);
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
-        try { await this.activate(type,slug,packageRows,undefined,renamed ?? undefined); activated++ }
-        catch(error) { failedPackages.push(key); const anchor=type === 'agents' ? roots[0] : packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
+        try {
+          await this.activate(type, slug, packageRows, undefined, renamed ?? undefined);
+          activated++;
+        } catch (error) {
+          failedPackages.push(key);
+          const anchor = type === 'agents' ? roots[0] : packageRows.find(row => activePublishedVersion(row));
+          await this.auditError(anchor, anchor ? String(activePublishedVersion(anchor)) : undefined, `${ key }: ${ error instanceof Error ? error.message : String(error) }`);
+        }
       }
       await this.disableMissing(active);
       const enabledPackSkills = await postgresClient.query<{slug:string}>(`SELECT slug FROM skill_definitions WHERE enabled=TRUE AND deleted_at IS NULL AND use_case_version_id IS NOT NULL AND frontmatter->>'memory_pack'='true'`);

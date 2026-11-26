@@ -183,7 +183,7 @@ describe('seeding built-ins against stored rows', () => {
   it.each([false, true])('refreshes the caller around a retained built-in (legacy marker: %s)', async(hadMarker) => {
     const worker = getBuiltinAgentSpecs().find(item => item.slug === 'advisor')!;
     const oldSlug = 'opus-worker';
-    const manager = spec({ card: { ...spec().card!, canCall: [oldSlug] } });
+    const manager = spec({ card: { ...spec().card, canCall: [oldSlug] } });
     await seedBuiltinAgents([{ ...worker, slug: oldSlug }, manager]);
     const workerId = String(db.table.stored(oldSlug)!.id);
     if (!hadMarker) db.table.ledger.delete(oldSlug);

@@ -48,7 +48,7 @@ export class BuiltinAgentIdentitiesMigration {
     for (const row of rows) {
       const identity = row.is_builtin ? BUILTIN_AGENT_RENAMES.find(([previous]) => previous === row.slug) : undefined;
       const slug = renames.get(row.slug) ?? row.slug;
-      const name = !deferred.has(row.slug) && identity && row.name === identity[2] ? identity[3] : row.name;
+      const name = !deferred.has(row.slug) && row.name === identity?.[2] ? identity[3] : row.name;
       const canCall = row.can_call.map(callee => renames.get(callee) ?? callee);
       if (slug === row.slug && name === row.name && canCall.every((callee, i) => callee === row.can_call[i])) continue;
 
@@ -89,6 +89,7 @@ export class BuiltinAgentIdentitiesMigration {
       }
     }
   }
+
   private static parseSetting(value: string | undefined): Record<string, any> | undefined {
     if (!value) return;
     try {
