@@ -22,7 +22,7 @@ export class ContainerSessionLeases {
 
   constructor(
     private readonly binding: AgentContainerRuntimeBinding,
-    private readonly lookup: (id: string) => ToolSession | null,
+    private readonly sessions: { peekToolSession(id: string): ToolSession | null; revokeSession(id: string): void },
     private readonly scopes: string[],
     private readonly lifecycleId: string,
     private readonly signingKey: Buffer,
@@ -31,7 +31,7 @@ export class ContainerSessionLeases {
   ) {}
 
   issue(id: string): string {
-    const session = this.lookup(id);
+    const session = this.sessions.peekToolSession(id);
     const ctx = session?.executionContext;
     const b = this.binding;
     const now = Math.floor(Date.now() / 1000);
@@ -62,8 +62,9 @@ export class ContainerSessionLeases {
 
   prepare(id: string): Promise<void> {
     return this.enqueue(async() => {
-      await this.files.replace(this.file(id), this.issue(id));
+      const lease = this.issue(id);
       this.processes.add(id);
+      await this.files.replace(this.file(id), lease);
     });
   }
 
@@ -79,11 +80,11 @@ export class ContainerSessionLeases {
     return this.enqueue(async() => {
       if (this.closed) return;
       // Legacy rebind can revive an absent id. Never use that feature for renewal.
-      if (!this.lookup(id) || !rebindLauncher()) throw new Error('Launcher tool session expired');
+      if (!this.sessions.peekToolSession(id) || !rebindLauncher()) throw new Error('Launcher tool session expired');
       await this.files.replace('SULLA_API_TOKEN', this.issue(id));
       for (const process of this.processes) {
-        const live = this.lookup(process);
-        if (!live?.executionContext || Math.min(live.expiresAt, live.executionContext.exp * 1000) <= Date.now()) {
+        const live = this.sessions.peekToolSession(process);
+        if (!live?.executionContext || Math.floor(Math.min(live.expiresAt / 1000, live.executionContext.exp)) <= Math.floor(Date.now() / 1000)) {
           await this.files.remove(this.file(process));
           this.processes.delete(process);
         } else {
@@ -96,6 +97,8 @@ export class ContainerSessionLeases {
 
   async close(): Promise<void> {
     this.closed = true;
+    // A call already held at Decide must lose its session even before guest I/O drains.
+    for (const id of this.processes) this.sessions.revokeSession(id);
     await this.pending;
     this.processes.clear(); // The lifecycle removes the entire private directory.
   }

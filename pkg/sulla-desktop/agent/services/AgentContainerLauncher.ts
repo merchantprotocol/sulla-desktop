@@ -985,15 +985,15 @@ class GuestSessionLeaseFiles implements SessionLeaseFiles {
 
   async replace(name: string, value: string): Promise<void> {
     const target = this.target(name);
-    // Drop privileges before creating anything in a worker-readable directory.
+    // Stage outside the container mount, on the same tmpfs. Publish with a
+    // rename; never open a worker-provided link or recreate a retired mount.
     await guestExec(['python3', '-c', [
       'import os, sys, tempfile',
       'target, uid, gid = sys.argv[1:]',
-      'os.setgroups([]); os.setgid(int(gid)); os.setuid(int(uid))',
-      'fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target))',
+      'fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.dirname(target)))',
       'try:',
       ' with os.fdopen(fd, "wb") as out:',
-      '  os.fchmod(out.fileno(), 0o400); out.write(sys.stdin.buffer.read())',
+      '  out.write(sys.stdin.buffer.read()); os.fchmod(out.fileno(), 0o400); os.fchown(out.fileno(), int(uid), int(gid))',
       ' os.replace(tmp, target)',
       'finally:',
       ' if os.path.exists(tmp): os.unlink(tmp)',
@@ -1006,7 +1006,7 @@ class GuestSessionLeaseFiles implements SessionLeaseFiles {
 
   private target(name: string): string {
     if (!/^\/dev\/shm\/sulla-agent-secrets\/[A-Za-z0-9_.-]+$/.test(this.directory) ||
-        !/^(SULLA_API_TOKEN|LEASE_[A-F0-9]{64})$/.test(name) || this.identity.uid <= 0 || this.identity.gid <= 0) {
+        !/^(SULLA_API_TOKEN|LEASE_[A-F0-9]{64})$/.test(name)) {
       throw new InfrastructureFailure('Invalid container lease destination');
     }
     return `${ this.directory }/${ name }`;
@@ -1336,7 +1336,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       taskIndex: run.taskIndex, threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
     };
 
-    const issuer = leases = new ContainerSessionLeases(toolBinding, id => getMCPServerHost().peekToolSession(id),
+    const issuer = leases = new ContainerSessionLeases(toolBinding, getMCPServerHost(),
       scopes, capabilityJti, deriveCapabilitySigningKey(installationSecret), LEASE_MS,
       new GuestSessionLeaseFiles(`/dev/shm/sulla-agent-secrets/${ containerName }-${ capabilityJti }`, identity));
     toolSession = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);
@@ -1663,6 +1663,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         unregisterRuntime?.();
         unregisterRuntime = undefined;
         toolSession?.revoke();
+        await leases?.close();
         const bridges = await Promise.allSettled(providerBridges?.all() ?? []);
         for (const bridge of bridges) {
           if (bridge.status !== 'fulfilled') continue;
@@ -1670,7 +1671,6 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           await bridge.value.close().catch(() => {});
         }
         providerBridgeRefs.clear();
-        await leases?.close();
         await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, (leases?.expiresAt ?? 0) - Math.floor(Date.now() / 1000))).catch(() => {});
         return await cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
           name: containerName, reason: closeRemoval.reason, caller: closeRemoval.caller,
@@ -1701,13 +1701,13 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     if (livenessTimer) clearInterval(livenessTimer);
     unregisterRuntime?.();
     toolSession?.revoke();
+    await leases?.close();
     const bridges = await Promise.allSettled(providerBridges?.all() ?? []);
     for (const bridge of bridges) {
       if (bridge.status !== 'fulfilled') continue;
       bridge.value.revoke();
       await bridge.value.close().catch(() => {});
     }
-    await leases?.close();
     await redisClient.set(`sulla:capability:revoked:${ capabilityJti }`, '1', Math.max(1, (leases?.expiresAt ?? 0) - Math.floor(Date.now() / 1000))).catch(() => {});
     const receipt = await (closePromise ??
       cleanupContainerResources(runtime, containerId, secretDir, providerFiles, workspacePath, guestRuntimePaths, {
@@ -1753,7 +1753,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       agentId: metadata.agentId ?? run.state.metadata.wsChannel, jobId: run.jobId,
       taskIndex: run.taskIndex, threadId: metadata.threadId, deviceId, workspacePath: run.workspacePath ?? '',
     };
-    const issuer = leases = new ContainerSessionLeases(toolBinding, id => getMCPServerHost().peekToolSession(id),
+    const issuer = leases = new ContainerSessionLeases(toolBinding, getMCPServerHost(),
       scopes, capabilityJti, deriveCapabilitySigningKey(installationSecret), LEASE_MS,
       new GuestSessionLeaseFiles(`/dev/shm/sulla-agent-secrets/${ containerName }-${ capabilityJti }`, identity));
     session = getMCPServerHost().registerSession(run.state, IDLE_MS + 5 * 60_000, toolBinding);

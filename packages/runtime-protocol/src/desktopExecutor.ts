@@ -26,13 +26,14 @@ export interface DesktopExecutor {
 export class HttpDesktopExecutor implements DesktopExecutor {
   private readonly deadlinePolicy = new ToolDeadlinePolicy();
 
-  constructor(private readonly endpoint: string, private readonly bearerToken: string) {}
+  constructor(private readonly endpoint: string, private readonly bearerToken: string,
+    private readonly transport: typeof fetch = fetch) {}
 
   async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: DesktopExecutionOptions): Promise<ToolResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), opts.deadlineMs);
     try {
-      const response = await fetch(`${ this.endpoint.replace(/\/$/, '') }/internal/desktop-executor/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`, {
+      const response = await this.transport(`${ this.endpoint.replace(/\/$/, '') }/internal/desktop-executor/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`, {
         method:  'POST',
         headers: {
           'Content-Type':       'application/json',
