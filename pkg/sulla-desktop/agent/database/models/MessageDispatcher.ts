@@ -139,21 +139,36 @@ export class MessageDispatcher {
 
 // ─── Handler: chat / assistant / system messages ────────────────
 
-/**
- * The text after its first `count` non-whitespace characters. Drops the
- * break before it (blank lines, or spaces on the same line) but keeps the
- * indentation of its first line, which can be Markdown.
- */
-function afterVisibleChars(text: string, count: number): string {
-  let seen = 0;
-  let index = 0;
-  while (index < text.length && seen < count) {
-    if (!/\s/.test(text[index])) seen++;
-    index++;
-  }
-  const rest = text.slice(index);
+// Return the last bubble's content, or undefined if the final needs its own bubble.
+function reconcileStreamSegments(segments: string[], final: string, oneStream: boolean): string | undefined {
+  const last = segments[segments.length - 1];
+  let rest = final;
+  for (const [index, segment] of segments.entries()) {
+    if (index > 0 && !rest.startsWith(segment) && !segment.startsWith(rest)) {
+      // Only a known segment boundary can supply a missing separator. After
+      // a line break leave the next line's indentation on the content itself.
+      rest = rest.replace(/^(?:[ \t]*\r?\n)+|^[ \t]+/, '');
+    }
+    if (segment.startsWith(rest)) return last; // the complete final is already visible
+    if (index === segments.length - 1 && oneStream) {
+      const unseen = rest.slice(segment.length);
+      const visibleLength = (text: string) => text.replace(/\s/g, '').length;
+      if (rest.startsWith(segment) && visibleLength(unseen) <= visibleLength(final) * 0.4) return rest;
 
-  return /^[ \t]*\r?\n/.test(rest) ? rest.replace(/^(?:[ \t]*\r?\n)+/, '') : rest.replace(/^[ \t]+/, '');
+      // A single prose bubble can also gain a tail while its spacing is
+      // corrected. Use word boundaries to recognize an extension ONLY for
+      // replacement: never use this comparison to discard authoritative text.
+      if (segments.length === 1 && !rest.startsWith(segment)) {
+        const words = segment.split(/ +/);
+        const finalWords = rest.split(/ +/);
+        if (words.length < finalWords.length && words.every((word, i) => word === finalWords[i]) &&
+            visibleLength(segment) >= visibleLength(final) * 0.6) return final;
+      }
+    }
+    if (!rest.startsWith(segment)) break;
+    rest = rest.slice(segment.length);
+  }
+  return undefined;
 }
 
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
@@ -751,39 +766,16 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       //   2. Incoming content is something else (status, error, abort,
       //      separate follow-up). Let it through as a new bubble alongside
       //      the segments.
-      const streamedConcat = recentStreamIndexes
-        .slice()
-        .reverse()
-        .map(i => ctx.messages[i].content || '')
-        .join('');
-      const incoming = finalContent.trim();
-      const streamed = streamedConcat.trim();
-      // Segments are trimmed one by one and joined with nothing, while the
-      // full reply keeps the paragraph breaks between them: compare without whitespace.
-      const flatIncoming = incoming.replace(/\s+/g, '');
-      const flatStreamed = streamed.replace(/\s+/g, '');
       const lastSegment = recentStreamIndexes[0];
       // The final reply carries no stream id. Its extra text can only go into
       // the last segment when every segment here provably belongs to one stream.
       const lastStreamId = ctx.messages[lastSegment].replyStreamId;
       const oneStream = recentStreamIndexes.length === 1 ||
         (lastStreamId !== undefined && recentStreamIndexes.every(i => ctx.messages[i].replyStreamId === lastStreamId));
-      const addsText = flatIncoming.length > flatStreamed.length && flatIncoming.startsWith(flatStreamed);
-      const alreadyShown = flatStreamed.length > 0 && !(addsText && !oneStream) && (
-        flatStreamed === flatIncoming ||
-        (flatStreamed.length >= Math.max(1, flatIncoming.length * 0.6) && flatIncoming.startsWith(flatStreamed)) ||
-        flatStreamed.startsWith(flatIncoming)
-      );
-      if (alreadyShown) {
-        // A final dump can carry the last part of a formatted block after
-        // a throttled stream update. Keep it in the existing bubble.
-        if (recentStreamIndexes.length === 1 && (addsText || (incoming.length > streamed.length && incoming.startsWith(streamed)))) {
-          ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: finalContent };
-        } else if (addsText) {
-          // Several segments: the text after the earlier ones belongs to the last.
-          const lastFlat = (ctx.messages[lastSegment].content || '').replace(/\s+/g, '').length;
-          ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: afterVisibleChars(finalContent, flatStreamed.length - lastFlat) };
-        }
+      const segments = recentStreamIndexes.slice().reverse().map(i => ctx.messages[i].content);
+      const tail = reconcileStreamSegments(segments, finalContent, oneStream);
+      if (tail !== undefined) {
+        if (tail !== ctx.messages[lastSegment].content) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: tail };
         if (explicitReferences?.length) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], ...referenceUpdate };
         // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
