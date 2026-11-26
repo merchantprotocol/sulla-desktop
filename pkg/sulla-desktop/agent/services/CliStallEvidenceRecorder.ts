@@ -4,13 +4,37 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import * as fs from 'node:fs';
+import path from 'node:path';
 
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
 import type { AgentCliStallEvidence } from '../tools/agents/jobRegistry';
 import type { RunLivenessClock, RunToolInFlight } from './RunLivenessClock';
+import paths from '@pkg/utils/paths';
 
 export interface CliStallEvidenceWriter {
   save(jobId: string, taskIndex: number, evidence: AgentCliStallEvidence): Promise<void>;
+}
+
+export interface CliStallEvidenceFileWriter {
+  save(evidence: AgentCliStallEvidence): string;
+}
+
+/** Synchronously leaves the sanitized last stall record in the app logs directory. */
+export class LocalCliStallEvidenceFileWriter implements CliStallEvidenceFileWriter {
+  constructor(private readonly logsDirectory: () => string = () => paths.logs) {}
+
+  save(evidence: AgentCliStallEvidence): string {
+    const directory = this.logsDirectory();
+    const fileName = `agent-cli-stall-${ this.safeSegment(evidence.provider) }-${ this.safeSegment(evidence.jobId) }-task-${ evidence.taskIndex }.json`;
+    const filePath = path.join(directory, fileName);
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(filePath, `${ JSON.stringify(evidence, null, 2) }\n`, { mode: 0o600 });
+    return filePath;
+  }
+
+  private safeSegment(value: string): string {
+    return value.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 120) || 'unknown';
+  }
 }
 
 export interface CliStallIdentity {
@@ -97,6 +121,7 @@ export class AgentJobTaskCliStallEvidenceWriter implements CliStallEvidenceWrite
 export class CliStallEvidenceRecorder {
   private readonly events: Array<{ timestamp: string; type: string }> = [];
   private persisted = false;
+  private localEvidencePath: string | null = null;
   private lastProviderRetry: { status: 429 | 503; at: number } | null = null;
 
   constructor(
@@ -104,6 +129,7 @@ export class CliStallEvidenceRecorder {
     private readonly identity: CliStallIdentity,
     private readonly memory: CliStallMemoryReader = new NodeCliStallMemoryReader(),
     private readonly now: () => number = Date.now,
+    private readonly localEvidenceWriter: CliStallEvidenceFileWriter = new LocalCliStallEvidenceFileWriter(),
   ) {}
 
   event(type: string, at = this.now()): void {
@@ -118,8 +144,12 @@ export class CliStallEvidenceRecorder {
 
   pointer(): string | undefined {
     if (!this.identity.jobId || this.identity.taskIndex === undefined) return undefined;
-    const state = this.persisted ? 'Stall evidence is stored' : 'Stall evidence could not be confirmed';
-    return `${ state } on task ${ this.identity.taskIndex } of job ${ this.identity.jobId }; inspect check_agent_jobs(jobId="${ this.identity.jobId }") at tasks[${ this.identity.taskIndex }].cliStallEvidence.`;
+    const location = this.persisted
+      ? `Stall evidence is stored on task ${ this.identity.taskIndex } of job ${ this.identity.jobId }`
+      : this.localEvidencePath
+        ? `Local stall evidence is stored at ${ this.localEvidencePath }; the job task write is pending or failed`
+        : `Stall evidence could not be confirmed on task ${ this.identity.taskIndex } of job ${ this.identity.jobId }`;
+    return `${ location }; inspect check_agent_jobs(jobId="${ this.identity.jobId }") at tasks[${ this.identity.taskIndex }].cliStallEvidence.`;
   }
 
   failureMessage(message: string): string {
@@ -172,6 +202,11 @@ export class CliStallEvidenceRecorder {
       },
       appStartedAt: this.iso(this.now() - process.uptime() * 1000),
     };
+    try {
+      this.localEvidencePath = this.localEvidenceWriter.save(evidence);
+    } catch {
+      // Keep the database write as a secondary path if the local disk is unavailable.
+    }
     await this.writer.save(jobId, taskIndex!, evidence);
     this.persisted = true;
     return evidence;

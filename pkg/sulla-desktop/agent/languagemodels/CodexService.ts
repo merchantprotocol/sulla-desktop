@@ -956,6 +956,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         barrier.then(async() => {
           if (settled) return;
           settled = true;
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           stopStallWatchdog();
           closeSteering(true);
           options.signal?.removeEventListener('abort', onAbort);
@@ -970,6 +971,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         }, async(error) => {
           if (settled) return;
           settled = true;
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           stopStallWatchdog();
           closeSteering(true);
           options.signal?.removeEventListener('abort', onAbort);
@@ -1036,10 +1038,16 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           stalled = true;
           stopStallWatchdog();
-          void stallEvidence.recordRunStall({ child: proc, providerPid: codexPid, stderr: stderrBuffer, promptLength: prompt.length, liveness, messages }).catch(() => { log.warn('[CodexService] Could not persist CLI stall evidence before teardown') }).then(() => {
-            cleanupMcp(); log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`); killSpawn();
-            scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(stallEvidence.failureMessage(stallErrorMessage()), liveness.toolsInFlight, unresolvedTool));
-          });
+          void stallEvidence.recordRunStall({ child: proc, providerPid: codexPid, stderr: stderrBuffer, promptLength: prompt.length, liveness, messages })
+            .catch(() => log.warn('[CodexService] Could not persist CLI stall evidence before teardown'));
+          cleanupMcp();
+          log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
+          killSpawn();
+          scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(
+            stallEvidence.failureMessage(stallErrorMessage()),
+            liveness.toolsInFlight,
+            unresolvedTool,
+          ));
         }, STALL_CHECK_MS);
       };
       proc.once('spawn', () => {

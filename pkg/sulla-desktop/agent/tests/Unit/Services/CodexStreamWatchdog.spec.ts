@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import '../../Support/TestHomeEnv';
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +11,9 @@ import { createCodexService } from '../../../languagemodels/CodexService';
 import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
 import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
 import { LONG_TOOL_CEILING_MS } from '../../../services/RunLivenessClock';
+import paths from '@pkg/utils/paths';
 import type { AgentCliStallEvidence } from '../../../tools/agents/jobRegistry';
+import type { CliStallEvidenceWriter } from '../../../services/CliStallEvidenceRecorder';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
@@ -37,9 +41,13 @@ vi.mock('../../../utils/steerChannel', () => ({ onSteer: () => () => {}, markSte
 vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 
 beforeEach(() => { runtimePod.id = 'codex-watchdog-test-pod'; runSleep.cliChildStarted.mockClear(); runSleep.cliChildEnded.mockClear(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() });
+afterEach(() => {
+  fs.rmSync(path.join(paths.logs, 'agent-cli-stall-codex-never-settling-write-job-task-2.json'), { force: true });
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
-async function launch(runtime: 'container' | 'guest' = 'container') {
+async function launch(runtime: 'container' | 'guest' = 'container', writer?: CliStallEvidenceWriter, jobId = 'evidence-job') {
   if (runtime === 'guest') runtimePod.id = undefined;
   const proc = Object.assign(new EventEmitter(), {
     stdin:    new PassThrough(),
@@ -58,7 +66,7 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
     terminate: vi.fn(async() => {}),
   } as any);
   const evidenceWriter = { records: [] as AgentCliStallEvidence[], async save(_jobId: string, _taskIndex: number, evidence: AgentCliStallEvidence) { this.records.push(evidence) } };
-  const service = createCodexService('gpt-6-luna', 'max', evidenceWriter) as any;
+  const service = createCodexService('gpt-6-luna', 'max', writer ?? evidenceWriter) as any;
   vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
   const abortController = new AbortController();
   let outcome: any;
@@ -66,7 +74,7 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
   const liveness = vi.fn();
   const finished = service.runCodex([
     { role: 'system', content: 'A synthetic watchdog test.' }, { role: 'user', content: 'Test only.' },
-  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test', signal: abortController.signal, state: { metadata: { modelDecisionTask: { jobId: 'evidence-job', taskIndex: 2, threadId: 'evidence-thread' } } } })
+  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test', signal: abortController.signal, state: { metadata: { modelDecisionTask: { jobId, taskIndex: 2, threadId: 'evidence-thread' } } } })
     .then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
   await vi.advanceTimersByTimeAsync(0);
   proc.emit('spawn');
@@ -145,6 +153,26 @@ describe('Codex quiet stream watchdog', () => {
     expect(record).toHaveProperty('cgroupMemory');
     expect(run.outcome().message).toContain('check_agent_jobs(jobId="evidence-job")');
     expect(run.outcome().message).toContain('tasks[2].cliStallEvidence');
+  });
+
+  it('ends Codex and saves local stall evidence when the job database write never settles', async() => {
+    // risk: an unavailable job database leaves the CLI alive forever and loses all stall evidence
+    const jobId = 'never-settling-write-job';
+    const filePath = path.join(paths.logs, `agent-cli-stall-codex-${ jobId }-task-2.json`);
+    fs.rmSync(filePath, { force: true });
+    const save = vi.fn(() => new Promise<void>(() => {}));
+    const run = await launch('container', { save }, jobId);
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(fs.existsSync(filePath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toMatchObject({ provider: 'codex', jobId, taskIndex: 2 });
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(runSleep.cliChildEnded).toHaveBeenCalledWith(expect.stringMatching(/^codex:/));
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
   });
 
   it('does not persist stall evidence after a normal CLI completion', async() => {

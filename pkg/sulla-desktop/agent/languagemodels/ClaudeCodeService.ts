@@ -1152,12 +1152,18 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               unresolvedTool = true;
               hungTool = verdict.tool;
             }
-            stalled = true; stopStallWatchdog();
+            stalled = true;
+            stopStallWatchdog();
             void stallEvidence.recordRunStall({ child: proc, stderr: stderrBuffer, promptLength: prompt.length, liveness, messages })
-              .catch(() => { log.warn('[ClaudeCodeService] Could not persist CLI stall evidence before teardown') }).then(() => {
-                cleanupMcp(); log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`); killSpawn();
-                scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(stallEvidence.failureMessage(unresolvedTool ? hungToolMessage() : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`), liveness.toolsInFlight, unresolvedTool));
-              });
+              .catch(() => log.warn('[ClaudeCodeService] Could not persist CLI stall evidence before teardown'));
+            cleanupMcp();
+            log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
+            killSpawn();
+            scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(
+              stallEvidence.failureMessage(unresolvedTool ? hungToolMessage() : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`),
+              liveness.toolsInFlight,
+              unresolvedTool,
+            ));
           }, STALL_CHECK_MS);
         };
 
