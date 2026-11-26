@@ -972,13 +972,14 @@ export class SpawnAgentWorker extends BaseTool {
     const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
     const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || taskAgentSelector(task) || `task-${ index }`;
+      const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
       const run = () => taskRunner.run({
         task: jobTasks[index],
         taskIndex: index,
-        threadId:   `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
+        threadId,
         generation: jobTasks[index].generation ?? 1,
       });
-      return budgetWorkerAdmission.run(async() => {
+      const execution = budgetWorkerAdmission.run(async() => {
         const policy = await budgetPolicyService.read();
         const liveJobs = await getAllJobs();
         const liveRunning = countBudgetWorkers(liveJobs);
@@ -989,6 +990,7 @@ export class SpawnAgentWorker extends BaseTool {
           running: Math.max(0, liveRunning - budgetWorkerAdmission.running),
         };
       }, run);
+      return trackHiddenAgentRun(execution, threadId);
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────

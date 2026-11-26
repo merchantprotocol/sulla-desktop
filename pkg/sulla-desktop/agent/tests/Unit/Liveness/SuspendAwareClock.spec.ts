@@ -7,6 +7,7 @@ import { RunLivenessClock } from '../../../services/RunLivenessClock';
 import { SuspendAwareClock } from '../../../services/SuspendAwareClock';
 import { AbortService } from '../../../services/AbortService';
 import { HiddenAgentRunInterrupter, HiddenAgentWakeRecovery } from '../../../services/HiddenAgentWakeRecovery';
+import { HiddenAgentRuns } from '../../../services/HiddenAgentRuns';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 
 const taskJob = (visibility: 'hidden' | 'tab' = 'hidden'): AgentJob => ({
@@ -72,5 +73,38 @@ describe('suspend-aware worker recovery', () => {
     expect(graphState.metadata.runtimeInterrupted).toBe(true);
     expect(abort.signal.aborted).toBe(true);
     expect(resumed).toEqual([[job.jobId, 0]]);
+  });
+
+  it('waits for the interrupted runner to finish before dispatching its replacement', async() => {
+    // risk: lifecycle — the old runner's finally must not delete state owned by the wake replacement.
+    const job = taskJob();
+    let resolveJobs!: (jobs: AgentJob[]) => void;
+    const jobsReady = new Promise<AgentJob[]>(resolve => { resolveJobs = resolve });
+    let finishRunner!: () => void;
+    let oldRunnerFinished = false;
+    const runner = new Promise<void>(resolve => {
+      finishRunner = () => { oldRunnerFinished = true; resolve() };
+    });
+    const runnerRuns = new HiddenAgentRuns();
+    runnerRuns.track(runner, 'sleep-thread');
+    const graphState = { metadata: { delegatedJobId: job.jobId, delegatedTaskIndex: 0, runtimeRunnerActive: true, options: { abort: { abort() {} } } } };
+    const resumedAfter: boolean[] = [];
+    const recovery = new HiddenAgentWakeRecovery(
+      { list: () => jobsReady },
+      new HiddenAgentRunInterrupter({ get: threadId => threadId === 'sleep-thread' ? graphState : undefined }),
+      () => resumedAfter.push(oldRunnerFinished),
+      runnerRuns,
+    );
+
+    recovery.suspend();
+    const resuming = recovery.resume();
+    resolveJobs([job]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resumedAfter).toEqual([]);
+
+    finishRunner();
+    await resuming;
+    expect(resumedAfter).toEqual([true]);
   });
 });
