@@ -6,9 +6,11 @@
 import { chatActivityByTab } from '../chat/messages/chatActivityStore';
 
 /** The turn meter follows execution; attention dots follow the thread status line. */
-export function headerTabActivity(tab: { id:string; mode:string }, running:ReadonlySet<string>) {
-  const working = tab.mode === 'chat' && running.has(tab.id);
-  const activity = tab.mode === 'chat' ? chatActivityByTab.get(tab.id) ?? (working ? 'working' as const : undefined) : undefined;
+export function headerTabActivity(tab: { id: string; mode: string }, running: ReadonlySet<string>) {
+  if (tab.mode !== 'chat') return { working: false, activity: undefined };
+  const status = chatActivityByTab.get(tab.id);
+  const working = running.has(tab.id) || status?.active === true;
+  const activity = working && (!status || status.state === 'idle') ? 'working' as const : status?.state;
   return { working, activity };
 }
 

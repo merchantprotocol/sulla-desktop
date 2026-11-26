@@ -38,6 +38,8 @@ describe('model switcher availability refresh', () => {
       refresh: vi.fn(async() => undefined),
       refreshAgents: vi.fn(async() => undefined),
       selectModel: vi.fn(),
+      selectDefault: vi.fn(),
+      isDefaultValue: false,
       selectAgent: vi.fn(),
     };
   });
@@ -55,8 +57,24 @@ describe('model switcher availability refresh', () => {
     const wrapper = mount(ModelSwitcherModal, { attachTo: document.body });
     f.controller.modals.value.which = 'model';
     await nextTick();
-    const modes = wrapper.findAll('.model-mode').map(node => node.text());
+    const modes = wrapper.findAll('.model-mode').filter(node => !node.element.closest('.mdefault')).map(node => node.text());
     expect(modes).toEqual(['Automatic · provider default', 'Automatic version · opus', 'Exact ID · claude-opus-5-5']);
+    wrapper.unmount();
+  });
+
+  it('offers a keyboard-focusable Default even without a connected provider and resets this selector', async() => {
+    f.selector.providerGroups.value = [];
+    const wrapper = mount(ModelSwitcherModal, { attachTo: document.body });
+    f.controller.modals.value.which = 'model';
+    await nextTick();
+    const button = wrapper.get('button.mdefault');
+    expect(button.text()).toContain('Follow Preferences');
+    (button.element as HTMLButtonElement).focus();
+    expect(document.activeElement).toBe(button.element);
+    await button.trigger('click');
+    expect(f.selector.selectDefault).toHaveBeenCalledOnce();
+    expect(f.selector.selectModel).not.toHaveBeenCalled();
+    expect(f.controller.closeModal).toHaveBeenCalledOnce();
     wrapper.unmount();
   });
 

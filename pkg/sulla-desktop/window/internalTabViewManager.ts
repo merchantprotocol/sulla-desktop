@@ -5,11 +5,12 @@
 import Electron, { WebContentsView } from 'electron';
 import { DURABLE_FILE_ID_PATTERN } from '../shared/filesReferences';
 
+import type { ChatTabActivity } from '@pkg/shared/chatTabActivity';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { agentWindowUrl } from './agentWindowUrl';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
 
-interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; running?: boolean; descriptor?: unknown }
+interface InternalTabView { view: WebContentsView; owner: Electron.BrowserWindow; bounds: Electron.Rectangle; visible: boolean; crashed: boolean; transferring: boolean; running?: boolean; chatActivity?: ChatTabActivity; descriptor?: unknown }
 
 /** Owns one isolated Electron renderer for each mounted internal tab. */
 export class InternalTabViewManager {
@@ -110,6 +111,10 @@ export class InternalTabViewManager {
     const owner = this.resolveOwner(sender);
     if (!owner || sender.isDestroyed() || !input || typeof input !== 'object') throw new Error('Invalid workspace tab request');
     const request = input as WorkspaceTabRequest;
+    if (request.mode === 'files' && request.filesNavigation === undefined && typeof request.title === 'string') {
+      owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'files', title: request.title });
+      return;
+    }
     const file = request.mode === 'paper' ? request.documentFile : request.mode === 'files' ? request.filesNavigation : null;
     if (file && typeof file.fileId === 'string' && file.fileId && typeof file.path === 'string' && file.path) {
       const { fileId, path, collectionId } = file;
@@ -118,7 +123,7 @@ export class InternalTabViewManager {
         owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'paper', documentFile: identity });
         return;
       }
-      if (request.mode === 'files' && typeof request.title === 'string') {
+      if (request.mode === 'files' && request.filesNavigation && typeof request.title === 'string') {
         const { section, versionId } = request.filesNavigation;
         if (!DURABLE_FILE_ID_PATTERN.test(fileId)
             || !['detail', 'versions', 'share-review'].includes(section)
@@ -149,7 +154,18 @@ export class InternalTabViewManager {
     tab.owner.webContents.send('internal-tab-view:chat-running', tabId, running);
   }
 
+  notifyChatActivity(sender: Electron.WebContents, tabId: string, activity: ChatTabActivity | null): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.view.webContents !== sender || tab.crashed || tab.owner.isDestroyed()) return;
+    tab.chatActivity = activity ? { state: activity.state, active: activity.active } : undefined;
+    tab.owner.webContents.send('internal-tab-view:chat-activity', tabId, tab.chatActivity ?? null);
+  }
+
   private clearChatRunning(tabId: string, tab: InternalTabView): void {
+    if (tab.chatActivity) {
+      tab.chatActivity = undefined;
+      if (!tab.owner.isDestroyed()) tab.owner.webContents.send('internal-tab-view:chat-activity', tabId, null);
+    }
     if (!tab.running) return;
     tab.running = false;
     if (!tab.owner.isDestroyed()) tab.owner.webContents.send('internal-tab-view:chat-running', tabId, false);
@@ -190,9 +206,11 @@ export class InternalTabViewManager {
       this.notifyHostDisposed(tabId);
       try { tab.owner.contentView.removeChildView(tab.view); } catch { /* already detached */ }
       const running = tab.running;
+      const activity = tab.chatActivity;
       this.clearChatRunning(tabId, tab);
       tab.owner = target;
       this.trackOwner(target);
+      if (activity) this.notifyChatActivity(tab.view.webContents, tabId, activity);
       if (running) this.notifyChatRunning(tab.view.webContents, tabId, true);
     }
     this.armChromeReadyFallback(target);

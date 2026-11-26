@@ -12,11 +12,11 @@ import { computed, nextTick, ref } from 'vue';
 import { headerTabActivity } from '@pkg/pages/agent/tabStrip';
 import ThreadStatusLine from '@pkg/pages/chat/components/composer/ThreadStatusLine.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
-import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
+import { chatActivityByTab, receiveChatActivity } from '@pkg/pages/chat/messages/chatActivityStore';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((): Promise<any> => Promise.resolve({ ok: true })) }));
-vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke, send: vi.fn(), on: vi.fn(), removeListener: vi.fn() } }));
+const { invoke, send } = vi.hoisted(() => ({ send: vi.fn(), invoke: vi.fn((): Promise<any> => Promise.resolve({ ok: true })) }));
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke, send, on: vi.fn(), removeListener: vi.fn() } }));
 
 const row = (state: string, extra: Record<string, unknown> = {}) => ({
   key:                `job-1:0`,
@@ -64,7 +64,7 @@ function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | 
   });
 }
 
-afterEach(() => { document.body.innerHTML = ''; invoke.mockClear(); chatActivityByTab.clear() });
+afterEach(() => { document.body.innerHTML = ''; invoke.mockClear(); send.mockClear(); chatActivityByTab.clear() });
 
 describe('the activity line above the message box', () => {
   // risk: the main thread showed nothing while agents worked or sat silent
@@ -85,14 +85,14 @@ describe('the activity line above the message box', () => {
     const w = mountLine([]);
     expect(w.find('.ta-line').text()).toContain('Idle');
     expect(w.find('.ta-line').attributes('disabled')).toBeDefined();
-    expect(chatActivityByTab.get('tab-1')).toBe('idle');
+    expect(chatActivityByTab.get('tab-1')).toEqual({ state: 'idle', active: false });
     w.unmount();
   });
 
   it('flags a silent agent and tells the tab strip', () => {
-    const w = mountLine([row('quiet')]);
+    const w = mountLine([row('quiet', { runtimeAlive: false })]);
     expect(w.find('.ta-line').text()).toContain('No progress');
-    expect(chatActivityByTab.get('tab-1')).toBe('stalled');
+    expect(chatActivityByTab.get('tab-1')).toEqual({ state: 'stalled', active: false });
     w.unmount();
     expect(chatActivityByTab.has('tab-1')).toBe(false);
   });
@@ -100,18 +100,44 @@ describe('the activity line above the message box', () => {
   it('keeps header attention states independent of the working meter', () => {
     const tab = { id: 'tab-1', mode: 'chat' };
     const running = new Set([tab.id]);
+    const notRunning = new Set<string>();
     for (const state of ['you', 'stalled', 'waiting'] as const) {
-      chatActivityByTab.set(tab.id, state);
-      expect(headerTabActivity(tab, running)).toEqual({ working:true, activity:state });
-      expect(headerTabActivity(tab, new Set())).toEqual({ working:false, activity:state });
+      receiveChatActivity(null, tab.id, { state, active: false });
+      expect(headerTabActivity(tab, running)).toEqual({ working: true, activity: state });
+      expect(headerTabActivity(tab, notRunning)).toEqual({ working: false, activity: state });
     }
-    chatActivityByTab.delete(tab.id);
-    expect(headerTabActivity(tab, running)).toEqual({ working:true, activity:'working' });
-    expect(headerTabActivity({ ...tab, mode:'browser' }, running)).toEqual({ working:false, activity:undefined });
+    receiveChatActivity(null, tab.id, { state: 'stalled', active: true });
+    expect(headerTabActivity(tab, notRunning)).toEqual({ working: true, activity: 'stalled' });
+    expect(headerTabActivity({ ...tab, mode: 'browser' }, running)).toEqual({ working: false, activity: undefined });
+    receiveChatActivity(null, tab.id, { state: 'idle', active: false });
+    expect(headerTabActivity(tab, running)).toEqual({ working: true, activity: 'working' });
+    receiveChatActivity(null, tab.id, null);
+    expect(headerTabActivity(tab, running)).toEqual({ working: true, activity: 'working' });
+  });
+
+  it('reports active workers to the shell even while a different worker has stalled', async() => {
+    const previousUrl = window.location.href;
+    window.history.replaceState(null, '', '?tabHost=1&tabId=tab-1');
+    const manager = row('parked', { jobId: 'manager', key: 'manager:0', waitingOnChildren: 1 });
+    const child = row('working', { jobId: 'child', key: 'child:0', parentJobId: 'manager', parentTaskIndex: 0 });
+    const stalled = row('quiet', { jobId: 'stalled', key: 'stalled:0', runtimeAlive: false });
+    const w = mountLine([manager, child, stalled]);
+    try {
+      expect(w.get('.ta-lead').text()).toBe('No progress');
+      expect(send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'tab-1', { state: 'stalled', active: true });
+      const client = w.vm.$.appContext.provides[AGENT_STATE_CLIENT_KEY as symbol];
+      client.snapshot.value = { version: 2, rows: [] };
+      await nextTick();
+      expect(send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'tab-1', { state: 'idle', active: false });
+    } finally {
+      w.unmount();
+      window.history.replaceState(null, '', previousUrl);
+    }
+    expect(send).toHaveBeenLastCalledWith('internal-tab-view:chat-activity', 'tab-1', null);
   });
 
   it('nudges a silent agent from its row with one click', async() => {
-    const w = mountLine([row('quiet')]);
+    const w = mountLine([row('quiet', { runtimeAlive: false })]);
     await w.find('.ta-line').trigger('click');
     const nudge = w.findAll('.ta-btn').find(b => b.attributes('aria-label')?.startsWith('Nudge'))!;
     await nudge.trigger('click');

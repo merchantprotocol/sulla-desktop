@@ -14,7 +14,7 @@
   --ta-ink-3: color-mix(in srgb, var(--text-primary) 58%, var(--bg-surface));
   --ta-well: var(--bg-page);
   --ta-well-raised: color-mix(in srgb, var(--bg-surface) 60%, var(--bg-page));
-  --ta-cols: 104px minmax(0, 1.3fr) minmax(0, 1.5fr) 40px 92px;
+  --ta-cols: 104px minmax(0, 1.3fr) minmax(0, 1.5fr) minmax(66px, max-content) 92px;
   /* Docked as the top of the message box: no border or gap of its own, a divider below. */
   border-bottom: 1px solid var(--border-default);
 }
@@ -93,7 +93,7 @@
 .ta-name small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--ta-ink-3); font-size: 12px; font-weight: 400; }
 .ta-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ta-ink-2); }
 .ta-last b { color: var(--text-primary); font-weight: 600; }
-.ta-when { color: var(--ta-ink-3); font: 12px var(--font-mono, ui-monospace, monospace); text-align: right; white-space: nowrap; }
+.ta-when { color: var(--ta-ink-3); font: 11px var(--font-mono, ui-monospace, monospace); text-align: right; }
 .ta-acts { display: flex; gap: 4px; justify-content: flex-end; }
 .ta-btn {
   display: inline-flex; align-items: center; justify-content: center; height: 28px; padding: 0 10px;
@@ -129,7 +129,7 @@
 /* Narrow composer (side panel): stack each row instead of squeezing columns. */
 @container (max-width: 560px) {
   .ta-cols { display: none; }
-  .ta-head { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 4px; }
+  .ta-head { grid-template-columns: minmax(0, 1fr) minmax(0, 7em) auto; row-gap: 4px; }
   .ta-head > .ta-chip { grid-column: 1 / -1; }
   .ta-head > .ta-last { grid-column: 1 / -1; grid-row: 3; }
   .ta-body { padding-left: 14px; }

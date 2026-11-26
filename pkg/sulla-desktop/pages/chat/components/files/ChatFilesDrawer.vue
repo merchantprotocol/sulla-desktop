@@ -24,7 +24,7 @@
       <button
         class="open-files"
         type="button"
-        @click="$emit('open-files')"
+        @click="openFiles"
       >
         Open Files
       </button>
@@ -47,6 +47,7 @@
           class="file-row row-main"
           type="button"
           @click="openFile(file)"
+          @contextmenu.stop.prevent="openMenu?.show($event, file)"
         >
           <FileGlyph
             :name="file.name"
@@ -65,6 +66,7 @@
           class="file-row row-main"
           type="button"
           @click="openFile(file)"
+          @contextmenu.stop.prevent="openMenu?.show($event, file)"
         >
           <FileGlyph
             :name="file.name"
@@ -125,19 +127,21 @@
         No files in this chat yet.
       </p>
     </div>
+    <ChatFileOpenMenu ref="openMenu" @error="error = $event" />
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import ChatFileOpenMenu from './ChatFileOpenMenu.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 import { useChatController } from '../../controller/useChatController';
 
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { openDocumentTab } from '@pkg/composables/useBrowserTabs';
-import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
+import { openChatFile } from '../../services/openChatFile';
 
 interface RefFile {
   fileId:          string;
@@ -169,11 +173,12 @@ interface AttachmentReference {
 }
 
 const props = defineProps<{ open: boolean }>();
-defineEmits<{ (e:'close'):void; (e:'open-files'):void }>();
+defineEmits<{ (e:'close'):void }>();
 
 const controller = useChatController();
 const inventory = ref<RefFile[]>([]);
 const error = ref('');
+const openMenu = ref<InstanceType<typeof ChatFileOpenMenu>>();
 const inventoryError = ref('');
 let refreshGeneration = 0;
 let timer:ReturnType<typeof setInterval> | undefined;
@@ -246,15 +251,18 @@ function refreshWhenVisible():void {
   if (document.visibilityState === 'visible') void refresh();
 }
 
+async function openFiles():Promise<void> {
+  await runOpen(() => openWorkspaceTab({ mode: 'files', title: 'File Manager' }));
+}
+
 async function openFile(file:RefFile):Promise<void> {
-  if (supportsDocumentEditor(file.path)) {
-    openDocumentTab({ fileId: file.fileId, path: file.path });
-    error.value = '';
-    return;
-  }
+  await runOpen(() => openChatFile(file));
+}
+
+async function runOpen(open: () => Promise<void>):Promise<void> {
+  error.value = '';
   try {
-    await ipcRenderer.invoke('files-ui:open-file', { fileId: file.fileId, versionId: file.versionId });
-    error.value = '';
+    await open();
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : 'This file could not be opened.';
   }
