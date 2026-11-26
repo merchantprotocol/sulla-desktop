@@ -23,7 +23,7 @@ export interface FilesDetail {
   version: FilesVersion;
   recording?: { version_id:string; language?:string; transcript:RecordingSegment[]; chapters:RecordingChapter[]; duration_seconds?:number; generator?:string; generated_at?:string };
   links: { id:string; path:string; mime:string; kind:'links_to' | 'created_by' | 'derived_from'; direction:'incoming' | 'outgoing'; createdAt:string }[];
-  activity: { id:string; who_type:string; who_id:string; device_or_run_id?:string; action:string; at:string; details?:Record<string, unknown> }[];
+  activity: { id:string; who_type:string; who_id:string; device_or_run_id?:string; action:string; at:string; version_id?:string|null; message?:string|null; details?:Record<string, unknown> }[];
   access: { role?:string; inherited:{ id:string; folder_path:string; principal_type:SharePrincipalType; principal_id:string; role:'view' | 'edit' }[] };
 }
 

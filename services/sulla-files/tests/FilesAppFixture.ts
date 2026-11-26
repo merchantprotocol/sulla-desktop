@@ -47,7 +47,8 @@ export class FilesRoutesFixture {
     this.root = await mkdtemp(join(tmpdir(), 'sulla-files-routes-'));
     const filesRoot = join(this.root, 'files'); const chunkRoot = join(this.root, 'chunks');
     await mkdir(filesRoot, { recursive: true }); await mkdir(chunkRoot, { recursive: true });
-    const keyring = { unlocked: true, keys: async() => ({ data: Buffer.alloc(32, 1), dedup: Buffer.alloc(32, 2) }), create: async() => ({ data: {}, dedup: {} }) };
+    const keys = async() => ({ data: Buffer.alloc(32, 1), dedup: Buffer.alloc(32, 2) });
+    const keyring = { unlocked: true, keys, keysFresh: keys, create: async() => ({ data: {}, dedup: {} }) };
     const config:any = { port: 0, databaseUrl, chunkRoot, dataRoot: this.root, filesRoot, caseInsensitiveRoot: false,
       capabilitySigningKey: this.signingKey, mode: 'desktop', deviceId: 'local-device', userId: this.userId, localToken: 'test-local', cloudUrl: '', paused: true, modelDir: this.root,
       fuseExperiment: true, keyring, fileRoots: [{ id: 'default', name: 'Files', path: filesRoot, syncMode: 'local', paused: true, exclusions: [], primary: true }] };
