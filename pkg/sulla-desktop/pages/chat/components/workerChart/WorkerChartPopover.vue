@@ -6,7 +6,7 @@
 -->
 <template>
   <section
-    v-if="agent || group"
+    v-if="agent"
     :ref="root"
     :id="id"
     class="worker-chart__popover"
@@ -24,13 +24,7 @@
     @pointerdown.stop
   >
     <header class="worker-chart__popover-head">
-      <template v-if="group">
-        <div class="worker-chart__popover-title">
-          <strong>{{ group.hiddenAgents.length ? `${group.hiddenAgents.length} more under ${group.agent.name}` : `${group.agent.name} workers` }}</strong>
-          <span>{{ group.hiddenAgents.length ? `${group.hiddenAgents.filter(agent => agent.state === 'working').length} working · click to expand` : 'Click to collapse' }}</span>
-        </div>
-      </template>
-      <template v-else-if="agent">
+      <template v-if="agent">
         <WorkerChartMarker
           class="worker-chart__marker--popover"
           :state="agent.state"
@@ -66,12 +60,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import ActivityBars from './ActivityBars.vue';
 import WorkerChartMarker from './WorkerChartMarker.vue';
-import type { WorkerChartAgent, WorkerChartGroupRow, WorkerChartState } from './workerChartModel';
+import type { WorkerChartAgent, WorkerChartState } from './workerChartModel';
 
 const props = defineProps<{
   id: string;
   agent: WorkerChartAgent | null;
-  group: WorkerChartGroupRow | null;
   selected: boolean;
   ready: boolean;
   pageHidden: boolean;

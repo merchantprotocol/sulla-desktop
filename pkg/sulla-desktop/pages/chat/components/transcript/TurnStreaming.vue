@@ -12,7 +12,7 @@
   <div class="chat-turn sulla chat-fade-in">
     <div class="chat-body">
       <div v-if="paragraphBreak" class="streaming-paragraph-break" aria-hidden="true" />
-      <InlineReplyBody :text="msg.text" agent-cards />
+      <InlineReplyBody :text="msg.text" agent-messages-as-trace />
       <span
         class="chat-cursor"
         aria-hidden="true"

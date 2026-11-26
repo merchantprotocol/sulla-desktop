@@ -13,7 +13,7 @@ import { WorkerChartController } from '../../../../pages/chat/components/workerC
 import { WorkerChartOverlayController } from '../../../../pages/chat/components/workerChart/WorkerChartOverlayController';
 import { WorkerChartTimeFormatter } from '../../../../pages/chat/components/workerChart/WorkerChartTimeFormatter';
 import { WorkerChartActivityBuckets, WorkerChartGeometry, WorkerChartLayout } from '../../../../pages/chat/components/workerChart/workerChartModel';
-import type { WorkerChartAgent, WorkerChartRow } from '../../../../pages/chat/components/workerChart/workerChartModel';
+import type { WorkerChartAgent } from '../../../../pages/chat/components/workerChart/workerChartModel';
 
 const fixedNow = 1_700_000_000_000;
 const wrappers: VueWrapper[] = [];
@@ -64,10 +64,6 @@ function createController(root: WorkerChartAgent): { controller: WorkerChartCont
   const controller = new WorkerChartController(sources, new WorkerChartLayout(), new WorkerChartGeometry(),
     new WorkerChartActivityBuckets(), new WorkerChartTimeFormatter(), interaction);
   return { controller, setRoot: value => { rootValue.value = value } };
-}
-
-function childRows(rows: readonly WorkerChartRow[]): string[] {
-  return rows.filter((row): row is Extract<WorkerChartRow, { kind: 'agent' }> => row.kind === 'agent').map(row => row.agent.id);
 }
 
 afterEach(() => {
@@ -165,8 +161,8 @@ describe('WorkerChart', () => {
     expect(document.body.querySelector('[role="dialog"][aria-label="Worker chart"]')).toBeNull();
   });
 
-  it('prioritizes a wide fan-out into a group, expands it, and keeps a finished agent until the linger delay ends', async () => {
-    // risk: agent visibility — priority chips must expose every child, while completed rows keep their existing linger window
+  it('renders every agent in a wide fan-out and keeps a finished agent until the linger delay ends', async () => {
+    // risk: agent visibility — every child needs its own row; completed rows retain their existing linger window
     const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id): WorkerChartAgent => ({
       id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: id === 'f' ? 'done' : 'working',
     }));
@@ -174,12 +170,9 @@ describe('WorkerChart', () => {
     await nextTick();
 
     const ids = () => wrapper.findAll('[data-agent-id]').map(node => node.attributes('data-agent-id'));
-    expect(ids()).toEqual(['root', 'worker-a', 'worker-b']);
-    const overflow = wrapper.get('.worker-chart__node--group');
-    await overflow.trigger('click');
-    await nextTick();
     expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e', 'worker-f']);
-    expect(wrapper.find('.worker-chart__node--group').attributes('aria-expanded')).toBe('true');
+    expect(wrapper.findAll('.worker-chart__row')).toHaveLength(7);
+    expect(wrapper.find('.worker-chart__node--group').exists()).toBe(false);
     expect(wrapper.get('[data-agent-id="worker-f"]').attributes('data-state')).toBe('done');
 
     vi.advanceTimersByTime(9_999);
@@ -191,17 +184,17 @@ describe('WorkerChart', () => {
     expect(ids()).toEqual(['root', 'worker-a', 'worker-b', 'worker-c', 'worker-d', 'worker-e']);
   });
 
-  it('animates the nearest visible group marker when a hidden descendant is shown', async () => {
-    // risk: missed live feedback — an overflow-hidden agent must still animate the visible collapsed group.
+  it('animates the marker belonging to the agent that reported a snippet tick', async () => {
+    // risk: missed live feedback — each agent tick must animate that agent’s own marker.
     vi.stubGlobal('matchMedia', () => ({ matches: false }));
     const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({
       id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: 'working',
     }));
     const wrapper = mountChart({ id: 'root', name: 'Sulla', initials: 'S', state: 'working', children });
-    const groupMarker = wrapper.get('.worker-chart__node--group .worker-chart__marker').element;
+    const agentMarker = wrapper.get('[data-agent-id="worker-e"] .worker-chart__marker').element;
     const animation = { onfinish: null, cancel: vi.fn(), pause: vi.fn(), play: vi.fn(), playState: 'running' } as unknown as Animation;
     const animate = vi.fn(() => animation);
-    Object.defineProperty(groupMarker, 'animate', { configurable: true, value: animate });
+    Object.defineProperty(agentMarker, 'animate', { configurable: true, value: animate });
 
     await wrapper.setProps({ snippetTick: { agentId: 'worker-e', sequence: 1 } });
     await nextTick();
@@ -231,33 +224,26 @@ describe('WorkerChart', () => {
     wrapper.unmount();
   });
 
-  it('collapses disappearing children into their parent when an overflow group is collapsed', async () => {
-    // risk: animation geometry — removed children must travel to the parent marker, not a generic upward offset.
-    const children: WorkerChartAgent[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({
-      id: `worker-${id}`, name: `Worker ${id}`, initials: id.toUpperCase(), state: 'working',
-    }));
+  it('moves a departing child row toward its actual parent', async () => {
+    // risk: animation geometry — source updates must not detach a departing child from its parent.
+    const children: WorkerChartAgent[] = [
+      { id: 'worker-a', name: 'Worker A', initials: 'A', state: 'working' },
+      { id: 'worker-b', name: 'Worker B', initials: 'B', state: 'working' },
+    ];
     const root: WorkerChartAgent = { id: 'root', name: 'Sulla', initials: 'S', state: 'working', children };
     const fixture = createController(root);
     try {
-      const collapsed = fixture.controller.chart.rows.find(row => row.kind === 'group');
-      expect(collapsed?.kind).toBe('group');
-      if (!collapsed || collapsed.kind !== 'group') throw new Error('Overflow group was not created.');
-      fixture.controller.activate(collapsed);
+      const departing = fixture.controller.chart.rows.find(row => row.agent.id === 'worker-a');
+      if (!departing) throw new Error('Departing child is missing.');
+      fixture.setRoot({ ...root, children: [children[1]] });
       await nextTick();
-      const expanded = fixture.controller.chart.rows.find(row => row.kind === 'group');
-      if (!expanded || expanded.kind !== 'group') throw new Error('Expanded group marker was not retained.');
-      const departing = fixture.controller.chart.rows.find(row => row.kind === 'agent' && row.agent.id === 'worker-e');
-      if (!departing || departing.kind !== 'agent') throw new Error('Expanded child is missing.');
-
-      fixture.controller.activate(expanded);
       await nextTick();
-      expect(childRows(fixture.controller.chart.rows)).not.toContain('worker-e');
       const element = document.createElement('li');
       element.dataset.rowKey = departing.key;
       element.dataset.parentId = departing.parentId ?? '';
       fixture.controller.beforeRowLeave(element);
 
-      const parent = fixture.controller.chart.rows.find(row => row.kind === 'agent' && row.agent.id === 'root');
+      const parent = fixture.controller.chart.rows.find(row => row.agent.id === 'root');
       expect(element.style.getPropertyValue('--worker-chart-leave-x')).toBe(`${(parent?.x ?? 0) + 14 - departing.x}px`);
       expect(element.style.getPropertyValue('--worker-chart-leave-y')).toBe(`${(parent?.y ?? 0) - departing.y}px`);
     } finally {
