@@ -25,7 +25,8 @@ vi.mock('node:child_process', async(importActual) => {
         // and the Docker executable; the broker, reader, publisher and Git are real.
         .replaceAll('/bin/df', `${ guest.root }/bin/df`)
         .replaceAll('/usr/bin/docker', `${ guest.root }/bin/docker`)
-        .replace('main(MountPins)', 'main(type("FixturePins", (MountPins,), {"bind": lambda self, fd: self.handles.proc(fd)}))')
+        .replaceAll('/proc/self/mountinfo', `${ guest.root }/mountinfo`)
+        .replace('main(MountPins)', readFileSync(path.resolve('pkg/sulla-desktop/agent/tests/Support/stable-seed-pins.py'), 'utf8').trimEnd().replaceAll('\n', '\n    '))
         .replaceAll('/mnt/data/.sulla-stable-seed', `${ guest.root }/.sulla-stable-seed`)
         .replaceAll('/mnt/worktrees', `${ guest.root }/worktrees`)
         .replaceAll('/mnt/data/sulla/runtime', `${ guest.root }/runtime`));
@@ -73,6 +74,7 @@ describe('durable Git workspace initialization', () => {
     mkdirSync(local('runtime/conversations/task/workspace'), { recursive: true });
     mkdirSync(local('worktrees/repo'), { recursive: true });
     mkdirSync(local('bin'));
+    writeFileSync(local('mountinfo'), '1 0 8:1 / / rw - ext4 /dev/root rw\n');
     copyFileSync(path.resolve('pkg/sulla-desktop/agent/tests/Support/stable-seed-container.py'), local('bin/docker'));
     chmodSync(local('bin/docker'), 0o700);
     writeFileSync(local('bin/df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 999999999 1 %s 1%% /\\n" "$GUEST_FREE_KIB"\n', { mode: 0o700 });
@@ -218,6 +220,34 @@ describe('durable Git workspace initialization', () => {
     await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow('target changed');
     expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
     expect(existsSync(local('runtime/conversations/task/prior/.git'))).toBe(false);
+  });
+
+  it('reconciles a killed run before seeding without crossing its mounted source', async() => {
+    const baseline = readFileSync(local('mountinfo'), 'utf8') +
+      `9 1 8:1 /other ${ local('.sulla-stable-seed-other') } rw - ext4 /dev/root rw\n`;
+    writeFileSync(local('mountinfo'), baseline);
+    mkdirSync(local('external-source'));
+    writeFileSync(local('external-source/sentinel'), 'untouched');
+    writeFileSync(local('kill-on-publish'), '');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow();
+    const abandoned = readFileSync(local('abandoned-stage'), 'utf8');
+    expect(existsSync(abandoned)).toBe(true);
+    const run = path.basename(path.dirname(abandoned));
+    const calls = readFileSync(local('helper-calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line).argv as string[]);
+    expect(calls.every(argv => argv.includes(`com.sulla.stable-seed.run=${ run }`))).toBe(true);
+    expect(readFileSync(local('mountinfo'), 'utf8').split('\n').length).toBe(baseline.split('\n').length + 1);
+
+    // The kernel can refuse a detach. The record, stage and mounted bytes must survive for retry.
+    writeFileSync(local('deny-detach'), '');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow();
+    expect(existsSync(abandoned)).toBe(true);
+    expect(readFileSync(path.join(path.dirname(abandoned), 'pin-interrupted space/sentinel'), 'utf8')).toBe('untouched');
+    rmSync(local('deny-detach'));
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+    expect(readFileSync(local('mountinfo'), 'utf8')).toBe(baseline);
+    expect(existsSync(path.dirname(abandoned))).toBe(false);
+    expect(readFileSync(local('external-source/sentinel'), 'utf8')).toBe('untouched');
+    expect(JSON.parse(readFileSync(local('helpers'), 'utf8'))).toEqual({ ['b'.repeat(64)]: 'unrelated' });
   });
 
   it('does not fall back to guest Git without an isolated reader', async() => {

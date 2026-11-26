@@ -6,10 +6,12 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 
@@ -63,9 +65,9 @@ class MountPins:
     def bind(self, fd):
         is_dir = stat.S_ISDIR(os.fstat(fd).st_mode)
         if is_dir:
-            dest = tempfile.mkdtemp(dir=self.private)
+            dest = tempfile.mkdtemp(prefix='pin-', dir=self.private)
         else:
-            leaf, dest = tempfile.mkstemp(dir=self.private)
+            leaf, dest = tempfile.mkstemp(prefix='pin-', dir=self.private)
             os.close(leaf)
         libc = ctypes.CDLL(None, use_errno=True)
         src, dst = os.fsencode(self.handles.proc(fd)), os.fsencode(dest)
@@ -74,32 +76,100 @@ class MountPins:
             error = ctypes.get_errno()
             (os.rmdir if is_dir else os.unlink)(dest)
             raise OSError(error, 'cannot pin seed mount')
-        def release():
-            if libc.umount2(dst, 2):
-                raise OSError(ctypes.get_errno(), 'cannot release seed mount')
-            (os.rmdir if is_dir else os.unlink)(dest)
-        self.handles.callback(release)
         return dest
+
+    @staticmethod
+    def detach(dest):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.umount2(os.fsencode(dest), 2 | 8):  # MNT_DETACH | UMOUNT_NOFOLLOW
+            raise OSError(ctypes.get_errno(), 'cannot release seed mount')
+
+
+class RunLedger:
+    # The 0700 directory name IS the record: a single mkdir registers the run
+    # before any mount, stage, or helper can exist. Only the broker can rename it.
+    def __init__(self, home, mounts):
+        self.home, self.mounts = home, mounts
+
+    def start(self):
+        run = self.home / ('run-' + uuid.uuid4().hex)
+        run.mkdir(mode=0o700)
+        return run
+
+    def recover(self):
+        for name in os.listdir(self.home):
+            if re.fullmatch(r'run-[0-9a-f]{32}', name):
+                self.release(self.home / name)
+
+    @staticmethod
+    def mountpoints(run):
+        # mountinfo escapes spaces, tabs, newlines and backslashes in field 5.
+        # Compare lexical components, never resolve a path through a mounted source.
+        result = []
+        with open('/proc/self/mountinfo', 'rb') as table:
+            for line in table:
+                raw = line.split(b' ')[4]
+                path = Path(os.fsdecode(re.sub(rb'\\(040|011|012|134)',
+                            lambda m: bytes([int(m[1], 8)]), raw)))
+                if path.is_relative_to(run):
+                    result.append(path)
+        return result
+
+    def release(self, run):
+        require(run not in self.mountpoints(run), 'refusing mounted seed run directory')
+        info = run.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid() and
+                stat.S_IMODE(info.st_mode) == 0o700, 'unsafe seed run directory')
+        ContainerRunner.stop_helpers(run.name)
+        # Only detach our direct pin leaves. A lazy unmount detaches the entire
+        # mount subtree without entering it. Never descend to unmount a child.
+        points = self.mountpoints(run)
+        while points:
+            leaf = next((p for p in points if p.parent == run and p.name.startswith('pin-')), None)
+            require(leaf is not None, 'unexpected mount under seed run')
+            self.mounts.detach(leaf)
+            remaining = self.mountpoints(run)
+            require(len(remaining) < len(points), 'seed mount still attached')
+            points = remaining
+        # Exclusive broker lock, no remaining helper, no mounts, private parent.
+        # Use the fd-based deletion implementation; never follow stage symlinks.
+        require(shutil.rmtree.avoids_symlink_attacks, 'unsafe seed cleanup unavailable')
+        shutil.rmtree(run)
 
 
 class ContainerRunner:
-    def __init__(self, image, uid, gid, helper):
+    LABEL = 'com.sulla.stable-seed.run'
+
+    def __init__(self, image, uid, gid, helper, run_id):
         self.image, self.uid, self.gid, self.helper = image, uid, gid, helper
+        self.run_id = run_id
+
+    @staticmethod
+    def docker(*args, check=True):
+        return subprocess.run(['/usr/bin/docker', *args], check=check, stdout=subprocess.PIPE,
+                              stderr=subprocess.DEVNULL, cwd='/', env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
+
+    @classmethod
+    def stop_helpers(cls, run_id):
+        def active():
+            return cls.docker('ps', '-aq', '--no-trunc', '--filter', f'label={cls.LABEL}={run_id}').stdout.split()
+        ids = active()
+        for ident in ids:
+            require(re.fullmatch(b'[0-9a-f]{64}', ident), 'invalid seed helper ID')
+            cls.docker('rm', '-f', ident, check=False)  # --rm can race with this removal.
+        require(not ids or not active(), 'seed helper still active')
 
     def resolve_image(self):
         # An image VOLUME silently adds writable mounts. Pin the checked local ID
         # once so producer and publisher cannot select different image generations.
-        result = subprocess.run(['/usr/bin/docker', 'image', 'inspect', '--format',
-                                 '{{.Id}} {{json .Config.Volumes}}', self.image], check=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd='/',
-                                env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
+        result = self.docker('image', 'inspect', '--format', '{{.Id}} {{json .Config.Volumes}}', self.image)
         image, volumes = result.stdout.decode().strip().split(' ', 1)
         require(re.fullmatch('sha256:[0-9a-f]{64}', image) and not json.loads(volumes),
                 'unsupported seed image or implicit volumes')
         self.image = image
 
     def run(self, mounts, operation, paths, *args, output=None, limit=32768):
-        cmd = ['/usr/bin/docker', 'run', '--rm', '--pull=never', '--user', f'{self.uid}:{self.gid}',
+        cmd = ['/usr/bin/docker', 'run', '--rm', '--label', f'{self.LABEL}={self.run_id}', '--pull=never', '--user', f'{self.uid}:{self.gid}',
                '--network', 'none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
                '--pids-limit=64', '--memory=512m', '--memory-swap=512m', '--ipc=none', '--log-driver=none', '--workdir=/',
                '--tmpfs', '/tmp:rw,nodev,nosuid,noexec,size=256m,mode=1777', '--entrypoint=/usr/bin/env']
@@ -279,17 +349,11 @@ class StableSeed:
             os.fchmod(bundle.fileno(), 0o444)
             require(self.free() - usage >= self.reserve, 'no space left on device for checkout and VM reserve')
             stage = tempfile.mkdtemp(dir=self.private)
-            try:
-                os.chown(stage, self.runner.uid, self.runner.gid)
-                self.runner.run([(bundle.name, '/seed/input', False), (stage, '/seed/stage', True)],
-                                'publish', {'bundle': '/seed/input', 'stage': '/seed/stage'}, approved, str(source), str(self.reserve))
-                require(self.free() >= self.reserve, 'no space left on device for workspace and VM reserve')
-                self.handoff(stage, parent, target, directory)
-            finally:
-                # Only the publisher saw this private mount. No worker-writable parent traversal.
-                if os.path.exists(stage):
-                    import shutil
-                    shutil.rmtree(stage)
+            os.chown(stage, self.runner.uid, self.runner.gid)
+            self.runner.run([(bundle.name, '/seed/input', False), (stage, '/seed/stage', True)],
+                            'publish', {'bundle': '/seed/input', 'stage': '/seed/stage'}, approved, str(source), str(self.reserve))
+            require(self.free() >= self.reserve, 'no space left on device for workspace and VM reserve')
+            self.handoff(stage, parent, target, directory)
         return target
 
 
@@ -310,22 +374,19 @@ def main(mounts):
         require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700, 'unsafe seed broker directory')
         lock = h.keep(os.open(h.proc(root), os.O_RDONLY | os.O_DIRECTORY))
         fcntl.flock(lock, fcntl.LOCK_EX)
+        ledger = RunLedger(home, mounts)
+        ledger.recover()  # A disconnected guest exec receives SIGKILL; finally is not guaranteed.
         require(os.fstat(h.pin(dst)).st_dev == info.st_dev, 'workspace and private staging must share a filesystem')
-        # Do not recursively clean a mount tree, even if an unmount failed.
-        runner = ContainerRunner(image, int(uid), int(gid), helper)
-        runner.resolve_image()
-        work = Path(tempfile.mkdtemp(dir=home))
+        work = ledger.start()
         try:
+            runner = ContainerRunner(image, int(uid), int(gid), helper, work.name)
+            runner.resolve_image()
             with Handles() as pins:
                 seed = StableSeed(runner, pins, work, int(reserve), mounts(work, pins))
                 result = seed.seed(src, dst, key, Path(agents))
-            print(result)
         finally:
-            for name in ('mask-file', 'mask-dir'):
-                leaf = work / name
-                if leaf.exists():
-                    (leaf.rmdir if leaf.is_dir() else leaf.unlink)()
-            os.rmdir(work)
+            ledger.release(work)
+        print(result)
 
 
 try:
