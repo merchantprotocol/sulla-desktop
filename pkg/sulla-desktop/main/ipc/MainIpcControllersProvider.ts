@@ -114,6 +114,7 @@ export class MainIpcControllersProvider {
     });
     this.modelRouting = new ModelRoutingIpcController(raw, {
       router:                   modelRouter as any,
+      whenReady:                awaitDatabaseReady,
       recommendedState,
       listAgents:               async() => (await import('@pkg/agent/database/models/AgentDefinitionModel')).AgentDefinitionModel.list() as any,
       onIntegrationValueChange: listener => getIntegrationService().onValueChange(listener as any),

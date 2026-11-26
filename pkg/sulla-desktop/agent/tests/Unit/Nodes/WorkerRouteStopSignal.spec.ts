@@ -97,7 +97,7 @@ describe('deferred stall input at the model boundary', () => {
       .mockResolvedValueOnce([]);
     const chatStream = vi.fn().mockRejectedValueOnce(new Error('temporary response failure'))
       .mockResolvedValueOnce({ content: 'answered', metadata: {} });
-    const provider = { getModel: () => 'test', chatStream };
+    const provider = { getProviderId: () => 'codex', getModel: () => 'test', chatStream };
     await expect((node as any).callLLMStreaming(state, snapshot, {}, {}, provider)).rejects.toThrow('temporary response failure');
     injectSteer(state, { role: 'user', content: 'newer steer' });
 

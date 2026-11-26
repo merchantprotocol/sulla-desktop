@@ -20,6 +20,14 @@ export class CheckAgentJobsWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     const jobId = String(input.jobId ?? '').trim();
+    const callerThreadId = String((this.state as any)?.metadata?.threadId ?? '').trim() || undefined;
+    if (input.view === 'implementation_source') {
+      const { productOwnerWorkflow } = await import('../../services/ProductOwnerWorkflow');
+      const source = !jobId && callerThreadId && await productOwnerWorkflow.readAssignedImplementationSource(callerThreadId);
+      return source
+        ? { successBoolean: true, responseString: JSON.stringify(source) }
+        : { successBoolean: false, responseString: 'No saved implementation is assigned to this review or acceptance task.' };
+    }
     if (jobId) {
       // Explicit history lookup remains global for backwards compatibility.
       const job = await this.fleet.job(jobId);
@@ -34,7 +42,6 @@ export class CheckAgentJobsWorker extends BaseTool {
     }
 
     const scope = input.scope === 'all' ? 'all' : 'mine';
-    const callerThreadId = String((this.state as any)?.metadata?.threadId ?? '').trim() || undefined;
     const jobs = await this.fleet.list({
       scope,
       callerThreadId,

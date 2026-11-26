@@ -27,6 +27,14 @@ vi.mock('../../../services/ModelProviderService', () => ({
 // convention backgroundHandoff.spec.ts already uses.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
+vi.mock('../../../../main/SleepPreventionService', () => ({ acquireChatActivity: () => {}, releaseChatActivity: () => {} }));
+
+// Readiness is established for this fixture. The real wait and busy guards are exercised independently.
+vi.mock('../../../services/AgentExecutionReadiness', async(importOriginal) => ({
+  ...await importOriginal<typeof import('../../../services/AgentExecutionReadiness')>(),
+  waitForAutomaticAgentExecution: async() => {},
+}));
+
 const dbDescribe = TestDatabase.available() ? describe : process.env.CI ? describe : describe.skip;
 
 dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgres)', () => {
@@ -63,6 +71,10 @@ dbDescribe('BackendGraphWebSocketService wakeParkedAgent busy guard (real Postgr
    */
   function bareInstance(): InstanceType<typeof BackendGraphWebSocketService> {
     const instance = Object.create(BackendGraphWebSocketService.prototype);
+    instance.runLocationResolver = { resolve: () => 'vm' };
+    instance.recoveryAbort = new AbortController();
+    instance.readinessWaits = new Map();
+    instance.dispatchedRuns = new Set();
     (instance as any).activeAborts = new Map();
     (instance as any).resumeContexts = new Map();
     (instance as any).wsService = { send: () => undefined, connect: () => undefined, onMessage: () => undefined };

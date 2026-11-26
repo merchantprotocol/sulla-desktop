@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { newerBuiltinAgentSlug } from '../../../shared/agentJobNames';
 import { DeferredStallInput } from '../../app/Services/DeferredStallInput';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { BaseTool, ToolResponse } from '../base';
@@ -93,8 +94,12 @@ const CONTRACT_REMINDER = '[Return contract reminder]\nYou ended your turn witho
   'Call `agents/return_result` now with a result that matches the contract in your brief. ' +
   'If you cannot finish, return what you have and say why.';
 
+type DelegatedWorkflowStep = import('../../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
+
 interface SpawnTask {
+  workflowStep?: DelegatedWorkflowStep;
   followUpOf?:    ResultReference;
+  implementationSource?: ResultReference;
   agentId?:   string;
   model?: string;
   effort?:        string;
@@ -160,6 +165,8 @@ export class SpawnAgentWorker extends BaseTool {
   private readonly workerRoutes = new WeakMap<SpawnTask, WorkerModelRoute>();
   private readonly modelDecisions = new WeakMap<SpawnTask, ModelDecision>();
   private readonly modelOverrides = new WeakMap<SpawnTask, { provider: string; model: string; connections?: Record<string, string> }>();
+  private readonly inlineAcceptanceSources = new WeakMap<SpawnTask, ResultReference & { digest: string }>();
+  private readonly inlineReviewDigests = new WeakMap<SpawnTask, string>();
   name = '';
   description = '';
 
@@ -214,7 +221,7 @@ export class SpawnAgentWorker extends BaseTool {
 
   protected async _validatedCall(input: any): Promise<ToolResponse> {
     // ── Validate tasks ──────────────────────────────────────────
-    const tasks: SpawnTask[] = input.tasks;
+    const tasks: SpawnTask[] = Array.isArray(input.tasks) ? input.tasks.map((task: SpawnTask) => ({ ...task })) : input.tasks;
 
     if (!Array.isArray(tasks) || tasks.length === 0) {
       return {
@@ -244,6 +251,21 @@ export class SpawnAgentWorker extends BaseTool {
     const plans: TabPlan[] = [];
     const callerIsHiddenJob = Number((this.state as any)?.metadata?.subAgentDepth ?? 0) > 0;
 
+    // New jobs use the stored slug. Existing job records retain their captured selectors.
+    for (const task of tasks) {
+      const selector = taskAgentSelector(task);
+      if (!selector || !newerBuiltinAgentSlug(selector)) continue;
+      const definition = await agentDefinitionService.findBySlug(selector);
+      if (definition) task.agentId = definition.slug;
+    }
+
+    // A step is scoped by the canonical job owner and its root chat, never by a title.
+    const actor = resolveAgentIdentity(this.state?.metadata);
+    const workflowRequested = tasks.some(task => task.workflowStep !== undefined || task.implementationSource !== undefined || (actor === 'account-manager'
+      && ['designer', 'coding-manager', 'ui-test-manager'].includes(newerBuiltinAgentSlug(taskAgentSelector(task) ?? '') ?? taskAgentSelector(task) ?? '')));
+    const workflow = parentThreadId && workflowRequested ? (await import('../../services/ProductOwnerWorkflow')).productOwnerWorkflow : undefined;
+    const workflowScope = workflow && parentThreadId ? await workflow.productOwnerDelegationScope(actor, parentThreadId) : undefined;
+
     for (let i = 0; i < tasks.length; i++) {
       if (tasks[i].followUpOf !== undefined) {
         try { await (await trackingService()).validateFollowUp(tasks[i].followUpOf!, parentThreadId ?? '') } catch (error) { return { successBoolean: false, responseString: (error as Error).message } }
@@ -260,13 +282,48 @@ export class SpawnAgentWorker extends BaseTool {
           return { successBoolean: false, responseString: `Task ${ i }: ${ key } must be a non-empty string.` };
         }
       }
+      let configuredRoute: WorkerModelRoute | undefined;
+      try {
+        const task = tasks[i];
+        if (task.implementationSource !== undefined && (!workflowScope?.lead || task.workflowStep !== 'acceptance')) {
+          throw new Error('Use implementationSource on a Product Owner acceptance handoff.');
+        }
+        const settings = workflowScope
+          ? await workflow!.productOwnerDelegation(workflowScope, taskAgentSelector(task), task.workflowStep, task.followUpOf, task.implementationSource)
+          : undefined;
+        task.workflowStep = settings?.step;
+        if (settings?.slug) {
+          // Preserve implicit labels used by the existing spawn dedupe guard.
+          task.label ||= taskAgentSelector(task) || parentChannel;
+          task.agentId = settings.slug;
+        }
+        configuredRoute = settings?.route
+          ? await workerModelRouting.applyWorkflowRequest(settings.route, task)
+          : undefined;
+        const inlineSource = settings?.inlineReview ?? settings?.inlineAcceptance;
+        if (settings && inlineSource) {
+          const { bytes, digest } = inlineSource;
+          const review = Boolean(settings.inlineReview);
+          if (review) {
+            if (tasks.length !== 1) throw new Error('Launch this independent inline review as a single task.');
+            this.inlineReviewDigests.set(task, digest);
+          }
+          if (settings.inlineAcceptance) this.inlineAcceptanceSources.set(task, { ...settings.inlineAcceptance.source, digest });
+
+          const decode = 'const r=JSON.parse(require("node:fs").readFileSync(0,"utf8")); if(!r.success) throw Error("Source unavailable"); const p=typeof r.result==="string"?JSON.parse(r.result):r.result; const b=Buffer.from(p.sourceBase64,"base64"); if(b.length!==p.byteLength||require("node:crypto").createHash("sha256").update(b).digest("hex")!==p.sha256) throw Error("Source mismatch"); process.stdout.write(b);';
+          const stage = review ? 'independent review' : 'acceptance';
+          task.prompt += `\n\nSaved implementation for ${ stage } (Sulla supplied)\nThe saved result is authoritative. It is ${ bytes } UTF-8 bytes, SHA-256 ${ digest }. Fetch it with the shell pipeline below. It checks the saved fingerprint before emitting raw bytes. Feed those bytes directly into any executable checks. Use the retrieved source for inspection. Ignore any copied source, prior checksums or comparisons against a transcription in the brief. Report the verified fingerprint, byte count, findings and any checks you could not run.\n\nsulla agents/check_agent_jobs '{"view":"implementation_source"}' | node -e '${ decode }'`;
+        }
+      } catch (error) {
+        return { successBoolean: false, responseString: `Task ${ i }: ${ (error as Error).message }` };
+      }
       if (tasks[i].runLocation !== undefined && !['vm', 'container'].includes(tasks[i].runLocation!)) {
         return { successBoolean: false, responseString: `Task ${ i }: runLocation must be vm or container.` };
       }
       try {
         const hasOverride = Boolean(tasks[i].model?.trim() || tasks[i].provider?.trim());
         // An explicit launch choice is a hard boundary: never read or attach a worker mapping.
-        const workerRoute = hasOverride ? undefined : await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
+        const workerRoute = hasOverride ? undefined : configuredRoute ?? await workerModelRouting.newRoute(taskGraphAgentChannel(tasks[i], parentChannel));
         if (workerRoute) this.workerRoutes.set(tasks[i], workerRoute);
         const selector = taskAgentSelector(tasks[i]) || parentChannel;
         const currentDefinition = selector ? await agentDefinitionService.findBySlug(selector) : null;
@@ -468,10 +525,13 @@ export class SpawnAgentWorker extends BaseTool {
       agentId:    childAgent.graphAgentId,
       label:      title,
       followUpOf:       task.followUpOf,
+      inlineReviewDigest: this.inlineReviewDigests.get(task),
+      inlineAcceptanceSource: this.inlineAcceptanceSources.get(task),
       provider: task.provider, model: task.model, effort:           task.effort,
       workerModelRoute: workerRoute,
       modelDecision,
       modelOverride,
+      workflowStep:     task.workflowStep,
       providerCliSnapshot,
       prompt:     task.prompt,
       taskId:     task.projectTaskId?.trim(),
@@ -533,6 +593,7 @@ export class SpawnAgentWorker extends BaseTool {
         workerModelRoute: workerRoute,
         modelDecision,
         modelOverride,
+        workflowStep:     task.workflowStep,
         providerCliSnapshot,
         runOverrides: { model: task.model, provider: task.provider, effort: task.effort, runLocation: task.runLocation },
       });
@@ -582,6 +643,7 @@ export class SpawnAgentWorker extends BaseTool {
         workerModelRoute: this.workerRoutes.get(task),
         modelDecision: this.modelDecisions.get(task),
         modelOverride: this.modelOverrides.get(task),
+        workflowStep:     task.workflowStep,
         providerCliSnapshot,
         provider:         task.provider?.trim() || undefined,
         model:      task.model?.trim() || undefined,
@@ -590,6 +652,8 @@ export class SpawnAgentWorker extends BaseTool {
         workspacePath: task.workspacePath,
         taskId:           task.projectTaskId?.trim(),
         followUpOf:       task.followUpOf,
+        inlineReviewDigest: this.inlineReviewDigests.get(task),
+        inlineAcceptanceSource: this.inlineAcceptanceSources.get(task),
         status: 'queued', spawnMode: async_ ? 'async' : 'sync',
         visibility: 'hidden',
         ...(decisions[index]?.requestedVisibility ? { requestedVisibility: decisions[index].requestedVisibility, downgradeReason: decisions[index].downgradeReason } : {}),
@@ -702,8 +766,10 @@ export class SpawnAgentWorker extends BaseTool {
         subState.metadata.modelSlot = 'primary';
         subState.metadata.subAgentDepth = parentDepth + 1;
         subState.metadata.workflowParentChannel = parentChannel;
+        subState.metadata.productOwnerWorkflowStep = task.workflowStep;
         subState.metadata.delegatedJobId = activityJobId;
         subState.metadata.delegatedTaskIndex = index;
+        subState.metadata.delegatedGeneration = input.generation ?? 1;
         subState.metadata.managerAgentId = parentAgentId || parentChannel;
         subState.metadata.managerThreadId = parentThreadId;
         // While this runner drives the graph, a human typing into the thread

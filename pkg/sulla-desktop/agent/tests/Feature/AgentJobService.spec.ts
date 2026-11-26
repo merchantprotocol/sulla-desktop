@@ -58,6 +58,23 @@ dbDescribe('AgentJobService state machine with real Postgres', () => {
     expect((await agentJobProvider.jobs.job(hiddenId))?.status).toBe('failed');
   });
 
+  it('saves the actual model and effort when a resumed worker completes directly', async() => {
+    const threadId = 'resumed-worker-with-model';
+    const jobId = `resumed-model-${ Date.now() }`;
+    await database.query(`INSERT INTO agent_jobs (job_id, status, task_count, created_at, tasks, visibility, restart_resume_count)
+      VALUES ($1, 'running', 1, now(), $2::jsonb, 'hidden', 1)`, [jobId, JSON.stringify([{
+      agentId: 'worker', label: 'Resumed worker', threadId, status: 'running',
+    }])]);
+    const { AgentModelStatusRegistry } = await import('../../services/AgentModelStatusRegistry');
+    const actual = [{ model: 'gpt-6.2-sol', provider: 'codex', effort: 'high', source: 'resolved' as const }];
+    AgentModelStatusRegistry.recordResponse(threadId, actual);
+
+    await registry.completeJob(jobId, [{ label: 'Resumed worker', status: 'completed', output: 'done', threadId }]);
+
+    const [durable] = await database.query('SELECT status, tasks FROM agent_jobs WHERE job_id = $1', [jobId]);
+    expect(durable).toMatchObject({ status: 'completed', tasks: [{ status: 'completed', responseModels: actual }] });
+  });
+
   it('stops a manager and every open descendant idempotently without changing terminal rows', async() => {
     // risk: stopped managers leave workers producing irreversible side effects
     const root = await registry.createJob([{ agentId: 'manager', label: 'manager', prompt: 'x', status: 'running', threadId: 'manager-thread' }]);
