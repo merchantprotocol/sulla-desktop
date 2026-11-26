@@ -8,7 +8,6 @@ const f = vi.hoisted(() => ({
   insertSql: [] as string[],
   initializedRoutes: [] as any[][],
   routeCreated: false,
-  removedRoutes: [] as any[][],
 }));
 
 vi.mock('electron', () => ({ Notification: { isSupported: () => false } }));
@@ -39,15 +38,13 @@ vi.mock('@pkg/agent/services/SkillDefinitionService', () => ({ hashSkillContent:
 vi.mock('@pkg/agent/memory/MemoryPackLoader', () => ({ installMemoryPackForSkill: vi.fn(), listPacks: async() => [], uninstallPack: vi.fn() }));
 vi.mock('@pkg/agent/database/registry/SkillsRegistry', () => ({ skillsRegistry: { invalidate: vi.fn() } }));
 vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
-  initializeBindingForPublishedPackage: vi.fn(async(...args: any[]) => {
+  reconcilePublishedPackageBinding: vi.fn(async(...args: any[]) => {
     f.initializedRoutes.push(args);
-    if (f.routeCreated) return { created: false };
+    if (f.routeCreated) return { outcome: 'unchanged' };
+    const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+    await postgresClient.transaction(args[4].project);
     f.routeCreated = true;
-    return { created: true, binding: { editToken: 'created-token', revision: 1 } };
-  }),
-  removeBindingForDefinition: vi.fn(async(...args: any[]) => {
-    f.removedRoutes.push(args);
-    f.routeCreated = false;
+    return { outcome: 'written', written: { editToken: 'created-token', revision: 1 } };
   }),
 } }));
 
@@ -80,7 +77,6 @@ describe('published legacy agent registration retry', () => {
     currentPackageText = packageText;
     f.initializedRoutes = [];
     f.routeCreated = false;
-    f.removedRoutes = [];
   });
 
   it('routes the exact approved model before registration and retries a failed projection without caching success', async() => {
@@ -89,13 +85,13 @@ describe('published legacy agent registration retry', () => {
     expect(f.insertParams).toHaveLength(1);
     expect(f.initializedRoutes).toHaveLength(1);
     expect(f.initializedRoutes[0][0]).toBe('grok-pr-reviewer');
-    expect(f.initializedRoutes[0][2]).toEqual([{ provider: 'grok', model: 'grok-4.7' }]);
+    expect(f.initializedRoutes[0][2]).toEqual({ kind: 'pin', candidates: [{ provider: 'grok', model: 'grok-4.7' }] });
+    expect(f.initializedRoutes[0][3]).toEqual({ fileId: 'grok-file', versionId: 'published-v1' });
     expect(f.initializedRoutes[0][1]).toBe(f.insertParams[0][0]);
     expect(f.insertParams[0][1]).toBe('grok-pr-reviewer');
     expect(f.insertParams[0][12]).toBe('grok');
     expect(f.insertParams[0][23]).toBe(false);
-    // The rollback carries the exact identity it created, never just the agent id.
-    expect(f.removedRoutes).toEqual([[ 'grok-pr-reviewer', f.insertParams[0][0], { editToken: 'created-token', revision: 1 } ]]);
+    expect(f.routeCreated).toBe(false);
     expect(f.storedAgent).toBeUndefined();
 
     await service.scan();

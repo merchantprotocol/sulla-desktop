@@ -107,8 +107,8 @@
       @click.stop.prevent
       @dblclick.stop
       @input="emit('update:renameDraft', ($event.target as HTMLInputElement).value)"
-      @keydown.enter.prevent="emit('commitRename')"
-      @keydown.esc.prevent="emit('cancelRename')"
+      @keydown.enter.stop.prevent="emit('commitRename')"
+      @keydown.esc.stop.prevent="emit('cancelRename')"
       @blur="emit('renameBlur')"
     >
     <span
