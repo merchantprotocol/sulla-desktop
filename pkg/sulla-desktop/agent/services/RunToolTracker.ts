@@ -62,3 +62,5 @@ export class RunToolTracker {
     return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === 'string' && key.length > 0) : [];
   }
 }
+
+export const runTools = new RunToolTracker();
