@@ -434,11 +434,20 @@ timestamp: Date.now(),
       relayed:                   entries.some(entry => entry.envelope.ids.relayed === true),
     });
     if (!human && target.threadId && !entries.some(entry => entry.envelope.kind === 'decision') && agentJobLifecycle.liveState(target.threadId)) {
-      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
-      const candidate = agentJobLifecycle.liveState(target.threadId);
-      // A non-parked task has no parked identity; a disabled parked one rejects.
-      if (candidate) await parkedAgentRehydrator.resolve(target.threadId);
-      if (this.recoveryAbort.signal.aborted || agentExecutionReadiness.draining) return 'deferred';
+      const controller = new AbortController();
+      const release = this.registerReadinessWait(this.abortKey(target.channel, target.threadId), controller);
+      const signal = AbortSignal.any([controller.signal, this.recoveryAbort.signal]);
+      let candidate: AgentGraphState | undefined;
+      try {
+        await waitForAutomaticAgentExecution(signal);
+        if (signal.aborted) return 'deferred';
+        candidate = agentJobLifecycle.liveState(target.threadId);
+        if (candidate) await parkedAgentRehydrator.resolve(target.threadId);
+      } catch (error: any) {
+        if (signal.aborted || error?.name === 'AbortError') return 'deferred';
+        throw error;
+      } finally { release() }
+      if (signal.aborted || agentExecutionReadiness.draining) return 'deferred';
       const owner = agentJobLifecycle.liveState(target.threadId);
       if (owner && owner !== candidate) return 'deferred'; // Retry eligibility for the new owner.
       if (owner) {
@@ -1223,13 +1232,21 @@ timestamp: Date.now(),
     }
   }
 
+  private registerReadinessWait(key: string, controller: AbortController): () => void {
+    const waiters = this.readinessWaits.get(key) ?? new Set<AbortController>();
+    waiters.add(controller);
+    this.readinessWaits.set(key, waiters);
+    return () => {
+      waiters.delete(controller);
+      if (!waiters.size) this.readinessWaits.delete(key);
+    };
+  }
+
   private dispatchToAgent(channelId: string, triggerType: string, message: string, threadIdFromMsg?: string, scopedWorkflowId?: string, overrideAgentId?: string, inputSource?: string, metadata?: Record<string, any>, decisionInputs?: DecisionAnswerDeliveryInput[], relayController?: AbortController): Promise<AgentInboxDeliveryReceipt> {
     const threadId = threadIdFromMsg || nextThreadId();
     const key = this.abortKey(channelId, threadId);
     const controller = relayController ?? new AbortController();
-    const waiters = this.readinessWaits.get(key) ?? new Set<AbortController>();
-    waiters.add(controller);
-    this.readinessWaits.set(key, waiters);
+    const release = this.registerReadinessWait(key, controller);
     const run = (async(): Promise<AgentInboxDeliveryReceipt> => {
       try {
         const automatic = inputSource === 'system' || channelId === HEARTBEAT_CHANNEL_ID || metadata?.source === 'system_resume';
@@ -1246,8 +1263,7 @@ timestamp: Date.now(),
         if (error?.name === 'AbortError') return 'deferred';
         throw error;
       } finally {
-        waiters.delete(controller);
-        if (!waiters.size) this.readinessWaits.delete(key);
+        release();
       }
     })();
     this.dispatchedRuns.add(run);

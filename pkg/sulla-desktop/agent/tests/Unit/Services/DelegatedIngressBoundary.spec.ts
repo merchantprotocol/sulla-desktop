@@ -27,6 +27,7 @@ function fixture() {
   service.orchestratorMessageFormatter = new AgentOrchestratorMessageFormatter();
   service.recoveryAbort = new AbortController();
   service.activeAborts = new Map();
+  service.readinessWaits = new Map();
   service.dispatchToAgent = vi.fn().mockResolvedValue('accepted');
   return service;
 }
@@ -97,6 +98,33 @@ describe('delegated input admission', () => {
       expect(live.messages).toEqual([]);
       expect(live.metadata.relayed).toBeUndefined();
       expect(backend.dispatchToAgent).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(['readiness', 'eligibility'])('defers an exact-thread peer claim stopped during %s', async(phase) => {
+    const backend = fixture();
+    const live = state();
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve });
+    const started = new Promise<void>(resolve => { entered = resolve });
+    const hold = () => { entered(); return held };
+    if (phase === 'readiness') vi.mocked(waitForAutomaticAgentExecution).mockImplementationOnce(hold);
+    vi.spyOn(agentJobProvider.jobs, 'findByTaskThread').mockImplementation(async() => {
+      if (phase === 'eligibility') await hold();
+      return undefined;
+    });
+    await agentJobLifecycle.withRunner(thread, live, async() => {
+      const receipt = backend.wakeInbox(target, peer.envelope.body, [peer]);
+      try {
+        await started;
+        await backend.handleChannelMessage(target.channel, 'sulla-desktop', { type: 'stop_run', data: { threadId: thread } });
+      } finally { release() }
+      await expect(receipt).resolves.toBe('deferred');
+      expect(live.messages).toHaveLength(0);
+      expect(live.metadata.relayed).toBeUndefined();
+      expect(backend.dispatchToAgent).not.toHaveBeenCalled();
+      expect(backend.readinessWaits.size).toBe(0);
     });
   });
 
