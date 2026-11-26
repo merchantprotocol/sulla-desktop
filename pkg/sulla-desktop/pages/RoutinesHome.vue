@@ -71,13 +71,13 @@
           <div class="studio-content">
             <div class="tb">
               <h1>Workflows</h1>
-              <span v-if="!routinesController.isLoading.value && !routinesController.error.value">{{ routinesController.routines.value.length }} in database</span>
+              <span v-if="!routinesController.isLoading.value && !routinesController.loadError.value">{{ routinesController.routines.value.length }} in database</span>
             </div>
 
             <ConfigurationLoadState
-              v-if="routinesController.routines.value.length === 0 && (routinesController.isLoading.value || routinesController.error.value)"
+              v-if="routinesController.showListLoadState.value"
               label="Loading workflows…"
-              :error="routinesController.error.value ? 'Couldn’t load workflows.' : ''"
+              :error="routinesController.loadError.value ? 'Couldn’t load workflows.' : ''"
               @retry="loadAll"
             />
             <EmptyState
@@ -211,7 +211,7 @@ async function loadRunSummaries() {
 
 onMounted(() => {
   summaryTimer = setInterval(() => {
-    if (!routinesController.isLoading.value && !routinesController.error.value && section.value === 'workflows') {
+    if (section.value === 'workflows' && (systemReady.value || routinesController.routines.value.length > 0)) {
       void loadRunSummaries();
     }
   }, 15_000);
@@ -222,7 +222,7 @@ onBeforeUnmount(() => {
 
 onMounted(() => { void loadAll() });
 watch(routinesController.isLoading, (loading) => {
-  if (!loading && !routinesController.error.value) void loadRunSummaries();
+  if (!loading && section.value === 'workflows') void loadRunSummaries();
 });
 
 // Re-fire when readiness toggles true. Handles both the first-boot race
