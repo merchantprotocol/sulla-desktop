@@ -908,6 +908,7 @@ content: `[Message from orchestrator]\n${ row.message }`,
         } else if (returned) {
           taskResult = returnedJobResult(returned, label, threadId);
         } else {
+          if (combined?.signal.aborted && !taskAbortSignal?.aborted) throw executionAbort();
           // Canonical blocked-branch + output-fallback chain for spawned jobs.
           const { status, text } = extractAgentTurnOutcome(finalState, task.prompt);
           taskResult = (settlementPolicy.decide({ returned: false, openChildren: 0, pendingWait: false, reminderSent, autoParkCount, finalText: text, schemaContract: Boolean(contract.schema) }) === 'fail') && status !== 'blocked'

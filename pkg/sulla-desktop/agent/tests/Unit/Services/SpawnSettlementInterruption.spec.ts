@@ -20,7 +20,7 @@ vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireChatActivity: () => 
 vi.mock('@pkg/backend/providerCliUpdates', () => ({ captureProviderCliSnapshot: () => Promise.resolve({}) }));
 afterEach(() => vi.restoreAllMocks());
 
-function fixture() {
+function fixture(parent?: AbortController) {
   const task = new AbortController();
   const state: any = { messages: [], metadata: {} };
   const job: any = { jobId: 'synthetic-job', status: 'running', tasks: [{ status: 'running' }] };
@@ -55,6 +55,7 @@ function fixture() {
     return Promise.resolve({ graph, state } as any);
   });
   const worker = new SpawnAgentWorker();
+  if (parent) worker.setState({ metadata: { options: { abort: parent } } } as any);
   const run = (): Promise<unknown> => (worker as any).launchHidden([{ prompt: 'test work', runLocation: 'vm' }], { async: false }, 0, []);
   return { task, state, job, read, update, complete, publish, save, cancel, run };
 }
@@ -87,6 +88,19 @@ describe('hidden spawn settlement at runtime drain', () => {
     expect(h.cancel).toHaveBeenCalled();
     expect(h.complete).toHaveBeenCalledWith(h.job.jobId, 0, stopped);
     expect(h.publish).toHaveBeenCalledWith(h.job, [stopped], 0, undefined);
+  });
+
+  it('reports an interrupted child instead of progress when its synchronous parent is superseded during a wait', async() => {
+    const parent = new AbortController();
+    const h = fixture(parent);
+    const run = h.run();
+    try {
+      await vi.waitFor(() => expect(agentJobLifecycle.hasLiveWaiter(h.state.metadata.threadId)).toBe(true));
+    } finally { parent.abort(); await run }
+    expect(h.task.signal.aborted).toBe(false);
+    const interrupted = expect.objectContaining({ status: 'error', output: expect.stringContaining('interrupted') });
+    expect(h.complete).toHaveBeenCalledWith(h.job.jobId, 0, interrupted);
+    expect(h.publish).toHaveBeenCalledWith(h.job, [interrupted], 0, expect.any(String));
   });
 
   it('publishes the committed contract, not the preceding graph text, when a parked wait drains', async() => {
