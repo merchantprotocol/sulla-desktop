@@ -134,7 +134,9 @@ export class DetailedTimelineProjection {
       }
 
       if (waiting && groupIds.has(String(waiting.message.id))) {
-        events.push({ item: { id: `waiting:${String(waiting.message.id)}:${waiting.since}`, at: waiting.since,
+        const newestUserAt = userMessages[userMessages.length - 1]?.createdAt ?? waiting.since;
+        const at = Math.max(waiting.since, newestUserAt);
+        events.push({ item: { id: `waiting:${String(waiting.message.id)}:${waiting.since}`, at,
           kind: 'waiting', message: waiting.message, since: waiting.since },
         sourceOrder: orderById.get(String(waiting.message.id)) ?? Number.MAX_SAFE_INTEGER, localOrder: localOrder++ });
       }
@@ -207,7 +209,8 @@ export class DetailedTimelineProjection {
       ...(tokens ? [`${tokens.toLocaleString()} tokens`] : []),
       ...(rows.length ? [`${rows.length} steps`] : []),
       ...(sources ? [`${sources} ${sources === 1 ? 'source' : 'sources'} cited`] : []),
-      ...(waiting ? ['waiting on you'] : []),
+      ...(rows.some(row => (row.kind === 'approval' && row.status === 'waiting') ||
+        (row.subagent && row.status === 'blocked')) ? ['waiting on you'] : []),
     ];
     return {
       agent: reply?.replyAttribution?.agent || 'Sulla',

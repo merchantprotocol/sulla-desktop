@@ -8,6 +8,51 @@ import { TranscriptReporting } from './toolGroups';
 import { DetailedTimelineProjection, DetailedTimelineSegmenter } from './DetailedTimelineProjection';
 
 describe('DetailedTimelineProjection', () => {
+  it('keeps a working agent from saying it needs the user and places queued waiting after the newest bubble', () => {
+    // risk: a working run is shown as blocked and a waiting control is rendered before a queued message.
+    const first = { id: asMessageId('first-user'), kind: 'user', createdAt: 100, text: 'first' } as const;
+    const newest = { id: asMessageId('newest-user'), kind: 'user', createdAt: 200, text: 'queued' } as const;
+    const messages = [first, newest] satisfies Message[];
+    const waiting = { message: newest, since: first.createdAt };
+    const reporting = new TranscriptReporting();
+    const items = new DetailedTimelineProjection(undefined, reporting).project(
+      messages, reporting.standardEntries(messages, 'info'), undefined, waiting,
+    );
+    const waitingItem = items.find(item => item.kind === 'waiting');
+
+    expect(items.filter(item => item.kind === 'message').map(item => item.entry.id)).toEqual(['first-user', 'newest-user']);
+    expect(waitingItem).toMatchObject({ kind: 'waiting', at: newest.createdAt, since: first.createdAt });
+    expect(items.find(item => item.kind === 'header' )?.header.metadata).not.toContain('waiting on you');
+    expect(items.findIndex(item => item.kind === 'message' && item.entry.id === 'newest-user')).toBeLessThan(
+      items.findIndex(item => item.kind === 'waiting'),
+    );
+  });
+
+  it('labels only pending approvals and blocked workers as waiting on you', () => {
+    // risk: misleading next-action state when approval is not pending or a worker has no blocker.
+    const user = { id: asMessageId('user'), kind: 'user', createdAt: 100, text: 'run it' } as const;
+    const approval = { id: asMessageId('approval'), kind: 'tool_approval', createdAt: 200,
+      reason: 'Needs approval', command: 'write report.md', decision: 'pending' } as const;
+    const approvalMessages = [user, approval] satisfies Message[];
+    const reporting = new TranscriptReporting();
+    const approvalItems = new DetailedTimelineProjection(undefined, reporting).project(
+      approvalMessages, reporting.standardEntries(approvalMessages, 'info'),
+    );
+    expect(approvalItems.find(item => item.kind === 'header')?.header.metadata).toContain('waiting on you');
+
+    const launch = { id: asMessageId('launch'), kind: 'subagent_exchange', createdAt: 150, direction: 'to_agent',
+      jobId: 'blocked-job', taskIndex: 0, conversationId: 'child', agentId: 'worker', label: 'Worker',
+      summary: 'Started', detail: 'brief', status: 'running' } as const;
+    const result = { id: asMessageId('result'), kind: 'proactive', createdAt: 300, headline: 'Blocked', body: '',
+      result: { items: [{ jobId: 'blocked-job', taskIndex: 0, threadId: 'child', label: 'Worker', status: 'blocked',
+        endedAt: 300, purpose: 'review', verdict: 'Blocked', tone: 'warning', outcome: 'Needs a decision', report: 'Full report' }] } } as unknown as Message;
+    const blockedMessages = [user, launch, result] satisfies Message[];
+    const blockedItems = new DetailedTimelineProjection(undefined, reporting).project(
+      blockedMessages, reporting.standardEntries(blockedMessages, 'info'),
+    );
+    expect(blockedItems.find(item => item.kind === 'header')?.header.metadata).toContain('waiting on you');
+  });
+
   it('places each detailed event between the original standard messages by timestamp', () => {
     // risk: moving work away from its time and changing the Standard transcript while adding Detail.
     const messages = [
