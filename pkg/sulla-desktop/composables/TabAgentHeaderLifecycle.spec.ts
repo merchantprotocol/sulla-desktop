@@ -47,10 +47,9 @@ async function mountShell(count = 1) {
   await router.push(`/Browser/${ store.tabs[0].id }`);
   const generation = ref(0);
   const tabProps = new Map<string, InstanceType<typeof TabStripTab>['$props']>();
+  const state = new WindowTabStripState(window, ipc.events!);
   const app = createApp({
     setup: () => {
-      const state = new WindowTabStripState(window, ipc.events!);
-
       provide(windowTabStripKey, state);
       state.connect();
       onUnmounted(() => state.dispose());
@@ -76,7 +75,7 @@ async function mountShell(count = 1) {
 
   shells.push(unmount);
   await nextTick();
-  return { root, router, tabProps, replaceHeaders: () => { generation.value++ } };
+  return { root, router, tabProps, state, replaceHeaders: () => { generation.value++ } };
 }
 
 const shells: (() => void)[] = [];
@@ -117,6 +116,29 @@ describe('window tab state with real AgentHeaders', () => {
     ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, false);
     await nextTick();
     expect(replacement?.tab).toMatchObject({ working: false, activity: 'you' });
+  });
+
+  it('keeps the selected tab expanded when Welcome becomes Chat without navigation', async() => {
+    vi.stubGlobal('ResizeObserver', class {
+      observe(element: HTMLElement) {
+        Object.defineProperty(element, 'clientWidth', { configurable: true, value: 440 });
+        element.scrollTo = vi.fn();
+      }
+
+      disconnect() {}
+    });
+    const selected = store.createTab('about:blank', { mode: 'welcome' });
+    const browser = store.createTab('https://example.test');
+    const { router, state, tabProps } = await mountShell();
+
+    expect(state.activeGroup.value).toBe('tools');
+    store.updateTab(selected.id, { mode: 'chat', title: 'New Chat' });
+    await nextTick();
+
+    expect(router.currentRoute.value.params.id).toBe(selected.id);
+    expect(state.activeGroup.value).toBe('chats');
+    expect(tabProps.get(`browser-${ selected.id }`)).toMatchObject({ tab: { mode: 'chat', isActive: true }, compact: false, iconOnly: false });
+    expect(tabProps.get(`browser-${ browser.id }`)?.compact).toBe(true);
   });
 
   it('duplicates exactly once with two mounted headers and a repeated menu reply', async() => {
