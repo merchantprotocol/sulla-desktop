@@ -640,13 +640,27 @@ export class BackendGraphWebSocketService {
     const route = !metadata.workerModelChatOverride && metadata.workerModelRoute;
     let providerCliSnapshot = recoveryCliSnapshot;
     const delegatedJobId = metadata.delegatedJobId ?? metadata.workerModelTask?.jobId;
-    const delegatedTaskIndex = Number.isInteger(metadata.delegatedTaskIndex) ? metadata.delegatedTaskIndex : Number(metadata.workerModelTask?.taskIndex ?? 0);
+    const recordedTaskIndex = Number.isInteger(metadata.delegatedTaskIndex)
+      ? Number(metadata.delegatedTaskIndex)
+      : (Number.isInteger(metadata.workerModelTask?.taskIndex) ? Number(metadata.workerModelTask.taskIndex) : undefined);
+    let delegatedTaskIndex = recordedTaskIndex;
     let workspacePath: string | undefined;
     let recoverExistingWorkspace = false;
     if (delegatedJobId) {
       const { getJob } = await import('../tools/agents/jobRegistry');
       const job = await getJob(String(delegatedJobId));
-      const task = job?.tasks[delegatedTaskIndex];
+      if (!job) throw new Error(`Delegated job ${ String(delegatedJobId) } is no longer available`);
+      if (delegatedTaskIndex === undefined) {
+        const matchingTaskIndexes = job.tasks.flatMap((task, index) => task.threadId === threadId ? [index] : []);
+        if (matchingTaskIndexes.length === 1) delegatedTaskIndex = matchingTaskIndexes[0];
+      }
+      if (!Number.isInteger(delegatedTaskIndex) || delegatedTaskIndex! < 0) {
+        throw new Error(`Delegated thread ${ threadId } does not match a saved task in job ${ String(delegatedJobId) }`);
+      }
+      const task = job.tasks[delegatedTaskIndex!];
+      if (!task || task.threadId !== threadId) {
+        throw new Error(`Delegated thread ${ threadId } does not match a saved task in job ${ String(delegatedJobId) }`);
+      }
       providerCliSnapshot ??= task?.providerCliSnapshot;
       workspacePath = task?.workspacePath;
       recoverExistingWorkspace = Boolean(workspacePath && (task?.status === 'parked' || metadata.containerPersistenceKey));
@@ -700,7 +714,7 @@ export class BackendGraphWebSocketService {
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
     const lifecycle = await createAgentContainerLifecycle({
       jobId: delegatedJobId ? String(delegatedJobId) : `chat-${ threadId }`,
-      taskIndex: delegatedJobId ? delegatedTaskIndex : 0,
+      taskIndex: delegatedJobId ? delegatedTaskIndex! : 0,
       provider,
       model, state, providerCliSnapshot, workspacePath,
       recoverExistingWorkspace,
@@ -1326,7 +1340,7 @@ export class BackendGraphWebSocketService {
     // Otherwise create a new one and notify the frontend via thread_created.
     const isNewThread = !threadIdFromMsg;
     const threadId = threadIdFromMsg || nextThreadId();
-    if (!decisionTurn && metadata?.source !== 'sub_agent_completion') {
+    if (!decisionTurn && !restartTurn && metadata?.source !== 'sub_agent_completion') {
       const pendingCompletions = takeAgentCompletions(channelId, threadId);
       if (pendingCompletions.length) {
         metadata = {
@@ -1390,6 +1404,18 @@ export class BackendGraphWebSocketService {
         if (restartTurn && (this.recoveryAbort.signal.aborted || this.deliveringDecisionThreads.has(threadId))) return 'deferred';
         runAbort = new AbortService();
         this.activeAborts.set(abortKey, runAbort);
+      }
+
+      if (restartTurn && metadata?.source !== 'sub_agent_completion') {
+        const pendingCompletions = takeAgentCompletions(channelId, threadId);
+        if (pendingCompletions.length) {
+          completionConsumption.recordInjected(pendingCompletions);
+          metadata = {
+            ...metadata,
+            completionEntries: pendingCompletions,
+            renderCompletionEntries: true,
+          };
+        }
       }
 
       if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);

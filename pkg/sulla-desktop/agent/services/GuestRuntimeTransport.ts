@@ -236,6 +236,7 @@ export async function seedGitWorktreeIntoStableGuest(source: string, target: str
       '[ -d "$target" ] && [ "$(realpath "$target")" = "$target" ]',
       'marker="$target/.git/sulla-workspace-binding"',
       'if [ -f "$marker" ]; then [ "$(realpath "$marker")" = "$marker" ] && [ "$(sed -n "1p" "$marker")" = "$source_input" ] || { echo "stable workspace belongs to another seed" >&2; exit 74; }; git -c safe.directory="$target" -C "$target" rev-parse --is-inside-work-tree >/dev/null; printf "%s" "$target"; exit 0; fi',
+      'if [ -n "$legacy_key" ] && [ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ]; then [ -e "$target/.git" ] && git -c safe.directory="$target" -C "$target" rev-parse --is-inside-work-tree >/dev/null || { echo "refusing an unbound non-Git stable workspace" >&2; exit 76; }; printf "%s" "$target"; exit 0; fi',
       '[ -z "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo "refusing to replace a nonempty unbound stable workspace" >&2; exit 76; }',
       'source=$(realpath "$source_input")',
       'case "$source" in /mnt/worktrees/*) ;; *) exit 73;; esac',
