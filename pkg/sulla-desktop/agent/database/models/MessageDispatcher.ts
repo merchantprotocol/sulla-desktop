@@ -142,6 +142,13 @@ export class MessageDispatcher {
 // Return the last bubble's content, or undefined if the final needs its own bubble.
 function reconcileStreamSegments(segments: string[], final: string, oneStream: boolean): string | undefined {
   const last = segments[segments.length - 1];
+  if (segments.length === 1) {
+    // Main's exact-prefix rule counts Markdown padding. Only trim the edges
+    // for this extension check; the replacement is always the verbatim final.
+    const prefix = last.trim();
+    const incoming = final.trim();
+    if (incoming.length > prefix.length && prefix.length >= incoming.length * 0.6 && incoming.startsWith(prefix)) return final;
+  }
   let rest = final;
   for (const [index, segment] of segments.entries()) {
     if (index > 0 && !rest.startsWith(segment) && !segment.startsWith(rest)) {

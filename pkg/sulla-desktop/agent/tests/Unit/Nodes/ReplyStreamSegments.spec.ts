@@ -131,9 +131,14 @@ describe('live reply segments around provider tool activity', () => {
     ]);
   });
 
+  // 69/109 raw characters are visible; ignoring padding would count only 19/39.
+  const tableHeader = '| Keys                       | Val                        |\n|---|---|';
+  const fullTable = tableHeader + '\n| left-hand         | rightway        |';
+
   // risk: the full reply that follows the live stream carried text the last
   // throttled update hadn't shown yet, and the chat silently dropped it
   it.each([
+    { name: 'after a padded Markdown table header', streams: [['r', tableHeader]], final: fullTable, shown: [fullTable] },
     { name: 'with a corrected word boundary', streams: [['r', 'The customer is notable.']], final: 'The customer is not able.', shown: ['The customer is notable.', 'The customer is not able.'] },
     {
       name: 'with authoritative Markdown indentation after a tool',
@@ -158,8 +163,11 @@ describe('live reply segments around provider tool activity', () => {
       send(text!, 'streaming', replyStreamId ? { replyStreamId, replySegment } : {});
       send('', 'streaming_complete', replyStreamId ? { replyStreamId } : {});
     });
+    const lastStreamId = ctx.messages.at(-1).id;
     send(final, 'progress');
 
-    expect(ctx.messages.filter(message => message.kind !== 'thinking').map(message => message.content)).toEqual(shown);
+    const replies = ctx.messages.filter(message => message.kind !== 'thinking');
+    expect(replies.map(message => message.content)).toEqual(shown);
+    if (shown.length === 1) expect(replies[0].id).toBe(lastStreamId);
   });
 });
