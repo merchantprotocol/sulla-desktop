@@ -5,7 +5,6 @@
 
 import { DURABLE_FILE_ID_PATTERN } from '@pkg/shared/filesReferences';
 
-import { supportsDocumentEditor } from '../editor/editorTypes';
 import { FilesBrowserState } from './FilesBrowserState';
 
 import type { FilesBrowserController } from './FilesBrowserController';
@@ -79,7 +78,19 @@ export class FilesBrowserNavigation {
 
     if (entry.rootCollectionId) { void this.selectCollection(entry.rootCollectionId); return }
     if (state.section.value === 'trash') { state.selectedKeys.value = new Set([entry.key]); if (!entry.folder) this.selectEntry(entry); return }
-    if (entry.folder) this.openPath(entry.path); else if (supportsDocumentEditor(entry.path)) state.emit('open-editor', entry, state.snapshot.value?.collection.id); else this.selectEntry(entry);
+    this.openInSulla(entry);
+  };
+
+  /** Open a row inside Sulla using the shared Files routing decision. */
+  readonly openInSulla = (entry:DisplayEntry):void => {
+    const state = this.state;
+
+    if (state.busy.value || state.loading.value) return;
+    const decision = this.browser.openDecision.resolve(entry);
+
+    if (decision === 'folder') this.openPath(entry.path);
+    else if (decision === 'editor') state.emit('open-editor', entry, state.snapshot.value?.collection.id);
+    else this.selectEntry(entry);
   };
 
   readonly selectEntry = (entry:DisplayEntry):void => {
@@ -93,7 +104,7 @@ export class FilesBrowserNavigation {
     state.selected.value = entry; state.detailTab.value = this.browser.presenter.entrySync(entry) === 'conflict' ? 'versions' : 'details';
   };
 
-  readonly openDisplayEntry = (entry:DisplayEntry):void => { if (supportsDocumentEditor(entry.path)) this.state.emit('open-editor', entry, this.state.snapshot.value?.collection.id); else this.selectEntry(entry) };
+  readonly openDisplayEntry = (entry:DisplayEntry):void => { this.openInSulla(entry) };
 
   /** FileDetail's close button returns to the listing. */
   readonly closeDetail = ():void => { this.state.selected.value = null };
@@ -247,7 +258,7 @@ export class FilesBrowserNavigation {
 
       state.collectionsRoot.value = false;
       const entry = browser.factory.toDisplay(file);
-      if (!detail.section && !version && supportsDocumentEditor(file.path)) { state.emit('open-editor', entry, collectionId); return true }
+      if (!detail.section && !version) { this.openInSulla(entry); return true }
       this.selectEntry(entry);
       state.detailTab.value = detail.section === 'versions' ? 'versions' : 'details';
       if (detail.section === 'detail' || (!detail.section && version)) state.detailVersion.value = version;
