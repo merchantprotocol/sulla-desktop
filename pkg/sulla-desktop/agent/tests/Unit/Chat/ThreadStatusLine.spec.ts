@@ -9,6 +9,7 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computed, nextTick, ref } from 'vue';
 
+import { headerTabActivity } from '@pkg/pages/agent/tabStrip';
 import ThreadStatusLine from '@pkg/pages/chat/components/composer/ThreadStatusLine.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
 import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
@@ -94,6 +95,19 @@ describe('the activity line above the message box', () => {
     expect(chatActivityByTab.get('tab-1')).toBe('stalled');
     w.unmount();
     expect(chatActivityByTab.has('tab-1')).toBe(false);
+  });
+
+  it('keeps header attention states independent of the working meter', () => {
+    const tab = { id: 'tab-1', mode: 'chat' };
+    const running = new Set([tab.id]);
+    for (const state of ['you', 'stalled', 'waiting'] as const) {
+      chatActivityByTab.set(tab.id, state);
+      expect(headerTabActivity(tab, running)).toEqual({ working:true, activity:state });
+      expect(headerTabActivity(tab, new Set())).toEqual({ working:false, activity:state });
+    }
+    chatActivityByTab.delete(tab.id);
+    expect(headerTabActivity(tab, running)).toEqual({ working:true, activity:'working' });
+    expect(headerTabActivity({ ...tab, mode:'browser' }, running)).toEqual({ working:false, activity:undefined });
   });
 
   it('nudges a silent agent from its row with one click', async() => {

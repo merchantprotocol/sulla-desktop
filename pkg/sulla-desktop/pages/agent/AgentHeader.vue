@@ -447,12 +447,11 @@
 import { ref, computed, nextTick, onActivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { isTabCloseable, measureActiveTabIndicator } from './tabStrip';
+import { headerTabActivity, isTabCloseable, measureActiveTabIndicator } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { orderPinnedFirst, useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
-import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -972,9 +971,7 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const chatStatus = bt.mode === 'chat' ? chatActivityByTab.get(bt.id) : undefined;
-    const working = chatStatus?.active ?? (bt.mode === 'chat' && workingTabIds.value.has(bt.id));
-    const activity = chatStatus?.state ?? (working ? 'working' : undefined);
+    const { working, activity } = headerTabActivity(bt, workingTabIds.value);
     const statusLine = bt.mode === 'chat'
       ? `chat · ${ working ? 'Sulla is working' : 'ready' }`
       : bt.url === 'about:blank' ? bt.mode : bt.url;
