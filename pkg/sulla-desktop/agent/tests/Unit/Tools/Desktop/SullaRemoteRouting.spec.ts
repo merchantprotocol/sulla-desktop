@@ -84,7 +84,7 @@ class SullaRemoteRoutingHarness {
     }
   }
 
-  async localDesktop(pid: number, listenerPid: number): Promise<void> {
+  async localDesktop(pid: number, listenerPid: number, explicitToken?: string): Promise<void> {
     this.directory = await mkdtemp(path.join(os.tmpdir(), 'sulla-routing-'));
     const capture = path.join(this.directory, 'contacted');
     const shim = path.join(this.directory, 'darwin.sh');
@@ -105,6 +105,7 @@ grep -qx 'Authorization: Bearer synthetic' <&3 && printf '%s' "$*"
         HOME:               this.directory,
         PATH:               `${ this.directory }:${ process.env.PATH }`,
         BASH_ENV:           shim,
+        SULLA_API_TOKEN:    explicitToken,
         SULLA_TOOL_SESSION: 'synthetic',
       },
     });
@@ -131,6 +132,10 @@ describe('agent-side sulla remote routing', () => {
     ['live matching listener', process.pid, process.pid],
   ] as const)('authenticates the discovered endpoint: %s', async(_label, pid, listener) => {
     await harness.localDesktop(pid, listener);
+  });
+
+  it('does not contact a mismatched discovered listener when only the token is explicit', async() => {
+    await harness.localDesktop(process.pid, process.ppid, 'synthetic');
   });
 
   it('explicit endpoint: a 503 discovery probe falls back to a successful proxy POST', async() => {
