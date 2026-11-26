@@ -21,10 +21,13 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
+import { ToolInputValidationError } from '@pkg/agent/tools/base';
 import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeToolExecutionContextToAccount, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { AgentMailLaneSelector } from '@pkg/agent/tools/mail/AgentMailLaneSelector';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
+import type { ToolResult as AgentToolResult } from '@pkg/agent/types';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
+import { toolRequestRejectionStatus } from '@pkg/runtime/desktopExecutor';
 import paths from '@pkg/utils/paths';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
@@ -82,6 +85,14 @@ export function chatCompletionsPort(): Promise<number> {
 }
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
+
+function sendToolRejection(response: Response, result: AgentToolResult): boolean {
+  const status = toolRequestRejectionStatus(result.errorCode);
+  if (result.success || !status) return false;
+  const message = result.error ?? (typeof result.result === 'string' ? result.result : 'Desktop tool rejected the request');
+  response.status(status).json({ success: false, error: { code: result.errorCode, message } });
+  return true;
+}
 
 const EXECUTION_IDENTITY_FIELDS = ['sub', 'org_id', 'agent_id', 'pod_id', 'thread_id', 'job_id', 'device_id'] as const;
 const LOCAL_GITHUB_TOOLS = new Set([
@@ -237,7 +248,7 @@ export class ChatCompletionsServer {
 
   }
 
-  private async loadApiToken(): Promise<void> {
+  private async loadApiToken(port: number): Promise<void> {
     const tokenPath = path.join(paths.appHome, API_TOKEN_FILE);
 
     // 1. Try reading from the token file (source of truth)
@@ -247,14 +258,14 @@ export class ChatCompletionsServer {
       if (data.token) {
         this.apiToken = data.token;
         console.log('[ChatCompletionsAPI] Bearer token loaded from file');
-        return;
+        if (data.pid === process.pid && data.port === port) return;
       }
     } catch {
       // File doesn't exist yet — fall through to generate
     }
 
     // 2. Try reading from DB (migration from older version)
-    const dbToken = await SullaSettingsModel.get('sullaApiToken');
+    const dbToken = this.apiToken || await SullaSettingsModel.get('sullaApiToken');
     if (dbToken) {
       this.apiToken = dbToken;
     } else {
@@ -267,7 +278,7 @@ export class ChatCompletionsServer {
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenPath, JSON.stringify({
       token: this.apiToken,
-      port:  await chatCompletionsPort(),
+      port,
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
@@ -466,10 +477,14 @@ export class ChatCompletionsServer {
         worker.approvalSignal = deadline;
         const result = await Promise.race([
           worker.call(args),
-          new Promise((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
+          new Promise<never>((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
         ]);
+        if (sendToolRejection(res, result)) return;
         return res.json({ success: true, result });
       } catch (error) {
+        if (error instanceof ToolInputValidationError) {
+          return res.status(400).json({ success: false, error: { code: 'invalid_tool_input', message: error.message } });
+        }
         const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
         // One line per failed tool call, so routine tool errors can be told apart from platform outages.
         console.warn(`[DesktopExecutor] ${ toolName } failed after ${ Date.now() - startedAt } ms: ${ (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300) }`);
@@ -1530,8 +1545,9 @@ export class ChatCompletionsServer {
           const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
-          const callTool = () => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
+          const callTool = (): Promise<AgentToolResult> => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
           const result = runtime ? await withAgentContainerRuntime(runtime, callTool) : await callTool();
+          if (sendToolRejection(res, result)) return;
           return res.json({ success: true, result });
         } finally { res.off('close', onDisconnect) }
       }
@@ -1608,6 +1624,9 @@ export class ChatCompletionsServer {
 
       res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
     } catch (error: any) {
+      if (error instanceof ToolInputValidationError) {
+        return res.status(400).json({ success: false, error: { code: 'invalid_tool_input', message: error.message } });
+      }
       console.error(`[ChatCompletionsAPI] Integration call failed (${ slug }/${ endpoint }):`, error);
 
       // Return structured upstream errors so the model can debug effectively
@@ -2019,8 +2038,8 @@ export class ChatCompletionsServer {
   }
 
   async start(requestedPort?: number): Promise<void> {
-    await this.loadApiToken();
     const port = requestedPort ?? await chatCompletionsPort();
+    await this.loadApiToken(port);
 
     // Loopback only: the guest reaches it through the runtime's forwarder,
     // which dials 127.0.0.1 on the Mac.
