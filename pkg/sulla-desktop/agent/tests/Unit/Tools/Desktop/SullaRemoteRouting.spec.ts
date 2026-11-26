@@ -4,11 +4,16 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
 import { afterEach, describe, expect, it } from 'vitest';
+
+import type { AddressInfo } from 'node:net';
 
 const execute = promisify(execFile);
 
@@ -41,12 +46,42 @@ class SullaRemoteRoutingHarness {
         env: { ...process.env, PATH: `${ this.directory }:${ process.env.PATH }`, SULLA_TOOL_API_URL: 'http://tools.invalid' },
       });
       let stderr = '';
-      child.stderr.on('data', chunk => stderr += String(chunk));
+      child.stderr.on('data', chunk => { stderr += String(chunk) });
       child.once('error', reject);
       child.once('close', code => code === 0 ? resolve() : reject(new Error(`sulla exited ${ code }: ${ stderr }`)));
       child.stdin.end(payload);
     });
     return { request: await readFile(capture, 'utf8'), body: await readFile(bodyCapture, 'utf8') };
+  }
+
+  async explicitEndpoint(probeStatus: number, postStatus: number, postBody: string) {
+    this.directory = await mkdtemp(path.join(os.tmpdir(), 'sulla-routing-'));
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(`${ request.method } ${ request.url }`);
+      const probe = request.method === 'GET';
+      response.writeHead(probe ? probeStatus : postStatus);
+      response.end(probe ? '' : postBody);
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const { port } = server.address() as AddressInfo;
+      // Exercise real curl exit codes; only the endpoint and credentials are synthetic.
+      const { stdout } = await execute('sh', ['resources/darwin/bin/sulla', 'sample/action', '{}'], {
+        env: {
+          PATH:               process.env.PATH,
+          HOME:               this.directory,
+          NO_PROXY:           '127.0.0.1',
+          SULLA_TOOL_API_URL: `http://127.0.0.1:${ port }`,
+          SULLA_API_TOKEN:    'synthetic',
+          SULLA_TOOL_SESSION: 'synthetic',
+        },
+      });
+      return { requests, stdout };
+    } finally {
+      server.close();
+    }
   }
 
   async localDesktop(pid: number, listenerPid: number): Promise<void> {
@@ -96,6 +131,18 @@ describe('agent-side sulla remote routing', () => {
     ['live matching listener', process.pid, process.pid],
   ] as const)('authenticates the discovered endpoint: %s', async(_label, pid, listener) => {
     await harness.localDesktop(pid, listener);
+  });
+
+  it('explicit endpoint: a 503 discovery probe falls back to a successful proxy POST', async() => {
+    const { requests, stdout } = await harness.explicitEndpoint(503, 200, 'proxy reply');
+    expect(requests).toEqual(['GET /v1/tools/help/sample', 'POST /v1/proxy/sample/action']);
+    expect(stdout).toBe('proxy reply');
+  });
+
+  it('explicit endpoint: an HTTP 400 tool POST prints its body and exits successfully', async() => {
+    const { requests, stdout } = await harness.explicitEndpoint(200, 400, '{"error":"invalid input"}');
+    expect(requests).toEqual(['GET /v1/tools/help/sample', 'POST /v1/tools/internal/sample/action/call']);
+    expect(stdout).toBe('{"error":"invalid input"}');
   });
 
   it('routes desktop/snapshot to the internal tool API when live catalog help is unavailable', async() => {
