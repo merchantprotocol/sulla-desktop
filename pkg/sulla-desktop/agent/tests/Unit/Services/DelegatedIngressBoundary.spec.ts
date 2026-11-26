@@ -7,6 +7,7 @@ import { waitForAutomaticAgentExecution } from '../../../services/AgentExecution
 import { AgentOrchestratorMessageFormatter } from '../../../services/AgentOrchestratorMessageFormatter';
 import { agentJobLifecycle } from '../../../services/AgentJobLifecycleService';
 import { BackendGraphWebSocketService } from '../../../services/BackendGraphWebSocketService';
+import { ChatHeartbeatDeliveryService } from '../../../services/ChatHeartbeatDeliveryService';
 import { GraphRegistry } from '../../../services/GraphRegistry';
 import { ParkedAgentRehydrator, parkedAgentRehydrator } from '../../../services/ParkedAgentRehydrator';
 import { ThreadGraphCache } from '../../../services/ThreadGraphCache';
@@ -53,6 +54,33 @@ describe('delegated input admission', () => {
 
   const target = { channel: 'desktop', threadId: thread, agentId: 'worker-agent' };
   const peer = { target, envelope: { from: 'peer-agent', kind: 'peer', body: 'update', ids: { messageId: 'peer-1', relayed: true } } };
+
+  it.each([false, true])('does not steer a heartbeat when its parked task resumes before wake admission (final=%s)', async(final) => {
+    const backend = fixture();
+    const live = state();
+    const task = { threadId: thread, status: 'parked', agentId: target.agentId };
+    const job = { status: 'running' as const, tasks: [task] };
+    vi.spyOn(agentJobProvider.jobs, 'findByTaskThread').mockImplementation(() => {
+      task.status = 'running'; // Another wake won after heartbeat delivery observed the parked task.
+      return Promise.resolve(job as any);
+    });
+    const queueJobMessage = vi.fn(() => Promise.resolve({ id: 'auto-off' }));
+    const heartbeat = new ChatHeartbeatDeliveryService({
+      getJob: () => Promise.resolve(job),
+      wakeParkedAgent: backend.wakeParkedAgent.bind(backend),
+      queueJobMessage,
+      send: vi.fn(),
+      now: Date.now,
+    });
+    await agentJobLifecycle.withRunner(thread, live, async() => {
+      const receipt = await heartbeat.deliver(target.channel, thread, 'beat', 5, { jobId: 'job', taskIndex: 0 }, { final });
+      expect(task.status).toBe('running');
+      expect(receipt).toEqual(final ? { delivered: true, queued: true } : { delivered: false, skipped: true });
+      expect(queueJobMessage).toHaveBeenCalledTimes(final ? 1 : 0);
+      expect(live.messages).toHaveLength(0);
+      expect(backend.dispatchToAgent).not.toHaveBeenCalled();
+    });
+  });
 
   it('injects an exact-thread peer claim once, wakes the parked owner, and never dispatches a second runner', async() => {
     const backend = fixture();

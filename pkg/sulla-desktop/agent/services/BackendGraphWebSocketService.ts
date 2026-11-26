@@ -218,7 +218,7 @@ timestamp: Date.now(),
       metadata: { source: 'orchestrator_job_message', inputSource: 'system', ...messageMeta },
     };
     const parked = await parkedAgentRehydrator.resolve(threadId);
-    if (!parked && agentJobLifecycle.liveState(threadId)) {
+    if (!parked && messageMeta.origin !== 'agent_heartbeat' && agentJobLifecycle.liveState(threadId)) {
       // A child may already have resumed the task while its timer was claimed.
       // A terminal/missing job is not that race and cannot accept another wake.
       const job = await agentJobProvider.jobs.findByTaskThread(threadId);
