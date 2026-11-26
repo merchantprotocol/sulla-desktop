@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { StatusRollupQueue, type StatusRollupItem } from '../../../../pages/chat/components/composer/StatusRollupQueue';
+import { BoundedThreadKeyLedger, StatusRollupQueue, type StatusRollupItem } from '../../../../pages/chat/components/composer/StatusRollupQueue';
 
 class StatusRollupQueueFixture {
   readonly queue = new StatusRollupQueue();
@@ -34,14 +34,17 @@ describe('StatusRollupQueue live selection', () => {
   // risk: latency and backlog replay — a burst must present its newest live item immediately instead of pacing a queue.
   it('returns only the newest live item from a burst while retaining live-only history', () => {
     const fixture = new StatusRollupQueueFixture();
-    const burst = Array.from({ length: 60 }, (_, index) => fixture.item(`event-${index}`, `Action ${index}`, 101 + index));
+    const burst = [
+      fixture.item('event-2', 'Action 2', 103),
+      fixture.item('event-0', 'Action 0', 101),
+      fixture.item('event-1', 'Action 1', 102),
+    ];
 
     const shown = fixture.queue.observe(burst, fixture.threadId, 200, 100);
 
-    expect(shown?.key).toBe('event-59');
-    expect(fixture.queue.current?.key).toBe('event-59');
-    expect(fixture.queue.history).toHaveLength(StatusRollupQueue.historyLimit);
-    expect(fixture.queue.history[0]?.key).toBe('event-59');
+    expect(shown?.key).toBe('event-2');
+    expect(fixture.queue.current?.key).toBe('event-2');
+    expect(fixture.queue.history.map(item => item.key)).toEqual(['event-2', 'event-1', 'event-0']);
   });
 
   // risk: thread isolation and remount recovery — shown statuses must not return when revisiting a thread.
@@ -57,16 +60,40 @@ describe('StatusRollupQueue live selection', () => {
     expect(fixture.queue.current).toBeNull();
   });
 
-  // risk: stale status replay — long sessions cannot age an already-seen action out of the per-thread ledger.
-  it('never replays a discarded burst item after more than 512 newer actions', () => {
+  // risk: stale status replay — the subscription timestamp gate rejects keys evicted after the 2,000-key cap.
+  it('does not replay an evicted key after 3,000 events and a new subscription boundary', () => {
     const fixture = new StatusRollupQueueFixture();
-    const burst = Array.from({ length: 520 }, (_, index) => fixture.item(`event-${index}`, `Action ${index}`, 101 + index));
+    const burst = Array.from({ length: 3_000 }, (_, index) => fixture.item(`event-${index}`, `Action ${index}`, 101 + index));
 
-    expect(fixture.queue.observe(burst, 'thread-a', 700, 100)?.key).toBe('event-519');
+    expect(fixture.queue.observe(burst, 'thread-a', 4_000, 100)?.key).toBe('event-2999');
     fixture.queue.reset('thread-b');
     fixture.queue.reset('thread-a');
 
-    expect(fixture.queue.observe([burst[0]!], 'thread-a', 800, 100)).toBeNull();
+    expect(fixture.queue.observe([burst[0]!], 'thread-a', 4_001, 4_000)).toBeNull();
+  });
+
+  // risk: long-session memory growth — displayed key history is capped oldest-first at 2,000 keys per thread.
+  it('retains no more than 2,000 keys per thread and evicts the oldest key first', () => {
+    const ledger = new BoundedThreadKeyLedger();
+    for (let index = 0; index < 3_000; index += 1) ledger.remember('thread-a', `key-${index}`);
+
+    expect(ledger.retainedKeyCount('thread-a')).toBe(BoundedThreadKeyLedger.maxKeysPerThread);
+    expect(ledger.has('thread-a', 'key-999')).toBe(false);
+    expect(ledger.has('thread-a', 'key-1000')).toBe(true);
+    expect(ledger.has('thread-a', 'key-2999')).toBe(true);
+  });
+
+  // risk: multi-thread memory growth — only the 20 most recently active thread ledgers remain retained.
+  it('retains key history for only the 20 most recently active threads', () => {
+    const ledger = new BoundedThreadKeyLedger();
+    for (let index = 0; index < 20; index += 1) ledger.remember(`thread-${index}`, 'seen');
+    expect(ledger.has('thread-0', 'seen')).toBe(true);
+    ledger.remember('thread-20', 'seen');
+
+    expect(ledger.retainedThreadCount).toBe(BoundedThreadKeyLedger.maxThreads);
+    expect(ledger.retainedKeyCount('thread-0')).toBe(1);
+    expect(ledger.retainedKeyCount('thread-1')).toBe(0);
+    expect(ledger.has('thread-20', 'seen')).toBe(true);
   });
 
   // risk: duplicate source delivery — duplicate IDs cannot reappear, while a current thought revision updates in place.

@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * "Sulla" is a trademark. See TRADEMARK.md.
  */
-
 export type StatusRollupUrgency = 'normal' | 'needs-you' | 'failed';
 export type StatusRollupAgentRole = 'root' | 'manager' | 'worker' | 'reviewer';
 export type StatusRollupKind = 'read' | 'edit' | 'run' | 'agent' | 'status' | 'thought' | 'reply' | 'tool';
@@ -39,6 +38,52 @@ export interface StatusRollupShownEvent {
   readonly correlationId?: string;
 }
 
+/** Bounded memory for status keys already displayed, scoped by their owning thread. */
+export class BoundedThreadKeyLedger {
+  static readonly maxKeysPerThread = 2_000;
+  static readonly maxThreads = 20;
+
+  private readonly keysByThread = new Map<string, Set<string>>();
+
+  get retainedThreadCount(): number {
+    return this.keysByThread.size;
+  }
+
+  retainedKeyCount(threadId: string): number {
+    return this.keysByThread.get(threadId)?.size ?? 0;
+  }
+
+  has(threadId: string, key: string): boolean {
+    const keys = this.keysByThread.get(threadId);
+    if (!keys) return false;
+    this.touchThread(threadId, keys);
+    return keys.has(key);
+  }
+
+  remember(threadId: string, key: string): void {
+    if (!threadId || !key) return;
+    let keys = this.keysByThread.get(threadId);
+    if (!keys) keys = new Set<string>();
+    if (!keys.has(key)) {
+      keys.add(key);
+      if (keys.size > BoundedThreadKeyLedger.maxKeysPerThread) {
+        const oldest = keys.values().next().value as string | undefined;
+        if (oldest !== undefined) keys.delete(oldest);
+      }
+    }
+    this.touchThread(threadId, keys);
+  }
+
+  private touchThread(threadId: string, keys: Set<string>): void {
+    this.keysByThread.delete(threadId);
+    this.keysByThread.set(threadId, keys);
+    if (this.keysByThread.size > BoundedThreadKeyLedger.maxThreads) {
+      const oldestThread = this.keysByThread.keys().next().value as string | undefined;
+      if (oldestThread !== undefined) this.keysByThread.delete(oldestThread);
+    }
+  }
+}
+
 /**
  * Sanitizes and remembers status events. Despite the historical class name,
  * this deliberately has no queue or replay policy: each observation selects
@@ -52,7 +97,7 @@ export class StatusRollupQueue {
   private threadId = '';
   private currentItem: StatusRollupItem | null = null;
   private historyItems: StatusRollupItem[] = [];
-  private readonly seenKeysByThread = new Map<string, Set<string>>();
+  private readonly seenKeysByThread = new BoundedThreadKeyLedger();
 
   get current(): StatusRollupItem | null {
     return this.currentItem;
@@ -112,7 +157,6 @@ export class StatusRollupQueue {
   ): StatusRollupItem | null {
     if (!threadId) return null;
     if (threadId !== this.threadId) this.reset(threadId);
-    const seen = this.seenKeys(threadId);
     const ordered = [...items].filter(item => item.threadId === threadId)
       .sort((left, right) => left.observedAt - right.observedAt);
     let newest: StatusRollupItem | null = null;
@@ -120,7 +164,7 @@ export class StatusRollupQueue {
     for (const source of ordered) {
       const item = this.present(source, threadId, now);
       if (!item || item.observedAt <= newerThan) continue;
-      if (seen.has(item.key)) {
+      if (this.seenKeysByThread.has(threadId, item.key)) {
         if (item.updateOnly && this.currentItem?.key === item.key) {
           this.currentItem = item;
           newest = item;
@@ -148,18 +192,8 @@ export class StatusRollupQueue {
     if (this.currentItem?.key === key) this.currentItem = null;
   }
 
-  private seenKeys(threadId: string): Set<string> {
-    let keys = this.seenKeysByThread.get(threadId);
-    if (!keys) {
-      keys = new Set<string>();
-      this.seenKeysByThread.set(threadId, keys);
-    }
-    return keys;
-  }
-
   private rememberKey(threadId: string, key: string): void {
-    const keys = this.seenKeys(threadId);
-    keys.add(key);
+    this.seenKeysByThread.remember(threadId, key);
   }
 
   private cleanText(value: string): string {

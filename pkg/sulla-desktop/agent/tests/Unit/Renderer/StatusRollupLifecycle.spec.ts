@@ -11,6 +11,7 @@ import { renderToString } from '@vue/server-renderer';
 
 import StatusRollup from '@pkg/pages/chat/components/composer/StatusRollup.vue';
 import type { StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
+import { ComposerGlow } from '@pkg/pages/chat/components/composer/ComposerGlow';
 
 const createItem = (key: string, threadId = 'thread-1', observedAt = Date.now() + 1): StatusRollupItem => ({
   key,
@@ -130,5 +131,78 @@ describe('StatusRollup live lifecycle', () => {
     await nextTick();
     expect(remounted.find('.status-rollup__line').exists()).toBe(false);
     expect(remounted.text()).not.toContain(old.text);
+  });
+
+  // risk: composer tool correlation — a late result finishes only its own earlier tool and reaches toolFinished once.
+  it('delivers a late tool result once with its phase and correlation after a newer start', async() => {
+    vi.useFakeTimers();
+    const glow = new ComposerGlow();
+    glow.setActive(true);
+    const onShown = vi.fn((event: { phase?: string; correlationId?: string }) => {
+      if (event.phase === 'start' && event.correlationId) glow.toolStarted(event.correlationId);
+      if (event.phase === 'result' && event.correlationId) glow.toolFinished(event.correlationId);
+    });
+    const finished = vi.spyOn(glow, 'toolFinished');
+    const wrapper = mount(StatusRollup, {
+      props: { threadId: 'thread-1', checkIns: [], onShown },
+    });
+    wrappers.push(wrapper);
+
+    const firstStart = { ...createItem('tool-a-start', 'thread-1', Date.now() + 1), kind: 'tool' as const,
+      phase: 'start' as const, correlationId: 'tool-a' };
+    await wrapper.setProps({ checkIns: [firstStart] });
+    await vi.advanceTimersByTimeAsync(2_000);
+    const newerStart = { ...createItem('tool-b-start', 'thread-1', Date.now() + 1), kind: 'tool' as const,
+      phase: 'start' as const, correlationId: 'tool-b' };
+    await wrapper.setProps({ checkIns: [firstStart, newerStart] });
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    const lateResult = { ...createItem('tool-a-result', 'thread-1', Date.now() + 1), kind: 'tool' as const,
+      phase: 'result' as const, correlationId: 'tool-a' };
+    await wrapper.setProps({ checkIns: [firstStart, newerStart, lateResult] });
+    await wrapper.setProps({ checkIns: [firstStart, newerStart, lateResult, { ...lateResult }] });
+
+    expect(finished).toHaveBeenCalledTimes(1);
+    expect(finished).toHaveBeenCalledWith('tool-a');
+    expect(wrapper.emitted('shown')).toEqual([
+      [expect.objectContaining({ key: 'tool-a-start', phase: 'start', correlationId: 'tool-a' })],
+      [expect.objectContaining({ key: 'tool-b-start', phase: 'start', correlationId: 'tool-b' })],
+      [expect.objectContaining({ key: 'tool-a-result', phase: 'result', correlationId: 'tool-a' })],
+    ]);
+    expect(glow.state.deep).toBe(false);
+    glow.dispose();
+  });
+
+  // risk: component lifecycle leaks — unmount detaches its consumer, media listener and every dwell/ghost timer.
+  it('detaches and clears all owned timers and its matchMedia listener on unmount', async() => {
+    vi.useFakeTimers();
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'matchMedia');
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const mediaQuery = { matches: false, addEventListener, removeEventListener } as unknown as MediaQueryList;
+    Object.defineProperty(window, 'matchMedia', { configurable: true, value: vi.fn(() => mediaQuery) });
+
+    try {
+      const wrapper = mount(StatusRollup, { props: { threadId: 'thread-1', checkIns: [] } });
+      wrappers.push(wrapper);
+      await nextTick();
+      const first = createItem('first', 'thread-1', Date.now() + 1);
+      await wrapper.setProps({ checkIns: [first] });
+      const second = createItem('second', 'thread-1', Date.now() + 2);
+      await wrapper.setProps({ checkIns: [first, second] });
+      expect(wrapper.findAll('.status-rollup__ghost')).toHaveLength(1);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      wrapper.unmount();
+      wrappers = wrappers.filter(candidate => candidate !== wrapper);
+
+      expect(wrapper.emitted('consumer-detached')).toHaveLength(1);
+      expect(addEventListener).toHaveBeenCalledWith('change', expect.any(Function));
+      expect(removeEventListener).toHaveBeenCalledWith('change', addEventListener.mock.calls[0]?.[1]);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      if (descriptor) Object.defineProperty(window, 'matchMedia', descriptor);
+      else delete (window as Partial<Window>).matchMedia;
+    }
   });
 });

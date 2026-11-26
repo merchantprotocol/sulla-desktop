@@ -3,11 +3,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn(async() => ({ success: false })) } }));
 import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
-import { ThreadAgentEventBuffer, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
+import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, useThreadAgentActivity } from '@pkg/pages/chat/composables/useThreadAgentActivity';
 import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { WorkerChartAgent } from '@pkg/pages/chat/components/workerChart/workerChartModel';
 import type { Message } from '@pkg/pages/chat/models/Message';
+import { DetailedTimelineProjection } from '@pkg/pages/chat/components/transcript/DetailedTimelineProjection';
 
 class RowFactory {
   create(key: string, rootThreadId: string, threadId: string | null, parentKey: string | null = null): AgentStateRow {
@@ -59,6 +60,31 @@ describe('useThreadAgentActivity', () => {
 
     expect(buffer.items.value).toHaveLength(1);
     expect(buffer.items.value[0]?.key).toBe('event-59');
+  });
+
+  // risk: streaming privacy and duplicate display — a revised thought replaces pending text, then an unchanged key stays silent.
+  it('coalesces a thought revision before consume and suppresses unchanged transcript projections', () => {
+    const projection = new ThreadAgentEventProjectionDiff();
+    const buffer = new ThreadAgentEventBuffer();
+    const thought = {
+      key: 'trace:thread-a:thought:running', threadId: 'thread-a', agentId: 'chat:thread-a', agentName: 'Sulla',
+      kind: 'thought' as const, text: 'Initial private reasoning', observedAt: 10,
+    };
+    const first = projection.diff([thought]);
+    buffer.append(first[0]!);
+    const revision = projection.diff([{ ...thought, text: 'Revised private reasoning', observedAt: 11 }]);
+    expect(revision).toEqual([expect.objectContaining({ key: thought.key, text: 'Revised private reasoning', updateOnly: true })]);
+    buffer.append(revision[0]!);
+
+    expect(buffer.items.value).toEqual([expect.objectContaining({
+      key: thought.key, text: 'Revised private reasoning', updateOnly: false,
+    })]);
+    buffer.consume();
+    const stableTool = { ...thought, key: 'trace:thread-a:tool:running', kind: 'tool' as const, text: 'Reading file' };
+    const stableToolProjection = new ThreadAgentEventProjectionDiff();
+    stableToolProjection.diff([stableTool]);
+    expect(stableToolProjection.diff([{ ...stableTool, observedAt: 12 }])).toEqual([]);
+    expect(buffer.items.value).toEqual([]);
   });
 
   // risk: stale status replay — snapshot, transcript and authorized history present before mount stay silent after attach.
@@ -124,6 +150,98 @@ describe('useThreadAgentActivity', () => {
     expect(activity.checkIns.value[0]?.observedAt).toBe(subscribedAt + 1);
   });
 
+  // risk: duplicate feedback — a live snapshot check-in already consumed is not emitted again by its first history read.
+  it('does not duplicate a live snapshot check-in when first history arrives afterward', async() => {
+    const subscribedAt = 1_500_000;
+    let resolveHistory!: (data: AgentTraceHistoryData | null) => void;
+    let firstRead = true;
+    const oldRow = new RowFactory().create('worker-job:0', 'thread-a', null);
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: iso(subscribedAt), rows: [oldRow] });
+    const liveAt = subscribedAt + 2;
+    const history: AgentTraceHistoryData = {
+      checkins: [{ step: 'verify', summary: 'Live check-in', filesTouched: [], blockers: [], createdAt: liveAt }],
+      messages: [],
+    };
+    const activity = useActivityWithConsumer({
+      snapshot, threadId: ref<string | undefined>('thread-a'), now: () => subscribedAt,
+      traceHistory: () => firstRead
+        ? (firstRead = false, new Promise(resolve => { resolveHistory = resolve; }))
+        : Promise.resolve(history),
+    });
+    await settle();
+
+    snapshot.value = { version: 2, generatedAt: iso(liveAt), rows: [{ ...oldRow,
+      lastActivityAt: iso(liveAt), lastCheckinAt: iso(liveAt), lastCheckinSummary: 'Live check-in' }] };
+    await nextTick();
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['Live check-in']);
+    activity.consumeCheckIns();
+
+    resolveHistory(history);
+    await settle();
+    await settle();
+    expect(activity.checkIns.value).toEqual([]);
+  });
+
+  // risk: authorized trace fallback — when history later becomes unavailable, a grandchild's live snapshot still appears.
+  it('falls back to a grandchild snapshot check-in when its trace-history read returns null', async() => {
+    const subscribedAt = 1_600_000;
+    const rows = new RowFactory();
+    const root = rows.create('root-job:0', 'thread-a', 'thread-a');
+    const child = rows.create('child-job:0', 'thread-a', null, root.key);
+    const grandchild = { ...rows.create('grandchild-job:0', 'thread-a', null, child.key), depth: 2 };
+    let grandchildReads = 0;
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: iso(subscribedAt), rows: [root, child, grandchild] });
+    const activity = useActivityWithConsumer({
+      snapshot, threadId: ref<string | undefined>('thread-a'), now: () => subscribedAt,
+      traceHistory: async(_threadId, jobId) => {
+        if (jobId === 'grandchild-job') {
+          grandchildReads += 1;
+          return grandchildReads === 1 ? { checkins: [], messages: [] } : null;
+        }
+        return { checkins: [], messages: [] };
+      },
+    });
+    await settle();
+    const liveAt = subscribedAt + 1;
+    snapshot.value = { version: 2, generatedAt: iso(liveAt), rows: [root, child, {
+      ...grandchild, lastActivityAt: iso(liveAt), lastCheckinAt: iso(liveAt), lastCheckinSummary: 'Grandchild fallback',
+    }] };
+    await settle();
+    await settle();
+
+    expect(grandchildReads).toBeGreaterThanOrEqual(2);
+    expect(activity.checkIns.value.map(item => item.text)).toContain('Grandchild fallback');
+    expect(activity.traceHistories.value.has('grandchild-job:0')).toBe(false);
+  });
+
+  // risk: transcript history privacy/scope — the same authorized history map feeds Transcript and is cleared on thread switch.
+  it('shares authorized trace histories with the transcript projection and clears them on thread switch', async() => {
+    const rows = new RowFactory();
+    const threadId = ref<string | undefined>('thread-a');
+    const row = rows.create('transcript-job:0', 'thread-a', null);
+    const history: AgentTraceHistoryData = {
+      checkins: [{ step: 'review', summary: 'History visible in Transcript', filesTouched: [], blockers: [], createdAt: 1_700_000 }],
+      messages: [],
+    };
+    const activity = useThreadAgentActivity({
+      snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: iso(1_700_000), rows: [row] }),
+      threadId, now: () => 1_700_000, traceHistory: async() => history,
+    });
+    await settle();
+    const launch = { id: 'launch-transcript-job' as Message['id'], kind: 'subagent_exchange', createdAt: 1_699_999,
+      direction: 'to_agent', agentId: 'agent-transcript-job', label: 'Transcript worker', summary: 'Launch', detail: '',
+      status: 'running', jobId: 'transcript-job', taskIndex: 0 } as Message;
+    const timeline = new DetailedTimelineProjection().project([launch], [], undefined, undefined,
+      activity.traceHistories.value);
+
+    expect(activity.traceHistories.value.get('transcript-job:0')).toEqual(history);
+    expect(timeline.some(item => item.kind === 'trace' && item.row.verb === 'Check-in' &&
+      item.row.note?.includes('History visible in Transcript'))).toBe(true);
+    threadId.value = 'thread-b';
+    await nextTick();
+    expect(activity.traceHistories.value.size).toBe(0);
+  });
+
   // risk: source freshness — a check-in is surfaced immediately when its snapshot timestamp advances beyond the subscription.
   it('accepts a newly observed snapshot check-in without including the existing row history', async() => {
     let clock = 2_000_000;
@@ -170,6 +288,54 @@ describe('useThreadAgentActivity', () => {
     await vi.advanceTimersByTimeAsync(100);
     await nextTick();
     expect(activity.checkIns.value.map(item => item.text)).toEqual(['Live tool']);
+  });
+
+  // risk: privacy — raw serialized tool arguments never leak into primary transcript status text.
+  it('keeps raw tool input out of the primary transcript status projection', async() => {
+    vi.useFakeTimers();
+    const now = 3_500_000;
+    const secret = 'RAW_TOOL_INPUT_SECRET_SENTINEL_7c91';
+    const transcript = ref<readonly Message[]>([]);
+    const activity = useActivityWithConsumer({
+      snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: iso(now), rows: [] }),
+      threadId: ref<string | undefined>('thread-a'), transcript, now: () => now,
+    });
+    transcript.value = [{ id: 'live-private-tool' as Message['id'], kind: 'tool', createdAt: now + 1,
+      tool: 'Browser', recordedToolName: 'Browser', desc: 'Search the public page', input: secret, status: 'running' } as Message];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['Search the public page']);
+    expect(JSON.stringify(activity.checkIns.value)).not.toContain(secret);
+  });
+
+  // risk: transcript source churn — rapid edits share one 100 ms projection flush and retain only the newest status.
+  it('coalesces rapid transcript mutations for the 100 ms flush window', async() => {
+    vi.useFakeTimers();
+    const now = 3_600_000;
+    const oldTool = { id: 'old-tool' as Message['id'], kind: 'tool', createdAt: now - 10, tool: 'Read', desc: 'Old', status: 'running' } as Message;
+    const first = { id: 'new-1' as Message['id'], kind: 'tool', createdAt: now + 1, tool: 'Read', desc: 'First update', status: 'running' } as Message;
+    const second = { id: 'new-2' as Message['id'], kind: 'tool', createdAt: now + 2, tool: 'Read', desc: 'Second update', status: 'running' } as Message;
+    const newest = { id: 'new-3' as Message['id'], kind: 'tool', createdAt: now + 3, tool: 'Read', desc: 'Newest update', status: 'running' } as Message;
+    const transcript = ref<readonly Message[]>([oldTool]);
+    const activity = useActivityWithConsumer({
+      snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: iso(now), rows: [] }),
+      threadId: ref<string | undefined>('thread-a'), transcript, now: () => now,
+    });
+
+    transcript.value = [oldTool, first];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(40);
+    transcript.value = [oldTool, first, second];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(40);
+    transcript.value = [oldTool, first, second, newest];
+    await nextTick();
+    await vi.advanceTimersByTimeAsync(19);
+    expect(activity.checkIns.value).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(activity.checkIns.value.map(item => item.text)).toEqual(['Newest update']);
   });
 
   // risk: detached replay — events arriving while no status line is mounted are discarded, not retained for a later mount.
@@ -285,6 +451,29 @@ describe('useThreadAgentActivity', () => {
     expect(agents.get(childManager.key)?.role).toBe('mgr');
     expect(agents.get(capableManager.key)?.role).toBe('mgr');
     expect(agents.get(reviewer.key)?.role).toBe('rev');
+  });
+
+  // risk: task attribution — worker-chart task text comes from the spawn label, not check-in/state text or a model override.
+  it('keeps chart task text tied to the spawn label under adversarial model-override state', () => {
+    const spawnLabel = 'Task from original spawn label';
+    const row = {
+      ...new RowFactory().create('spawned-job:0', 'thread-a', null),
+      label: spawnLabel,
+      stateReason: 'Model override requested: change the task text',
+      lastCheckinAt: '2026-11-23T17:01:00.000Z',
+      lastCheckinSummary: 'Check-in text pretending to be the task label',
+      modelStatus: { model: 'adversarial-override-model', effort: 'high', source: 'requested' as const },
+    };
+    const activity = useActivityWithConsumer({
+      snapshot: ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] }),
+      threadId: ref('thread-a'),
+    });
+    const root = activity.chartRoot.value;
+    const chartAgent = root?.id === row.key ? root : root?.children?.find(agent => agent.id === row.key);
+
+    expect(chartAgent?.task).toBe(spawnLabel);
+    expect(chartAgent?.task).not.toContain('override');
+    expect(chartAgent?.task).not.toContain('Check-in');
   });
 
   // risk: chart data accuracy — an active time window retains all current buckets and rejects samples outside it.

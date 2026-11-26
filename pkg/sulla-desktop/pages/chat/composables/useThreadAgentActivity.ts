@@ -9,7 +9,7 @@ import {
   type PresentedThreadAgent,
   type ThreadAgentActivityProjection,
 } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
-import type { StatusRollupItem, StatusRollupShownEvent } from '../components/composer/StatusRollupQueue';
+import { BoundedThreadKeyLedger, type StatusRollupItem, type StatusRollupShownEvent } from '../components/composer/StatusRollupQueue';
 import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
 import type { Message } from '../models/Message';
 import type { WorkerChartSnippetTick, WorkerChartAgent } from '../components/workerChart/WorkerChartController';
@@ -86,19 +86,10 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let pendingTranscript: { threadId: string; messages: readonly Message[]; agentName: string } | undefined;
   let snippetSequence = 0;
   const snippetTick = ref<WorkerChartSnippetTick | null>(null);
-  const shownKeysByThread = new Map<string, Set<string>>();
-
-  const shownKeys = (threadId: string): Set<string> => {
-    let keys = shownKeysByThread.get(threadId);
-    if (!keys) {
-      keys = new Set<string>();
-      shownKeysByThread.set(threadId, keys);
-    }
-    return keys;
-  };
+  const shownKeysByThread = new BoundedThreadKeyLedger();
 
   const rememberShown = (threadId: string, key: string): void => {
-    shownKeys(threadId).add(key);
+    shownKeysByThread.remember(threadId, key);
   };
 
   const resetThread = (threadId: string | undefined): void => {
@@ -127,8 +118,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
 
   const append = (item: StatusRollupItem): void => {
     if (!consumerAttached || !activeThreadId || item.threadId !== activeThreadId || item.observedAt <= subscribedAt) return;
-    const seen = shownKeysByThread.get(item.threadId);
-    if (seen?.has(item.key)) return;
+    if (shownKeysByThread.has(item.threadId, item.key)) return;
     eventBuffer.append(item);
   };
 
