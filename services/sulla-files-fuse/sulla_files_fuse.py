@@ -1178,7 +1178,12 @@ class SullaFiles(pyfuse3.Operations):
             raise pyfuse3.FUSEError(errno.ENOENT)
         path = node["path"]
         if node.get("stale") and not (node.get("collectionRoot") or node.get("virtualMetadata")) and self.path_inode.get(path) == inode:
-            await self._refresh_node(path, node.get("collectionId"))
+            try:
+                await self._refresh_node(path, node.get("collectionId"))
+            except pyfuse3.FUSEError as error:
+                # A remote unlink detaches the path but retains an open inode.
+                if error.errno != errno.ENOENT or self.path_inode.get(path) == inode:
+                    raise
         return self._attrs(inode)
 
     @traced("lookup", lambda s, a: s._child_info(a[0], a[1], a[-1]))
