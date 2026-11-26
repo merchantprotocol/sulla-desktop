@@ -205,13 +205,29 @@ export async function ensureGuestWorktreeDirectories(identity: GuestRuntimeIdent
   ]);
 }
 
+interface StableSeedRuntime {
+  image: string;
+  identity?: () => Promise<GuestRuntimeIdentity>;
+}
+
+async function configuredSeedIdentity(): Promise<GuestRuntimeIdentity> {
+  const login = sullaRuntimeGuestUser();
+  if (!login?.name || !Number.isSafeInteger(login.uid) || login.uid <= 0) throw new Error('Missing guest seed identity');
+  const identity = await getGuestRuntimeIdentity();
+  if (identity.uid !== login.uid) throw new Error('Guest seed identity does not match the configured account');
+  return identity;
+}
+
 /**
  * Initialize a stable conversation workspace from a clean VM worktree once.
  * The marker lives inside .git, so it never dirties the worker checkout. The
  * staged clone and marker move into place together; a crash cannot publish a
  * half-cloned workspace as resumable.
  */
-export async function seedGitWorktreeIntoStableGuest(source: string, target: string, existingJobKey?: string): Promise<string> {
+export async function seedGitWorktreeIntoStableGuest(source: string, target: string, existingJobKey: string | undefined, runtime: StableSeedRuntime): Promise<string> {
+  const identity = await (runtime.identity ?? configuredSeedIdentity)();
+  if (![identity?.uid, identity?.gid].every(id => Number.isSafeInteger(id) && id > 0)) throw new Error('Invalid guest seed identity');
+  if (!runtime.image || runtime.image.startsWith('-')) throw new Error('Missing trusted seed image');
   const normalizedSource = path.posix.resolve(source);
   if (normalizedSource !== '/mnt/worktrees' && !normalizedSource.startsWith('/mnt/worktrees/')) {
     throw new Error('Container workspacePath must be an existing worktree under /mnt/worktrees');

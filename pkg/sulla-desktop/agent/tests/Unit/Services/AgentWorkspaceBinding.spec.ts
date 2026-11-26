@@ -10,7 +10,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentWorkspaceBinder } from '../../../services/AgentWorkspaceBinding';
-import { ensureGuestWorktreeDirectories, GUEST_CONVERSATIONS_ROOT, seedGitWorktreeIntoStableGuest } from '../../../services/GuestRuntimeTransport';
+import { ensureGuestWorktreeDirectories, GUEST_CONVERSATIONS_ROOT, seedGitWorktreeIntoStableGuest as productionSeed } from '../../../services/GuestRuntimeTransport';
 
 const guest = vi.hoisted(() => ({ root: '', freeKiB: 99999999, assumeDifferentGitOwner: false }));
 vi.mock('node:child_process', async(importActual) => {
@@ -47,6 +47,10 @@ describe('durable Git workspace initialization', () => {
   const local = (name: string) => path.join(guest.root, name);
   const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const sourceRemote = 'https://github.example.test/team/repo.git';
+  const uid = process.getuid!();
+  const gid = process.getgid!();
+  const seedGitWorktreeIntoStableGuest = (source: string, workspace: string, job?: string, identity = async() => ({ uid, gid })) =>
+    productionSeed(source, workspace, job, { image: 'seed-fixture', identity });
   function legacyCheckout(name: string): string {
     const agents = local('runtime/agents');
     mkdirSync(agents, { recursive: true });
@@ -130,6 +134,32 @@ describe('durable Git workspace initialization', () => {
     expect(git(workspace, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(mode === 'detached' ? 'HEAD' : 'worker-branch');
     expect(git(workspace, 'for-each-ref', '--format=%(refname)')).not.toContain('unpublished');
     expect(() => git(workspace, 'cat-file', '-e', unrelated)).toThrow();
+  });
+
+  it('seeds the approved HEAD without interpreting checkout-local Git configuration', async() => {
+    const repo = local('worktrees/repo');
+    const head = git(repo, 'rev-parse', 'HEAD');
+    git(repo, 'config', 'core.bare', 'true');
+    // Inert positive control: this exact repository config changes Git semantics.
+    expect(git(repo, 'rev-parse', '--is-bare-repository')).toBe('true');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+    expect(git(local('runtime/conversations/task/workspace'), 'rev-parse', 'HEAD')).toBe(head);
+    const calls: string[][] = readFileSync(local('helper-calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const argv of calls) {
+      expect(uid).toBeGreaterThan(0);
+      expect(argv[argv.indexOf('--user') + 1]).toBe(`${ uid }:${ gid }`);
+      expect(argv[argv.indexOf('--network') + 1]).toBe('none');
+      expect(argv).toContain('--read-only');
+    }
+  });
+
+  it.each([0, undefined])('refuses missing or privileged reader identity (%s)', async(badUid) => {
+    const repo = local('worktrees/repo');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target, undefined,
+      async() => ({ uid: badUid as number, gid }))).rejects.toThrow(/identity/i);
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('worker-branch');
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
   });
 
   it('preserves an exact pre-marker durable Git workspace during restart recovery', async() => {
