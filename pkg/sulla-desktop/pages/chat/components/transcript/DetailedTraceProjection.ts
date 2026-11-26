@@ -35,7 +35,7 @@ export class DetailedTraceProjection {
         const sourceId = String(message.id);
         const jobRows = subagents.get(sourceId) ?? [];
         subagents.delete(sourceId);
-        return [...this.rowsFor(message, anchorEntryId, activities.get(message.id)),
+        return [...this.rowsFor(message, sourceId, activities.get(message.id)),
           ...jobRows.map(row => ({ ...row, anchorEntryId }))];
       });
       const usage = this.usage(group);
