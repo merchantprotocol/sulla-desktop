@@ -187,6 +187,7 @@ export function useRoutines() {
   const { loading: isLoading, error: loadError, start: startLoad } = useConfigurationLoad(async() => {
     routines.value = await fetchRoutines();
   });
+  const showListLoadState = computed(() => !!loadError.value || (isLoading.value && routines.value.length === 0));
   const error = computed({ get: () => loadError.value || actionError.value, set: value => { actionError.value = value } });
 
   async function load(): Promise<void> {
@@ -198,7 +199,7 @@ export function useRoutines() {
     return load();
   }
 
-  // Strict reads wait for the boot gate. A brief database outage rejoins on database:available.
+  // Refresh after recovery from a brief database outage.
   useDatabaseAvailableReload(load, 'useRoutines');
 
   /**
@@ -320,6 +321,8 @@ export function useRoutines() {
     // state
     routines,
     isLoading,
+    loadError,
+    showListLoadState,
     isEmpty,
     error,
 
