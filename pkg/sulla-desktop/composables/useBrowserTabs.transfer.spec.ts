@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { adoptTransferredTab, applyTransferAdoption, persistActiveTabId, releaseTransferredTab, shouldEnsureOneTab, shouldCloseAfterTransfer, shouldPersistTabList, tabDropIndexInVisualOrder } from './useBrowserTabs';
+
 // useBrowserTabs registers ipcRenderer listeners at module load. Mock the typed
 // wrapper so the spec never loads the real 'electron' package (binary path only in Node).
 vi.mock('@pkg/utils/ipcRenderer', () => ({
@@ -15,8 +17,6 @@ vi.mock('@pkg/utils/ipcRenderer', () => ({
     removeAllListeners: vi.fn(),
   },
 }));
-
-import { adoptTransferredTab, applyTransferAdoption, persistActiveTabId, releaseTransferredTab, shouldEnsureOneTab, shouldCloseAfterTransfer, shouldPersistTabList } from './useBrowserTabs';
 
 describe('tab-host persistence isolation', () => {
   it('does not persist tab lists from hosted renderers', () => {
@@ -38,7 +38,7 @@ describe('early tab transfer adoption', () => {
 });
 
 function stubTabElements(rects: Array<{ left: number; width: number; id?: string; hidden?: boolean }>): void {
-  document.body.innerHTML = rects.map(r => `<a class="tab-item" href="#/Browser/${r.id || ''}" style="visibility:${r.hidden ? 'hidden' : 'visible'}"></a>`).join('');
+  document.body.innerHTML = rects.map(r => `<a class="tab-item" data-tab-id="browser-${ r.id || '' }" href="#/Browser/${ r.id || '' }" style="visibility:${ r.hidden ? 'hidden' : 'visible' }"></a>`).join('');
   const els = Array.from(document.querySelectorAll<HTMLElement>('.tab-item'));
   els.forEach((el, index) => vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left: rects[index].left, width: rects[index].width, height: rects[index].hidden ? 20 : 20, right: 0, top: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect));
 }
@@ -55,6 +55,7 @@ describe('tab drop position and release ordering', () => {
     const adopted: Array<{ index: number | undefined; id: string }> = [];
     const store = {
       tabs: [{ id: 'a' }, { id: 'b' }] as any[],
+      tabOrder: { value: ['browser-a', 'browser-b'] },
       adoptTab: (descriptor: any, index?: number) => { adopted.push({ index, id: descriptor.id }); return descriptor; },
     };
     adoptTransferredTab(store as any, { id: 'tab-new' } as any, undefined, -10 + window.screenX);
@@ -67,25 +68,35 @@ describe('tab drop position and release ordering', () => {
     const adopted: Array<number | undefined> = [];
     const store = {
       tabs: [{ id: 'a' }, { id: 'b' }] as any[],
+      tabOrder: { value: ['browser-a', 'browser-b'] },
       adoptTab: (_d: any, index?: number) => { adopted.push(index); return _d; },
     };
     adoptTransferredTab(store as any, { id: 'tab-new' } as any, undefined, window.screenX + 120);
     expect(adopted).toEqual([1]);
   });
 
-  it('ignores hidden measuring copies and maps visible hrefs to store order', () => {
-    // risk: transfer inserted at a wrong tab index when hidden measurement clones precede real tabs
+  it('uses the destination grouped visual order rather than backing creation order', () => {
+    // risk: creation order [browser, chat-1, chat-2] disagrees with visible Chats/Browser order
     stubTabElements([
       ...Array.from({ length: 30 }, (_, i) => ({ left: i * 10, width: 10, id: `clone-${i}`, hidden: true })),
-      { left: 0, width: 100, id: 'b' }, { left: 100, width: 100, id: 'a' },
+      { left: 0, width: 100, id: 'chat-1' }, { left: 100, width: 100, id: 'chat-2' }, { left: 200, width: 100, id: 'browser' },
     ]);
     const adopted: Array<number | undefined> = [];
     const store = {
-      tabs: [{ id: 'a' }, { id: 'b' }] as any[],
+      tabs:     [{ id: 'browser' }, { id: 'chat-1' }, { id: 'chat-2' }] as any[],
+      tabOrder: { value: ['browser-chat-1', 'browser-chat-2', 'browser-browser'] },
       adoptTab: (_d: any, index?: number) => { adopted.push(index); return _d; },
     };
     adoptTransferredTab(store as any, { id: 'new' } as any, undefined, window.screenX + 20);
-    expect(adopted).toEqual([1]);
+    expect(adopted).toEqual([0]);
+  });
+
+  it('returns a drop position using ordered visual header IDs and skips non-store tabs', () => {
+    expect(tabDropIndexInVisualOrder(20, ['chat-1', 'chat-2', 'browser'], [
+      { id: 'extension-files', left: 0, width: 40 },
+      { id: 'chat-1', left: 50, width: 100 },
+    ])).toBe(0);
+    expect(tabDropIndexInVisualOrder(500, ['chat-1', 'chat-2', 'browser'], [])).toBe(3);
   });
 
   it('suppresses empty-window tab creation after releasing its only tab and clears on rollback adoption', async() => {
@@ -107,6 +118,7 @@ describe('tab drop position and release ordering', () => {
     const adopted: Array<number | undefined> = [];
     const store = {
       tabs: [{ id: 'a' }] as any[],
+      tabOrder: { value: ['browser-a'] },
       adoptTab: (_d: any, index?: number) => { adopted.push(index); return _d; },
     };
     adoptTransferredTab(store as any, { id: 'tab-new' } as any, undefined, window.screenX);
