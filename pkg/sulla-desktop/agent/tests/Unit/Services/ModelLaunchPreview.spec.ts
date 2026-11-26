@@ -7,6 +7,9 @@ import { SullaSettingsModel } from '../../../database/models/SullaSettingsModel'
 import { agentDefinitionService } from '../../../services/AgentDefinitionService';
 import type { RoutingProviderInfo } from '../../../languagemodels/modelRoutingTypes';
 
+// Preview reads model metadata; no Electron process or native API is involved.
+vi.mock('electron', () => ({ app: { isPackaged: false }, safeStorage: {} }));
+
 const a = { provider: 'codex', model: 'test-a', effort: 'high' };
 const b = { provider: 'grok', model: 'test-b' };
 const c = { provider: 'codex', model: 'test-c', effort: 'low' };
