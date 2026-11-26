@@ -131,7 +131,7 @@ describe('the side dock tabs', () => {
     invoke.mockImplementation(channel => Promise.resolve(channel === 'decisions:conversation' ? [{ id: 'q-m1', conversationId: 'thread-1', kind: 'question', status: 'expired', attention: 'active', createdAt: NOW, expiresAt: 1, title: 'Question', questions: [] }] : []));
     const plain = mountWith(SideDock, { messages: [question('m1')] });
     await flushPromises();
-    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'For You1', 'AI Team', 'Files']);
+    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'Decide1', 'AI Team', 'Files']);
     const withArtifacts = mountWith(SideDock, { artifacts: 2 });
     expect(withArtifacts.findAll('.sdk-tab').map(t => t.text())).toContain('Artifacts2');
     await withArtifacts.findAll('.sdk-tab').find(tab => tab.text() === 'Files')!.trigger('click');
@@ -141,7 +141,7 @@ describe('the side dock tabs', () => {
 
 describe('agent lanes', () => {
   // risk: live activity was not recognisable; a child agent looked unrelated to its parent
-  it('links requests to For You, shows live child relationships and folds finished ones', async() => {
+  it('links requests to Decide, shows live child relationships and folds finished ones', async() => {
     invoke.mockImplementation(channel => Promise.resolve(channel === 'decisions:conversation' ? [{ id: 'q-m1', conversationId: 'thread-1', kind: 'question', status: 'expired', attention: 'active', createdAt: NOW, expiresAt: 1, title: 'Question', questions: [] }] : []));
     const lanes = mountWith(AgentLanes, {
       messages: [question('m1')],
@@ -149,8 +149,8 @@ describe('agent lanes', () => {
     });
     await flushPromises();
     expect(lanes.find('.wy-list').exists()).toBe(false);
-    expect(lanes.text()).toContain('For You');
-    expect(lanes.find('.ln-sum').text()).toMatch(/^Needs you·1 request in For You·2 agents running/);
+    expect(lanes.text()).toContain('Decide');
+    expect(lanes.find('.ln-sum').text()).toMatch(/^Needs you·1 request in Decide·2 agents running/);
     expect(lanes.find('.handoff-map').exists()).toBe(true);
     const review = lanes.get('[data-job-key="j2:0"]');
     await review.trigger('click');
