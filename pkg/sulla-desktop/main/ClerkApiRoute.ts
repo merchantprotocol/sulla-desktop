@@ -4,7 +4,9 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { clerkFailure, ClerkError, type ClerkCaller, type ClerkClient } from '@pkg/agent/integrations/clerk/ClerkClient';
-import { CLERK_ACCOUNT } from '@pkg/agent/integrations/clerk/ClerkEndpoints';
+import { ClerkRawRequestEnvelope } from '@pkg/agent/integrations/clerk/ClerkRawRequestEnvelope';
+import { ToolApprovalGate } from '@pkg/agent/tools/ToolApprovalGate';
+import { CLERK_ACCOUNT, clerkEndpoints } from '@pkg/agent/integrations/clerk/ClerkEndpoints';
 
 import type { Request, Response } from 'express';
 
@@ -12,6 +14,7 @@ export class ClerkApiRoute {
   constructor(
     private readonly client: () => ClerkClient,
     private readonly caller: (request: Request, name: string, signal: AbortSignal) => Promise<ClerkCaller>,
+    private readonly approvals: ToolApprovalGate,
   ) {}
 
   async handle(request: Request, response: Response, endpoint?: string): Promise<void> {
@@ -22,8 +25,18 @@ export class ClerkApiRoute {
       if (request.params.accountId !== CLERK_ACCOUNT) throw new ClerkError(404, 'Clerk uses the default account.');
       const name = endpoint?.replace(/^clerk_/, '') ?? 'raw_request';
       const caller = await this.caller(request, `clerk_${ name }`, disconnect.signal);
-      const clerk = this.client();
+      if (name !== 'get_config' && name !== 'raw_request' && !Object.hasOwn(clerkEndpoints, name)) throw new ClerkError(404, 'Unknown Clerk tool.');
       const input = request.body ?? {};
+      if (name === 'raw_request') {
+        const refusal = new ClerkRawRequestEnvelope().refusal(input, endpoint === undefined ? 'proxy' : 'tool');
+        if (refusal) throw new ClerkError(400, refusal);
+      }
+      const approval = await this.approvals.check({
+        category: 'clerk', name: `clerk_${ name }`, conversationId: caller.conversationId, channel: caller.channel, signal: caller.signal,
+      });
+      if (approval && approval.answer.status !== 'approved') throw new ClerkError(403, 'Clerk tool approval was not granted. Nothing was sent.');
+      caller.signal?.throwIfAborted();
+      const clerk = this.client();
       if (endpoint !== undefined) {
         // Raw requests have one flat envelope shared with /v1/proxy; never
         // unwrap `params` before the ClerkClient rejects unsupported fields.
