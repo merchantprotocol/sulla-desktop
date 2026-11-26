@@ -205,6 +205,8 @@ export interface BaseThreadState {
 export interface AgentGraphState extends BaseThreadState {
   metadata: BaseThreadState['metadata'] & {
     agent?: {
+      /** From the resolved definition, never from its editable config. */
+      definitionBuiltin?: boolean;
       // Config (loaded at graph creation from config.yaml)
       name?:         string;
       description?:  string;
@@ -413,11 +415,16 @@ export class Graph<TState = BaseThreadState> {
     const convId = (state as any).metadata.conversationId;
     if (convId && !isReentry) {
       const convLogger = getConversationLogger();
-      const agentName = (state as any).metadata.agent?.name || (state as any).metadata.wsChannel || 'unknown';
-      const parentId = (state as any).metadata.parentConversationId;
+      const meta = (state as AgentGraphState).metadata as AgentGraphState['metadata'] & { delegatedJobId?: string; parentConversationId?: string };
+      const agentName = meta.agent?.name || meta.wsChannel || 'unknown';
+      const parentId = meta.parentConversationId;
       convLogger.logGraphStarted(convId, agentName, {
-        agentId: (state as any).metadata.wsChannel,
-        channel: (state as any).metadata.wsChannel,
+        agentId: meta.wsChannel,
+        channel: meta.wsChannel,
+        graphOrigin: {
+          delegated: Boolean(meta.isSubAgent || meta.delegatedJobId),
+          builtin: meta.agent?.definitionBuiltin,
+        },
         parentId,
       });
       // Log the initial user message if present
