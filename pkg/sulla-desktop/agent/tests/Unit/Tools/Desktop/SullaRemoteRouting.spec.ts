@@ -33,7 +33,7 @@ class SullaRemoteRoutingHarness {
     const capture = path.join(this.directory, 'request.txt');
     const bodyCapture = path.join(this.directory, 'body.txt');
     const curl = path.join(this.directory, 'curl');
-    await writeFile(curl, `#!/bin/sh\ncase "$*" in\n  *'/v1/tools/help/agents'*) printf 'Categories: agents\\n'; exit 0 ;;\nesac\nprintf '%s\\n' "$*" > '${ capture }'\ncat > '${ bodyCapture }'\nprintf '{"success":true}'\n`);
+    await writeFile(curl, `#!/bin/sh\ncase "$*" in\n  *'%{http_code}'*'/v1/tools/help/agents'*) printf '200'; exit 0 ;;\n  *'/v1/tools/help/agents'*) printf 'Categories: agents\\n'; exit 0 ;;\nesac\nprintf '%s\\n' "$*" > '${ capture }'\ncat > '${ bodyCapture }'\nprintf '{"success":true}'\n`);
     await chmod(curl, 0o755);
     await new Promise<void>((resolve, reject) => {
       const child = spawn('sh', ['resources/darwin/bin/sulla', 'agents/report_progress', '-'], {
