@@ -71,6 +71,7 @@ if (tabHost && hostedTabId) {
     if (detail?.tabId !== hostedTabId || !isChatTabActivitySnapshot(detail)) return;
     ipcRenderer.send('internal-tab-view:chat-running', hostedTabId, graphRunning, {
       state: detail.state,
+      ...(detail.active !== undefined ? { active: detail.active } : {}),
       ...(detail.detail ? { detail: detail.detail } : {}),
     });
   };
