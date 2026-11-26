@@ -546,7 +546,7 @@ export class BackendGraphWebSocketService {
     for (const [, abort] of this.activeAborts) {
       abort.abort();
     }
-    for (const key of this.activeAborts.keys()) releaseChatActivity(`graph:${ key }`);
+    for (const key of this.activeAborts.keys()) { releaseChatActivity(`graph:${ key }`); agentJobProvider.workSleepPrevention.chatRunEnded(key); }
     this.activeAborts.clear();
     this.suspendedRuns.clear();
     this.resumeContexts.clear();
@@ -808,7 +808,7 @@ export class BackendGraphWebSocketService {
     for (;;) {
       await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
       try {
-        await this.recoverRuntimeWork();
+        await this.recoverRuntimeWork(); await agentJobProvider.workSleepPrevention.reconcileAfterRecovery().catch(error => console.warn('[BackendGraphWS] Agent-work sleep hold recovery failed:', error));
         return;
       } catch (error: any) {
         if (error?.name === 'AbortError' || this.recoveryAbort.signal.aborted) return;
@@ -1346,7 +1346,7 @@ export class BackendGraphWebSocketService {
       if (decisionTurn) {
         if (this.decisionThreadOwned(channelId, threadId)) return 'deferred';
         runAbort = new AbortService();
-        this.activeAborts.set(abortKey, runAbort);
+        this.activeAborts.set(abortKey, runAbort); agentJobProvider.workSleepPrevention.chatRunStarted(abortKey);
       }
 
       if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);
@@ -1470,7 +1470,7 @@ export class BackendGraphWebSocketService {
       runAbort = abort; if (relaySignal) relayAbortBridge = new AbortSignalBridge(relaySignal, abort);
       state.metadata.options.abort = abort;
       delete state.metadata.reportingDecisionFollowUp;
-      this.activeAborts.set(abortKey, abort);
+      this.activeAborts.set(abortKey, abort); agentJobProvider.workSleepPrevention.chatRunStarted(abortKey);
       const initialSteerRevision = state.metadata.reportingSteerRevision;
       this.resumeContexts.set(abortKey, {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
@@ -1678,7 +1678,7 @@ export class BackendGraphWebSocketService {
           // instead: no spawn_agent runner is left to hand it to the parent.
           if (wakeTurnToRepark) await agentJobLifecycle.endDormantWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
           if (decisionTurn && !isCurrentRun()) return;
-          this.activeAborts.delete(abortKey);
+          this.activeAborts.delete(abortKey); agentJobProvider.workSleepPrevention.chatRunEnded(abortKey);
           this.resumeContexts.delete(abortKey);
           releaseChatActivity(`graph:${ abortKey }`);
 

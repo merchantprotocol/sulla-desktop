@@ -43,6 +43,8 @@ import { GraphRegistryTopLevelConversationRegistry } from '../Services/GraphRegi
 import { GraphRegistryOwnerPresence } from '../Services/GraphRegistryOwnerPresence';
 import { JobTaskCustodyLineage, MainCustodyOwnerLiveness, MainStrandedOwnerDetector } from '../Services/MainCustodyOwnerLiveness';
 import { NoopCustodyChangeNotifier } from '../Services/JobCustodyTypes';
+import { AgentWorkSleepPrevention } from '../Services/AgentWorkSleepPrevention';
+import { startCaffeinate, stopCaffeinate } from '@pkg/main/SleepPreventionService';
 
 export class AgentJobServiceProvider {
   readonly jobs: AgentJobRepository;
@@ -53,6 +55,7 @@ export class AgentJobServiceProvider {
   readonly runtime: JobRuntimeRegistry;
   readonly service: AgentJobService;
   readonly states: AgentStateService;
+  readonly workSleepPrevention: AgentWorkSleepPrevention;
   readonly fleet: AgentFleetProjectionService;
   readonly activity: AgentTaskActivityProjector;
   readonly stranded: StrandedManagerScheduler;
@@ -75,6 +78,7 @@ export class AgentJobServiceProvider {
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime, Date.now, new AgentJobMutationQueue(), new AgentJobFailureLogger({ error: message => Logging.background.error(message) }));
+    this.workSleepPrevention = new AgentWorkSleepPrevention(this.states, { startCaffeinate, stopCaffeinate });
     this.activity = new AgentTaskActivityProjector(runActivity);
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);

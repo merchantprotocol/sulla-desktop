@@ -3,12 +3,12 @@
 // container pre-check. The user's Stop must end that wait through the turn's own run handle.
 import { describe, expect, it, vi } from 'vitest';
 
-const f = vi.hoisted(() => ({ createAgentContainerLifecycle: vi.fn(), saveThreadState: vi.fn(() => Promise.resolve()) }));
+const f = vi.hoisted(() => ({ createAgentContainerLifecycle: vi.fn(), saveThreadState: vi.fn(() => Promise.resolve()), startSleep: vi.fn(), stopSleep: vi.fn() }));
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../services/ModelProviderService', () => ({ getModelProviderService: () => ({ isInitialized: () => true, getPrimaryProvider: () => 'codex' }) }));
 vi.mock('../../../services/AgentContainerLauncher', () => ({ createAgentContainerLifecycle: f.createAgentContainerLifecycle }));
 vi.mock('../../../nodes/ThreadStateStore', () => ({ loadThreadState: vi.fn(() => Promise.resolve(null)), saveThreadState: f.saveThreadState }));
-vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireChatActivity: vi.fn(), releaseChatActivity: vi.fn() }));
+vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireChatActivity: vi.fn(), releaseChatActivity: vi.fn(), startCaffeinate: f.startSleep, stopCaffeinate: f.stopSleep }));
 vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 vi.mock('../../../services/AgentCompletionInbox', async() => ({
   ...await vi.importActual<object>('../../../services/AgentCompletionInbox'),
@@ -62,5 +62,7 @@ describe('Stop during a worker route catalog wait', () => {
     // The route stays approved and unchanged for the next turn.
     expect(state.metadata.workerModelRoute).toEqual(route);
     expect(service.activeAborts.has(service.abortKey(CHANNEL, THREAD))).toBe(false);
+    expect(f.startSleep).toHaveBeenCalledWith('agent-work');
+    expect(f.stopSleep).toHaveBeenCalledWith('agent-work');
   });
 });
