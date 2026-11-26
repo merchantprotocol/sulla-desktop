@@ -3,7 +3,7 @@ FROM node:22-bookworm-slim
 ARG CLAUDE_CODE_VERSION=2.1.329
 ARG CODEX_VERSION=0.170.0
 
-LABEL com.sulla.agent.transport-version="1"
+LABEL com.sulla.agent.transport-version="2"
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

@@ -4,24 +4,33 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # "Sulla" is a trademark. See TRADEMARK.md.
 
-# The API capability is shared per container and may be rotated while a worker
-# runs, so refresh it for each CLI invocation. Tool sessions are process/chat
-# identity: only use the mounted file as a fallback when the process has no
-# session at all. Never replace an inherited session with another process's.
-load_sulla_api_token() {
-  secret_file=$1/SULLA_API_TOKEN
-  if [ -f "$secret_file" ]; then
-    secret_value=$(cat "$secret_file")
-    export SULLA_API_TOKEN="$secret_value"
-    unset secret_value
+load_sulla_tool_session() {
+  if [ "${SULLA_TOOL_SESSION+x}" != x ] && [ -f "$1/SULLA_TOOL_SESSION" ]; then
+    SULLA_TOOL_SESSION=$(cat "$1/SULLA_TOOL_SESSION") || return 1
+    export SULLA_TOOL_SESSION
   fi
 }
 
-load_sulla_tool_session() {
-  secret_file=$1/SULLA_TOOL_SESSION
-  if [ "${SULLA_TOOL_SESSION+x}" != x ] && [ -f "$secret_file" ]; then
-    secret_value=$(cat "$secret_file")
-    export SULLA_TOOL_SESSION="$secret_value"
-    unset secret_value
+# A provider or nested exec overrides the launcher graph. Look up that session's
+# current lease on every invocation. Never fall back to another graph's token.
+load_sulla_api_token() {
+  if [ "${SULLA_TOOL_SESSION+x}" = x ]; then
+    [ -n "$SULLA_TOOL_SESSION" ] || return 1
+    launcher_session=$(cat "$1/SULLA_TOOL_SESSION") || return 1
+    if [ "$SULLA_TOOL_SESSION" != "$launcher_session" ]; then
+      digest=$(printf '%s' "$SULLA_TOOL_SESSION" | sha256sum) || return 1
+      digest=$(printf '%s' "${digest%% *}" | tr 'a-f' 'A-F')
+      lease_file="$1/LEASE_$digest"
+    else
+      lease_file="$1/SULLA_API_TOKEN"
+    fi
+    unset launcher_session
+  else
+    # Older, capability-only service launches have no MCP session.
+    lease_file="$1/SULLA_API_TOKEN"
+    [ -f "$lease_file" ] || return 0
   fi
+  SULLA_API_TOKEN=$(cat "$lease_file") || return 1
+  [ -n "$SULLA_API_TOKEN" ] || return 1
+  export SULLA_API_TOKEN
 }

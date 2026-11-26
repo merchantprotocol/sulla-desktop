@@ -45,7 +45,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { toolRegistry } from '@pkg/agent/tools/registry';
-import { ContainerExecutionContextFactory, type AgentContainerRuntimeBinding } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { agentContainerRuntimeRegistry, ContainerExecutionContextFactory, currentAgentContainerRuntime, type AgentContainerRuntimeBinding } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
@@ -86,6 +86,7 @@ export interface RegisteredSession {
   /** Authorization header value Claude Code should include: `Bearer <id>`. */
   header: string;
   revoke: () => void;
+  prepareCliLease?: () => Promise<void>;
 }
 let hostInstance: MCPServerHost | null = null;
 
@@ -138,13 +139,20 @@ export class MCPServerHost {
    */
   registerSession(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS, binding?: AgentContainerRuntimeBinding): RegisteredSession {
     if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
-    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs, binding));
+    const runtime = binding ?? currentAgentContainerRuntime();
+    const leases = runtime && agentContainerRuntimeRegistry.sessionLeases(runtime);
+    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs, runtime));
 
     return {
       id,
       url:    this.getVmReachableUrl(),
       header: `Bearer ${ id }`,
-      revoke: () => this.revokeSession(id),
+      prepareCliLease: leases ? () => leases.prepare(id) : undefined,
+      revoke: () => {
+        this.revokeSession(id);
+        // Revocation takes effect synchronously, even if guest file cleanup must retry on renewal.
+        if (leases) void leases.retire(id).catch(() => {});
+      },
     };
   }
 
@@ -177,6 +185,10 @@ export class MCPServerHost {
   /** Resolve the complete verified session, including its execution identity. */
   getToolSession(id: string): ToolSession | null {
     return this.sessions.get(id);
+  }
+
+  peekToolSession(id: string): ToolSession | null {
+    return this.sessions.peek(id);
   }
 
   private resolveSession(req: Request): ToolSession | null {

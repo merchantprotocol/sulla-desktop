@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { ContainerSessionLeases } from './ContainerSessionLeases';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import type { ToolExecutionContext } from '../tools/executionContext';
@@ -33,6 +34,9 @@ export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<Agent
 /** Injectible owner of container bindings and fail-closed boot rehydration. */
 export class AgentContainerRuntimeRegistry {
   private readonly bindings = new Map<string, AgentContainerRuntimeBinding>();
+  // Keep signing authority out of serializable runtime bindings and snapshots.
+  private readonly leases = new WeakMap<AgentContainerRuntimeBinding, ContainerSessionLeases>();
+  sessionLeases(binding: AgentContainerRuntimeBinding) { return this.leases.get(binding); }
   private readonly activeRuntime = new AsyncLocalStorage<AgentContainerRuntimeBinding>();
   private rehydrated: Promise<void> = Promise.resolve();
   private rebindPending = true;
@@ -61,7 +65,14 @@ export class AgentContainerRuntimeRegistry {
   withRuntime<T>(binding: AgentContainerRuntimeBinding, action: () => T): T { return this.activeRuntime.run(binding, action); }
   has(jobId?: string, threadId?: string): boolean { return Array.from(this.bindings.values()).some(binding => (!jobId || binding.jobId === jobId) && (!threadId || binding.threadId === threadId)); }
   current(): AgentContainerRuntimeBinding | undefined { return this.activeRuntime.getStore(); }
-  register(binding: AgentContainerRuntimeBinding): () => void { this.bindings.set(binding.podId, binding); return () => { if (this.bindings.get(binding.podId) === binding) this.bindings.delete(binding.podId); }; }
+  register(binding: AgentContainerRuntimeBinding, leases?: ContainerSessionLeases): () => void {
+    this.bindings.set(binding.podId, binding);
+    if (leases) this.leases.set(binding, leases);
+    return () => {
+      this.leases.delete(binding);
+      if (this.bindings.get(binding.podId) === binding) this.bindings.delete(binding.podId);
+    };
+  }
   require(ctx: ToolExecutionContext): AgentContainerRuntimeBinding {
     // `reason` is a non-secret code the provider bridge logs when it refuses a request.
     const binding = this.bindings.get(ctx.pod_id ?? ''); if (!binding) throw Object.assign(new Error('Agent tool context is not bound to a live container'), { reason: 'container_not_registered' });
@@ -89,6 +100,6 @@ export const hasAgentContainerRuntime = (jobId?: string, threadId?: string) => a
 export const probeAgentContainerRuntime = (jobId?: string, threadId?: string) => agentContainerRuntimeRegistry.probe(jobId, threadId);
 export const snapshotAgentContainerRuntimes = () => agentContainerRuntimeRegistry.snapshot();
 export const currentAgentContainerRuntime = () => agentContainerRuntimeRegistry.current();
-export const registerAgentContainerRuntime = (binding: AgentContainerRuntimeBinding) => agentContainerRuntimeRegistry.register(binding);
+export const registerAgentContainerRuntime = (binding: AgentContainerRuntimeBinding, leases?: ContainerSessionLeases) => agentContainerRuntimeRegistry.register(binding, leases);
 export const requireAgentContainerRuntime = (ctx: ToolExecutionContext) => agentContainerRuntimeRegistry.require(ctx);
 export const containerRuntimeForExecution = (ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined) => agentContainerRuntimeRegistry.forExecution(ctx, target);

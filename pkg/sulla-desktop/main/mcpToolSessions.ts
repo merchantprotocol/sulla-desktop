@@ -75,8 +75,8 @@ export class ToolSessionRegistry {
     return true;
   }
 
-  /** Live session for a token, sliding its expiry; null if unknown or expired. */
-  get(id: string): ToolSession | null {
+  /** Maintenance lookup must not keep an idle provider session alive. */
+  peek(id: string): ToolSession | null {
     const session = this.sessions.get(id);
     if (!session) return null;
     const now = Date.now();
@@ -84,6 +84,13 @@ export class ToolSessionRegistry {
       this.sessions.delete(id);
       return null;
     }
+    return session;
+  }
+
+  get(id: string): ToolSession | null {
+    const session = this.peek(id);
+    if (!session) return null;
+    const now = Date.now();
     // Sliding expiry: a session in active use never times out mid-turn.
     session.lastUsedAt = now;
     session.expiresAt = Math.max(session.expiresAt, now + session.ttlMs);
