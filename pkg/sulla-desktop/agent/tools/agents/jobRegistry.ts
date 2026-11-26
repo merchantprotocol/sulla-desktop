@@ -54,6 +54,25 @@ export interface AgentJobResult {
   };
 }
 
+/** Sanitized, durable evidence captured immediately before a CLI stall is terminated. */
+export interface AgentCliStallEvidence {
+  recordedAt: string;
+  provider: 'codex' | 'claude-code';
+  jobId: string;
+  taskIndex: number;
+  threadId: string;
+  events: Array<{ timestamp: string; type: string }>;
+  toolsInFlight: Array<{ name: string; startedAt: string }>;
+  child: { pid: number | null; providerPid: number | null; alive: boolean; exitCode: number | null; signal: NodeJS.Signals | null };
+  stderrSummary: { errorName: string | null; firstLine: string | null; exitCode: number | null; signal: NodeJS.Signals | null };
+  lastProviderRetry: { status: 429 | 503; timestamp: string } | null;
+  promptLength: number;
+  processRssBytes: number | null;
+  cgroupMemory: { currentBytes: number | null; maxBytes: number | 'max' | null } | null;
+  suspendMarks: { lastSuspendAt: string | null; lastResumeAt: string | null };
+  appStartedAt: string;
+}
+
 export interface AgentJobTask extends ResultTracking {
   agentId:    string;
   label:      string;
@@ -112,6 +131,8 @@ export interface AgentJobTask extends ResultTracking {
   reopenCount?: number;
   /** Opaque ownership token while a reopened generation is active. */
   reopenLeaseId?: string;
+  /** Why a Codex/Claude CLI stall was declared; never includes tool arguments or prompt content. */
+  cliStallEvidence?: AgentCliStallEvidence;
 }
 
 export interface OrphanedChildNotice {
@@ -164,8 +185,6 @@ export const createJob = (...args: Parameters<typeof agentJobProvider.service.cr
 export const updateJobTask = (...args: Parameters<typeof agentJobProvider.service.updateJobTask>) => agentJobProvider.service.updateJobTask(...args);
 export const getJobsForParentThread = (...args: Parameters<typeof agentJobProvider.service.getJobsForParentThread>) => agentJobProvider.service.getJobsForParentThread(...args);
 export const dismissJobTask = (...args: Parameters<typeof agentJobProvider.service.dismissJobTask>) => agentJobProvider.service.dismissJobTask(...args);
-export const registerJobWatcher = (...args: Parameters<typeof agentJobProvider.service.registerJobWatcher>) => agentJobProvider.service.registerJobWatcher(...args);
-export const releaseJobWatcher = (...args: Parameters<typeof agentJobProvider.service.releaseJobWatcher>) => agentJobProvider.service.releaseJobWatcher(...args);
 export const getTaskAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getTaskAbortSignal>) => agentJobProvider.service.getTaskAbortSignal(...args);
 export const abortJob = (...args: Parameters<typeof agentJobProvider.service.abortJob>) => agentJobProvider.service.abortJob(...args);
 export const stopJobTask = (...args: Parameters<typeof agentJobProvider.service.stopJobTask>) => agentJobProvider.service.stopJobTask(...args);

@@ -54,17 +54,10 @@ async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): 
   });
   return true;
 }
-/** Keep a job's dead-run watcher until releaseJobWatcher (tab this.runtime.jobs). */
-registerJobWatcher(jobId: string, stop: () => void): void {
-  this.runtime.watchers.get(jobId)?.();
-  this.runtime.watchers.set(jobId, stop);
-}
-releaseJobWatcher(jobId: string): void {
-  this.runtime.watchers.get(jobId)?.();
-  this.runtime.watchers.delete(jobId);
-}
 /** The task-specific abort signal wired into exactly one delegated runner. */
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
+/** Ensure restart-recovered dispatches can be cancelled by the normal stop service. */
+ensureTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal { return this.runtime.ensureAbortScope(jobId).taskSignal(taskIndex); }
 abortJob(jobId: string, principal: StopPrincipalValue, reason: string): 'stopped' | 'not-found' | 'already-finished' { return this.stops.abortJob(jobId, principal, reason); }
 async stopJobTask(jobId: string, taskIndex: number, principal: StopPrincipalValue, reason: string): Promise<'stopped' | 'not-found' | 'already-finished' | 'forbidden'> { return this.stops.stopTask(jobId, taskIndex, principal, reason); }
 async authorizeJobStop(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> { return this.stops.authorize(jobId, principal); }

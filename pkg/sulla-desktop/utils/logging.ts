@@ -33,6 +33,7 @@ import stream from 'stream';
 import util from 'util';
 
 import paths from '@pkg/utils/paths';
+import { LogFileRotator } from './LogFileRotator';
 
 type consoleKey = 'log' | 'error' | 'info' | 'warn';
 type logLevel = 'debug' | 'info';
@@ -200,15 +201,12 @@ export default new Proxy<Module>({}, {
 });
 
 /**
- * Max size per log file in bytes before trimming (500KB).
- * On startup, if a log file exceeds this, only the last MAX_LOG_SIZE bytes are kept.
+ * Maximum size of a retained previous-run log file (500KB).
  */
 const MAX_LOG_SIZE = 500 * 1024;
 
 /**
- * Clean up the logging directory on startup:
- * - Delete log files for topics that are not currently in use
- * - Trim active log files that exceed MAX_LOG_SIZE (keep the tail)
+ * Rotate logs at startup, keeping a bounded five-run history for each topic.
  *
  * Should only be run once we are certain that this is the only instance
  * of Sulla Desktop running on the system.
@@ -217,44 +215,8 @@ export function clearLoggingDirectory(): void {
   if ((process.env.SULLA_TEST ?? '').includes('e2e') || process.type !== 'browser') {
     return;
   }
-
-  const entries = fs.readdirSync(paths.logs, { withFileTypes: true });
-
-  for (const entry of entries) {
-    if (entry.isFile() && entry.name.endsWith('.log')) {
-      const topic = path.basename(entry.name, '.log');
-      const fullPath = path.join(paths.logs, entry.name);
-
-      if (!logs.has(topic)) {
-        // Topic not in use — delete the stale log file
-        try {
-          fs.unlinkSync(fullPath);
-        } catch (ex: any) {
-          console.log(`Failed to delete log file ${ fullPath }: ${ ex }`);
-        }
-      } else {
-        // Topic is active — trim if too large
-        try {
-          const stat = fs.statSync(fullPath);
-
-          if (stat.size > MAX_LOG_SIZE) {
-            const buf = Buffer.alloc(MAX_LOG_SIZE);
-            const fd = fs.openSync(fullPath, 'r');
-
-            fs.readSync(fd, buf, 0, MAX_LOG_SIZE, stat.size - MAX_LOG_SIZE);
-            fs.closeSync(fd);
-            // Find the first newline to avoid partial lines
-            const firstNewline = buf.indexOf('\n');
-            const trimmed = firstNewline >= 0 ? buf.subarray(firstNewline + 1) : buf;
-
-            fs.writeFileSync(fullPath, trimmed);
-          }
-        } catch {
-          // If trimming fails, leave the file as-is
-        }
-      }
-    }
-  }
+  new LogFileRotator(fs, 5, MAX_LOG_SIZE).rotateDirectory(paths.logs);
+  reopenLogs();
 }
 
 export function reopenLogs() {

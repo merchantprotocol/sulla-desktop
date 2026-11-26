@@ -6,7 +6,7 @@
 import { emitSubAgentExchange } from './jobExchange';
 import { BaseTool, ToolResponse } from '../base';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
-import { authorizeJobStop, getJob, releaseJobWatcher, stopJobCascade, stopJobTask } from './jobRegistry';
+import { authorizeJobStop, getJob, stopJobCascade, stopJobTask } from './jobRegistry';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { StopPrincipal, type StopPrincipalValue } from '../../app/ValueObjects/StopPrincipal';
@@ -45,7 +45,6 @@ export async function stopAgentJob(jobId: string, principal: StopPrincipalValue 
     // A tab child runs as a desktop chat, not under the job's abort signal:
     // stop its live turn directly and close its delegation record.
     if (job?.visibility === 'tab') {
-      releaseJobWatcher(jobId);
       const { stopAgentTab } = await import('../../services/AgentTabOpener');
       const threadId = job.tasks[0]?.threadId;
       if (threadId) await stopAgentTab(threadId, `The parent agent stopped job ${ jobId }. This tab no longer reports back.`);

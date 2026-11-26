@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import '../../Support/TestHomeEnv';
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs';
+import path from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +11,9 @@ import { createCodexService } from '../../../languagemodels/CodexService';
 import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
 import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
 import { LONG_TOOL_CEILING_MS } from '../../../services/RunLivenessClock';
+import paths from '@pkg/utils/paths';
+import type { AgentCliStallEvidence } from '../../../tools/agents/jobRegistry';
+import type { CliStallEvidenceWriter } from '../../../services/CliStallEvidenceRecorder';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
 vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
@@ -16,7 +21,9 @@ vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
 }));
 // Container runs carry a runtime pod; VM runs have none and rely on the bridge lease's pod.
 const runtimePod = vi.hoisted(() => ({ id: 'codex-watchdog-test-pod' as string | undefined }));
+const runSleep = vi.hoisted(() => ({ cliChildStarted: vi.fn(), cliChildEnded: vi.fn() }));
 const VM_LEASE_POD = 'sulla-guest-codex-watchdog-lease';
+vi.mock('../../../app/Services/AgentWorkSleepPrevention', () => ({ agentWorkSleepPrevention: runSleep }));
 vi.mock('../../../services/AgentContainerRuntimeRegistry', () => ({
   currentAgentContainerRuntime: () => runtimePod.id
     ? { podId: runtimePod.id, subject: 'test', jobId: 'test', deviceId: 'test', workspacePath: '/tmp' }
@@ -33,15 +40,21 @@ vi.mock('../../../tools/agents/workerMessaging', () => ({ prepareWorkerTurnPromp
 vi.mock('../../../utils/steerChannel', () => ({ onSteer: () => () => {}, markSteerPending: vi.fn() }));
 vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 
-beforeEach(() => { runtimePod.id = 'codex-watchdog-test-pod'; vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() });
+beforeEach(() => { runtimePod.id = 'codex-watchdog-test-pod'; runSleep.cliChildStarted.mockClear(); runSleep.cliChildEnded.mockClear(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
+afterEach(() => {
+  fs.rmSync(path.join(paths.logs, 'agent-cli-stall-codex-never-settling-write-job-task-2.json'), { force: true });
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
-async function launch(runtime: 'container' | 'guest' = 'container') {
+async function launch(runtime: 'container' | 'guest' = 'container', writer?: CliStallEvidenceWriter, jobId = 'evidence-job') {
   if (runtime === 'guest') runtimePod.id = undefined;
   const proc = Object.assign(new EventEmitter(), {
     stdin:    new PassThrough(),
     stdout:   new PassThrough(),
     stderr:   new PassThrough(),
+    pid:      12345,
+    signalCode: null,
     exitCode: null,
     kill:     vi.fn(() => true),
   });
@@ -52,43 +65,42 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
     spawn:     vi.fn(() => proc),
     terminate: vi.fn(async() => {}),
   } as any);
-  const service = createCodexService('gpt-6-luna', 'max') as any;
+  const evidenceWriter = { records: [] as AgentCliStallEvidence[], async save(_jobId: string, _taskIndex: number, evidence: AgentCliStallEvidence) { this.records.push(evidence) } };
+  const service = createCodexService('gpt-6-luna', 'max', writer ?? evidenceWriter) as any;
   vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
+  const abortController = new AbortController();
   let outcome: any;
   const activities: Array<{ message: string; reportingActivity?: string }> = [];
   const liveness = vi.fn();
   const finished = service.runCodex([
     { role: 'system', content: 'A synthetic watchdog test.' }, { role: 'user', content: 'Test only.' },
-  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test' })
+  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test', signal: abortController.signal, state: { metadata: { modelDecisionTask: { jobId, taskIndex: 2, threadId: 'evidence-thread' } } } })
     .then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
   await vi.advanceTimersByTimeAsync(0);
   proc.emit('spawn');
-  return { proc, finished, outcome: () => outcome, activities, liveness };
+  return { proc, finished, outcome: () => outcome, activities, liveness, abortController, evidence: evidenceWriter.records };
 }
 
 describe('Codex quiet stream watchdog', () => {
-  it('shows retry state but still stalls at three minutes with the last rate-limit reason', async() => {
-    // risk: stalled Codex run hangs indefinitely while unrelated bridge activity masks silence
+  it('counts 429/503 provider retry states as activity, then stalls after retries go quiet', async() => {
+    // risk: provider backoff is misclassified as silence and kills a healthy run mid-retry.
     const run = await launch();
     const bridgePodId = 'codex-watchdog-test-pod';
-    providerBridgeActivity.mark(bridgePodId);
-    const bridgeHeartbeat = setInterval(() => providerBridgeActivity.mark(bridgePodId), 30_000);
-    try {
-      await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
-      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, retryAfterSeconds: 9 });
-      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, reason: 'request rate limit exceeded', retryAfterSeconds: 9 });
-      providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 503 });
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(providerBridgeActivity.lastActivityAt(bridgePodId)).toBe(Date.now());
-      expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
-      await vi.advanceTimersByTimeAsync(5_000);
-      await run.finished;
-      expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
-      expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
-      expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
-    } finally {
-      clearInterval(bridgeHeartbeat);
-    }
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
+    providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 429, reason: 'request rate limit exceeded', retryAfterSeconds: 9 });
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    providerBridgeActivity.publishRetryStatus(bridgePodId, { status: 503 });
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.activities).toContainEqual({ message: 'Codex is rate-limited, retrying', reportingActivity: 'status' });
+    expect(run.activities).toContainEqual({ message: 'Codex is busy, retrying', reportingActivity: 'status' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', retrySafe: true, unsafeToFallback: false });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)');
   });
 
   it('terminates a silent process at three minutes and settles after teardown', async() => {
@@ -100,7 +112,88 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall', retrySafe: true, unsafeToFallback: false });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes');
+  });
+
+  it('persists sanitized stall evidence before teardown and points the parent to the job task record', async() => {
+    // risk: a Codex worker dies without evidence explaining whether the CLI, provider, memory or an in-flight tool stalled
+    const run = await launch();
+    for (let index = 0; index < 25; index++) run.proc.stdout.write(`${ JSON.stringify({ type: 'item.completed', item: { id: `reasoning-${ index }`, type: 'reasoning' } }) }\n`);
+    run.proc.stderr.write('TypeError: {\"access_token\":\"json-secret\",\"password\": \"pw\"}\nAuthorization: Basic basic-secret\nGET /?key=query-secret\nprovider echoed partial tool argument');
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
+    providerBridgeActivity.publishRetryStatus('codex-watchdog-test-pod', { status: 429 });
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
+    providerBridgeActivity.publishRetryStatus('codex-watchdog-test-pod', { status: 503 });
+    await vi.advanceTimersByTimeAsync(3 * 60_000 + 30_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+
+    expect(run.evidence).toHaveLength(1);
+    const [record] = run.evidence;
+    expect(record).toMatchObject({
+      provider: 'codex', jobId: 'evidence-job', taskIndex: 2, threadId: 'evidence-thread',
+      events: expect.arrayContaining([
+        expect.objectContaining({ type: 'provider_retry_429' }),
+        expect.objectContaining({ type: 'provider_retry_503' }),
+        expect.objectContaining({ type: 'stderr_chunk' }),
+      ]),
+      toolsInFlight: [],
+      child: { pid: 12345, providerPid: null, alive: true, exitCode: null, signal: null },
+      lastProviderRetry: { status: 503, timestamp: expect.any(String) },
+      promptLength: expect.any(Number), processRssBytes: expect.any(Number),
+      appStartedAt: expect.any(String), recordedAt: expect.any(String),
+    });
+    expect(record.suspendMarks).toHaveProperty('lastSuspendAt');
+    expect(record.suspendMarks).toHaveProperty('lastResumeAt');
+    expect(record.events).toHaveLength(20);
+    expect(record.events[record.events.length - 1].type).toBe('provider_retry_503');
+    expect(record.stderrSummary).toEqual({ errorName: 'TypeError', firstLine: '[omitted: stderr content excluded]', exitCode: null, signal: null });
+    expect(JSON.stringify(record)).not.toMatch(/json-secret|basic-secret|query-secret|partial tool argument/);
+    expect(record).toHaveProperty('cgroupMemory');
+    expect(run.outcome().message).toContain('check_agent_jobs(jobId="evidence-job")');
+    expect(run.outcome().message).toContain('tasks[2].cliStallEvidence');
+  });
+
+  it('ends Codex and saves local stall evidence when the job database write never settles', async() => {
+    // risk: an unavailable job database leaves the CLI alive forever and loses all stall evidence
+    const jobId = 'never-settling-write-job';
+    const filePath = path.join(paths.logs, `agent-cli-stall-codex-${ jobId }-task-2.json`);
+    fs.rmSync(filePath, { force: true });
+    const save = vi.fn(() => new Promise<void>(() => {}));
+    const run = await launch('container', { save }, jobId);
+
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(fs.existsSync(filePath)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toMatchObject({ provider: 'codex', jobId, taskIndex: 2 });
+    expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(runSleep.cliChildEnded).toHaveBeenCalledWith(expect.stringMatching(/^codex:/));
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+  });
+
+  it('does not persist stall evidence after a normal CLI completion', async() => {
+    // risk: normal successful turns are mislabeled or clutter job history with false stall evidence
+    const run = await launch();
+    run.proc.stdout.write(`${ JSON.stringify({ type: 'item.completed', item: { id: 'msg', type: 'agent_message', text: 'finished normally' } }) }\n`);
+    run.proc.stdout.write(`${ JSON.stringify({ type: 'turn.completed' }) }\n`);
+    run.proc.exitCode = 0;
+    run.proc.emit('close', 0, null);
+    await run.finished;
+    expect(run.evidence).toEqual([]);
+  });
+
+  it('holds system sleep only while a real CLI child is alive', async() => {
+    // risk: a live worker CLI is killed by system sleep or a completed child leaks the hold
+    const run = await launch();
+    expect(runSleep.cliChildStarted).toHaveBeenCalledWith(expect.stringMatching(/^codex:/));
+    run.proc.exitCode = 0;
+    run.proc.emit('close', 0, null);
+    await run.finished;
+    expect(runSleep.cliChildEnded).toHaveBeenCalledWith(expect.stringMatching(/^codex:/));
   });
 
   it('resets the silence clock when stdout arrives at 2:59', async() => {
@@ -113,7 +206,8 @@ describe('Codex quiet stream watchdog', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes');
   });
 
   // Jonathon (2026-11-24): an agent is stalled only when its WHOLE loop is idle.
@@ -151,7 +245,22 @@ describe('Codex quiet stream watchdog', () => {
     await run.finished;
     expect(run.outcome()).toMatchObject({ kind: 'stall' });
     expect(run.outcome().message).toContain('tool still running for 120m: command_execution');
+    expect(run.outcome()).toMatchObject({ retrySafe: false, unsafeToFallback: true });
     expect(run.outcome().message).not.toContain('no output for 3 minutes');
+    expect(run.evidence[0].toolsInFlight).toEqual([{ name: 'command_execution', startedAt: expect.any(String) }]);
+  });
+
+  it('does not stop a real 40-minute command while it is still running', async() => {
+    // risk: a legitimate long build is stopped by the removed dead-run silence watcher.
+    const run = await launch();
+    emit(run, { type: 'item.started', item: { id: 'build-40m', type: 'command_execution', command: 'yarn build' } });
+    await vi.advanceTimersByTimeAsync(40 * 60_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+
+    run.abortController.abort();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.outcome()).toMatchObject({ name: 'AbortError' });
   });
 
   it('counts model output relayed by the provider bridge (reasoning) as activity', async() => {
@@ -168,7 +277,8 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes');
   });
 
   it('keeps a run waiting on the human alive past the tool ceiling', async() => {
@@ -199,6 +309,7 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.proc.kill).toHaveBeenCalledWith('SIGTERM');
     await vi.advanceTimersByTimeAsync(5_000);
     await run.finished;
-    expect(run.outcome()).toMatchObject({ kind: 'stall', message: 'Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)' });
+    expect(run.outcome()).toMatchObject({ kind: 'stall' });
+    expect(run.outcome().message).toContain('Codex stalled: no output for 3 minutes (rate-limited by OpenAI: request rate limit exceeded)');
   });
 });

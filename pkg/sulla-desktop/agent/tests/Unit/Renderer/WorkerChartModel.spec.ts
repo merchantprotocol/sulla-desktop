@@ -21,11 +21,12 @@ function agent(
 }
 
 describe('WorkerChartLayout', () => {
-  it('keeps the two highest-priority children visible and expands the overflow group on request', () => {
-    // risk: agent visibility — urgent workers stay reachable without letting a wide fan-out hide the rest
+  it('keeps every fan-out agent in its own row and connects children and grandchildren to their parents', () => {
+    // risk: agent visibility — every worker must remain individually visible and hierarchically connected
     const layout = new WorkerChartLayout();
+    const geometry = new WorkerChartGeometry();
     const root = agent('root', 'working', [
-      agent('first', 'parked'),
+      agent('first', 'parked', [agent('grandchild-a', 'working')]),
       agent('urgent', 'needs-you'),
       agent('failed', 'failed'),
       agent('fourth', 'working'),
@@ -33,20 +34,20 @@ describe('WorkerChartLayout', () => {
       agent('sixth', 'working'),
     ]);
 
-    const collapsed = layout.layout(root, false, new Set());
-    expect(collapsed.rows.map(row => row.kind === 'agent' ? row.agent.id : row.key)).toEqual([
-      'root', 'urgent', 'failed', 'group:root',
+    const rows = layout.layout(root, false, new Set()).rows;
+    expect(rows.map(row => row.agent.id)).toEqual([
+      'root', 'first', 'grandchild-a', 'urgent', 'failed', 'fourth', 'fifth', 'sixth',
     ]);
-    expect(collapsed.rows.at(-1)).toMatchObject({ kind: 'group', hiddenAgents: [
-      { id: 'first' }, { id: 'fourth' }, { id: 'fifth' }, { id: 'sixth' },
-    ] });
+    expect(rows.every(row => row.kind === 'agent')).toBe(true);
 
-    const expanded = layout.layout(root, false, new Set(), new Set(['root']));
-    expect(expanded.rows.filter(row => row.kind === 'agent').map(row => row.agent.id)).toEqual([
-      'root', 'first', 'urgent', 'failed', 'fourth', 'fifth', 'sixth',
+    const links = geometry.links(rows, false);
+    expect(links.filter(link => link.kind === 'elbow' && link.key.startsWith('elbow:root:')).map(link => link.key)).toEqual([
+      'elbow:root:first', 'elbow:root:urgent', 'elbow:root:failed',
+      'elbow:root:fourth', 'elbow:root:fifth', 'elbow:root:sixth',
     ]);
-    expect(expanded.rows.at(-1)).toMatchObject({ kind: 'group', hiddenAgents: [], expanded: true });
-    expect(layout.layout(root, true, new Set()).rows).toHaveLength(4);
+    expect(links).toContainEqual(expect.objectContaining({ kind: 'elbow', key: 'elbow:first:grandchild-a' }));
+    expect(links.some(link => link.kind === 'elbow' && link.key === 'elbow:root:grandchild-a')).toBe(false);
+    expect(layout.layout(root, true, new Set()).rows).toHaveLength(8);
   });
 
   it('collapses completed descendants into the parent while retaining a completed root marker', () => {

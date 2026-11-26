@@ -24,7 +24,10 @@ import { providerSessionStore } from './providerSessionStore';
 import { bindCodexMcpSession, buildCodexMcpOverrides, CODEX_MCP_TOKEN_ENV } from './codexMcpConfig';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
-import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
+import { CliStallEvidenceRecorder, durableCliStallEvidenceWriter, type CliStallEvidenceWriter } from '../services/CliStallEvidenceRecorder';
+import { agentWorkSleepPrevention } from '../app/Services/AgentWorkSleepPrevention';
+import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
 import { CodexToolEventEmitter } from './codexToolEvents';
@@ -47,6 +50,59 @@ import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
 const log = Logging.background;
 const failureDiagnostics = new CodexFailureDiagnostics(line => log.warn(line));
 const perf = Logging.perf;
+
+/** Bridges Codex's deltas and completed agent_message items into reply segments. */
+export class CodexAssistantMessageStream {
+  private collectedText = '';
+  private awaitingCompletedMessage = false;
+  private hasCompletedMessage = false;
+  private messageStarted = false;
+
+  constructor(private readonly callbacks: Partial<StreamCallbacks>) {}
+
+  get text(): string { return this.collectedText; }
+
+  appendDelta(delta: string): void {
+    if (!delta) return;
+    this.startMessage();
+    this.awaitingCompletedMessage = true;
+    this.collectedText += delta;
+    try { this.callbacks.onToken?.(delta) } catch { /* observer callback */ }
+  }
+
+  completeAgentMessage(text: string, markFirstText: () => void): void {
+    if (!text && !this.awaitingCompletedMessage) return;
+    if (text) markFirstText();
+    if (this.awaitingCompletedMessage) {
+      this.awaitingCompletedMessage = false;
+      this.finishBoundary();
+      return;
+    }
+
+    this.startMessage();
+    this.collectedText += text;
+    try { this.callbacks.onToken?.(text) } catch { /* observer callback */ }
+    this.finishBoundary();
+  }
+
+  finishPendingMessage(): void {
+    if (!this.awaitingCompletedMessage) return;
+    this.awaitingCompletedMessage = false;
+    this.finishBoundary();
+  }
+
+  private finishBoundary(): void {
+    if (this.messageStarted) this.hasCompletedMessage = true;
+    this.messageStarted = false;
+    try { this.callbacks.onMessageBoundary?.() } catch { /* observer callback */ }
+  }
+
+  private startMessage(): void {
+    if (this.messageStarted) return;
+    if (this.hasCompletedMessage && this.collectedText.trim()) this.collectedText += '\n\n';
+    this.messageStarted = true;
+  }
+}
 
 /** stderr prefix carrying the in-VM PID of the codex process (see buildSpawnArgs). */
 const CODEX_PID_MARKER = 'SULLA_CODEX_PID=';
@@ -305,7 +361,7 @@ export class CodexService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) {
+  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy(), private readonly stallEvidenceWriter: CliStallEvidenceWriter = durableCliStallEvidenceWriter) {
     super({ id: 'codex', model: 'codex', baseUrl: 'local-vm' });
     this.agentAwarenessPolicy = agentAwarenessPolicy;
   }
@@ -373,7 +429,7 @@ export class CodexService extends BaseLanguageModel {
         canRetry: () => !toolStarted,
         onRetry:  (error, attempt) => failureDiagnostics.retry(error, attempt, options.conversationId ?? '__default__', runOptions.diagnosticRunId),
       });
-      if (streamedText) result.text = streamedText;
+      if (streamedText && !result.text) result.text = streamedText;
       const response: NormalizedResponse = {
         content:  result.text,
         metadata: {
@@ -647,7 +703,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     let lastSetupMark = runPhaseStart;
     const mark = (name: string) => { const now = Date.now(); marks[name] = now - lastSetupMark; lastSetupMark = now };
     const convId = options.conversationId ?? '__default__';
-    const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID();
+    const diagnosticRunId = options.diagnosticRunId ?? crypto.randomUUID(); const task = options.state?.metadata?.modelDecisionTask as { jobId?: string; taskIndex?: number; threadId?: string } | undefined; const stallEvidence = new CliStallEvidenceRecorder(this.stallEvidenceWriter, { provider: 'codex', jobId: task?.jobId, taskIndex: task?.taskIndex, threadId: task?.threadId ?? convId });
     // Signal immediately, before credential/config/file setup starts.
     try { callbacks.onActivity?.('Preparing your turn…', 'status') } catch { /* renderer unavailable */ }
     const existingSession = retryWithoutSession ? undefined : await this.getSession(convId);
@@ -826,6 +882,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           : {}),
       });
+      const cliChildActivityKey = `codex:${ diagnosticRunId }`;
       proc.once('exit', () => instructionsFile.dispose());
       if (transportContext.runtime === 'guest') {
         proc.once('close', () => this.cleanupGuestCodexPluginTemp());
@@ -849,8 +906,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
-      let textCollected = '';
-      let sawDelta = false;
+      const assistantMessages = new CodexAssistantMessageStream(callbacks);
       let capturedSessionId: string | undefined = existingSession;
       let codexPid: number | undefined;
       const outcome = new CodexTurnOutcome();
@@ -865,8 +921,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Container runs record bridge activity under the runtime pod; VM runs on a
       // bridge lease (vault authority, first-run pending bridge) under the lease's pod.
       const providerBridgePodId = currentAgentContainerRuntime()?.podId ?? executionAuth?.podId;
-      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, () => Date.now(),
+      const liveness = new RunLivenessClock(CODEX_STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS, undefined,
         () => providerBridgeActivity.lastModelOutputAt(providerBridgePodId));
+      const stallRecoveryPolicy = new CliStallRecoveryPolicy();
       let hungTool: RunToolInFlight | undefined;
       let lastBridgeOutputReportedAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
       let sawToolExecution = false;
@@ -875,11 +932,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Surface provider retry state to the job, but never refresh the watchdog clock here.
       unsubscribeProviderBridgeRetryStatus = providerBridgeActivity.subscribeRetryStatus(providerBridgePodId, event => {
         if (settled) return;
+        liveness.touch();
         if (event.status === 429) {
-          latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
+          stallEvidence.providerRetry(429); latestRateLimitReason = event.reason?.trim() || latestRateLimitReason || 'reason unavailable';
           emitActivity('Codex is rate-limited, retrying', 'status');
         } else {
-          emitActivity('Codex is busy, retrying', 'status');
+          if (event.status === 503) stallEvidence.providerRetry(503); emitActivity('Codex is busy, retrying', 'status');
         }
       });
       let terminationPromise: Promise<void> | null = null;
@@ -898,6 +956,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         barrier.then(async() => {
           if (settled) return;
           settled = true;
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           stopStallWatchdog();
           closeSteering(true);
           options.signal?.removeEventListener('abort', onAbort);
@@ -912,6 +971,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         }, async(error) => {
           if (settled) return;
           settled = true;
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           stopStallWatchdog();
           closeSteering(true);
           options.signal?.removeEventListener('abort', onAbort);
@@ -941,8 +1001,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       // Jonathon's rules: Codex must not sit silent for more than three
       // minutes (2026-11-23), and silence means the WHOLE loop is idle
       // (2026-11-24): no stream byte, no JSONL event, no provider stream chunk
-      // and no tool call still running. Provider retry status (429/503) never
-      // counts. A tool running past LONG_TOOL_CEILING_MS is reported as a hung
+      // and no tool call still running. Provider retry/backoff status (429/503)
+      // counts as activity; a tool past LONG_TOOL_CEILING_MS is reported as hung
       // tool, not a dead agent.
       const STALL_CHECK_MS = 30 * 1_000;
       let stalled = false;
@@ -956,12 +1016,12 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         unsubscribeProviderBridgeRetryStatus = () => {};
       };
       const stallErrorMessage = () => hungTool
-        ? `Codex ${ describeHungTool(hungTool) }, with no other activity. Recovery was not attempted because replay could duplicate side effects.`
+        ? `Codex ${ liveness.describeHungTool(hungTool) }, with no other activity.`
         : latestRateLimitReason
           ? `Codex stalled: no output for 3 minutes (rate-limited by OpenAI: ${ latestRateLimitReason })`
           : 'Codex stalled: no output for 3 minutes';
       const startStallWatchdog = () => {
-        liveness.start();
+        liveness.start(); stallEvidence.event('spawn');
         stallTimer = setInterval(() => {
           // Relayed model output (reasoning) is invisible on stdout; pass it up to the job clock.
           const bridgeOutputAt = providerBridgeActivity.lastModelOutputAt(providerBridgePodId);
@@ -978,19 +1038,22 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           stalled = true;
           stopStallWatchdog();
+          void stallEvidence.recordRunStall({ child: proc, providerPid: codexPid, stderr: stderrBuffer, promptLength: prompt.length, liveness, messages })
+            .catch(() => log.warn('[CodexService] Could not persist CLI stall evidence before teardown'));
           cleanupMcp();
           log.warn(`[CodexService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing codex (convId=${ convId })`);
           killSpawn();
-          scheduleForcedSettlement(() => new CliFaultError(
-            'stall',
-            stallErrorMessage(),
-            undefined,
-            false,
+          scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(
+            stallEvidence.failureMessage(stallErrorMessage()),
+            liveness.toolsInFlight,
             unresolvedTool,
           ));
         }, STALL_CHECK_MS);
       };
-      proc.once('spawn', startStallWatchdog);
+      proc.once('spawn', () => {
+        agentWorkSleepPrevention.cliChildStarted(cliChildActivityKey);
+        startStallWatchdog();
+      });
 
       // ── Live steering ("Send now" while the turn runs) ─────────────
       // `codex exec` reads exactly one prompt, so a steer can't be written
@@ -1058,20 +1121,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         else options.signal.addEventListener('abort', onAbort);
       }
 
-      /** Append a complete agent message, skipping it when deltas already
-       *  streamed its content into textCollected. */
-      const appendAgentMessage = (text: string) => {
-        if (!text) return;
+      /** Append a complete agent message, skipping its duplicate streamed deltas. */
+      const appendAgentMessage = (text: string) => assistantMessages.completeAgentMessage(text, () => {
         if (!firstTextAt) { firstTextAt = Date.now(); logRunPhase() }
-        if (sawDelta) {
-          // Deltas already delivered this content; reset for the next message.
-          sawDelta = false;
-          return;
-        }
-        const sep = textCollected.trim() ? '\n\n' : '';
-        textCollected += sep + text;
-        try { callbacks.onToken?.(sep + text) } catch { /* ignore */ }
-      };
+      });
 
       /** Activity line for a thread-event item (command_execution, etc.). */
       const activityForItem = (item: any) => {
@@ -1108,8 +1161,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         } catch {
           return;
         }
-
-        const limitSnapshot = normalizeCodexLimitSnapshot(parsed);
+        stallEvidence.event(typeof parsed.type === 'string' ? parsed.type : typeof parsed.msg?.type === 'string' ? parsed.msg.type : 'json_event'); const limitSnapshot = normalizeCodexLimitSnapshot(parsed);
         if (limitSnapshot) recordCliLimitSnapshot('codex', limitSnapshot).catch(() => {});
 
         // ── Thread-event schema (codex exec --json) ──────────────
@@ -1155,6 +1207,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             return;
           }
           if (parsed.type === 'turn.completed') {
+            assistantMessages.finishPendingMessage();
             sawTerminalResult = true;
             outcome.recordCompletion();
             // Recorded once on close — codex can emit several usage events
@@ -1192,9 +1245,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (typeof msg.delta === 'string') {
             if (!firstContentAt) firstContentAt = Date.now();
             if (!firstTextAt) { firstTextAt = Date.now(); logRunPhase() }
-            sawDelta = true;
-            textCollected += msg.delta;
-            try { callbacks.onToken?.(msg.delta) } catch { /* ignore */ }
+            assistantMessages.appendDelta(msg.delta);
           }
           break;
         case 'agent_message':
@@ -1212,9 +1263,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         case 'task_complete':
           sawTerminalResult = true;
           outcome.recordCompletion();
-          if (typeof msg.last_agent_message === 'string' && !textCollected.trim()) {
+          if (typeof msg.last_agent_message === 'string' && !assistantMessages.text.trim()) {
             appendAgentMessage(msg.last_agent_message);
           }
+          assistantMessages.finishPendingMessage();
           break;
         case 'error':
           if (outcome.recordErrorEvent(msg.message) === 'notice') {
@@ -1236,7 +1288,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       proc.stdout.on('data', (chunk) => {
         if (settled) return;
-        liveness.touch();
+        stallEvidence.event('stdout_chunk'); liveness.touch();
         try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
         stdoutBuffer += chunk.toString('utf-8');
         const lines = stdoutBuffer.split('\n');
@@ -1246,7 +1298,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       proc.stderr.on('data', (chunk) => {
         if (settled) return;
-        liveness.touch();
+        stallEvidence.event('stderr_chunk'); liveness.touch();
         let text = chunk.toString('utf-8');
         if (!codexPid && text.includes(CODEX_PID_MARKER)) {
           const m = new RegExp(`${ CODEX_PID_MARKER }(\\d+)\\s*`).exec(text);
@@ -1260,6 +1312,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       });
 
       proc.on('error', (err) => {
+        agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
         if (settled) return;
         settled = true;
         stopStallWatchdog();
@@ -1274,12 +1327,15 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       });
 
       proc.on('close', async(code, signal) => {
+        agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
         logRunPhase();
         if (settled) return;
         if (stdoutBuffer.trim()) {
           processLine(stdoutBuffer);
           stdoutBuffer = '';
         }
+        if (stalled && !terminationPromise) return;
+        assistantMessages.finishPendingMessage();
         const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
@@ -1305,7 +1361,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           this.setSession(convId, capturedSessionId).catch(() => {});
           this.lastStableContextHash.set(convId, stableHash);
           if (lastUsage) recordUsage(lastUsage, this.getModel()).catch(() => { /* ignore */ });
-          const lead = textCollected.trim() ? `${ textCollected }\n\n` : '';
+          const lead = assistantMessages.text.trim() ? `${ assistantMessages.text }\n\n` : '';
           if (lead) {
             try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
           }
@@ -1338,13 +1394,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         // Stall-watchdog kill — surface the exact rule violation instead of
         // falling through to the generic no-output message.
         if (stalled) {
-          const stallError = new CliFaultError(
-            'stall',
-            stallErrorMessage(),
-            undefined,
-            false,
-            unresolvedTool,
-          );
+          const stallError = stallRecoveryPolicy.createFault(stallEvidence.failureMessage(stallErrorMessage()), liveness.toolsInFlight, unresolvedTool);
           failureDiagnostics.failure({ error: stallError, fault: 'stall', conversationId: convId, runId: diagnosticRunId, exitCode: code, signal });
           reject(stallError);
           return;
@@ -1416,7 +1466,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           return;
         }
 
-        if (!textCollected.trim()) {
+        if (!assistantMessages.text.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
           const typedFailure = legacyProviderFailure('codex', stderrTail || 'Codex returned no output', { exitCode: code });
           if (signal) Object.assign(typedFailure, { signal });
@@ -1436,8 +1486,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           recordUsage(lastUsage, this.getModel()).catch(() => { /* ignore */ });
         }
 
-        log.log(`[CodexService] runCodex ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected, usage: lastUsage });
+        log.log(`[CodexService] runCodex ok: ${ assistantMessages.text.length } chars, session=${ capturedSessionId ?? '(none)' }`);
+        resolve({ text: assistantMessages.text, usage: lastUsage });
       });
     });
   }
@@ -1475,8 +1525,8 @@ export function getCodexService(): CodexService {
 }
 
 /** Create a fresh (non-singleton) CodexService with a specific model override. */
-export function createCodexService(model: string, effort?: string): CodexService {
-  const svc = new CodexService();
+export function createCodexService(model: string, effort?: string, stallEvidenceWriter: CliStallEvidenceWriter = durableCliStallEvidenceWriter): CodexService {
+  const svc = new CodexService(undefined, stallEvidenceWriter);
   svc.setModel(model);
   svc.setEffort(effort);
   return svc;

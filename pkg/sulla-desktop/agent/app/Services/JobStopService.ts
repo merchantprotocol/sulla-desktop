@@ -5,13 +5,14 @@ import { Service, type Clock } from '@sulla/foundation';
 import { StopPrincipal, type StopPrincipalValue } from '../ValueObjects/StopPrincipal';
 import { JobRuntimeRegistry } from './JobRuntimeRegistry';
 import { JobTaskLocator } from './JobTaskLocator';
+import type { ActiveThreadRunRegistry } from './ActiveThreadRunRegistry';
 import type { AgentStateService } from './AgentStateService';
 
 export type StopOutcome = 'stopped' | 'not-found' | 'already-finished' | 'forbidden';
 
 /** Applies authorization, attribution, persistence, publication, and aborts for job stops. */
 export class JobStopService extends Service {
-  constructor(private readonly states: AgentStateService, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator) { super(); }
+  constructor(private readonly states: AgentStateService, private readonly runtime: JobRuntimeRegistry, private readonly clock: Clock, private readonly taskLocator: JobTaskLocator, private readonly activeRuns?: ActiveThreadRunRegistry) { super(); }
 
   abortJob(jobId: string, principal: StopPrincipalValue, reason: string): Exclude<StopOutcome, 'forbidden'> {
     const job = this.runtime.jobs.get(jobId); if (!job) return 'not-found';
@@ -38,7 +39,10 @@ export class JobStopService extends Service {
       const settlesJob = tasks.every(item => !['queued','running','parked'].includes(item.status));
       return { ...current, tasks, ...(settlesJob ? { status: 'stopped' as const, finishedAt: stoppedAt, stoppedBy, stopReason: reason } : {}) };
     });
-    if (!updated) return 'already-finished'; this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex); return 'stopped';
+    if (!updated) return 'already-finished';
+    this.runtime.abortScopes.get(jobId)?.abortTask(taskIndex);
+    if (task.threadId) this.activeRuns?.abortThread(task.threadId);
+    return 'stopped';
   }
 
   async authorize(jobId: string, principal: StopPrincipalValue): Promise<'allowed' | 'not-found' | 'forbidden'> {

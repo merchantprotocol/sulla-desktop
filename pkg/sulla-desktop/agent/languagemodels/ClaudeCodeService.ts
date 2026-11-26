@@ -53,10 +53,34 @@ import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
 import Logging from '@pkg/utils/logging';
 import { TurnHopTiming } from '../utils/turnHopTiming';
-import { LONG_TOOL_CEILING_MS, RunLivenessClock, describeHungTool, type RunToolInFlight } from '../services/RunLivenessClock';
+import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
+import { CliStallEvidenceRecorder, durableCliStallEvidenceWriter, type CliStallEvidenceWriter } from '../services/CliStallEvidenceRecorder';
+import { agentWorkSleepPrevention } from '../app/Services/AgentWorkSleepPrevention';
+import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
+import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
+import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
 import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
+
+/** Turns Claude stream-json message stops into assistant segment boundaries. */
+export class ClaudeAssistantMessageStream {
+  private hasText = false;
+
+  constructor(private readonly callbacks: Partial<StreamCallbacks>) {}
+
+  noteText(): void { this.hasText = true; }
+
+  onStreamEvent(type: string): void {
+    if (type === 'message_start' || type === 'message_stop') this.finish();
+  }
+
+  finish(): void {
+    if (!this.hasText) return;
+    this.hasText = false;
+    try { this.callbacks.onMessageBoundary?.() } catch { /* observer callback */ }
+  }
+}
 
 function redactClaudeDiagnostic(value: unknown, messages: ChatMessage[]): string {
   const raw = value instanceof Error ? value.message : String(value ?? '');
@@ -492,7 +516,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
     return Promise.resolve(true);
   }
 
-  constructor(toolPolicy = new ClaudeToolPolicy(), agentAwarenessPolicy = new AgentAwarenessPolicy()) {
+  constructor(toolPolicy = new ClaudeToolPolicy(), agentAwarenessPolicy = new AgentAwarenessPolicy(), private readonly stallEvidenceWriter: CliStallEvidenceWriter = durableCliStallEvidenceWriter) {
     super({ id: 'claude-code', model: 'claude-code', baseUrl: 'local-vm' });
     this.toolPolicy = toolPolicy;
     this.agentAwarenessPolicy = agentAwarenessPolicy;
@@ -929,7 +953,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     // the model still learns about them.
     const heldNotices = this.bgDelivery.takePending(convId);
     const bgPreamble = heldNotices.length ? formatBackgroundNotices(heldNotices) : '';
-    const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n');
+    const prompt = [contextPrefix, bgPreamble, basePrompt].filter(Boolean).join('\n\n'); const task = options.state?.metadata?.modelDecisionTask as { jobId?: string; taskIndex?: number; threadId?: string } | undefined; const stallEvidence = new CliStallEvidenceRecorder(this.stallEvidenceWriter, { provider: 'claude-code', jobId: task?.jobId, taskIndex: task?.taskIndex, threadId: task?.threadId ?? convId });
     markPhase('prompt');
 
     // The Sulla runtime only exists on macOS; container transports do not depend on it.
@@ -1050,6 +1074,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     }
 
     const setupDoneAt = Date.now();
+    const cliChildActivityKey = `claude:${ crypto.randomUUID() }`;
     const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
       context: transportContext,
       providerCommand,
@@ -1118,7 +1143,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // Tool activities and model thinking will provide feedback
           }, 3000);
 
-          liveness.start();
+          liveness.start(); stallEvidence.event('spawn');
           stallTimer = setInterval(() => {
             const verdict = liveness.verdict();
             if (verdict.kind === 'alive') return;
@@ -1129,16 +1154,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             }
             stalled = true;
             stopStallWatchdog();
+            void stallEvidence.recordRunStall({ child: proc, stderr: stderrBuffer, promptLength: prompt.length, liveness, messages })
+              .catch(() => log.warn('[ClaudeCodeService] Could not persist CLI stall evidence before teardown'));
             cleanupMcp();
             log.warn(`[ClaudeCodeService] Stall watchdog: no stream activity for ${ Math.round(silentMs / 1000) }s — killing claude (convId=${ convId })`);
             killSpawn();
-            scheduleForcedSettlement(() => new CliFaultError(
-              'stall',
-              unresolvedTool
-                ? hungToolMessage()
-                : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`,
-              undefined,
-              !unresolvedTool,
+            scheduleForcedSettlement(() => stallRecoveryPolicy.createFault(
+              stallEvidence.failureMessage(unresolvedTool ? hungToolMessage() : `Claude Code stalled — no stream activity for ${ Math.round(STALL_TIMEOUT_MS / 60_000) } minutes, so the run was terminated.`),
+              liveness.toolsInFlight,
               unresolvedTool,
             ));
           }, STALL_CHECK_MS);
@@ -1147,6 +1170,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         let stdoutBuffer = '';
         let stderrBuffer = '';
         let textCollected = '';
+        const assistantMessages = new ClaudeAssistantMessageStream(callbacks);
         let capturedSessionId: string | undefined = existingSession;
         let lastUsage: any;
         let errored = false;
@@ -1284,17 +1308,15 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         const STALL_TIMEOUT_MS = 15 * 60 * 1_000;
         const STALL_CHECK_MS = 30 * 1_000;
         const liveness = new RunLivenessClock(STALL_TIMEOUT_MS, LONG_TOOL_CEILING_MS);
+        const stallRecoveryPolicy = new CliStallRecoveryPolicy(); const providerBridgePodId = currentAgentContainerRuntime()?.podId ?? authLease?.podId; const unsubscribeProviderRetry = providerBridgeActivity.subscribeRetryStatus(providerBridgePodId, event => stallEvidence.providerRetry(event.status));
         let hungTool: RunToolInFlight | undefined;
         const hungToolMessage = () => hungTool
-          ? `Claude Code ${ describeHungTool(hungTool) }, with no other activity. Recovery was not attempted because replay could duplicate side effects.`
-          : 'Claude Code stopped reporting activity while a tool was unresolved. Recovery was not attempted because replay could duplicate side effects.';
+          ? `Claude Code ${ liveness.describeHungTool(hungTool) }, with no other activity.`
+          : 'Claude Code stopped reporting activity while a tool was unresolved.';
         let stalled = false;
         let stallTimer: NodeJS.Timeout | null = null;
         const stopStallWatchdog = () => {
-          if (stallTimer) {
-            clearInterval(stallTimer);
-            stallTimer = null;
-          }
+          if (stallTimer) { clearInterval(stallTimer); stallTimer = null; } unsubscribeProviderRetry();
         };
 
         const onAbort = () => {
@@ -1311,7 +1333,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         };
 
         // Start the heartbeat + stall watchdog once the process has spawned.
-        proc.once('spawn', () => { spawnedAt = Date.now(); onSpawned() });
+        proc.once('spawn', () => {
+          agentWorkSleepPrevention.cliChildStarted(cliChildActivityKey);
+          spawnedAt = Date.now(); onSpawned();
+        });
 
         /**
        * Summarise a tool_use block for the activity line. The structured
@@ -1508,8 +1533,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           } catch {
             return;
           }
-
-          const limitSnapshot = normalizeClaudeLimitSnapshot(parsed);
+          stallEvidence.event(typeof parsed.event?.type === 'string' ? parsed.event.type : typeof parsed.type === 'string' ? parsed.type : 'json_event'); const limitSnapshot = normalizeClaudeLimitSnapshot(parsed);
           if (limitSnapshot) recordCliLimitSnapshot('claude-code', limitSnapshot).catch(() => {});
 
           if (parsed.session_id) capturedSessionId = parsed.session_id;
@@ -1566,7 +1590,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // tool_use block starts, thinking starts.
           const ev = parsed?.event;
           if (ev) {
-            if (!firstStreamAt && ev.type === 'message_start') firstStreamAt = Date.now();
+            if (ev.type === 'message_start') {
+              assistantMessages.onStreamEvent(ev.type);
+              if (!firstStreamAt) firstStreamAt = Date.now();
+            }
+            if (ev.type === 'message_stop') {
+              assistantMessages.onStreamEvent(ev.type);
+              return;
+            }
           // Text chunks → stream to caller as content
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
               if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
@@ -1576,6 +1607,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               textDeltaCount++;
               if (!firstTextDeltaAt) firstTextDeltaAt = Date.now();
               textCollected += ev.delta.text;
+              assistantMessages.noteText();
               try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
               return;
             }
@@ -1696,11 +1728,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             } else {
               if (typeof parsed.result === 'string' && !textCollected) {
                 textCollected = parsed.result;
+                assistantMessages.noteText();
                 try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
               }
               // Usage capture is best-effort — never block on failure.
               recordUsage(parsed).catch(() => { /* ignore */ });
             }
+            assistantMessages.finish();
             // A steer written after Claude's last tool boundary hasn't been
             // consumed yet — Claude runs it as a follow-up turn right after this
             // result. Keep the turn open for it. The grace timer covers a CLI
@@ -1740,7 +1774,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
         const onStdoutData = (chunk: Buffer) => {
           if (settled && !holding) return;
-          liveness.touch();
+          stallEvidence.event('stdout_chunk'); liveness.touch();
           try { callbacks.onLiveness?.() } catch { /* liveness reporting is best-effort */ }
           stdoutBuffer += chunk.toString('utf-8');
           const lines = stdoutBuffer.split('\n');
@@ -1751,7 +1785,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
         const onStderrData = (chunk: Buffer) => {
           if (settled) return;
-          liveness.touch();
+          stallEvidence.event('stderr_chunk'); liveness.touch();
           const text = chunk.toString('utf-8');
           stderrBuffer += text;
           const trimmed = text.trim();
@@ -1766,6 +1800,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.stderr.on('data', onStderrData);
 
         const onProcError = (err: Error) => {
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           stopHeartbeat();
           stopStallWatchdog();
           closeSteering();
@@ -1889,12 +1924,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         };
 
         const onProcClose = async(code: number | null) => {
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           logRunPhase();
           const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
           stopHeartbeat();
           stopStallWatchdog();
           closeSteering();
-          options.signal?.removeEventListener('abort', onAbort);
+          options.signal?.removeEventListener('abort', onAbort); if (stalled && !terminationPromise) return;
           if (awaitingForcedSettlement && !settled) return;
           const persistenceError = await persistSession();
           if (persistenceError && !settled) {
@@ -1931,15 +1967,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // falling through to the generic no-output message.
           if (stalled) {
             const silentMin = Math.round(STALL_TIMEOUT_MS / 60_000);
-            reject(new CliFaultError(
-              'stall',
-              unresolvedTool
-                ? hungToolMessage()
-                : `Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`,
-              undefined,
-              !unresolvedTool,
-              unresolvedTool,
-            ));
+            reject(stallRecoveryPolicy.createFault(
+              stallEvidence.failureMessage(unresolvedTool ? hungToolMessage() : `Claude Code stalled — no stream activity for ${ silentMin } minutes, so the run was terminated.`),
+              liveness.toolsInFlight, unresolvedTool));
             return;
           }
 
@@ -2093,8 +2123,8 @@ export function getClaudeCodeService(): ClaudeCodeService {
 }
 
 /** Create a fresh (non-singleton) ClaudeCodeService with a specific model override. */
-export function createClaudeCodeService(model: string, effort?: string): ClaudeCodeService {
-  const svc = new ClaudeCodeService();
+export function createClaudeCodeService(model: string, effort?: string, stallEvidenceWriter: CliStallEvidenceWriter = durableCliStallEvidenceWriter): ClaudeCodeService {
+  const svc = new ClaudeCodeService(undefined, undefined, stallEvidenceWriter);
   svc.setModel(model);
   svc.setEffort(effort);
   return svc;

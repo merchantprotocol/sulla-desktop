@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { blockingTool } from './RunLivenessClock';
+import { SuspendAwareClock } from './SuspendAwareClock';
 
 export interface ToolInFlight { name: string; startedAt: number }
 
@@ -16,7 +17,12 @@ export interface ToolInFlight { name: string; startedAt: number }
 export class RunToolTracker {
   private readonly calls = new Map<string, Map<string, ToolInFlight>>();
 
-  constructor(private readonly clock: () => number = () => Date.now()) {}
+  private readonly clock: () => number;
+
+  constructor(clock?: () => number) {
+    const suspendAwareClock = new SuspendAwareClock();
+    this.clock = clock ?? (() => suspendAwareClock.now());
+  }
 
   started(metadata: any, callId: string, name: string): void {
     if (!callId) return;

@@ -250,7 +250,7 @@ export class AgentStateService {
   }
 
   async create(job: AgentJob): Promise<AgentJob> {
-    const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.writeVersion++; this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); return next;
+    const next = this.withDerivedStatus(job); await this.store.insertJob(next); this.writeVersion++; this.cache.jobs.set(next.jobId, next); this.trimTerminalCache(); this.emitChange(); this.changes.emit('job', next, next); return next;
   }
 
   async claimInterruptedJobs(maxResumes = 2, eligible: (job: AgentJob) => Promise<boolean> = () => Promise.resolve(true)): Promise<{ resumable: AgentJob[]; exhausted: AgentJob[] }> {

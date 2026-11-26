@@ -53,6 +53,9 @@ import { DecisionAnswerDelivery, type DecisionAnswerDeliveryInput } from './Deci
 import { workerModelRouting, installWorkerRoute, detachTerminalWorkerChat, isWorkerMappingHumanTurn } from './WorkerModelRouting';
 import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import { AgentTurnStopper } from './AgentTurnStopper';
+import { AbortSignalBridge } from '../app/Services/AbortSignalBridge';
+import { RecoveredAgentTaskDispatcher } from './RecoveredAgentTaskDispatcher';
+import { HiddenAgentRunInterrupter, HiddenAgentWakeRecovery } from './HiddenAgentWakeRecovery';
 import { AgentOrchestratorMessageFormatter } from './AgentOrchestratorMessageFormatter';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -133,12 +136,13 @@ export class BackendGraphWebSocketService {
   // channel (e.g. multiple chat tabs sharing the desktop WebSocket) can
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
-  private activeAborts = new Map<string, AbortService>();
+  private activeAborts = agentJobProvider.activeThreadRuns;
   private suspendedRuns = new Set<string>();
   private readonly relayRuns = new Map<string, { id: string; controller: AbortController }>();
   private readonly readinessWaits = new Map<string, Set<AbortController>>();
   private readonly dispatchedRuns = new Set<Promise<unknown>>();
   private readonly recoveryAbort = new AbortController();
+  private readonly hiddenWorkerWakeRecovery = new HiddenAgentWakeRecovery({ list: () => agentJobProvider.jobs.jobsForList(1, false) }, new HiddenAgentRunInterrupter({ get: threadId => GraphRegistry.get(threadId)?.state }), (job, taskIndex) => this.resumeInterruptedTask(job, taskIndex));
   private recoveryStarted = false;
   private readonly recoveryCutoff = Date.now();
   private readonly agentInbox: AgentInbox;
@@ -542,7 +546,7 @@ export class BackendGraphWebSocketService {
     for (const [, abort] of this.activeAborts) {
       abort.abort();
     }
-    for (const key of this.activeAborts.keys()) releaseChatActivity(`graph:${ key }`);
+    for (const key of this.activeAborts.keys()) { releaseChatActivity(`graph:${ key }`); agentJobProvider.workSleepPrevention.chatRunEnded(key); }
     this.activeAborts.clear();
     this.suspendedRuns.clear();
     this.resumeContexts.clear();
@@ -554,10 +558,9 @@ export class BackendGraphWebSocketService {
     this.conversationContainers.clear();
     this.subscribedChannels.clear();
   }
-
   /** Stamp only runs actually in flight when macOS suspends. */
   handleSuspend(): void {
-    this.suspendedRuns = new Set(this.activeAborts.keys());
+    this.suspendedRuns = new Set(this.activeAborts.keys()); this.hiddenWorkerWakeRecovery.suspend();
     console.log(`[BackendGraphWS] System suspending with ${ this.suspendedRuns.size } in-flight chat run(s)`);
   }
 
@@ -573,7 +576,7 @@ export class BackendGraphWebSocketService {
       .map(key => this.resumeContexts.get(key))
       .filter((context): context is NonNullable<typeof context> => !!context);
     this.suspendedRuns.clear();
-    this.reinitialize();
+    this.reinitialize(); void this.hiddenWorkerWakeRecovery.resume().catch(err => console.error('[BackendGraphWS] Failed to continue hidden workers after resume:', err));
     if (interrupted.length) console.log(`[BackendGraphWS] Continuing ${ interrupted.length } chat thread(s) interrupted by system sleep`);
     for (const context of interrupted) {
       // Give the aborted runs a moment to unwind their finally blocks first.
@@ -587,7 +590,6 @@ export class BackendGraphWebSocketService {
       }, RESUME_CONTINUE_DELAY_MS);
     }
   }
-
   private async conversationContainer(
     channelId: string,
     threadId: string,
@@ -807,6 +809,7 @@ export class BackendGraphWebSocketService {
       await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
       try {
         await this.recoverRuntimeWork();
+        await agentJobProvider.workSleepPrevention.reconcileAfterRecovery();
         return;
       } catch (error: any) {
         if (error?.name === 'AbortError' || this.recoveryAbort.signal.aborted) return;
@@ -878,14 +881,13 @@ export class BackendGraphWebSocketService {
   }
 
   private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): void {
-    const run = (async() => {
-      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
-      const task = job.tasks[taskIndex];
-      const channel = job.parentChannel || 'sulla-desktop';
-      await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+    const dispatcher = new RecoveredAgentTaskDispatcher(agentJobProvider.service, (current, index, controller) => {
+      const task = current.tasks[index], channel = current.parentChannel || 'sulla-desktop';
+      return this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
         `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
-        task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
-    })();
+        task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: current.jobId, delegatedTaskIndex: index }, undefined, controller);
+    });
+    const run = dispatcher.dispatchIfRunning(job, taskIndex, () => waitForAutomaticAgentExecution(this.recoveryAbort.signal));
     this.dispatchedRuns.add(run);
     run.catch(error => {
       if (error?.name !== 'AbortError') console.error('[BackendGraphWS] Interrupted worker dispatch failed:', error);
@@ -1323,7 +1325,7 @@ export class BackendGraphWebSocketService {
     let state: AgentGraphState | undefined;
     let turnConsumedInput = false;
     const abortKey = this.abortKey(channelId, threadId);
-    let runAbort: AbortService | undefined;
+    let runAbort: AbortService | undefined, relayAbortBridge: AbortSignalBridge | undefined;
     // Set only for a dormant parked job (no live in-process waiter) this turn
     // is waking. Re-parked in the finally block if the turn ends without the
     // job completing, so job/task status stays truthful for the turn's whole
@@ -1345,7 +1347,7 @@ export class BackendGraphWebSocketService {
       if (decisionTurn) {
         if (this.decisionThreadOwned(channelId, threadId)) return 'deferred';
         runAbort = new AbortService();
-        this.activeAborts.set(abortKey, runAbort);
+        this.activeAborts.set(abortKey, runAbort); agentJobProvider.workSleepPrevention.chatRunStarted(abortKey);
       }
 
       if (parkedIdentity) parkedAgentRehydrator.apply(state, parkedIdentity);
@@ -1466,10 +1468,10 @@ export class BackendGraphWebSocketService {
       // Create abort service for this run.
       // Set state first so stop_run can't race between activeAborts and state.
       const abort = runAbort ?? new AbortService();
-      runAbort = abort;
+      runAbort = abort; if (relaySignal) relayAbortBridge = new AbortSignalBridge(relaySignal, abort);
       state.metadata.options.abort = abort;
       delete state.metadata.reportingDecisionFollowUp;
-      this.activeAborts.set(abortKey, abort);
+      this.activeAborts.set(abortKey, abort); agentJobProvider.workSleepPrevention.chatRunStarted(abortKey);
       const initialSteerRevision = state.metadata.reportingSteerRevision;
       this.resumeContexts.set(abortKey, {
         channelId, triggerType, threadId, scopedWorkflowId, overrideAgentId, inputSource,
@@ -1639,8 +1641,7 @@ export class BackendGraphWebSocketService {
           runEnded:  true,
         });
       }
-    } finally {
-      if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
+    } finally { relayAbortBridge?.dispose(); if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
       }
@@ -1678,7 +1679,7 @@ export class BackendGraphWebSocketService {
           // instead: no spawn_agent runner is left to hand it to the parent.
           if (wakeTurnToRepark) await agentJobLifecycle.endDormantWakeTurn(wakeTurnToRepark.jobId, wakeTurnToRepark.taskIndex);
           if (decisionTurn && !isCurrentRun()) return;
-          this.activeAborts.delete(abortKey);
+          this.activeAborts.delete(abortKey); agentJobProvider.workSleepPrevention.chatRunEnded(abortKey);
           this.resumeContexts.delete(abortKey);
           releaseChatActivity(`graph:${ abortKey }`);
 

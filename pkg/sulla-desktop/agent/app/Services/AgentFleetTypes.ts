@@ -2,6 +2,8 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { AgentCliStallEvidence } from '../../tools/agents/jobRegistry';
+
 /** Persisted compact check-in fields shared by fleet presenters. */
 export interface FleetCheckinView {
   step: string;
@@ -49,6 +51,7 @@ export interface FleetTaskView {
   openReviewItems?: FleetReviewItemView[];
   result?: unknown;
   completion?: unknown;
+  cliStallEvidence?: AgentCliStallEvidence;
 }
 
 export interface FleetJobView {

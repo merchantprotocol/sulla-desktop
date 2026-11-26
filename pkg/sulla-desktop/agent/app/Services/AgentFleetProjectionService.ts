@@ -204,6 +204,7 @@ export class AgentFleetProjectionService {
       stranded: stranded ? { ...stranded, detectedAt: 0, alertedAt: 0 } : null,
       result: task.result,
       completion: task.completion,
+      ...(detailed && task.cliStallEvidence ? { cliStallEvidence: task.cliStallEvidence } : {}),
       undeliveredOrchestratorMessages: telemetry?.undeliveredMessages ?? 0,
       openReviewItems: this.openReviewItemsFor(context.reviews[job.jobId] ?? [], taskIndex),
       ...(detailed ? { checkins: (telemetry?.checkins ?? []).map(item => this.checkin(item, false)) } : {}),
