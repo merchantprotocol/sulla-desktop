@@ -38,8 +38,13 @@ export class ScopedToolClient {
       },
       body: JSON.stringify(input),
     });
-    const json = await response.json().catch(() => ({ error: `non-JSON response (${ response.status })` }));
-    if (!response.ok) throw new Error(json.error ?? `Tool ${ tool } failed with HTTP ${ response.status }`);
+    const json = await response.json().catch(() => response.ok ? { error: `non-JSON response (${ response.status })` } : null);
+    if (!response.ok) {
+      const error = json?.error;
+      if (typeof error === 'string') throw new Error(error);
+      if (typeof error?.message === 'string') throw new Error(error.message);
+      throw new Error(`Tool ${ tool } failed with HTTP ${ response.status }`);
+    }
     return unwrap(json);
   }
 }

@@ -40,9 +40,12 @@ export type InputSchemaDef = Record<string, FieldSchema>;
 
 type ParsedInput = Record<string, unknown>;
 
+export class ToolInputValidationError extends Error {}
+
 export interface ToolResponse {
   successBoolean: boolean;
   responseString: string;
+  errorCode?:     ToolResult['errorCode'];
   /** Optional structured payload; BaseTool exposes it without double encoding. */
   result?: unknown;
   status?: number;
@@ -185,7 +188,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
       }
     }
 
-    if (errors.length) throw new Error(`Input validation failed:\n${ errors.join('\n') }`);
+    if (errors.length) throw new ToolInputValidationError(`Input validation failed:\n${ errors.join('\n') }`);
 
     return result;
   }

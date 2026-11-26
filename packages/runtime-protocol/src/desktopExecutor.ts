@@ -23,6 +23,11 @@ export interface DesktopExecutor {
   execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: DesktopExecutionOptions): Promise<ToolResult>;
 }
 
+export function toolRequestRejectionStatus(code: string | undefined): 400 | 409 | undefined {
+  if (code === 'invalid_tool_input') return 400;
+  if (code === 'task_inactive') return 409;
+}
+
 export class HttpDesktopExecutor implements DesktopExecutor {
   private readonly deadlinePolicy = new ToolDeadlinePolicy();
 

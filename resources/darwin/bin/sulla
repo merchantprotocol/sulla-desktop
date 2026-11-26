@@ -21,6 +21,32 @@ fi
 
 SOCKET="/tmp/sulla-tools.sock"
 
+# On the Mac, Desktop publishes its actual port and bearer in a private file.
+# Agent containers and explicitly configured endpoints use their existing routes.
+LOCAL_DESKTOP=0
+if [ -z "$SULLA_TOOL_API_URL" ] && [ -z "$SULLA_HOST" ] && [ ! -S "$SOCKET" ] && [ "$(uname -s)" = Darwin ]; then
+  LOCAL_DESKTOP=1
+  case "$SULLA_INSTANCE" in
+    '') instance_suffix='' ;;
+    *[!A-Za-z0-9_-]*) printf '%s\n' 'Invalid SULLA_INSTANCE.' >&2; exit 1 ;;
+    *) instance_suffix="-$SULLA_INSTANCE" ;;
+  esac
+  descriptor="$HOME/Library/Application Support/sulla-desktop${instance_suffix}/chat-api-token.json"
+  port=$(/usr/bin/plutil -extract port raw -expect integer -o - -- "$descriptor" 2>/dev/null)
+  case "$port" in
+    ''|*[!0-9]*|??????*) ;;
+    *)
+      if [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+        SULLA_TOOL_API_URL="http://127.0.0.1:$port"
+      fi
+      ;;
+  esac
+  desktop_pid=$(/usr/bin/plutil -extract pid raw -expect integer -o - -- "$descriptor" 2>/dev/null)
+  if [ -z "$SULLA_API_TOKEN" ]; then
+    SULLA_API_TOKEN=$(/usr/bin/plutil -extract token raw -expect string -o - -- "$descriptor" 2>/dev/null)
+  fi
+fi
+
 # The agent's tool session binds CLI calls to its thread (check-ins,
 # return_result, contracts). Some agent shells don't pass it down — Codex's
 # exec kernel drops it on resumed turns — so take it from the nearest
@@ -58,19 +84,57 @@ elif [ -z "$BODY" ] && [ ! -t 0 ]; then
   BODY_FROM_STDIN=1
 fi
 
-tool_api_get() {
+tool_api_curl() {
   _path="$1"
+  shift
+  if [ "$LOCAL_DESKTOP" = 1 ]; then
+    case "$desktop_pid" in ''|0*|*[!0-9]*) desktop_pid='' ;; esac
+    if [ -z "$SULLA_TOOL_API_URL" ] || [ -z "$desktop_pid" ] || ! kill -0 "$desktop_pid" 2>/dev/null ||
+       ! owner=$(/usr/sbin/lsof -nP -i4TCP:"$port" -sTCP:LISTEN -t 2>/dev/null) || [ "$owner" != "$desktop_pid" ]; then
+      printf '%s\n' 'Sulla Desktop is not running. Start it and retry.' >&2
+      return 69
+    fi
+    case "$SULLA_API_TOKEN" in
+      ''|*[!A-Za-z0-9._~+/=-]*)
+        printf '%s\n' 'Sulla Desktop credentials are unavailable. Start Sulla Desktop and retry.' >&2
+        return 1
+        ;;
+    esac
+    if [ -z "$SULLA_TOOL_API_URL" ]; then
+      printf '%s\n' 'Sulla Desktop port is unavailable. Start Sulla Desktop and retry.' >&2
+      return 1
+    fi
+    # Ignore proxy and curl configuration for this credential. Keep it off argv.
+    exec curl -q --noproxy '*' --header @/dev/fd/3 "$@" "${SULLA_TOOL_API_URL}${_path}" 3<<AUTH
+Authorization: Bearer $SULLA_API_TOKEN
+AUTH
+  fi
+
+  if [ -n "$SULLA_API_TOKEN" ]; then
+    set -- -H "Authorization: Bearer $SULLA_API_TOKEN" "$@"
+  fi
   if [ -n "$SULLA_TOOL_API_URL" ]; then
-    curl -fsS --max-time 2 ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} "${SULLA_TOOL_API_URL}${_path}"
+    exec curl "$@" "${SULLA_TOOL_API_URL}${_path}"
   elif [ -S "$SOCKET" ]; then
-    curl -fsS --max-time 2 --unix-socket "$SOCKET" ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} "http://localhost${_path}"
+    exec curl --unix-socket "$SOCKET" "$@" "http://localhost${_path}"
   else
-    curl -fsS --max-time 2 ${SULLA_API_TOKEN:+-H "Authorization: Bearer $SULLA_API_TOKEN"} "http://${SULLA_HOST}:3000${_path}"
+    exec curl "$@" "http://${SULLA_HOST}:3000${_path}"
   fi
 }
 
 is_tool_category() {
-  tool_api_get "/v1/tools/help/$1" >/dev/null 2>&1
+  if [ "$LOCAL_DESKTOP" != 1 ]; then
+    # A failed catalog lookup on a configured route is a miss, not a CLI error.
+    # Run the probe in a subshell because tool_api_curl execs curl.
+    (tool_api_curl "/v1/tools/help/$1" -fsS --max-time 2) >/dev/null 2>&1
+    return $?
+  fi
+  _status=$(tool_api_curl "/v1/tools/help/$1" -sS --max-time 2 -o /dev/null -w '%{http_code}') || exit $?
+  case "$_status" in
+    2[0-9][0-9]) return 0 ;;
+    404) return 1 ;;
+    *) printf 'Sulla tool discovery failed (HTTP %s).\n' "$_status" >&2; exit 22 ;;
+  esac
 }
 
 # ── Help & discovery ─────────────────────────────────────────────
@@ -79,7 +143,8 @@ is_tool_category() {
 # CLI rebuild.
 if [ -z "$FIRST" ] || [ "$FIRST" = "--help" ] || [ "$FIRST" = "-h" ] || [ "$FIRST" = "help" ]; then
   _help_url="/v1/tools/help"
-  _live=$(tool_api_get "$_help_url" 2>/dev/null)
+  _live=$(tool_api_curl "$_help_url" -fsS --max-time 2 2>/dev/null)
+  if [ "$?" = 69 ] && [ "$LOCAL_DESKTOP" = 1 ]; then printf '%s\n' 'Sulla Desktop is not running. Start it and retry.' >&2; exit 69; fi
   if [ -n "$_live" ] && printf '%s' "$_live" | grep -q "Categories"; then
     printf '%s\n' "$_live"
     printf '\nRun "sulla <category> --help" or "sulla <category>" to list tools in a category.\n'
@@ -166,65 +231,14 @@ else
 fi
 
 # ── Execute ──────────────────────────────────────────────────────
-if [ "$METHOD" = "GET" ]; then
-  if [ -n "$SULLA_TOOL_API_URL" ]; then
-    if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s -H "Authorization: Bearer $SULLA_API_TOKEN" "${SULLA_TOOL_API_URL}${URL}"
-    else
-      exec curl -s "${SULLA_TOOL_API_URL}${URL}"
-    fi
-  elif [ -S "$SOCKET" ]; then
-    if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s --unix-socket "$SOCKET" -H "Authorization: Bearer $SULLA_API_TOKEN" "http://localhost${URL}"
-    else
-      exec curl -s --unix-socket "$SOCKET" "http://localhost${URL}"
-    fi
-  else
-    if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s -H "Authorization: Bearer $SULLA_API_TOKEN" "http://${SULLA_HOST}:3000${URL}"
-    else
-      exec curl -s "http://${SULLA_HOST}:3000${URL}"
-    fi
-  fi
-else
-  if [ -n "$SULLA_TOOL_API_URL" ]; then
-    if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s -X POST "${SULLA_TOOL_API_URL}${URL}" \
-        -H "Content-Type: application/json" \
-        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        -H "Authorization: Bearer $SULLA_API_TOKEN" \
-        $DATA_FLAG "$DATA_ARG"
-    else
-      exec curl -s -X POST "${SULLA_TOOL_API_URL}${URL}" \
-        -H "Content-Type: application/json" \
-        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        $DATA_FLAG "$DATA_ARG"
-    fi
-  elif [ -S "$SOCKET" ]; then
-    if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
-        -H "Content-Type: application/json" \
-        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        -H "Authorization: Bearer $SULLA_API_TOKEN" \
-        $DATA_FLAG "$DATA_ARG"
-    else
-      exec curl -s --unix-socket "$SOCKET" -X POST "http://localhost${URL}" \
-        -H "Content-Type: application/json" \
-        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        $DATA_FLAG "$DATA_ARG"
-    fi
-  else
-    if [ -n "$SULLA_API_TOKEN" ]; then
-      exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
-        -H "Content-Type: application/json" \
-        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        -H "Authorization: Bearer $SULLA_API_TOKEN" \
-        $DATA_FLAG "$DATA_ARG"
-    else
-      exec curl -s -X POST "http://${SULLA_HOST}:3000${URL}" \
-        -H "Content-Type: application/json" \
-        -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
-        $DATA_FLAG "$DATA_ARG"
-    fi
-  fi
+set -- -s
+if [ "$LOCAL_DESKTOP" = 1 ]; then
+  set -- -sS --fail-with-body
 fi
+if [ "$METHOD" = "POST" ]; then
+  set -- "$@" -X POST \
+    -H "Content-Type: application/json" \
+    -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
+    "$DATA_FLAG" "$DATA_ARG"
+fi
+tool_api_curl "$URL" "$@"

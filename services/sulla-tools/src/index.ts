@@ -19,8 +19,8 @@ import { RedisHealthProbe } from './RedisHealthProbe.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import { StartupDatabaseWait } from './StartupDatabaseWait.js';
 import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
-import { HttpDesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relayDesktopExecutor.js';
+import { HttpDesktopExecutor, toolRequestRejectionStatus } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 
 import type { ToolExecutionContext } from '../../../packages/runtime-protocol/src/executionContext.js';
 import type { DesktopExecutor } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
@@ -220,7 +220,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
       const claimedStatus = details.httpStatus ?? (forwarded as typeof forwarded & { status?: unknown }).status;
       if (!forwarded.success) status = category === 'clerk' && typeof claimedStatus === 'number' && Number.isInteger(claimedStatus) && claimedStatus >= 400 && claimedStatus <= 599
         ? claimedStatus
-        : forwarded.error?.code === 'deadline_exceeded' ? 504 : 503;
+        : toolRequestRejectionStatus(forwarded.error?.code) ?? (forwarded.error?.code === 'deadline_exceeded' ? 504 : 503);
       const retry = details.retryAfter ?? (forwarded as typeof forwarded & { retryAfter?: unknown }).retryAfter;
       const retryAfter = category === 'clerk' && typeof retry === 'string' && /^\d{1,15}$/.test(retry) && Number.isSafeInteger(Number(retry)) && Number(retry) > 0
         ? String(Number(retry))

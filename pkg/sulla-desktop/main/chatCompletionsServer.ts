@@ -27,10 +27,13 @@ import { ClerkToolSessionResolver } from './ClerkToolSessionResolver';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
+import { ToolInputValidationError } from '@pkg/agent/tools/base';
 import { githubRepositoryFromArgs, scopeToolExecutionContext, scopeToolExecutionContextToAccount, scopeItemExecutionContext } from '@pkg/agent/tools/credentialScope';
 import { AgentMailLaneSelector } from '@pkg/agent/tools/mail/AgentMailLaneSelector';
 import { getWebSocketClientService, type WebSocketMessage } from '@pkg/agent/services/WebSocketClientService';
+import type { ToolResult as AgentToolResult } from '@pkg/agent/types';
 import { deriveCapabilitySigningKey, issueCapabilityToken, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
+import { toolRequestRejectionStatus } from '@pkg/runtime/desktopExecutor';
 import paths from '@pkg/utils/paths';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
@@ -88,6 +91,14 @@ export function chatCompletionsPort(): Promise<number> {
 }
 const API_TOKEN_FILE = 'chat-api-token.json';
 const WS_CHANNEL = 'tasker';
+
+function sendToolRejection(response: Response, result: AgentToolResult): boolean {
+  const status = toolRequestRejectionStatus(result.errorCode);
+  if (result.success || !status) return false;
+  const message = result.error ?? (typeof result.result === 'string' ? result.result : 'Desktop tool rejected the request');
+  response.status(status).json({ success: false, error: { code: result.errorCode, message } });
+  return true;
+}
 
 const EXECUTION_IDENTITY_FIELDS = ['sub', 'org_id', 'agent_id', 'pod_id', 'thread_id', 'job_id', 'device_id'] as const;
 const LOCAL_GITHUB_TOOLS = new Set([
@@ -243,16 +254,20 @@ export class ChatCompletionsServer {
 
   }
 
-  private async loadApiToken(): Promise<void> {
+  private async loadApiToken(port: number): Promise<void> {
     const tokenPath = path.join(paths.appHome, API_TOKEN_FILE);
 
     // 1. Try reading from the token file (source of truth)
     try {
       const raw = await fs.promises.readFile(tokenPath, 'utf-8');
       const data = JSON.parse(raw);
-      if (data.token) {
-        this.apiToken = data.token;
+      const fileToken = data.token;
+      if (typeof fileToken === 'string' && fileToken.length > 0) {
+        this.apiToken = fileToken;
         console.log('[ChatCompletionsAPI] Bearer token loaded from file');
+        if (data.pid !== process.pid || data.port !== port) {
+          await this.refreshApiDescriptor(tokenPath, fileToken, port);
+        }
         return;
       }
     } catch {
@@ -273,7 +288,7 @@ export class ChatCompletionsServer {
     await fs.promises.mkdir(paths.appHome, { recursive: true });
     await fs.promises.writeFile(tokenPath, JSON.stringify({
       token: this.apiToken,
-      port:  await chatCompletionsPort(),
+      port,
       pid:   process.pid,
     }, null, 2), { mode: 0o600 });
     console.log(`[ChatCompletionsAPI] Bearer token written to ${ tokenPath }`);
@@ -283,6 +298,27 @@ export class ChatCompletionsServer {
       await SullaSettingsModel.set('sullaApiToken', this.apiToken, 'string');
     } catch {
       // DB may not be ready yet — that's fine, file is the primary store
+    }
+  }
+
+  private async refreshApiDescriptor(tokenPath: string, token: string, port: number): Promise<void> {
+    try {
+      const temporary = `${ tokenPath }.${ crypto.randomUUID() }.tmp`;
+      const file = await fs.promises.open(temporary, 'wx', 0o600);
+      try {
+        try {
+          await file.writeFile(JSON.stringify({ token, port, pid: process.pid }, null, 2));
+        } finally {
+          await file.close();
+        }
+        await fs.promises.rename(temporary, tokenPath);
+      } catch (error) {
+        await fs.promises.unlink(temporary);
+        throw error;
+      }
+    } catch {
+      // The file token still authenticates the server. Stale discovery must fail closed.
+      console.warn('[ChatCompletionsAPI] Could not refresh discovery descriptor; continuing with the existing token');
     }
   }
 
@@ -496,7 +532,7 @@ export class ChatCompletionsServer {
         }
         const result = await Promise.race([
           worker.call(args),
-          new Promise((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
+          new Promise<never>((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
         ]);
         if (category === 'clerk' && result && typeof result === 'object' && (result as { success?: unknown }).success === false) {
           const failure = result as { status?: unknown; result?: unknown; retryAfter?: unknown };
@@ -514,8 +550,12 @@ export class ChatCompletionsServer {
             },
           });
         }
+        if (sendToolRejection(res, result)) return;
         return res.json({ success: true, result });
       } catch (error) {
+        if (error instanceof ToolInputValidationError) {
+          return res.status(400).json({ success: false, error: { code: 'invalid_tool_input', message: error.message } });
+        }
         const timedOut = error instanceof Error && /deadline exceeded/i.test(error.message);
         // One line per failed tool call, so routine tool errors can be told apart from platform outages.
         console.warn(`[DesktopExecutor] ${ toolName } failed after ${ Date.now() - startedAt } ms: ${ (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 300) }`);
@@ -1621,7 +1661,7 @@ export class ChatCompletionsServer {
           const runtime = executionContext && !trustedDesktopSessionFallback
             ? containerRuntimeForExecution(executionContext, toolRegistry.getExecutionTarget(toolName))
             : undefined;
-          const callTool = () => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
+          const callTool = (): Promise<AgentToolResult> => invoke(tool, canonicalCategory, toolName, session?.state.metadata?.threadId, params);
           const result = runtime ? await withAgentContainerRuntime(runtime, callTool) : await callTool();
           if (canonicalCategory === 'clerk' && result && typeof result === 'object' && (result as { success?: unknown }).success === false) {
             const failure = result as { status?: unknown; result?: unknown; retryAfter?: unknown };
@@ -1639,6 +1679,7 @@ export class ChatCompletionsServer {
               },
             });
           }
+          if (sendToolRejection(res, result)) return;
           return res.json({ success: true, result });
         } finally {
           res.off('close', onDisconnect);
@@ -1718,6 +1759,9 @@ export class ChatCompletionsServer {
 
       res.json({ success: true, result: JSON.parse(JSON.stringify(result)) });
     } catch (error: any) {
+      if (error instanceof ToolInputValidationError) {
+        return res.status(400).json({ success: false, error: { code: 'invalid_tool_input', message: error.message } });
+      }
       console.error(`[ChatCompletionsAPI] Integration call failed (${ slug }/${ endpoint }):`, error);
 
       // Return structured upstream errors so the model can debug effectively
@@ -2130,8 +2174,8 @@ export class ChatCompletionsServer {
   }
 
   async start(requestedPort?: number): Promise<void> {
-    await this.loadApiToken();
     const port = requestedPort ?? await chatCompletionsPort();
+    await this.loadApiToken(port);
 
     // Loopback only: the guest reaches it through the runtime's forwarder,
     // which dials 127.0.0.1 on the Mac.

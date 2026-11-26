@@ -15,6 +15,10 @@ COPY packages/relay-protocol/src ./packages/relay-protocol/src
 COPY pkg/sulla-desktop/runtime ./pkg/sulla-desktop/runtime
 COPY pkg/sulla-desktop/vault-broker ./pkg/sulla-desktop/vault-broker
 COPY pkg/sulla-desktop/utils ./pkg/sulla-desktop/utils
+# The catalog import check loads model discovery, which uses the Vault relay's Sulla Cloud host constant.
+COPY services/sulla-vault/src/sullaCloudRelay.ts ./services/sulla-vault/src/sullaCloudRelay.ts
+# The settings model the catalog loads imports the primary color tokens (dependency-free).
+COPY pkg/sulla-desktop/config/primaryColor.ts ./pkg/sulla-desktop/config/primaryColor.ts
 # Dependency-free modules the Files read tools import (FilesListingPager ships with agent/ above). Copy exact files only;
 # the rest of shared/ and main/ stay out of the container.
 COPY pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts ./pkg/sulla-desktop/shared/providerCliUpdateAuthority.ts
