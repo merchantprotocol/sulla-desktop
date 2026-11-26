@@ -168,10 +168,6 @@ html.dark .ch-title { --chat-title-chip-bg: #1d2126; --chat-title-chip-text: #e8
 .ch-origin:hover { color: var(--primary-color-text-override, var(--accent)); border-color: var(--accent); }
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ch-payloads {
-  justify-self: end; margin-left: 8px; padding: 4px 8px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; }
-.ch-payloads:not(.open) { visibility: hidden; }
-.ch-payloads:hover { color: var(--text-primary); }
 .ch-reporting {
   display: flex; align-items: center; gap: 2px; min-width: 0; padding: 2px;
   justify-self: end; margin-left: 8px;

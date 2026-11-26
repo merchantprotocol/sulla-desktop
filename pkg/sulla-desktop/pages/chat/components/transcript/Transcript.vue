@@ -105,7 +105,6 @@ import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjec
 import { ReplyCitationProjection } from './ReplyCitationProjection';
 import { DetailedTraceProjection } from './DetailedTraceProjection';
 import { DetailedTimelineProjection } from './DetailedTimelineProjection';
-import { TraceDisclosureController } from './traceDisclosure';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
@@ -131,7 +130,6 @@ const timelineProjection = new DetailedTimelineProjection(traceProjection, repor
 const citationProjection = new ReplyCitationProjection();
 const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
 const { activity: resultActivity } = useResultActivity();
-const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
 const transcriptMessages = computed(() => approvalProjector.project(
   controller.messages.value,
