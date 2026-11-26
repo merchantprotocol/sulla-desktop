@@ -191,6 +191,48 @@ describe('durable Git workspace initialization', () => {
     expect(existsSync(local('runtime/conversations/next/workspace/.git'))).toBe(false);
   });
 
+  function addInitializedModule(source: string): string {
+    git(source, '-c', 'protocol.file.allow=always', 'submodule', 'add', '--name', 'lib', source, 'deps/dep');
+    git(source, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'add module');
+    return path.join(source, 'deps/dep');
+  }
+
+  it.each(['module', 'linked top-level'])('seeds a %s with only locally excluded build output, but refuses unmatched output', async(kind) => {
+    const primary = local('worktrees/repo');
+    const source = kind === 'module' ? primary : local('worktrees/linked');
+    if (source !== primary) git(primary, 'worktree', 'add', '-b', 'linked', source);
+    const checkout = kind === 'module' ? addInitializedModule(source) : source;
+    const exclude = git(checkout, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude');
+    writeFileSync(exclude, '/build-output\n');
+    writeFileSync(path.join(checkout, 'build-output'), 'ignored');
+    expect(git(source, 'status', '--porcelain=v1', '--untracked-files=normal')).toBe('');
+    const seed = (target: string) => seedGitWorktreeIntoStableGuest(`/mnt/worktrees/${ path.basename(source) }`, target);
+    await expect(seed(target)).resolves.toBe(target);
+    expect(git(local('runtime/conversations/task/workspace'), 'rev-parse', 'HEAD')).toBe(git(source, 'rev-parse', 'HEAD'));
+
+    writeFileSync(path.join(checkout, 'unmatched-output'), 'not ignored');
+    expect(git(source, 'status', '--porcelain=v1', '--untracked-files=normal')).not.toBe('');
+    mkdirSync(local('runtime/conversations/next/workspace'), { recursive: true });
+    await expect(seed(`${ GUEST_CONVERSATIONS_ROOT }/next/workspace`)).rejects.toThrow();
+    expect(existsSync(local('runtime/conversations/next/workspace/.git'))).toBe(false);
+  });
+
+  it.each(['symlinked file', 'symlinked directory', 'oversized file'])('does not adopt a module info/exclude from a %s', async(kind) => {
+    const source = local('worktrees/repo');
+    const checkout = addInitializedModule(source);
+    const exclude = git(checkout, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude');
+    writeFileSync(exclude, '/build-output\n' + (kind === 'oversized file' ? '#'.repeat(64 * 1024) : ''));
+    if (kind !== 'oversized file') {
+      const original = kind === 'symlinked file' ? exclude : path.dirname(exclude);
+      const elsewhere = local('synthetic-exclude-target');
+      renameSync(original, elsewhere);
+      symlinkSync(elsewhere, original);
+    }
+    writeFileSync(path.join(checkout, 'build-output'), 'not safe to ignore');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow();
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+  });
+
   it('seeds the approved HEAD without interpreting checkout-local Git configuration', async() => {
     const repo = local('worktrees/repo');
     const head = git(repo, 'rev-parse', 'HEAD');
