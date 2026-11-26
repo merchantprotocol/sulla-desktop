@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
-  <section ref="root" class="fy" aria-label="For You">
+  <section ref="root" class="fy" aria-label="Decide">
     <header class="fy-head">
       <div>
-        <h2>For You</h2>
+        <h2>Decide</h2>
         <p class="fy-muted fy-count">{{ active.length ? `${active.length} active` : 'Questions and approvals for this chat' }}</p>
       </div>
       <button class="fy-refresh" type="button" :disabled="store.loading.value" @click="store.refresh">
@@ -22,7 +22,10 @@
       <p v-if="record.answerDelivery === 'interrupted'" role="status">Your answer is saved, but Sulla could not confirm it finished handling it. Check the original chat before submitting the saved answer again.</p>
       <p v-else-if="record.kind === 'question' && record.status === 'expired'" class="fy-muted">Sulla stopped waiting. Your answer will be queued in the original chat without interrupting running work.</p>
       <p v-if="store.actionError(record.id)" role="alert">{{ store.actionError(record.id) }}</p>
-      <template v-if="record.kind === 'question'">
+      <!-- Routed requests use the transcript card and its guarded action, never a second approval form. -->
+      <DecisionHolderLine v-if="record.route && messageFor(record)" :presentation="presenter.present(record)" compact />
+      <DecisionReference v-else-if="record.route" :msg="routedMessage(record)" />
+      <template v-else-if="record.kind === 'question'">
         <pre v-if="record.questions?.length !== 1 || !record.questions[0].task" v-for="question in record.questions?.filter(question => question.command)" :key="question.question" class="fy-command">{{ question.command }}</pre>
         <ToolTask v-if="record.questions?.length === 1 && record.questions[0].task" :msg="questionMessage(record)" :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answer="value => taskAnswer(record, value)" />
         <ToolQuestion v-else :msg="questionMessage(record)" persistent :draft="store.draft(record)" :blocked="store.busy(record.id)" :submit-answers="answers => answer(record, answers)" />
@@ -59,16 +62,21 @@
 </template>
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, ref, watch, type Ref } from 'vue';
+import DecisionReference from '../transcript/DecisionReference.vue';
+import DecisionHolderLine from '../tool/DecisionHolderLine.vue';
+import { useDecisionRoutePresenter } from '../../decisions/useDecisionRoutePresenter';
+import { asMessageId } from '../../types/chat';
 import ToolQuestion from '../tool/ToolQuestion.vue';
 import ToolTask from '../tool/ToolTask.vue';
 import { AgentResultActions } from '../../composables/useAgentResultActions';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
 import { LineTimes } from '../../messages/lineTime';
-import type { ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
+import type { ToolApprovalMessage, ToolQuestionAnswerItem, ToolQuestionMessage } from '../../models/Message';
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 import type { DecisionRecord } from '@pkg/shared/decisions';
 const store = ChatDecisions.useChatDecisions();
+const presenter = useDecisionRoutePresenter({ now: () => store.now.value });
 onMounted(() => {
   if (!store.loading.value) void store.refresh();
 });
@@ -98,6 +106,11 @@ function showRequestTitle(record: DecisionRecord): boolean {
 function messageFor(record: DecisionRecord) { return controller.messages.value.find(message => (message.kind === 'tool_question' && message.questionId === record.id) || (message.kind === 'tool_approval' && message.approvalId === record.id)); }
 function jump(record: DecisionRecord) { const message = messageFor(record); if (!message) { actions.openAgent({ threadId: record.conversationId, agentId: record.channel, label: record.title }); return; } window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId: message.id } })); }
 function approvalCommand(record: DecisionRecord): string { const message = messageFor(record); return message?.kind === 'tool_approval' ? message.command : ''; }
+function routedMessage(record: DecisionRecord): ToolQuestionMessage | ToolApprovalMessage {
+  if (record.kind === 'question') return questionMessage(record);
+  return { id: asMessageId(record.id), kind: 'tool_approval', approvalId: record.id, createdAt: record.createdAt,
+    decision: 'pending', reason: record.approvalPresentation?.reason ?? record.title, command: record.approvalPresentation?.command ?? record.toolName ?? record.title };
+}
 function questionMessage(record: DecisionRecord): ToolQuestionMessage { return { id: record.id as ToolQuestionMessage['id'], kind: 'tool_question', role: 'assistant', createdAt: record.createdAt, questionId: record.id, questions: record.questions ?? [], status: 'pending', text: '' } as ToolQuestionMessage; }
 function answer(record: DecisionRecord, answers: ToolQuestionAnswerItem[]) { return store.resolve(record, 'answered', answers.map(answer => ({ question: answer.question, selected: [...answer.selected] }))); }
 function taskAnswer(record: DecisionRecord, value: string) { return answer(record, [{ question: record.questions![0].question, selected: [value] }]); }
