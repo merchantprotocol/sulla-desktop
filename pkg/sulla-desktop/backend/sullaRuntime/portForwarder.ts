@@ -16,7 +16,7 @@ const console = Logging.sullaRuntime;
 // userland proxy listens for every published port.
 const FORWARD_STREAM_PORT = 2376;
 const RECONNECT_DELAY_MS = 2_000;
-const RELAY_IDLE_TIMEOUT_MS = 120_000;
+const FILES_RELAY_IDLE_TIMEOUT_MS = 120_000;
 /** How often a port another Mac process held is tried again. */
 const UNAVAILABLE_RETRY_MS = 30_000;
 
@@ -25,6 +25,13 @@ interface ContainerPort {
   PrivatePort: number;
   PublicPort?: number;
   Type:        string;
+}
+
+interface PortForwarderPolicy {
+  /** The published host port used by Desktop main for Sulla Files over TLS. */
+  filesPort: number;
+  /** Idle timeout applies only to the Files relay; other ports remain long-lived. */
+  filesIdleTimeoutMs?: number;
 }
 
 /**
@@ -43,8 +50,13 @@ export class SullaRuntimePortForwarder {
   #reconnectTimer: NodeJS.Timeout | undefined;
   #retryTimer: NodeJS.Timeout | undefined;
   #syncing: Promise<void> = Promise.resolve();
+  readonly #filesPort: number;
+  readonly #filesIdleTimeoutMs: number;
 
-  constructor(private readonly dockerSocket: string, private readonly guestSocket: string) {}
+  constructor(private readonly dockerSocket: string, private readonly guestSocket: string, policy: PortForwarderPolicy) {
+    this.#filesPort = policy.filesPort;
+    this.#filesIdleTimeoutMs = policy.filesIdleTimeoutMs ?? FILES_RELAY_IDLE_TIMEOUT_MS;
+  }
 
   start(): void {
     this.#stopped = false;
@@ -205,16 +217,17 @@ export class SullaRuntimePortForwarder {
       guest.destroy();
     };
 
-    // A half-close is terminal for this HTTP/TLS tunnel; Chromium must see a
-    // close rather than retain a socket whose peer has stopped responding.
-    client.on('end', destroyBoth);
-    guest.on('end', destroyBoth);
     client.on('error', destroyBoth);
     guest.on('error', destroyBoth);
     client.on('close', destroyBoth);
     guest.on('close', destroyBoth);
-    client.setTimeout(RELAY_IDLE_TIMEOUT_MS, destroyBoth);
-    guest.setTimeout(RELAY_IDLE_TIMEOUT_MS, destroyBoth);
+    // Only Desktop's Files listener (30124) needs stale keep-alive cleanup.
+    // Other published ports include WebSockets, SSE, DB connections and
+    // protocols that legitimately remain idle or half-close one direction.
+    if (port === this.#filesPort) {
+      client.setTimeout(this.#filesIdleTimeoutMs, destroyBoth);
+      guest.setTimeout(this.#filesIdleTimeoutMs, destroyBoth);
+    }
 
     // Queued in order ahead of any client bytes.
     guest.write(`${ FORWARD_STREAM_PORT }\n${ JSON.stringify({ port }) }\n`);
