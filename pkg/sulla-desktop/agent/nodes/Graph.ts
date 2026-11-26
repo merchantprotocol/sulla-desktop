@@ -102,6 +102,8 @@ export interface BaseThreadState {
     agentId?:              string;
     /** Conversation logger ID — set by workflow agent handler or graph creator */
     conversationId?:       string;
+    /** Whether this agent may see other agents and team-operation instructions. */
+    agentAwareness?:       boolean;
     /** Parent conversation ID (e.g. the workflow execution that spawned this graph) */
     parentConversationId?: string;
 

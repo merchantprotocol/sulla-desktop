@@ -1012,7 +1012,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       purpose:       'system-prompt',
       suggestedName: `claude-system-${ crypto.randomUUID() }.md`,
       data:          new SupportSessionPolicy().appendSupportContext(
-        systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(state),
+        systemPromptFromMessages(messages) || await this.fallbackSystemPrompt(options.state),
         options.state?.metadata?.supportContext,
       ),
     });

@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 export type DecisionAuthority = 'human' | 'any';
+export type DecisionAgentAction = 'answer' | 'pass';
 export type DecisionActor = { kind: 'human' } | { kind: 'agent'; agentId?: string; label?: string; threadId?: string; note?: string };
 export type DecisionRouteEntry = {
   threadId: string;

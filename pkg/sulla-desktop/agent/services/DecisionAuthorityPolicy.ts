@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import type { DecisionAuthority, DecisionRecord } from '@pkg/shared/decisions';
+import type { DecisionAgentAction, DecisionAuthority, DecisionRecord } from '@pkg/shared/decisions';
 
-export type DecisionAgentAction = 'answer' | 'pass';
+export type { DecisionAgentAction } from '@pkg/shared/decisions';
 export type DecisionAction = DecisionAgentAction | 'approve' | 'deny';
 
 /** The record-level authority rules shared by decision creation and later agent actions. */

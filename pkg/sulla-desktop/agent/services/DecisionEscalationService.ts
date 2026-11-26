@@ -112,7 +112,7 @@ export class DecisionEscalationService {
     if (reason === 'timeout' && (route.holderDeadline == null || route.holderDeadline > now)) return false;
     if (reason === 'passed' && (!actor || actor.kind !== 'agent' || actor.threadId !== holder.threadId)) return false;
     const action = reason === 'passed' ? 'passed' : reason;
-    const history = this.history(holder, action, now, note ?? actor?.note);
+    const history = this.history(holder, action, now, note ?? (actor?.kind === 'agent' ? actor.note : undefined));
     const next = Math.min(route.holderIndex + 1, route.chain.length - 1);
     const patch: DecisionRoutePatch = { holderIndex: next, holderSince: now, holderDeadline: null, deliveredAt: null };
     const transitionActor: DecisionTransitionActor = reason === 'passed'
@@ -134,9 +134,10 @@ export class DecisionEscalationService {
     const holder = record.route.chain[record.route.holderIndex];
     const transition: DecisionRouteHistoryEntry['action'] = action === 'approved' ? 'approved' : action === 'denied' ? 'denied'
       : action === 'deferred' ? 'deferred' : 'answered';
+    const actorNote = actor.kind === 'agent' ? actor.note : undefined;
     return [{ threadId: actor.kind === 'agent' ? actor.threadId || holder?.threadId || record.conversationId : record.route.chain.at(-1)?.threadId || record.conversationId,
       agentId: actor.kind === 'agent' ? actor.agentId || 'agent' : 'human', action: transition, at: this.clock(),
-      ...((note ?? actor.note) ? { note: (note ?? actor.note)!.slice(0, 500) } : {}) }];
+      ...((note ?? actorNote) ? { note: (note ?? actorNote)!.slice(0, 500) } : {}) }];
   }
 
   async reconcile(): Promise<void> {

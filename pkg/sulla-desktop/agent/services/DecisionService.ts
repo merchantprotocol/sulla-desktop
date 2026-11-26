@@ -36,7 +36,7 @@ export class DecisionService {
   private readonly routeResolver: DecisionRouteResolver;
   private readonly askerWaiter: DecisionQuestionAskerWaiter;
   private readonly parentFyiNotifier: DecisionParentFyiNotifier;
-  private readonly escalation: Pick<DecisionEscalationService, 'start' | 'reconcile' | 'answerAsAgent' | 'authorize' | 'passFromResolveAs' | 'historyForAction'>;
+  private readonly escalation: Pick<DecisionEscalationService, 'start' | 'reconcile' | 'answerAsAgent' | 'answerAsHuman' | 'authorize' | 'passFromResolveAs' | 'historyForAction'>;
 
   constructor(
     lateAnswerHandler?: LateDecisionAnswerHandler,
@@ -334,7 +334,7 @@ export class DecisionService {
         entry.cleanup();
         clearTimeout(entry.timer);
         this.waiting.delete(response.id);
-        entry.settle({ status: action, answers, answeredBy: actor, ...(actor.note ? { note: actor.note } : {}) });
+        entry.settle({ status: action, answers, answeredBy: actor, ...(actor.kind === 'agent' && actor.note ? { note: actor.note } : {}) });
       }
       return { settled: true, conversationId: entry.record.conversationId };
     } finally { entry.busy = false }
@@ -369,7 +369,7 @@ export class DecisionService {
       clearTimeout(entry.timer);
       entry.cleanup();
       entry.record = result;
-      entry.settle({ status: result.status, answers: result.answers ?? [], answeredBy: result.answeredBy, ...(result.answeredBy?.note ? { note: result.answeredBy.note } : {}) });
+      entry.settle({ status: result.status, answers: result.answers ?? [], answeredBy: result.answeredBy, ...(result.answeredBy?.kind === 'agent' && result.answeredBy.note ? { note: result.answeredBy.note } : {}) });
       if (expiredNow) this.changed(result);
     } catch { /* Keep the waiter available; the durable sweep retries after database recovery. */ }
     finally { entry.busy = false }
