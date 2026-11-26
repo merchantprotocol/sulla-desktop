@@ -217,7 +217,7 @@ const heartbeatMinutes = computed(() => controller.heartbeat.value.intervalMinut
 const humanMessages = computed(() => controller.messages.value.filter((msg): msg is ToolQuestionMessage | ToolApprovalMessage =>
   (msg.kind === 'tool_question' && msg.status === 'pending') || (msg.kind === 'tool_approval' && msg.decision === 'pending')));
 
-// For You requests live in the side dock's For You tab, not on this line (Jonathon, 2026-11-19).
+// Decision requests live in the side dock's Decide tab, not on this line (Jonathon, 2026-11-19).
 const activity = computed(() => deriveThreadActivity({
   running:          controller.isRunning.value,
   messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),

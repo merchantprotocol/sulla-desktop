@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  The right drawer: outlined tabs (Sulla, For You, AI Team, Files, and
+  The right drawer: outlined tabs (Sulla, Decide, AI Team, Files, and
   Artifacts when the chat has any). It holds no chat input: the message box
   stays at the bottom of the chat. Files and Artifacts come in as slots so
   they keep their own handlers.
@@ -212,7 +212,7 @@ const artifactCount = computed(() => controller.artifacts.value.list.length);
 
 const tabs = computed(() => [
   { id: 'sulla' as const, label: 'Sulla', pulse: working.value },
-  { id: 'decisions' as const, label: 'For You', badge: openCount.value ? { text: String(openCount.value), tone: 'you' } : undefined },
+  { id: 'decisions' as const, label: 'Decide', badge: openCount.value ? { text: String(openCount.value), tone: 'you' } : undefined },
   { id: 'workflow' as const, label: 'AI Team' },
   { id: 'files' as const, label: 'Files' },
   ...(artifactCount.value ? [{ id: 'artifacts' as const, label: 'Artifacts', badge: { text: String(artifactCount.value), tone: 'n' } }] : []),

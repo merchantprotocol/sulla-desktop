@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
-  <section ref="root" class="fy" aria-label="For You">
+  <section ref="root" class="fy" aria-label="Decide">
     <header class="fy-head">
       <div>
-        <h2>For You</h2>
+        <h2>Decide</h2>
         <p class="fy-muted fy-count">{{ active.length ? `${active.length} active` : 'Questions and approvals for this chat' }}</p>
       </div>
       <button class="fy-refresh" type="button" :disabled="store.loading.value" @click="store.refresh">

@@ -35,7 +35,7 @@
           type="button"
           :class="['mode-btn', { active: isActive(item, idx) }]"
           :data-tooltip="item.label"
-          :data-noir-tooltip="item.mode === 'decide' && pending.length ? `Decide · ${pending.length} waiting` : (item.tooltip ?? item.label)"
+          :data-noir-tooltip="item.tooltip ?? item.label"
           :aria-label="item.label"
           :aria-current="isActive(item, idx) ? 'page' : undefined"
           @click="$emit('set-mode', item.mode, item.subTab)"
@@ -44,11 +44,6 @@
             class="icon"
             v-html="item.icon"
           />
-          <span
-            v-if="item.mode === 'decide' && pending.length"
-            class="decision-badge"
-            :aria-label="`${pending.length} decisions waiting`"
-          >{{ pending.length }}</span>
           <span class="item-label">{{ item.label }}</span>
           <span
             class="shortcut-hint"
@@ -181,13 +176,10 @@
 import DOMPurify from 'dompurify';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { useDecisions } from '@pkg/composables/useDecisions';
-
 import type { ComponentPublicInstance, CSSProperties } from 'vue';
 
 const EXPANDED_STORAGE_KEY = 'sulla:mode-rail-expanded';
 
-const { pending } = useDecisions();
 const props = defineProps<{
   active?:        string;
   activeSubTab?:  string;
@@ -328,9 +320,6 @@ onBeforeUnmount(() => {
 
 const items: readonly ModeItem[] = Object.freeze([
   {
-    mode: 'decide', label: 'Decide', shortcut: '⌘1', tooltip: 'Decide', icon: '<svg viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>',
-  },
-  {
     mode: 'chat', label: 'Chat', shortcut: '⌘2', icon: '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
   },
   {
@@ -429,18 +418,6 @@ const items: readonly ModeItem[] = Object.freeze([
 
 .rail-divider {
   display: none;
-}
-
-.decision-badge {
-  position: absolute;
-  top: 0;
-  right: 0;
-  padding: 1px 5px;
-  border-radius: 12px;
-  color: var(--text-on-accent);
-  background: var(--accent, var(--accent));
-  box-shadow: 0 0 8px var(--accent, var(--accent));
-  font-size: 10px;
 }
 
 .rail-spacer {
@@ -660,36 +637,6 @@ const items: readonly ModeItem[] = Object.freeze([
   background: var(--border-subtle);
 }
 
-.decision-badge {
-  left: 25px;
-  right: auto;
-  top: 3px;
-  min-width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent), 0 0 0 2px var(--bg-surface-alt);
-  font-weight: 650;
-}
-
-.decision-badge::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--accent-hover);
-  animation: decision-ping 2.2s cubic-bezier(.22, 1, .36, 1) infinite;
-  z-index: -1;
-}
-
-@keyframes decision-ping {
-  0% { transform: scale(1); opacity: .6; }
-  70%, 100% { transform: scale(2.2); opacity: 0; }
-}
-
 .mode-btn::after {
   content: attr(data-noir-tooltip);
   left: 52px;
@@ -736,9 +683,6 @@ const items: readonly ModeItem[] = Object.freeze([
     filter: none;
   }
 
-  .decision-badge::after {
-    animation: none;
-  }
 }
 </style>
 

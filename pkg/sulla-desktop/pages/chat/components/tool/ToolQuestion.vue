@@ -4,7 +4,7 @@
   SPDX-License-Identifier: GPL-2.0-or-later
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
-<!-- Choices reuse the inline answer route or the persistent For You callback. -->
+<!-- Choices reuse the inline answer route or the persistent Decide callback. -->
 <template>
   <section
     class="qc"
