@@ -13,7 +13,7 @@ type Inventory = {
 };
 
 type CreateIssuer = (binding: AgentContainerRuntimeBinding, scopes: string[], lifecycle: string,
-  directory: string, uid: number, gid: number, ceiling: number, paired: boolean, containerId: string) => ContainerSessionLeases;
+  directory: string, uid: number, gid: number, ceiling: number, containerId: string) => ContainerSessionLeases;
 
 /** Recover only from Docker's launch metadata. Never read authority from a worker's files. */
 export class RecoveredContainerLeaseAuthority {
@@ -57,6 +57,6 @@ export class RecoveredContainerLeaseAuthority {
     const allowed = !caller || caller.scopes.includes('*') ? scopes : scopes.includes('*') ? caller.scopes :
       scopes.filter(scope => caller.scopes.includes(scope));
     return this.create(binding, [...allowed], lifecycle, directory, Number(user[1]), Number(user[2]),
-      caller?.exp ?? Infinity, stored !== undefined, details.Id);
+      caller?.exp ?? Infinity, details.Id);
   }
 }

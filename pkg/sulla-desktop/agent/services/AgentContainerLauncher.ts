@@ -383,7 +383,7 @@ export interface LegacyAgentContainerIdentityResolver {
 export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
   constructor(private readonly runtime: ContainerRuntimeDriver = new GuestDockerRuntimeDriver(),
     private readonly legacyIdentity?: LegacyAgentContainerIdentityResolver, private readonly timeoutMs = 10_000) {}
-  private readonly recovered = new RecoveredContainerLeaseAuthority((binding, scopes, lifecycle, directory, uid, gid, ceiling, paired, containerId) => {
+  private readonly recovered = new RecoveredContainerLeaseAuthority((binding, scopes, lifecycle, directory, uid, gid, ceiling, containerId) => {
     const secret = getChatCompletionsServer().getApiToken();
     if (!secret) throw new Error('Desktop tool API is not initialized');
     const files = new GuestSessionLeaseFiles(directory, { uid, gid });
@@ -397,7 +397,7 @@ export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRunti
           await files.replace(name, value);
         },
         remove: name => files.remove(name),
-      }, paired ? '2' : '1', ceiling);
+      }, '1', ceiling); // Cold inventory cannot prove a live parent session generation.
   });
   recoveredLeases(...args: Parameters<RecoveredContainerLeaseAuthority['issuer']>) { return this.recovered.issuer(...args); }
   private withTimeout<T>(operation: Promise<T>, action: string): Promise<T> {

@@ -125,7 +125,9 @@ describe('owned lease renewal', () => {
 });
 
 describe('cold container inventory', () => {
-  it.each([false, true])('runs a fresh nested CLI without inheriting an old Clerk pair (persisted scopes: %s)', async(scoped) => {
+  it.each([
+    { scoped: false, caller: 'stale' }, { scoped: true, caller: 'stale' }, { scoped: true, caller: 'absent' },
+  ])('runs an ordinary nested CLI with $caller parent (persisted scopes: $scoped)', async({ scoped, caller }) => {
     const lifecycle = 'a6d55df4-acbf-412d-baea-b91ee1f24a2a';
     const directory = '/dev/shm/sulla-agent-secrets/' + binding.podId + '-' + lifecycle;
     const runtime = { list: async() => [{ ID: 'a'.repeat(64) }], inspect: async() => ({ Name: '/' + binding.podId,
@@ -156,16 +158,18 @@ describe('cold container inventory', () => {
       if (out.status !== 0) return { stdout: '', stderr: 'nested CLI wrapper has no process lease', exitCode: 77 };
       const [id, token] = out.stdout.split('\n');
       const proof = await verifyCapabilityToken(token, key, { category: 'meta', tool: 'ping' });
-      expect(proof.exp).toBeLessThanOrEqual(parent.exp);
+      if (caller === 'stale') expect(proof.exp).toBeLessThanOrEqual(parent.exp);
       expect(proof.jti).toBe(lifecycle);
-      expect(proof.tool_session_generation).toBe(scoped ? host.peekToolSession(id)?.executionContext?.jti : undefined);
+      expect(proof.tool_session_generation).toBeUndefined();
+      await expect(resolver.bindForwarded(worker(), 'clerk_get_user', id, { ...proof, request_id: 'child' }, new AbortController().signal))
+        .rejects.toMatchObject({ status: 403 });
       await expect(resolver.bindForwarded(worker(), 'clerk_get_user', id, parent, new AbortController().signal))
         .rejects.toMatchObject({ status: 403 });
       return { stdout: 'pong', stderr: '', exitCode: 0 };
     });
     try {
       await registry.rehydrate();
-      const recovered = registry.forExecution(parent, 'agent-local')!;
+      const recovered = caller === 'stale' ? registry.forExecution(parent, 'agent-local')! : registry.require(parent);
       const release = agentContainerRuntimeRegistry.register(recovered, registry.sessionLeases(recovered));
       try {
         const exec = new ExecWorker(); exec.setState(state);
