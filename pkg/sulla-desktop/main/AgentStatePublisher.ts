@@ -2,12 +2,13 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, webContents } from 'electron';
 
 import type { AgentStateProjector } from '@pkg/agent/app/Services/AgentStateProjector';
 import type { AgentStateService } from '@pkg/agent/app/Services/AgentStateService';
 import { AgentModelStatusRegistry } from '@pkg/agent/services/AgentModelStatusRegistry';
 import { AGENT_STATE_CHANGED_EVENT, AGENT_STATE_SNAPSHOT_CHANNEL, type AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
+import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
 
 /** Coalesces authoritative snapshots and publishes them to every renderer. */
 export class AgentStatePublisher {
@@ -55,7 +56,20 @@ export class AgentStatePublisher {
       if (this.disposed) return;
       // An IPC reader may have started before the change that scheduled this publish.
       if (snapshot.version < this.states.version) this.dirty = true;
-      for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send(AGENT_STATE_CHANGED_EVENT, snapshot);
+      const windows = new Set(BrowserWindow.getAllWindows().filter(window => !window.isDestroyed()).map(window => window.webContents));
+      // Hosted chat tabs are WebContentsViews and do not appear in the BrowserWindow list.
+      for (const contents of webContents.getAllWebContents()) {
+        if (contents.isDestroyed()) continue;
+        const url = contents.getURL();
+        const appWindow = windows.has(contents) && /^(file:|app:)/.test(url);
+        const chatView = url.startsWith('app://./agent.html?') && isAgentWindowSender(contents);
+        if (!appWindow && !chatView) continue;
+        try {
+          contents.send(AGENT_STATE_CHANGED_EVENT, snapshot);
+        } catch (error) {
+          console.debug('[AgentStatePublisher] Could not update a desktop view:', error);
+        }
+      }
     } finally {
       this.publishing = false;
       if (this.dirty && !this.disposed) this.schedule();

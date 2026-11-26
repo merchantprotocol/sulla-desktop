@@ -39,12 +39,14 @@ export interface AgentStateRow extends ResultTracking {
  /** 0 = launched directly from the root chat. */
  depth: number;
  agentId: string | null;
- /** Product Owner stage recorded when this task was delegated. */
- workflowStep?: import('../productOwnerWorkflow').DelegatedWorkflowStep;
- responseModels?: AgentModelStatusValue[];
  /** Explicit existing Projects task assignment. */
  taskId?:            string;
  modelStatus?:       AgentModelStatusValue;
+ /** Optional Workflow projection, absent on older snapshots. */
+ workflowStep?:      import('../productOwnerWorkflow').DelegatedWorkflowStep;
+ responseModels?:    AgentModelStatusValue[];
+ /** Recovery attempts recorded for this job, shared by its tasks. */
+ jobRestartResumeCount?: number;
  label: string;
  visibility: 'hidden' | 'tab';
  state: AgentRowState;

@@ -5,7 +5,7 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <!--
-  The right drawer: outlined tabs (Sulla, Results, Decisions, Files, and
+  The right drawer: outlined tabs (Sulla, For You, AI Team, Files, and
   Artifacts when the chat has any). It holds no chat input: the message box
   stays at the bottom of the chat. Files and Artifacts come in as slots so
   they keep their own handlers.
@@ -15,7 +15,7 @@
     ref="rootEl"
     class="sdk"
     :class="{ 'sdk-resizing': dragging }"
-    aria-label="Sulla, results, decisions and files for this chat"
+    aria-label="Side panel for this chat"
   >
     <!-- Drag the edge to resize; arrow keys nudge it; double-click resets it. -->
     <div
@@ -33,31 +33,33 @@
       @keydown.left.prevent="nudge(0.02)"
       @keydown.right.prevent="nudge(-0.02)"
     />
-    <div
-      class="sdk-tabs"
-      role="tablist"
-    >
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        type="button"
-        role="tab"
-        class="sdk-tab"
-        :class="{ 'sdk-attention': tab.id === 'decisions' && openCount > 0 }"
-        :aria-selected="current === tab.id"
-        @click="pick(tab.id)"
+    <div class="sdk-tabs">
+      <div
+        class="sdk-tab-scroll"
+        role="tablist"
+        aria-label="Chat side panel"
       >
-        {{ tab.label }}<span
-          v-if="tab.badge"
-          class="sdk-badge"
-          :class="`sdk-badge-${tab.badge.tone}`"
-        >{{ tab.badge.text }}</span><span
-          v-else-if="tab.pulse"
-          class="sdk-pulse"
-          aria-label="working"
-        />
-      </button>
-      <span class="sdk-sp" />
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          class="sdk-tab"
+          :class="{ 'sdk-attention': tab.id === 'decisions' && openCount > 0 }"
+          :aria-selected="current === tab.id"
+          @click="pick(tab.id)"
+        >
+          {{ tab.label }}<span
+            v-if="tab.badge"
+            class="sdk-badge"
+            :class="`sdk-badge-${tab.badge.tone}`"
+          >{{ tab.badge.text }}</span><span
+            v-else-if="tab.pulse"
+            class="sdk-pulse"
+            aria-label="working"
+          />
+        </button>
+      </div>
       <button
         type="button"
         class="sdk-move"
@@ -75,12 +77,43 @@
       class="sdk-panel"
       role="tabpanel"
     >
-      <AgentLanes v-if="current === 'sulla'" />
-      <ResultsPanel
-        v-else-if="current === 'results'"
-        @show-activity="current = 'sulla'"
+      <AgentLanes
+        v-if="current === 'sulla' && !showHistory"
+        :outcomes="outcomes.groups.value"
+        :outcomes-loading="outcomes.loading.value"
+        :outcomes-error="outcomes.error.value"
+        :outcome-target="outcomeTarget"
+        @show-for-you="selectTab('decisions')"
+        @show-history="showHistory = true"
+        @retry-outcomes="outcomes.refresh()"
       />
+      <div
+        v-else-if="current === 'sulla'"
+        class="sdk-history"
+      >
+        <div class="sdk-history-head">
+          <button
+            type="button"
+            @click="showHistory = false"
+          >
+            ← Current work
+          </button>
+        </div>
+        <WorkflowPanel
+          view="activity"
+          :outcome-keys="outcomes.reportKeys.value"
+          :lead-at="leadAt"
+          @show-outcome="showOutcome"
+        />
+      </div>
       <ForYouPanel v-else-if="current === 'decisions'" />
+      <WorkflowPanel
+        v-else-if="current === 'workflow'"
+        view="team"
+        :outcome-keys="outcomes.reportKeys.value"
+        :lead-at="leadAt"
+        @show-outcome="showOutcome"
+      />
       <div
         v-else-if="current === 'files'"
         class="sdk-embed"
@@ -102,15 +135,18 @@ import { computed, inject, ref, watch, type Ref } from 'vue';
 
 import AgentLanes from './AgentLanes.vue';
 import ForYouPanel from './ForYouPanel.vue';
-import ResultsPanel from './ResultsPanel.vue';
+import WorkflowPanel from './WorkflowPanel.vue';
 import { ChatDecisions } from '../../composables/useChatDecisions';
+import { useChatOutcomes } from '../../composables/useChatOutcomes';
 import { DockPositions, SIDE_RATIO_DEFAULT } from '../../composables/useDockPosition';
 import { useChatController } from '../../controller/useChatController';
+import { LineTimes } from '../../messages/lineTime';
+import { hasActiveChatWork } from '../../messages/threadActivity';
 
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
 
-type TabId = 'sulla' | 'results' | 'decisions' | 'files' | 'artifacts';
+type TabId = 'sulla' | 'decisions' | 'workflow' | 'files' | 'artifacts';
 
 const controller = useChatController();
 const { setPosition, sideRatio, setSideRatio } = DockPositions.use();
@@ -149,26 +185,49 @@ const client = inject(AGENT_STATE_CLIENT_KEY, null);
 const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
 const current = ref<TabId>('sulla');
+const showHistory = ref(false);
+const outcomes = useChatOutcomes(context.backendThreadId);
+const outcomeTarget = ref<string>();
+watch(context.backendThreadId, () => {
+  outcomeTarget.value = undefined;
+  showHistory.value = false;
+});
+function showOutcome(key: string): void {
+  outcomeTarget.value = key;
+  showHistory.value = false;
+  current.value = 'sulla';
+}
 
 const working = computed(() => {
-  if (!client || !context.backendThreadId.value) return false;
-  const nodes = new AgentTreeBuilder([]).flatten(new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value));
-  return controller.isRunning.value || nodes.some(node => ['queued', 'working'].includes(node.row.state));
+  const agents = client && context.backendThreadId.value
+    ? new AgentTreeBuilder([]).flatten(new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)).map(node => node.row)
+    : [];
+  return hasActiveChatWork(controller.isRunning.value, agents);
+});
+const leadAt = computed(() => {
+  const response = controller.messages.value.findLast(message => message.kind === 'sulla');
+  return response ? LineTimes.idTime(response.id) ?? response.createdAt : undefined;
 });
 const artifactCount = computed(() => controller.artifacts.value.list.length);
 
 const tabs = computed(() => [
   { id: 'sulla' as const, label: 'Sulla', pulse: working.value },
-  { id: 'results' as const, label: 'Results' },
   { id: 'decisions' as const, label: 'For You', badge: openCount.value ? { text: String(openCount.value), tone: 'you' } : undefined },
+  { id: 'workflow' as const, label: 'AI Team' },
   { id: 'files' as const, label: 'Files' },
   ...(artifactCount.value ? [{ id: 'artifacts' as const, label: 'Artifacts', badge: { text: String(artifactCount.value), tone: 'n' } }] : []),
 ] as { id: TabId; label: string; badge?: { text: string; tone: string }; pulse?: boolean }[]);
 
-watch(artifactCount, count => { if (!count && current.value === 'artifacts') current.value = 'sulla'; });
+watch(artifactCount, count => {
+  if (!count && current.value === 'artifacts') current.value = 'sulla';
+});
 
-function selectTab(tab: TabId): void { current.value = tab }
-function pick(tab: TabId): void { current.value = tab }
+function selectTab(tab: TabId): void {
+  outcomeTarget.value = undefined;
+  showHistory.value = false;
+  current.value = tab;
+}
+function pick(tab: TabId): void { selectTab(tab) }
 defineExpose({ selectTab });
 </script>
 
@@ -188,21 +247,31 @@ defineExpose({ selectTab });
 .sdk-resize:focus-visible { outline: none; }
 /* While dragging, text in the transcript and panels must not get selected. */
 .sdk-resizing, .sdk-resizing * { user-select: none; }
-.sdk-tabs { display: flex; flex: none; gap: 3px; padding: 10px 8px 0; border-bottom: 1px solid var(--border-strong); background: var(--bg-page); }
+.sdk-tabs {
+  container-type: inline-size;
+  display: flex; flex: none; align-items: center; gap: 6px;
+  height: var(--chat-header-height, 52px); padding: 0 8px;
+  border-bottom: 1px solid var(--border-default); background: var(--bg-chrome-active);
+}
+.sdk-tab-scroll { min-width: 0; flex: 1; display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; }
 .sdk-tab {
-  position: relative; display: inline-flex; flex: none; align-items: center; gap: 4px; height: 34px; padding: 0 8px;
-  border: 1px solid var(--border-strong); border-bottom: 0; border-radius: 9px 9px 0 0;
+  position: relative; display: inline-flex; flex: none; align-items: center; gap: 4px; height: 32px; padding: 0 8px;
+  border: 1px solid var(--border-default); border-radius: 7px;
   background: color-mix(in srgb, var(--bg-surface) 50%, var(--bg-page)); color: var(--sdk-ink-2);
-  font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer;
+  font: 600 12.5px/1 var(--font-body); white-space: nowrap; cursor: pointer;
   transition: background-color .15s cubic-bezier(.22, 1, .36, 1), color .15s cubic-bezier(.22, 1, .36, 1);
 }
 .sdk-tab:hover { background: var(--bg-surface); color: var(--text-primary); }
-.sdk-tab[aria-selected="true"] { height: 35px; margin-bottom: -1px; background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); color: var(--text-primary); font-weight: 700; }
-.sdk-tab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 1px; left: 8px; right: 8px; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent); }
+.sdk-tab[aria-selected="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-surface)); color: var(--text-primary); }
+.sdk-tab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 2px; left: 8px; right: 8px; height: 2px; border-radius: 2px; background: var(--accent); }
 .sdk-tab.sdk-attention { color: var(--status-warning); border-color: color-mix(in srgb, var(--status-warning) 65%, var(--border-strong)); background: color-mix(in srgb, var(--status-warning) 9%, var(--bg-page)); }
 .sdk-tab.sdk-attention::after { background: var(--status-warning); }
 .sdk-tab.sdk-attention[aria-selected="true"] { background: color-mix(in srgb, var(--status-warning) 16%, var(--bg-surface)); color: var(--text-primary); }
-.sdk-tab:focus-visible, .sdk-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sdk-tab:focus-visible, .sdk-move:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+@container (max-width: 335px) {
+  .sdk-tab-scroll { gap: 2px; }
+  .sdk-tab { padding-inline: 4px; font-size: 12px; }
+}
 .sdk-badge { display: inline-grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; font: 700 10.5px/1 var(--font-body); }
 .sdk-badge-you { background: var(--status-warning); color: var(--bg-page); }
 .sdk-badge-bad { background: color-mix(in srgb, var(--status-error) 22%, transparent); color: var(--status-error); }
@@ -213,14 +282,30 @@ defineExpose({ selectTab });
   70% { box-shadow: 0 0 0 6px transparent; }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-.sdk-sp { flex: 1 1 0; min-width: 4px; }
 .sdk-move {
-  align-self: center; display: grid; place-items: center; width: 28px; height: 28px; margin-bottom: 6px;
-  border: 1px solid var(--border-strong); border-radius: 8px; background: none; color: var(--sdk-ink-2); cursor: pointer;
+  flex:none;
+  display: grid; place-items: center; width: 32px; height: 32px;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-page); color: var(--sdk-ink-2); cursor: pointer;
 }
 .sdk-move:hover { color: var(--text-primary); border-color: var(--accent); }
 .sdk-move svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .sdk-panel { flex: 1; min-height: 0; overflow: auto; }
-.sdk-embed { height: 100%; }
+.sdk-embed { position: relative; height: 100%; }
+.sdk-embed :deep(.chat-files-drawer) {
+  position: relative; inset: auto; z-index: auto; width: 100%; height: 100%;
+  border: 0; background: transparent; backdrop-filter: none;
+}
+.sdk-embed :deep(.sd-artifact-panel) {
+  width: calc(100% - 20px); height: calc(100% - 20px); margin: 10px;
+  border-radius: 10px; background: var(--bg-page); backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--border-default);
+}
+.sdk-history-head { padding: 10px 14px 0; }
+.sdk-history-head button {
+  padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer;
+  font: 600 12px/1.4 var(--font-body);
+}
+.sdk-history-head button:hover { text-decoration: underline; text-underline-offset: 2px; }
+.sdk-history-head button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .sdk-pulse { animation: none; } }
 </style>

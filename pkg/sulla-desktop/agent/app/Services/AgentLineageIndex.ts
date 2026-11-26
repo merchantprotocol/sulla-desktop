@@ -21,7 +21,8 @@ export class AgentLineageIndex {
     for (const job of [...jobs].sort((left, right) => left.createdAt - right.createdAt)) {
       job.tasks.forEach((task, taskIndex) => {
         // Older interrupted jobs can retain a null JSON array slot. Preserve
-        // task indexes without letting one malformed slot hide later lineage.
+        // task indexes, but do not let one malformed historical slot hide the
+        // rest of the chat's lineage.
         if (!task) return;
         if (task.threadId && !this.taskByThreadId.has(task.threadId)) this.taskByThreadId.set(task.threadId, { job, taskIndex });
       });
