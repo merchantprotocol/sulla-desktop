@@ -86,14 +86,12 @@ export class DetailedTimelineProjection {
     agents?: readonly AgentStateRow[],
     waiting?: { message: UserMessage; since: number } | null,
   ): DetailedTimelineItem[] {
-    const ordered = messages.map((message, order) => ({ message, order }))
-      .sort((left, right) => left.message.createdAt - right.message.createdAt || left.order - right.order);
     const rows = this.traceProjection.projectRows(messages, standardEntries, { agents });
     const entriesBySource = this.entriesBySource(standardEntries);
     const rowsBySource = this.rowsBySource(rows);
     const entryIndexById = new Map(standardEntries.map((entry, index) => [entry.id, index]));
-    const groups = this.groups(ordered.map(item => item.message));
-    const orderById = new Map(ordered.map((item, index) => [String(item.message.id), index]));
+    const groups = this.groups(messages);
+    const orderById = new Map(messages.map((message, index) => [String(message.id), index]));
     const result: DetailedTimelineItem[] = [];
 
     for (const group of groups) {
@@ -146,9 +144,7 @@ export class DetailedTimelineProjection {
       result.push(...events.map(event => event.item));
     }
 
-    return result.map((item, order) => ({ item, order }))
-      .sort((left, right) => left.item.at - right.item.at || left.order - right.order)
-      .map(({ item }) => item);
+    return result;
   }
 
   private entriesBySource(entries: readonly TranscriptEntry[]): Map<string, TranscriptEntry[]> {

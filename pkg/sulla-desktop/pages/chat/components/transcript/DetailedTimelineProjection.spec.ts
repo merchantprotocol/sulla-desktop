@@ -56,10 +56,10 @@ describe('DetailedTimelineProjection', () => {
   it('places each detailed event between the original standard messages by timestamp', () => {
     // risk: moving work away from its time and changing the Standard transcript while adding Detail.
     const messages = [
-      { id: asMessageId('reply'), kind: 'sulla', createdAt: 400, text: 'done', model: 'test-model', tokens: 4 },
-      { id: asMessageId('tool'), kind: 'tool', createdAt: 300, tool: 'Shell', recordedToolName: 'exec', desc: 'run', status: 'ok', input: 'echo safe', output: 'safe' },
-      { id: asMessageId('thought'), kind: 'thinking', createdAt: 200, thoughts: ['Measure before guessing'], startedAt: 200, completed: true },
       { id: asMessageId('user'), kind: 'user', createdAt: 100, text: 'inspect it' },
+      { id: asMessageId('thought'), kind: 'thinking', createdAt: 200, thoughts: ['Measure before guessing'], startedAt: 200, completed: true },
+      { id: asMessageId('tool'), kind: 'tool', createdAt: 300, tool: 'Shell', recordedToolName: 'exec', desc: 'run', status: 'ok', input: 'echo safe', output: 'safe' },
+      { id: asMessageId('reply'), kind: 'sulla', createdAt: 400, text: 'done', model: 'test-model', tokens: 4 },
     ] satisfies Message[];
     const reporting = new TranscriptReporting();
     const standardEntries = reporting.standardEntries(messages, 'info');
@@ -165,6 +165,27 @@ describe('DetailedTimelineProjection', () => {
 
     expect(items.find(item => item.kind === 'message' && item.entry.id === 'continuation'))
       .toMatchObject({ kind: 'message', streamingParagraphBreak: true });
+  });
+
+  it('splits turns by transcript order when a reply timestamp precedes its user message', () => {
+    // risk: clock skew or optimistic timestamps place a reply inside the previous user's turn.
+    const messages = [
+      { id: asMessageId('user-one'), kind: 'user', createdAt: 100, text: 'first question' },
+      { id: asMessageId('reply-one'), kind: 'sulla', createdAt: 200, text: 'first answer' },
+      { id: asMessageId('user-two'), kind: 'user', createdAt: 300, text: 'second question' },
+      { id: asMessageId('reply-two'), kind: 'sulla', createdAt: 290, text: 'second answer with a skewed timestamp' },
+    ] satisfies Message[];
+    const reporting = new TranscriptReporting();
+    const entries = reporting.standardEntries(messages, 'info');
+    const items = new DetailedTimelineProjection(undefined, reporting).project(messages, entries);
+    const segments = new DetailedTimelineSegmenter().segment(items);
+
+    expect(items.filter(item => item.kind === 'message').map(item => item.entry.id))
+      .toEqual(['user-one', 'reply-one', 'user-two', 'reply-two']);
+    expect(segments.map(segment => segment.leading.map(item => item.kind === 'message' ? item.entry.id : '')))
+      .toEqual([['user-one'], ['user-two']]);
+    expect(segments.map(segment => segment.items.filter(item => item.kind === 'message')
+      .map(item => item.kind === 'message' ? item.entry.id : ''))).toEqual([['reply-one'], ['reply-two']]);
   });
 
   it('places a returned sub-agent result at its own later timestamp instead of under the launch', () => {
