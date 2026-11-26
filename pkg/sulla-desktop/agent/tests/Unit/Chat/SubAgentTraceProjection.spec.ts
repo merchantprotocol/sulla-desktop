@@ -84,7 +84,7 @@ describe('Option A transcript policy', () => {
       direction: 'from_agent', status: 'failed' } as const;
     const messages = [launch, exchange, card(result('blocked', { problem: 'Waiting for a decision' }))];
     expect(rows(messages)).toMatchObject([{ status: 'blocked', note: 'Waiting for a decision' }]);
-    const restarted = { ...live('working'), startedAt: new Date(7_200).toISOString() };
+    const restarted = { ...live('working'), startedAt: new Date(8_000).toISOString() };
     expect(rows(messages, [restarted])).toMatchObject([{ status: 'working' }]);
   });
 

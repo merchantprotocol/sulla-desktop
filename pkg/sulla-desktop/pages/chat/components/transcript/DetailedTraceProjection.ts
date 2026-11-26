@@ -14,6 +14,8 @@ import type { SubAgentTraceStatus, TraceIcon, TraceRow, TraceRowKind, TraceRowSt
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
+  static readonly trailingAnchor = '__trace-trailing__';
+
   constructor(
     private readonly reporting = new TranscriptReporting(),
     private readonly serializer = new TracePayloadSerializer(),
@@ -26,12 +28,15 @@ export class DetailedTraceProjection {
     const activities = this.debugActivities(messages, standardEntries);
     const subagents = this.subagents.statusRowsByMessage(messages, subagentInput);
     return this.groups(messages).map((group, index) => {
+      const reply = group.find(message => message.kind === 'sulla' || message.kind === 'streaming');
+      const last = group[group.length - 1];
+      const anchorEntryId = this.anchorFor(reply, last.createdAt, standardEntries);
       const rows = group.flatMap(message => {
         const sourceId = String(message.id);
         const jobRows = subagents.get(sourceId) ?? [];
         subagents.delete(sourceId);
-        return [...this.rowsFor(message, sourceId, activities.get(message.id)),
-          ...jobRows.map(row => ({ ...row, anchorEntryId: sourceId }))];
+        return [...this.rowsFor(message, anchorEntryId, activities.get(message.id)),
+          ...jobRows.map(row => ({ ...row, anchorEntryId }))];
       });
       const usage = this.usage(group);
       const agentSummary = SubAgentTraceProjection.summary(rows.flatMap(row => row.subagent ? [row.status as SubAgentTraceStatus] : []));
@@ -74,6 +79,14 @@ export class DetailedTraceProjection {
     }
     if (current.length > 0) groups.push(current);
     return groups;
+  }
+
+  /** Keeps the legacy activity-line projection's anchor; the Detailed timeline uses projectRows(). */
+  private anchorFor(reply: Message | undefined, groupLastCreatedAt: number, entries: readonly TranscriptEntry[]): string {
+    const own = reply && entries.find(entry => entry.sourceId === String(reply.id));
+    if (own) return own.id;
+    const next = entries.find(entry => entry.createdAt >= groupLastCreatedAt);
+    return next?.id ?? DetailedTraceProjection.trailingAnchor;
   }
 
   private debugActivities(messages: readonly Message[], standardEntries: readonly TranscriptEntry[]): Map<string, string[]> {
