@@ -11,9 +11,9 @@ import { A2aCardMarkup } from '../../messages/a2aCardMarkup';
 import { InlineReplyMarkup } from '../../messages/InlineReplyMarkup';
 import { sanitizeMarkdownHtml } from '../../messages/markdown';
 
-const props = defineProps<{ text: string; legacyHtml?: boolean; agentCards?: boolean }>();
+const props = defineProps<{ text: string; legacyHtml?: boolean; agentMessagesAsTrace?: boolean }>();
 const formatter = new InlineReplyMarkup();
 const cards = new A2aCardMarkup();
-const reply = computed(() => formatter.render(props.agentCards ? cards.render(props.text) : props.text, props.legacyHtml));
+const reply = computed(() => formatter.render(props.agentMessagesAsTrace ? cards.strip(props.text) : props.text, props.legacyHtml));
 const rendered = computed(() => sanitizeMarkdownHtml(reply.value.html));
 </script>

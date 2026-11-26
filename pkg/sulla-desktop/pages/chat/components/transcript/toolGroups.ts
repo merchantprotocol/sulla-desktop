@@ -7,6 +7,7 @@ import { ChatToolReporting } from '@pkg/agent/tools/ChatToolReporting';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 
 import { LegacyAgentNotices } from '../../messages/legacyAgentNotice';
+import { A2aCardMarkup } from '../../messages/a2aCardMarkup';
 import type { Message } from '../../models/Message';
 import type { ReportingLevel } from '../../models/ReportingLevel';
 
@@ -27,7 +28,7 @@ const cards: Record<CardMessage['kind'], Classification> = {
   tool_approval:     { label: 'Approval', level: 'info', essential: true },
   tool_question:     { label: 'Question', level: 'info', essential: true },
   patch:             { label: 'Change', level: 'info' },
-  channel:           { label: 'Agent message', level: 'info', essential: true },
+  channel:           { label: 'Agent message', level: 'debug' },
   subagent:          { label: 'Agent status', level: 'info' },
   subagent_exchange: { label: 'Handoff', level: 'info' },
   citation:          { label: 'Evidence', level: 'info' },
@@ -53,6 +54,8 @@ const toolLabels = new Map([
 ]);
 
 export class TranscriptReporting {
+  constructor(private readonly agentMessages = new A2aCardMarkup()) {}
+
   /** Project one active thread, never reorder or change its retained messages. */
   entries(messages: readonly Message[], level: ReportingLevel, needsHumanDecision?: (item: AgentResultItem) => boolean): TranscriptEntry[] {
     const entries: TranscriptEntry[] = [];
@@ -145,6 +148,8 @@ export class TranscriptReporting {
       }
       if (LegacyAgentNotices.parseLegacyAgentNotice(message.headline, message.body)) return;
     }
+    if ((message.kind === 'sulla' || message.kind === 'streaming') &&
+      message.text.includes('⟦SULLA_A2A:') && !this.agentMessages.strip(message.text).trim()) return;
     const report = Object.hasOwn(cards, message.kind) ? cards[message.kind] : undefined;
     if (!report) return;
     const label = message.kind === 'user' && message.voiceIdentity ? 'Voice' : report.label;
