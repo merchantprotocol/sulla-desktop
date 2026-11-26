@@ -21,7 +21,7 @@ vi.mock('../../../../database/models/AgentJobMessagingModel', () => ({ AgentJobM
   markMessagesDelivered: runtime.markMessagesDelivered,
 } }));
 vi.mock('../../../../app/Providers/AgentJobServiceProvider', () => ({ agentJobProvider: { jobs: { job: vi.fn(async() => runtime.job) }, reviewItems: {} } }));
-vi.mock('../../../../tools/agents/jobRegistry', () => ({ getJob: vi.fn(async() => runtime.job) }));
+vi.mock('../../../../tools/agents/jobRegistry', () => ({ getJob: vi.fn(() => Promise.resolve(runtime.job)), completeJob: vi.fn(), parkJobTask: vi.fn(), recordTaskCompletion: vi.fn(), resumeParkedJob: vi.fn() }));
 vi.mock('../../../../services/GraphRegistry', () => ({ GraphRegistry: { get: vi.fn(() => runtime.graph) } }));
 vi.mock('../../../../services/AgentWaitServices', () => ({ agentWaitProvider: { cancel: runtime.cancel } }));
 vi.mock('../../../../services/BackendGraphWebSocketService', () => ({ getBackendGraphWebSocketService: () => ({ wakeParkedAgent: runtime.wakeParkedAgent }) }));

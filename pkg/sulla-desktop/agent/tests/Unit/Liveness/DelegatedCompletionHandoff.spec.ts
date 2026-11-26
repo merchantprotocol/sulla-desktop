@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('../../../app/Providers/AgentJobServiceProvider', () => ({ agentJobProvider: {} }));
 vi.mock('../../../tools/agents/jobDelivery', () => ({ deliverJobCompletion: vi.fn(), returnedJobResult: vi.fn() }));
 vi.mock('../../../tools/agents/jobRegistry', () => ({ completeJob: vi.fn(), getJob: vi.fn(), parkJobTask: vi.fn(), recordTaskCompletion: vi.fn(), resumeParkedJob: vi.fn() }));
+vi.mock('../../../services/GraphRegistry', () => ({ GraphRegistry: { get: vi.fn(), delete: vi.fn(), containsState: vi.fn(() => false) } }));
 vi.mock('../../../services/ReturnedTaskSettlement', () => ({ ReturnedTaskSettlement: class { settle = vi.fn() } }));
 
 import { AgentCompletionInboxService, type PendingCompletion } from '../../../app/Services/AgentCompletionInboxService';
