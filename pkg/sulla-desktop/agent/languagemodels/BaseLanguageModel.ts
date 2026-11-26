@@ -139,6 +139,8 @@ export interface NormalizedResponse {
     prompt_tokens?:          number;
     completion_tokens?:      number;
     model?:                  string;
+    /** Model identity supplied by the provider on this response. */
+    reportedModel?:          string;
     tool_calls?:             { id?: string; name: string; args: any }[];
     finish_reason?:          FinishReason;
     reasoning?:              string;
@@ -881,6 +883,7 @@ export abstract class BaseLanguageModel {
         prompt_tokens:     usage.prompt_tokens ?? usage.input_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
         model:             this.model,
+        reportedModel:     typeof raw.model === 'string' ? raw.model : undefined,
         tool_calls:        toolCalls.length > 0 ? toolCalls : undefined,
         finish_reason:     this.normalizeFinishReason(finishReason),
         reasoning:         reasoning.trim() || undefined,

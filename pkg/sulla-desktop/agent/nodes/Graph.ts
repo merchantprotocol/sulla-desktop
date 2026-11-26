@@ -102,6 +102,11 @@ export interface BaseThreadState {
      * this is not rewritten when a turn arrives through another transport.
      */
     agentId?:              string;
+    /** Runtime-reported models that returned output in this conversation. */
+    inheritedResumeModel?: import('../languagemodels/modelRouter').ModelCandidate;
+    workflowResponseModels?: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue[];
+    /** Set by the canonical delegated launch path after the scope is validated. */
+    productOwnerWorkflowStep?: import('../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
     /** Conversation logger ID — set by workflow agent handler or graph creator */
     conversationId?:       string;
     /** Whether this agent may see other agents and team-operation instructions. */
