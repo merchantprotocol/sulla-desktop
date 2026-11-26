@@ -2,276 +2,172 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { CLASS_LABELS, modelName, providerName, resolveChoice } from '../settings/sections/modelRouting/routingLogic';
-
+import type { AgentModelTiers, ModelTier } from '@pkg/agent/languagemodels/agentModelTiers';
+import { incompleteTierRow } from './AgentModelConfiguration';
 import type { ModelCandidate } from '@pkg/agent/languagemodels/modelRouter';
-import { MODEL_CLASSES, type AgentModelChoice, type ModelRoutingState } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import { MODEL_CLASSES, type AgentModelChoice, type ModelClass, type ModelRoutingState, type RoutingProviderInfo } from '@pkg/agent/languagemodels/modelRoutingTypes';
+import { previewEffort } from '@pkg/shared/modelLaunchPreview';
+import { isSubscriptionAccess } from '@pkg/shared/providerAccess';
+import { AGENT_EDITOR_WORKER_PROVIDERS } from '@pkg/shared/agentEditor';
+import { CLASS_LABELS, choiceLabel } from '../settings/sections/modelRouting/routingLogic';
 
-const props = defineProps<{ modelValue: AgentModelChoice; baseChoice: AgentModelChoice; fallbacks: ModelCandidate[]; state: ModelRoutingState | null }>();
-const emit = defineEmits<{ (event: 'update:modelValue', choice: AgentModelChoice): void; (event: 'update:fallbacks', candidates: ModelCandidate[]): void }>();
-const pin = computed(() => props.modelValue.mode === 'pin' ? props.modelValue : null);
-const providers = computed(() => {
-  const connected = (props.state?.providers ?? []).filter(provider => provider.connected && ['codex', 'claude-code', 'grok'].includes(provider.id));
-  const retainedIds = new Set([
-    ...(pin.value ? [pin.value.provider] : []),
-    ...props.fallbacks.map(candidate => candidate.provider),
-  ]);
-  const retained = (props.state?.providers ?? []).filter(provider => retainedIds.has(provider.id));
-  return [...connected, ...retained.filter(provider => !connected.some(row => row.id === provider.id))];
-});
-const subscriptionPin = computed(() => !!pin.value && ['codex', 'claude-code', 'grok'].includes(pin.value.provider));
-const fallbackProviders = computed(() => providers.value.filter(provider => ['codex', 'claude-code', 'grok'].includes(provider.id)));
-const current = computed(() => props.state ? resolveChoice(props.state, props.modelValue) : null);
-function models(provider: string, selected = '') {
-  const rows = props.state?.providers.find(item => item.id === provider)?.models ?? [];
-  return selected && !rows.some(row => row.id === selected) ? [{ id: selected, label: `${ selected } · not listed` }, ...rows] : rows;
+const props = withDefaults(defineProps<{
+  modelValue: AgentModelChoice;
+  tiers: AgentModelTiers | null;
+  state: ModelRoutingState;
+  source: string;
+  sharedChoiceReadonly?: boolean;
+}>(), { sharedChoiceReadonly: false });
+const emit = defineEmits<{ 'update:modelValue': [choice: AgentModelChoice]; 'update:tiers': [tiers: AgentModelTiers | null] }>();
+const providers = computed(() => props.state.providers.filter(provider =>
+  provider.connected && AGENT_EDITOR_WORKER_PROVIDERS.some(id => id === provider.id) &&
+  (!provider.accessMethod || isSubscriptionAccess(provider.accessMethod)) && usableModels(provider).length,
+));
+
+function usableModels(provider?: RoutingProviderInfo) {
+  return provider?.models.filter(row => !row.unverified) ?? [];
 }
-function efforts(provider: string, model: string) { return props.state?.providers.find(item => item.id === provider)?.models.find(item => item.id === model)?.efforts ?? [] }
-function base(value: string) { emit('update:modelValue', value === 'list' ? { mode: 'list' } : { mode: 'class', class: value as typeof MODEL_CLASSES[number] }) }
-function toggle() {
-  if (pin.value) {
-    // Fallbacks belong to a pinned first choice; unpinning hides their editor, so clear them visibly here.
-    emit('update:modelValue', props.baseChoice.mode === 'pin' ? { mode: 'list' } : props.baseChoice);
-    if (props.fallbacks.length) emit('update:fallbacks', []);
-    return;
+function models(provider: string) {
+  return usableModels(providers.value.find(row => row.id === provider));
+}
+function efforts(provider: string, model: string) {
+  return models(provider).find(row => row.id === model)?.efforts ?? [];
+}
+
+// A new row starts empty. The owner chooses the provider and model; the editor never picks one.
+const emptyRow = (): ModelCandidate => ({ provider: '', model: '' });
+const canAdd = computed(() => providers.value.length > 0);
+const incomplete = computed(() => incompleteTierRow(props.tiers));
+
+const valueOf = (event: Event) => (event.target as HTMLSelectElement).value;
+function selectShared(value: string) {
+  emit('update:modelValue', value === 'list' ? { mode: 'list' } : { mode: 'class', class: value as ModelClass });
+}
+function useShared() {
+  emit('update:tiers', null);
+  if (!props.sharedChoiceReadonly && props.modelValue.mode === 'pin') selectShared('list');
+}
+function updateTiers(tiers: ModelTier[]) {
+  if (props.tiers) emit('update:tiers', { ...props.tiers, tiers });
+}
+function patchPolicy(patch: Pick<AgentModelTiers, 'allowLaunchOverride' | 'crossCompanyFallback'>) {
+  if (props.tiers) emit('update:tiers', { ...props.tiers, ...patch });
+}
+function addTier() {
+  if (!canAdd.value) return;
+  if (props.tiers) updateTiers([...props.tiers.tiers, { candidates: [emptyRow()] }]);
+  else {
+    emit('update:tiers', { version: 1, tiers: [{ candidates: [emptyRow()] }], crossCompanyFallback: true, allowLaunchOverride: 'listed' });
+    if (props.modelValue.mode === 'pin') selectShared('list');
   }
-  emit('update:modelValue', { mode: 'pin', provider: '', model: '' });
 }
-function selectProvider(provider: string) { emit('update:modelValue', { mode: 'pin', provider, model: '' }) }
-function selectModel(model: string) { if (pin.value) emit('update:modelValue', { mode: 'pin', provider: pin.value.provider, model }); }
-function selectEffort(effort: string) { if (pin.value) emit('update:modelValue', { mode: 'pin', provider: pin.value.provider, model: pin.value.model, ...(effort ? { effort } : {}) }); }
-function updateFallback(index: number, patch: Partial<ModelCandidate>) { emit('update:fallbacks', props.fallbacks.map((row, i) => i === index ? { ...row, ...patch } : { ...row })) }
-function add() { emit('update:fallbacks', [...props.fallbacks, { provider: '', model: '' }]); }
-function move(index: number, delta: number) { const rows = [...props.fallbacks]; [rows[index], rows[index + delta]] = [rows[index + delta], rows[index]]; emit('update:fallbacks', rows) }
+function updateRows(index: number, candidates: ModelCandidate[]) {
+  if (props.tiers) updateTiers(props.tiers.tiers.map((tier, i) => i === index ? { ...tier, candidates } : tier));
+}
+function selectProvider(tier: number, row: number, provider: string) {
+  // The earlier model and effort belong to the other provider. Clear both.
+  patchRow(tier, row, { provider, model: '' });
+}
+function patchRow(tier: number, index: number, replacement: ModelCandidate) {
+  updateRows(tier, props.tiers!.tiers[tier].candidates.map((row, i) => i === index ? replacement : row));
+}
+function move<T>(rows: T[], index: number, delta: number) {
+  const ordered = [...rows];
+  [ordered[index], ordered[index + delta]] = [ordered[index + delta], ordered[index]];
+  return ordered;
+}
 </script>
+
 <template>
-  <div class="mc">
-    <div class="mc-set">
-      <div class="mc-l">
-        <b>Shared defaults</b><small>Use the Agents list or a model class from AI Models.</small><p v-if="!pin && current">
-          Right now: {{ current.model }} {{ current.text }}
-        </p>
-      </div>
-      <select
-        :value="modelValue.mode === 'class' ? modelValue.class : baseChoice.mode === 'class' ? baseChoice.class : 'list'"
-        class="mc-sel"
-        aria-label="Model class"
-        :disabled="!!pin"
-        @change="base(($event.target as HTMLSelectElement).value)"
-      >
-        <option value="list">
-          Agents list (default)
-        </option><option
-          v-for="modelClass in MODEL_CLASSES"
-          :key="modelClass"
-          :value="modelClass"
-        >
-          Class: {{ CLASS_LABELS[modelClass] }}
-        </option>
+  <div class="model-tiers">
+    <div class="setting">
+      <div><strong>{{ source }}</strong><p v-if="!tiers && modelValue.mode === 'pin'">{{ choiceLabel(modelValue, state) }}</p></div>
+      <button v-if="tiers || modelValue.mode === 'pin'" class="btn sm" type="button" @click="useShared">Use shared defaults</button>
+      <span v-else-if="sharedChoiceReadonly" class="inherited-choice">{{ choiceLabel(modelValue, state) }}</span>
+      <select v-else :value="modelValue.mode === 'class' ? modelValue.class : 'list'" aria-label="Shared model defaults" @change="selectShared(valueOf($event))">
+        <option value="list">Agents list</option>
+        <option v-for="modelClass in MODEL_CLASSES" :key="modelClass" :value="modelClass">{{ CLASS_LABELS[modelClass] }} class</option>
       </select>
     </div>
-    <div class="mc-set">
-      <div class="mc-l">
-        <b>Choose a specific model</b><small>Set the version and effort for this agent. Running work keeps its launch settings.</small>
-      </div>
-      <button
-        type="button"
-        class="mc-tog"
-        :class="{ on: !!pin }"
-        role="switch"
-        :aria-checked="!!pin"
-        aria-label="Pin a specific model"
-        :disabled="!pin && !providers.length"
-        @click="toggle"
-      />
-    </div>
-    <template v-if="pin">
-      <div class="mc-set">
-        <div class="mc-l">
-          <b>Model</b><small>First choice for this agent.</small>
+    <template v-if="tiers">
+      <fieldset v-for="(tier, tierIndex) in tiers.tiers" :key="tierIndex">
+        <legend>Tier {{ tierIndex + 1 }}</legend>
+        <div v-for="(row, rowIndex) in tier.candidates" :key="rowIndex" class="candidate">
+          <select :value="row.provider" :aria-label="`Tier ${tierIndex + 1}, model ${rowIndex + 1} provider`" @change="selectProvider(tierIndex, rowIndex, valueOf($event))">
+            <option v-if="!row.provider" value="" disabled>Choose provider</option>
+            <option v-else-if="!providers.some(provider => provider.id === row.provider)" :value="row.provider" disabled>{{ row.provider }} · unavailable</option>
+            <option v-for="provider in providers" :key="provider.id" :value="provider.id">{{ provider.name }}</option>
+          </select>
+          <select :value="row.model" :disabled="!row.provider" :aria-label="`Tier ${tierIndex + 1}, model ${rowIndex + 1} version`" @change="patchRow(tierIndex, rowIndex, { provider: row.provider, model: valueOf($event) })">
+            <option v-if="!row.model" value="" disabled>Choose model</option>
+            <option v-else-if="!models(row.provider).some(model => model.id === row.model)" :value="row.model" disabled>{{ row.model }} · unavailable</option>
+            <option v-for="model in models(row.provider)" :key="model.id" :value="model.id">{{ model.label }}</option>
+          </select>
+          <select v-if="row.effort || efforts(row.provider, row.model).length" :value="row.effort ?? ''" :aria-label="`Tier ${tierIndex + 1}, model ${rowIndex + 1} effort`" @change="patchRow(tierIndex, rowIndex, { provider: row.provider, model: row.model, ...(valueOf($event) ? { effort: valueOf($event) } : {}) })">
+            <option value="">Provider default</option>
+            <option v-if="row.effort && !efforts(row.provider, row.model).some(level => level.id === row.effort)" :value="row.effort" disabled>{{ row.effort }} · unavailable</option>
+            <option v-for="level in efforts(row.provider, row.model)" :key="level.id" :value="level.id">{{ previewEffort({ ...row, effort: level.id }) }}</option>
+          </select>
+          <div class="actions">
+            <button class="btn sm" type="button" :aria-label="`Move model ${rowIndex + 1} up in tier ${tierIndex + 1}`" :disabled="rowIndex === 0" @click="updateRows(tierIndex, move(tier.candidates, rowIndex, -1))">↑</button>
+            <button class="btn sm" type="button" :aria-label="`Move model ${rowIndex + 1} down in tier ${tierIndex + 1}`" :disabled="rowIndex === tier.candidates.length - 1" @click="updateRows(tierIndex, move(tier.candidates, rowIndex, 1))">↓</button>
+            <button class="btn sm" type="button" :aria-label="`Remove model ${rowIndex + 1} in tier ${tierIndex + 1}`" :disabled="tier.candidates.length === 1" @click="updateRows(tierIndex, tier.candidates.filter((_, i) => i !== rowIndex))">Remove model</button>
+          </div>
         </div>
-        <div class="mc-c">
-          <select
-            :value="pin.provider"
-            class="mc-sel"
-            aria-label="Pinned provider"
-            @change="selectProvider(($event.target as HTMLSelectElement).value)"
-          >
-            <option
-              v-if="!providers.some(provider => provider.id === pin!.provider)"
-              :value="pin.provider"
-            >
-              {{ pin.provider ? `${ pin.provider } · not listed` : 'Choose provider' }}
-            </option><option
-              v-for="provider in providers"
-              :key="provider.id"
-              :value="provider.id"
-            >
-              {{ providerName(state, provider.id) }}
-            </option>
-          </select>
-          <select
-            :value="pin.model"
-            class="mc-sel"
-            aria-label="Pinned model"
-            @change="selectModel(($event.target as HTMLSelectElement).value)"
-          >
-            <option v-if="!pin.model" value="" disabled>Choose model</option>
-            <option
-              v-for="model in models(pin.provider, pin.model)"
-              :key="model.id"
-              :value="model.id"
-            >
-              {{ state ? modelName(state, pin.provider, model.id) : model.label }}
-            </option>
-          </select>
+        <div class="actions">
+          <button class="btn sm" type="button" :disabled="tier.candidates.length >= 10 || !canAdd" @click="updateRows(tierIndex, [...tier.candidates, emptyRow()])">Add model</button>
+          <button class="btn sm" type="button" :aria-label="`Move tier ${tierIndex + 1} up`" :disabled="tierIndex === 0" @click="updateTiers(move(tiers.tiers, tierIndex, -1))">↑</button>
+          <button class="btn sm" type="button" :aria-label="`Move tier ${tierIndex + 1} down`" :disabled="tierIndex === tiers.tiers.length - 1" @click="updateTiers(move(tiers.tiers, tierIndex, 1))">↓</button>
+          <button class="btn sm" type="button" :aria-label="`Remove tier ${tierIndex + 1}`" :disabled="tiers.tiers.length === 1" @click="updateTiers(tiers.tiers.filter((_, i) => i !== tierIndex))">Remove tier</button>
         </div>
-      </div>
-      <div class="mc-set">
-        <div class="mc-l">
-          <b>Effort</b><small>Provider default leaves the model’s own default in place.</small>
-        </div>
-        <select
-          v-if="efforts(pin.provider, pin.model).length || pin.effort"
-          :value="pin.effort ?? ''"
-          class="mc-sel"
-          aria-label="Reasoning effort"
-          @change="selectEffort(($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">
-            Provider default
-          </option><option
-            v-if="pin.effort && !efforts(pin.provider, pin.model).some(level => level.id === pin!.effort)"
-            :value="pin.effort"
-          >
-            {{ pin.effort }} · not listed
-          </option><option
-            v-for="level in efforts(pin.provider, pin.model)"
-            :key="level.id"
-            :value="level.id"
-          >
-            {{ level.id }}
-          </option>
-        </select>
-        <span
-          v-else
-          class="mc-muted"
-        >No effort setting for this model</span>
-      </div>
-      <details
-        v-if="subscriptionPin || fallbacks.length"
-        class="mc-fallbacks"
-      >
-        <summary>Fallback models · {{ fallbacks.length }}</summary>
-        <p>Try these in order if the first choice is unavailable or out of subscription usage.</p>
-        <p
-          v-if="!subscriptionPin"
-          role="alert"
-        >
-          Choose Claude Code, OpenAI Codex, or the Grok OAuth subscription before saving fallback models.
-        </p>
-        <div
-          v-for="(row, index) in fallbacks"
-          :key="index"
-          class="mc-fallback"
-        >
-          <strong>{{ index + 1 }}</strong>
-          <select
-            :value="row.provider"
-            :aria-label="`Fallback provider ${index + 1}`"
-            @change="updateFallback(index, { provider: ($event.target as HTMLSelectElement).value, model: '', effort: undefined })"
-          >
-            <option
-              v-if="!fallbackProviders.some(provider => provider.id === row.provider)"
-              :value="row.provider"
-            >
-              {{ row.provider }} · not listed
-            </option>
-            <option
-              v-for="provider in fallbackProviders"
-              :key="provider.id"
-              :value="provider.id"
-            >
-              {{ provider.name }}
-            </option>
-          </select>
-          <select
-            :value="row.model"
-            :aria-label="`Fallback model ${index + 1}`"
-            @change="updateFallback(index, { model: ($event.target as HTMLSelectElement).value, effort: undefined })"
-          >
-            <option
-              v-for="model in models(row.provider, row.model)"
-              :key="model.id"
-              :value="model.id"
-            >
-              {{ model.label }}
-            </option>
-          </select>
-          <select
-            v-if="efforts(row.provider, row.model).length || row.effort"
-            :value="row.effort ?? ''"
-            :aria-label="`Fallback effort ${index + 1}`"
-            @change="updateFallback(index, { effort: ($event.target as HTMLSelectElement).value || undefined })"
-          >
-            <option value="">
-              Provider default
-            </option><option
-              v-if="row.effort && !efforts(row.provider, row.model).some(level => level.id === row.effort)"
-              :value="row.effort"
-            >
-              {{ row.effort }} · not listed
-            </option><option
-              v-for="level in efforts(row.provider, row.model)"
-              :key="level.id"
-              :value="level.id"
-            >
-              {{ level.id }}
-            </option>
-          </select>
-          <button
-            type="button"
-            :aria-label="`Move fallback ${index + 1} up`"
-            :disabled="index === 0"
-            @click="move(index, -1)"
-          >
-            ↑
-          </button><button
-            type="button"
-            :aria-label="`Move fallback ${index + 1} down`"
-            :disabled="index === fallbacks.length - 1"
-            @click="move(index, 1)"
-          >
-            ↓
-          </button><button
-            type="button"
-            :aria-label="`Remove fallback ${index + 1}`"
-            @click="emit('update:fallbacks', fallbacks.filter((_, i) => i !== index))"
-          >
-            Remove
-          </button>
-        </div>
-        <button
-          type="button"
-          class="btn sm"
-          :disabled="!subscriptionPin || !fallbackProviders.length || fallbacks.length >= 9"
-          @click="add"
-        >
-          Add fallback
-        </button>
-      </details>
-      <p
-        v-if="!fallbacks.length"
-        class="mc-note"
-      >
-        No fallback selected. This agent waits if its selected provider is unavailable.
-      </p>
+      </fieldset>
     </template>
-    <p class="mc-note">
-      Model settings change how this agent runs. Its instructions, tools and workflow stay the same.
-    </p>
+    <div class="setting">
+      <button class="btn sm" type="button" :disabled="!canAdd || (tiers?.tiers.length ?? 0) >= 10" @click="addTier">{{ tiers ? 'Add tier' : 'Set model tiers' }}</button>
+      <small v-if="!providers.length">Connect a subscription and refresh its model catalog to add models.</small>
+      <small v-else-if="incomplete" role="status">{{ incomplete }}: choose a provider and model before saving.</small>
+    </div>
+    <div v-if="tiers" class="setting policy">
+      <label class="policy-select">Launch override
+        <select :value="tiers.allowLaunchOverride ?? 'listed'" @change="patchPolicy({ allowLaunchOverride: valueOf($event) as AgentModelTiers['allowLaunchOverride'] })">
+          <option value="listed">Models in these tiers</option>
+          <option value="never">Never</option>
+          <option value="any">Models on approved subscriptions</option>
+        </select>
+      </label>
+      <label class="policy-checkbox"><input type="checkbox" :checked="tiers.crossCompanyFallback !== false" @change="patchPolicy({ crossCompanyFallback: ($event.target as HTMLInputElement).checked })"> Allow fallback across companies</label>
+    </div>
   </div>
 </template>
+
 <style scoped>
-.mc{overflow:hidden;border:1px solid var(--uc-line);border-radius:10px;background:var(--uc-card)}.mc-set{display:flex;align-items:center;gap:24px;padding:13px 16px;border-top:1px solid var(--uc-line)}.mc-set:first-child{border-top:0}.mc-l{flex:1;min-width:0}.mc-l b{display:block;color:var(--uc-text);font-weight:600}.mc-l small,.mc-l p,.mc-muted{display:block;margin-top:2px;color:var(--uc-dim);font-size:12px}.mc-c{display:flex;flex:none;flex-wrap:wrap;justify-content:flex-end;gap:8px}.mc select{width:auto;max-width:100%;min-width:150px;padding:6px 10px;color:var(--uc-text);background:var(--uc-paper);border:1px solid var(--uc-line-strong);border-radius:7px;font:inherit}.mc select:disabled{opacity:.5}.mc-tog{position:relative;flex:none;width:34px;height:20px;padding:0;border:0;border-radius:999px;background:var(--uc-line-strong);cursor:pointer}.mc-tog::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--bg-surface);box-shadow:0 1px 2px rgb(0 0 0 / 25%)}.mc-tog.on{background:var(--uc-accent)}.mc-tog.on::after{transform:translateX(14px)}.mc :is(button,select,summary):focus-visible{outline:2px solid var(--uc-accent);outline-offset:2px}.mc-note,.mc-fallbacks{padding:12px 16px;border-top:1px solid var(--uc-line);color:var(--uc-muted);font-size:12px}.mc-fallbacks summary{cursor:pointer}.mc-fallback{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}.mc-fallback select{min-width:120px}.mc-fallback button{font:inherit;padding:6px;background:transparent;color:inherit;border:1px solid var(--uc-line-strong);border-radius:6px}@media(max-width:720px){.mc-set{flex-direction:column;align-items:stretch;gap:10px}.mc-c{justify-content:flex-start}}
+.model-tiers { display: grid; gap: .5rem; min-width: 0; container-type: inline-size; }
+.setting, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; min-width: 0; }
+.setting { justify-content: space-between; }
+.setting p, .setting small { margin: .2rem 0 0; color: var(--uc-dim); }
+fieldset { display: grid; gap: .55rem; min-width: 0; padding: .65rem; border: 1px solid var(--uc-line-strong); border-radius: .5rem; }
+legend { padding: 0 .2rem; font-weight: 600; }
+.candidate { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: .35rem; min-width: 0; }
+@container (min-width: 34rem) {
+  .candidate { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 1fr); }
+}
+.candidate .actions { grid-column: 1 / -1; }
+.candidate + .candidate { border-top: 1px solid var(--uc-line); padding-top: .4rem; }
+select { min-width: 0; max-width: 100%; padding: .35rem; color: var(--uc-text); background: var(--uc-paper); border: 1px solid var(--uc-line-strong); border-radius: .35rem; font: inherit; }
+.inherited-choice { color: var(--uc-muted); }
+.policy { align-items: flex-start; }
+.policy-select, .policy-checkbox { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem; }
+:where(button, select, input):focus-visible { outline: 2px solid var(--uc-accent); outline-offset: 2px; }
+button {
+  padding: .3rem .5rem;
+  min-height: 1.75rem;
+  color: var(--uc-text);
+  background: var(--uc-paper);
+  border: 1px solid var(--uc-line-strong);
+  border-radius: .35rem;
+  font: inherit;
+  cursor: pointer;
+}
+button:not(:disabled):hover { border-color: var(--uc-accent); }
+button:disabled { opacity: .5; cursor: default; }
 </style>

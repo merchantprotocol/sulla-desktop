@@ -6,6 +6,7 @@ import type {
   AgentCostTier,
   AgentModelSlot,
 } from '../agent/database/models/AgentDefinitionModel';
+import type { AgentModelTiers } from '../agent/languagemodels/agentModelTiers';
 import type { ModelCandidate } from '../agent/languagemodels/modelRouter';
 import type { AgentModelChoice } from '../agent/languagemodels/modelRoutingTypes';
 
@@ -51,6 +52,7 @@ export interface AgentEditorDefinitionFields
 export interface AgentEditorCreateInput extends AgentEditorDefinitionFields {
   slug:           string;
   modelFallbacks: ModelCandidate[];
+  modelTiers?:    AgentModelTiers;
 }
 
 /** Renderer-facing request shape. Main normalizes omitted fields before writing. */
@@ -58,7 +60,17 @@ export type AgentEditorCreateRequest = Partial<AgentEditorDefinitionFields> &
   Pick<AgentEditorDefinitionFields, 'name' | 'prompt'> & {
     slug:            string;
     modelFallbacks?: ModelCandidate[];
+    modelTiers?:     AgentModelTiers;
   };
+
+export interface AgentEditorBindingReceipt {
+  editToken: string;
+  revision: number;
+}
+
+export type AgentEditorCreateResponse = import('../agent/database/models/AgentDefinitionModel').AgentDefinition & {
+  modelBindingReceipt?: AgentEditorBindingReceipt;
+};
 
 export interface AgentEditorPatch extends Partial<AgentEditorDefinitionFields> {
   expectedUpdatedAt?: string;

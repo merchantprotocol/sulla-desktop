@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { Notification } from 'electron';
 import yaml from 'yaml';
 
+import { AgentModelCategoryPolicy } from '@pkg/agent/languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
 import { isRetiredCodingManagerSlug, RETIRED_CODING_MANAGER_SLUGS } from '@pkg/agent/builtinAgents/index';
@@ -18,9 +19,10 @@ import { readDatabaseArtifact } from '@pkg/main/marketplace/databaseArtifacts';
 import Logging from '@pkg/utils/logging';
 
 import type { StoredFile } from '@pkg/agent/database/models/MarketplaceArtifactModel';
+import type { PoolClient } from 'pg';
 import type { UseCaseChangePublisher } from '@pkg/agent/useCases/UseCaseChangeBus';
 import { FilesListingPager } from '../agent/files/FilesListingPager';
-import { explicitAgentPackageModel, readAgentPackage } from './marketplace/agentPackageManifest';
+import { agentPackageModels, readAgentPackage } from './marketplace/agentPackageManifest';
 
 const USE_CASE_ROW_LIMIT = 20_000;
 const USE_CASE_REQUEST_TIMEOUT_MS = 120_000;
@@ -31,7 +33,8 @@ const ROOT = 'Use Cases';
 const OWNER_HOME_AREA = 'sulla';
 const TYPES = ['agents', 'skills', 'workflows', 'functions', 'recipes'] as const;
 type UseCaseType = typeof TYPES[number];
-type FilesRow = { id:string; path:string; published_version_id?:string|null; publishedVersionId?:string|null };
+type FilesRow = { id:string; path:string; published_version_id?:string|null; publishedVersionId?:string|null; deleted_at?:string|null };
+type PublishedAgentRow = { id:string; source_kind:string; removed_from_editor:boolean; use_case_file_id:string|null; use_case_version_id:string|null };
 type Request = (endpoint:string, init?:RequestInit) => Promise<Response>;
 
 let activeUseCaseFiles: SullaUseCaseFiles | undefined;
@@ -73,6 +76,7 @@ export class SullaUseCaseFiles {
   private retryDelay = 2_000;
   private lastFailure = '';
   private stopped = false;
+  private readonly reportedModelConflicts = new Set<string>();
 
   constructor(private readonly request:Request, private readonly notifier?:UseCaseChangePublisher) {}
 
@@ -151,7 +155,7 @@ export class SullaUseCaseFiles {
     return Buffer.from(await response.arrayBuffer());
   }
 
-  private packageFiles(artifact:Awaited<ReturnType<typeof readDatabaseArtifact>>):Record<string,StoredFile> {
+  private packageFiles(artifact:Pick<Awaited<ReturnType<typeof readDatabaseArtifact>>, 'kind'|'manifest'|'files'>):Record<string,StoredFile> {
     const files = { ...artifact.files };
     if (artifact.kind === 'agent') files['agent.json'] = `${ JSON.stringify(artifact.manifest, null, 2) }\n`;
     if (artifact.kind === 'function' && !files['function.yaml']) files['function.yaml'] = yaml.stringify(artifact.manifest);
@@ -174,6 +178,10 @@ export class SullaUseCaseFiles {
 
   /** Publish a human-authored use-case package through Files, never Postgres. */
   async publishPackage(type:UseCaseType, slug:string, files:Record<string,Buffer|string>):Promise<void> {
+    if (type === 'agents') {
+      const entries = Object.fromEntries(Object.entries(files).map(([name, value]) => [name, value.toString()]));
+      agentPackageModels(readAgentPackage(entries, slug).manifest);
+    }
     const area = (await this.areas()).find(item => item.systemArea === OWNER_HOME_AREA);
     if (!area) throw new Error('Sulla Files home collection is unavailable');
     for (const [name, value] of Object.entries(files)) {
@@ -202,13 +210,31 @@ export class SullaUseCaseFiles {
       if (!moved.ok) throw new Error(`Files request /v1/local/system-areas/move failed (${ moved.status }) for ${ file.path }: ${ await moved.text() }`);
     }
     for (const item of definitions) {
-      const artifact = await readDatabaseArtifact(item.kind, item.slug);
+      const artifact = item.kind === 'agent'
+        ? { kind:'agent' as const, manifest:await (await import('./marketplace/localAgentPackages')).exportLocalAgentPackage(item.slug), files:{} }
+        : await readDatabaseArtifact(item.kind, item.slug);
       for (const [name, stored] of Object.entries(this.packageFiles(artifact))) {
         await this.ingestPublished(collectionId, `${ ROOT }/${ typeFor(item.kind) }/${ item.slug }/${ name }`, bytes(stored));
       }
     }
     await postgresClient.query('UPDATE use_case_files_state SET initial_export_completed_at=NOW(),last_error=NULL WHERE singleton=TRUE');
     this.lastSignature = '';
+  }
+
+  /**
+   * The owner's model choice was kept over this file version. Shown
+   * once per file version and app run through the Files audit trail and a notification; rereads of
+   * the same indexed version are no-ops, so it does not repeat on every scan.
+   */
+  private async reportModelConflict(slug:string, anchor:FilesRow, versionId:string, message:string):Promise<void> {
+    const key = `${ slug }\0${ anchor.id }\0${ versionId }`;
+    if (this.reportedModelConflicts.has(key)) return;
+    const detail = `agents/${ slug }: ${ message }`;
+    const recorded = await this.requestFiles('/v1/local/system-areas/audit', { method:'POST', body:json({ fileId:anchor.id, versionId, action:'use-case-model-conflict', details:{ message:detail } }) });
+    if (!recorded.ok) throw new Error(`Files could not record the model settings conflict (${ recorded.status })`);
+    this.reportedModelConflicts.add(key);
+    console.warn(`[UseCases] model mapping conflict: ${ detail }`);
+    if (Notification.isSupported()) new Notification({ title:'Use Case model settings need review', body:detail.slice(0, 240) }).show();
   }
 
   private async auditError(file:FilesRow|undefined, versionId:string|undefined, message:string):Promise<void> {
@@ -232,41 +258,40 @@ export class SullaUseCaseFiles {
     const kind = kindFor(type);
     const artifact = bundleToArtifact(kind, files, slug);
     const anchorName = kind === 'agent' ? readAgentPackage(Object.fromEntries(Object.entries(files).map(([name, file]) => [name, text(file)])), slug).anchor : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
-    const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ slug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path.endsWith(`/${ anchorName }`));
+    const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ slug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path === `${ ROOT }/${ type }/${ slug }/${ anchorName }`);
     if (!anchor) throw new Error(`${ type }/${ slug } is missing ${ anchorName }`);
     const versionId = String(activePublishedVersion(anchor));
     const manifest = artifact.manifest as any;
     let agentId:string | undefined;
     let createdAgentBinding:{ editToken:string; revision:number } | undefined;
+    let observedAgent: PublishedAgentRow | null = null;
     if (kind === 'agent') {
-      const existing = await postgresClient.queryOne<{id:string;source_kind:string;use_case_file_id:string|null}>('SELECT id,source_kind,use_case_file_id FROM agent_definitions WHERE slug=$1',[slug]);
-      if (existing && !['local', 'user'].includes(existing.source_kind)) throw new Error(`agents/${ slug } conflicts with an existing ${ existing.source_kind } agent; the existing definition was preserved`);
-      // Checked before any owner mapping is written; the INSERT below enforces it again atomically.
-      if (existing && pending) throw new Error(`agents/${ slug } already has a definition; it was preserved until the Use Cases migration runs`);
-      agentId = existing?.id ?? publishedAgentId(slug, anchor.id);
-      const candidate = explicitAgentPackageModel(manifest);
-      if (pending) {
-        const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
-        await workerModelRouting.assertReusablePublicationMapping(slug, agentId, { fileId:anchor.id, versionId });
-      }
-      if (candidate) {
-        const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
-        // A pending registration marks its mapping in the same write, so a restart can settle it.
-        const initialized = await workerModelRouting.initializeBindingForPublishedPackage(slug, agentId, [candidate], pending ? { fileId:anchor.id, versionId } : undefined);
-        createdAgentBinding = initialized.binding;
-      }
+      observedAgent = await postgresClient.queryOne<PublishedAgentRow>(
+        `SELECT id,source_kind,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor,use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1`, [slug]) ?? null;
+      if (observedAgent?.removed_from_editor) return;
+      if (observedAgent && !['local', 'user'].includes(observedAgent.source_kind)) throw new Error(`agents/${ slug } conflicts with an existing ${ observedAgent.source_kind } agent; the existing definition was preserved`);
+      if (observedAgent && pending) throw new Error(`agents/${ slug } already has a definition; it was preserved until the Use Cases migration runs`);
+      agentId = observedAgent?.id ?? publishedAgentId(slug, anchor.id);
     }
-    try { await postgresClient.transaction(async client => {
+    const project = async(client:PoolClient) => {
       if (kind === 'agent') {
         const metadata = manifest.metadata ?? {}; const spec = manifest.spec ?? {}; const directory = spec.directory ?? {};
         if (manifest.apiVersion !== 'sulla/v3' || !metadata.title || typeof spec.prompt !== 'string' || metadata.slug !== slug) throw new Error(`agents/${ slug } has an invalid sulla/v3 agent.json`);
-        const registered = await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id,agent_awareness)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','1.0.0','production',TRUE,$10,$5,$11,$12,$13,NULL,$14,'local',$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,TRUE))
-          ${ pending ? 'ON CONFLICT DO NOTHING' : `ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,agent_awareness=COALESCE($24,agent_definitions.agent_awareness),updated_at=NOW()` }
+        const profileChoice = spec.modelChoice?.mode === 'class' ? spec.modelChoice : spec.config?.modelChoice;
+        const category = profileChoice?.mode === 'class' ? new AgentModelCategoryPolicy().resolve({ choice: profileChoice, slug }) : null;
+        const registered = await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id,agent_awareness,model_choice)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'[]','1.0.0','production',TRUE,$10,$5,$11,$12,$13,NULL,$14,'local',$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,TRUE),$25)
+          ${ !observedAgent ? 'ON CONFLICT DO NOTHING' : `ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,system_prompt=EXCLUDED.system_prompt,soul_content=EXCLUDED.soul_content,allowed_tools=EXCLUDED.allowed_tools,skill_refs=EXCLUDED.skill_refs,routine_refs=EXCLUDED.routine_refs,status='production',enabled=TRUE,config=EXCLUDED.config,prompt_content=EXCLUDED.prompt_content,goals_content=EXCLUDED.goals_content,prompt_files=EXCLUDED.prompt_files,provider=EXCLUDED.provider,model=NULL,model_slot=EXCLUDED.model_slot,when_to_call=EXCLUDED.when_to_call,when_not_to_call=EXCLUDED.when_not_to_call,send=EXCLUDED.send,returns=EXCLUDED.returns,cost_tier=EXCLUDED.cost_tier,can_call=EXCLUDED.can_call,front_door=COALESCE(agent_definitions.front_door,EXCLUDED.front_door),use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,agent_awareness=COALESCE($24,agent_definitions.agent_awareness),updated_at=NOW()` }
+          ${ !observedAgent ? '' : `WHERE agent_definitions.id=EXCLUDED.id
+            AND agent_definitions.source_kind=$26
+            AND agent_definitions.use_case_file_id IS NOT DISTINCT FROM $27
+            AND agent_definitions.use_case_version_id IS NOT DISTINCT FROM $28
+            AND NOT COALESCE(agent_definitions.config @> '{"removedFromEditor":true}'::jsonb,FALSE)` }
           RETURNING id`,
-        [agentId,slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId,typeof spec.agentAwareness==='boolean'?spec.agentAwareness:null]);
-        if (pending && !registered.rows.length) throw new Error(`agents/${ slug } was registered concurrently; that definition was preserved`);
-        if (String(registered.rows[0]?.id ?? '') !== agentId) throw new Error(`agents/${ slug } changed identity during activation; its prior definition was preserved`);
+        [agentId,slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId,typeof spec.agentAwareness==='boolean'?spec.agentAwareness:null,category ? json(category) : null,...(observedAgent ? [observedAgent.source_kind,observedAgent.use_case_file_id,observedAgent.use_case_version_id] : [])]);
+        if (!registered.rows.length || String(registered.rows[0]?.id ?? '') !== agentId) {
+          throw new Error(`agents/${ slug } ${ pending ? 'was registered concurrently' : 'changed during activation' }; the newer definition was preserved`);
+        }
       } else if (kind === 'skill') {
         const raw = text(files['SKILL.md']); const parsed = parseSkillMarkdown(raw, slug, Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'SKILL.md')));
         if (!parsed || parsed.slug !== slug) throw new Error(`skills/${ slug } has an invalid SKILL.md`);
@@ -294,13 +319,43 @@ export class SullaUseCaseFiles {
           ON CONFLICT(slug) DO UPDATE SET name=EXCLUDED.name,description=EXCLUDED.description,manifest=EXCLUDED.manifest,compose=EXCLUDED.compose,files=EXCLUDED.files,version=EXCLUDED.version,use_case_file_id=EXCLUDED.use_case_file_id,use_case_version_id=EXCLUDED.use_case_version_id,enabled=TRUE,updated_at=NOW()`,
         [slug,manifest.name??slug,manifest.description??'',json(manifest),text(compose),json(files),manifest.version??'1.0.0',anchor.id,versionId]);
       }
-    }) } catch(error) {
+    };
+    let projected = false;
+    try {
+      if (kind === 'agent' && agentId) {
+        const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
+        const publication = { fileId:anchor.id, versionId };
+        if (pending) await workerModelRouting.assertReusablePublicationMapping(slug, agentId, publication);
+        // A same-version read cannot undo or warn on a subsequent owner edit.
+        if (observedAgent?.use_case_file_id !== anchor.id || observedAgent.use_case_version_id !== versionId) {
+          const declared = agentPackageModels(manifest);
+          const verifyVersion = async() => {
+            const response = await this.requestFiles(`/v1/files/${ encodeURIComponent(anchor.id) }`);
+            if (!response.ok) throw new Error(`Files could not confirm the current publication (${ response.status })`);
+            const current = await response.json() as FilesRow;
+            if (current.deleted_at || current.id !== anchor.id || current.path !== anchor.path || activePublishedVersion(current) !== versionId) {
+              throw new Error(`agents/${ slug } has a newer file publication. Its model settings will be checked again.`);
+            }
+          };
+          const result = await workerModelRouting.reconcilePublishedPackageBinding(slug, agentId, declared, publication, {
+            pending:!!pending, verifyVersion, ...(pending ? {} : { project }),
+          });
+          if (result.outcome === 'conflict') {
+            await verifyVersion();
+            await this.reportModelConflict(slug, anchor, versionId, result.message);
+          }
+          else if (result.outcome === 'written') {
+            if (pending) createdAgentBinding = result.written ?? undefined;
+            else projected = true;
+          }
+        }
+      }
+      if (!projected) await postgresClient.transaction(project);
+    } catch (error) {
       if (createdAgentBinding && agentId) {
         const { workerModelRouting } = await import('@pkg/agent/services/WorkerModelRouting');
-        // Remove only the exact entry this activation wrote; a newer owner edit is preserved.
-        if (!pending) await workerModelRouting.removeBindingForDefinition(slug, agentId, createdAgentBinding).catch(() => undefined);
-        else await workerModelRouting.removeBindingForDefinition(slug, agentId, createdAgentBinding).catch((cleanupError) => {
-          // The marked mapping stays durable; settlePendingRegistrations retries it, also after a restart.
+        await workerModelRouting.removeBindingForDefinition(slug, agentId, createdAgentBinding).catch((cleanupError) => {
+          // The marked mapping stays durable; settlePendingRegistrations retries it after a restart.
           throw new MappingCleanupPending(`${ error instanceof Error ? error.message : String(error) }; its new model mapping could not be removed yet and will be retried: ${ cleanupError instanceof Error ? cleanupError.message : String(cleanupError) }`);
         });
       }
@@ -389,7 +444,9 @@ export class SullaUseCaseFiles {
       if (!packageRows.some(row => activePublishedVersion(row))) continue;
       if (isRetiredCodingManagerSlug(slug)) continue;
       const anchor = SullaUseCaseFiles.rootAgentAnchor(slug, packageRows);
-      const existing = await postgresClient.queryOne<{use_case_file_id:string|null;use_case_version_id:string|null}>('SELECT use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1', [slug]);
+      const existing = await postgresClient.queryOne<{ use_case_file_id: string | null; use_case_version_id: string | null; removed_from_editor: boolean }>(
+        `SELECT use_case_file_id,use_case_version_id,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor FROM agent_definitions WHERE slug=$1`, [slug]);
+      if (existing?.removed_from_editor) continue;
       // The same indexed anchor version is a permanent no-op: owner edits to it are never undone.
       if (anchor && existing && existing.use_case_file_id === anchor.id && existing.use_case_version_id === activePublishedVersion(anchor)) continue;
       if (!anchor || existing || !await this.approvedPublication(anchor)) { deferred.push(`agents/${ slug }`); continue }
@@ -436,7 +493,7 @@ export class SullaUseCaseFiles {
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
         try { await this.activate(type,slug,packageRows); active.add(key); activated++ }
-        catch(error) { failedPackages.push(key); const anchor=packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
+        catch(error) { failedPackages.push(key); const anchor=type === 'agents' ? SullaUseCaseFiles.rootAgentAnchor(slug, packageRows) : packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
       const enabledPackSkills = await postgresClient.query<{slug:string}>(`SELECT slug FROM skill_definitions WHERE enabled=TRUE AND deleted_at IS NULL AND use_case_version_id IS NOT NULL AND frontmatter->>'memory_pack'='true'`);

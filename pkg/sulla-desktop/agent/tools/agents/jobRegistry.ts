@@ -55,11 +55,19 @@ export interface AgentJobResult {
 }
 
 export interface AgentJobTask extends ResultTracking {
+  /** Fingerprint of source supplied by Sulla for an independent inline review. */
+  inlineReviewDigest?: string;
+  /** Original implementation and byte fingerprint supplied to an acceptance worker. */
+  inlineAcceptanceSource?: import('../../../shared/agentResults/AgentResultCard').ResultReference & { digest: string };
+  workflowStep?: import('../../../shared/productOwnerWorkflow').DelegatedWorkflowStep;
+  responseModels?: import('../../../shared/agentState/AgentModelStatus').AgentModelStatusValue[];
   agentId:    string;
   label:      string;
   prompt:     string;
   /** Per-run routing overrides required to rehydrate this exact agent. */
   workerModelRoute?:      import('../../languagemodels/workerModelBindings').WorkerModelRoute;
+  /** Selection on the original, inherited execution path, preserved for a parked wake. */
+  inheritedModel?: import('../../languagemodels/modelRouter').ModelCandidate;
   /** Exact worker CLI selection captured when this task was created; absent on legacy tasks. */
   providerCliSnapshot?:   import('../../../shared/providerCliSelection').ProviderCliSnapshot;
   provider?: string;
