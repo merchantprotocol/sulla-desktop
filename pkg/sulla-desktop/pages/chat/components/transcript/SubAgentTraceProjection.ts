@@ -127,7 +127,7 @@ export class SubAgentTraceProjection {
       } else if (message.kind === 'proactive') {
         for (const item of message.result?.items ?? []) {
           const job = get(this.taskKey(item.jobId, item.taskIndex));
-          const at = item.endedAt ?? message.createdAt;
+          const at = Math.max(item.endedAt ?? message.createdAt, message.createdAt);
           if (!job.result || at >= job.result.at) job.result = { item, at, message };
         }
         const legacy = !message.result && LegacyAgentNotices.parseLegacyAgentNotice(message.headline, message.body);

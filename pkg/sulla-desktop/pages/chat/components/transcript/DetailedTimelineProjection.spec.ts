@@ -194,26 +194,27 @@ describe('DetailedTimelineProjection', () => {
       { id: asMessageId('user'), kind: 'user', createdAt: 1_000, text: 'review this change' },
       { id: asMessageId('launch'), kind: 'subagent_exchange', createdAt: 2_000, direction: 'to_agent', jobId: 'job-1', taskIndex: 0, conversationId: 'child-1', agentId: 'reviewer', label: 'Review', summary: 'Started review', detail: 'Complete brief', status: 'running' },
       { id: asMessageId('reply'), kind: 'sulla', createdAt: 3_000, text: 'I started a review.' },
-      { id: asMessageId('next-user'), kind: 'user', createdAt: 6_000, text: 'What did it find?' },
-      // The result message is recorded before the next user turn, but the worker itself finishes after it.
-      { id: asMessageId('result'), kind: 'proactive', createdAt: 5_500, headline: 'Review complete', body: '', result: { items: [{
+      // The result message arrives after the recorded worker end and before the next user turn.
+      { id: asMessageId('result'), kind: 'proactive', createdAt: 7_500, headline: 'Review complete', body: '', result: { items: [{
         jobId: 'job-1', taskIndex: 0, threadId: 'child-1', label: 'Review', status: 'completed', endedAt: 7_000,
         purpose: 'review', verdict: 'Done', tone: 'ok', outcome: 'No issues found.', report: 'Full review report',
       }] } },
+      { id: asMessageId('next-user'), kind: 'user', createdAt: 8_000, text: 'What did it find?' },
     ] as unknown as Message[];
     const reporting = new TranscriptReporting();
     const items = new DetailedTimelineProjection(undefined, reporting).project(messages, reporting.standardEntries(messages, 'info'));
     const subagentEvents = items.filter(item => item.kind === 'trace' && ['handoff', 'result'].includes(item.row.kind));
 
     expect(subagentEvents.map(item => item.kind === 'trace' ? [item.at, item.row.kind, item.row.verb] : [])).toEqual([
-      [2_000, 'handoff', 'Handed off to'], [7_000, 'result', 'Result from'],
+      [2_000, 'handoff', 'Handed off to'], [7_500, 'result', 'Result from'],
     ]);
-    expect(items.findIndex(item => item.kind === 'message' && item.entry.id === 'next-user')).toBeLessThan(
-      items.findIndex(item => item.kind === 'trace' && item.row.kind === 'result'),
+    expect(items.findIndex(item => item.kind === 'trace' && item.row.kind === 'result')).toBeLessThan(
+      items.findIndex(item => item.kind === 'message' && item.entry.id === 'next-user'),
     );
     expect(subagentEvents.some(item => item.kind === 'trace' && item.row.kind === 'subagent')).toBe(false);
     const segments = new DetailedTimelineSegmenter().segment(items);
     expect(segments).toHaveLength(2);
-    expect(segments[1].items.some(item => item.kind === 'trace' && item.row.kind === 'result')).toBe(true);
+    expect(segments[0].items.some(item => item.kind === 'trace' && item.row.kind === 'result')).toBe(true);
+    expect(segments[1].leading.some(item => item.kind === 'message' && item.entry.id === 'next-user')).toBe(true);
   });
 });
