@@ -713,6 +713,7 @@ export class BackendGraphWebSocketService {
     }
     const { createAgentContainerLifecycle } = await import('./AgentContainerLauncher');
     const lifecycle = await createAgentContainerLifecycle({
+      kind: delegatedJobId ? 'delegated' : 'chat',
       jobId: delegatedJobId ? String(delegatedJobId) : `chat-${ threadId }`,
       taskIndex: delegatedJobId ? delegatedTaskIndex! : 0,
       provider,

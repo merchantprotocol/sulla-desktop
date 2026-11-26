@@ -248,6 +248,7 @@ export interface AgentContainerLifecycle {
 }
 
 export type AgentContainerLifecycleRun = Omit<AgentContainerRun, 'prompt' | 'instructions'> & {
+  kind: 'chat' | 'delegated';
   /** Stable key for long-lived chat state. Workspace and provider homes survive container reaping. */
   persistenceKey?: string;
   /** Old container identity used for delegated conversations before job-scoped WebSocket launches. */
@@ -479,12 +480,17 @@ export async function retireLegacyConversationContainer(runtime: ContainerRuntim
   await retireRestartContainer(runtime, { jobId, taskIndex: 0, threadId, subject, deviceId });
 }
 
-export async function prepareDelegatedContainerWorkspace<T>(
+export async function prepareAgentContainerWorkspace<T>(
   runtime: ContainerRuntimeDriver,
+  kind: AgentContainerLifecycleRun['kind'],
   identity: RestartContainerIdentity,
   legacyJobId: string | undefined,
   prepare: () => Promise<T>,
 ): Promise<T> {
+  // Chat personas can change on the same thread. The create-conflict path
+  // verifies the principal and thread, revokes the old lease and removes its
+  // Files actor before creating the replacement with its own capability.
+  if (kind === 'chat') return await prepare();
   if (legacyJobId && legacyJobId !== identity.jobId) {
     await retireRestartContainer(runtime, { ...identity, jobId: legacyJobId, taskIndex: 0 });
   }
@@ -1423,7 +1429,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
       agentId,
       orgId:     metadata.orgId,
     };
-    const dirsTask = phase('dirs', () => prepareDelegatedContainerWorkspace(runtime, restartIdentity, run.legacyConversationJobId, async() => {
+    const dirsTask = phase('dirs', () => prepareAgentContainerWorkspace(runtime, run.kind, restartIdentity, run.legacyConversationJobId, async() => {
       const operations = {
         createEphemeral: (key: string) => createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ key }-`),
         seedEphemeral:   seedGitWorktreeIntoGuest,

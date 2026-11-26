@@ -16,7 +16,7 @@ vi.mock('node:child_process', async(importActual) => {
     },
   };
 });
-import { createAgentContainer, prepareDelegatedContainerWorkspace, removeAgentContainer, retireLegacyConversationContainer } from '../../../services/AgentContainerLauncher';
+import { createAgentContainer, prepareAgentContainerWorkspace, removeAgentContainer, retireLegacyConversationContainer } from '../../../services/AgentContainerLauncher';
 
 const spec = { name: 'sulla-agent-chat-test-0', image: 'agent-image' } as any;
 const oldId = 'a'.repeat(64);
@@ -147,7 +147,7 @@ describe('retireLegacyConversationContainer', () => {
   });
 });
 
-describe('prepareDelegatedContainerWorkspace', () => {
+describe('prepareAgentContainerWorkspace', () => {
   const identity = {
     jobId:     'job-1',
     taskIndex: 3,
@@ -157,6 +157,38 @@ describe('prepareDelegatedContainerWorkspace', () => {
     agentId:   'builder',
     orgId:     'org',
   };
+
+  it('revokes the stale persona lease and removes its Files actor before creating the new chat persona', async() => {
+    const { redisClient } = await import('../../../database/RedisClient');
+    const revoke = vi.spyOn(redisClient, 'set').mockResolvedValue('OK');
+    const name = 'sulla-agent-chat-persona-switch-0';
+    const labels = {
+      'com.sulla.workload': 'agent', 'com.sulla.job-id': 'chat-persona-switch', 'com.sulla.task-index': '0',
+      'com.sulla.thread-id': 'persona-switch', 'com.sulla.subject': 'subject', 'com.sulla.org-id': 'org', 'com.sulla.device-id': 'device',
+    };
+    const old = { ...labels, 'com.sulla.agent-id': 'persona-a', 'com.sulla.capability-jti': 'old-test-lease' };
+    const next = { ...labels, 'com.sulla.agent-id': 'persona-b', 'com.sulla.capability-jti': 'new-test-lease' };
+    const runtime = {
+      inspect: vi.fn().mockResolvedValue({ Id: oldId, Name: '/' + name, State: { Running: true }, Config: { Labels: old } }),
+      create: vi.fn().mockRejectedValueOnce(new Error('Conflict: name in use')).mockResolvedValueOnce('new-id'),
+      remove: vi.fn().mockResolvedValue(undefined),
+    } as any;
+    try {
+      await prepareAgentContainerWorkspace(runtime, 'chat', {
+        ...identity, jobId: 'chat-persona-switch', taskIndex: 0, threadId: 'persona-switch', agentId: 'persona-b',
+      }, undefined, async() => '/workspace');
+      await expect(createAgentContainer(runtime, { ...spec, name, labels: next })).resolves.toBe('new-id');
+      expect(revoke).toHaveBeenCalledExactlyOnceWith('sulla:capability:revoked:old-test-lease', '1', expect.any(Number));
+      expect(revoke.mock.invocationCallOrder[0]).toBeLessThan(runtime.remove.mock.invocationCallOrder[0]);
+      expect(runtime.remove).toHaveBeenCalledExactlyOnceWith(oldId, true);
+      expect(guestCommands).toHaveBeenCalledExactlyOnceWith(cleanupCommand);
+      expect(guestCommands.mock.invocationCallOrder[0]).toBeLessThan(runtime.create.mock.invocationCallOrder[1]);
+      expect(runtime.create).toHaveBeenLastCalledWith(expect.objectContaining({ labels: next }));
+    } finally {
+      revoke.mockRestore();
+      await removeAgentContainer(runtime, 'new-id', name, 'test', 'test');
+    }
+  });
 
   it('retires legacy and job-scoped survivors before reopening the durable workspace', async() => {
     const events: string[] = [];
@@ -185,7 +217,7 @@ describe('prepareDelegatedContainerWorkspace', () => {
       remove: vi.fn((id: string) => { events.push(`remove:${ id[0] }`) }),
     } as any;
 
-    await expect(prepareDelegatedContainerWorkspace(runtime, identity, 'chat-worker-thread', () => {
+    await expect(prepareAgentContainerWorkspace(runtime, 'delegated', identity, 'chat-worker-thread', () => {
       events.push('prepare');
       return Promise.resolve('/durable/workspace');
     })).resolves.toBe('/durable/workspace');
@@ -215,7 +247,7 @@ describe('prepareDelegatedContainerWorkspace', () => {
       remove: vi.fn(),
     } as any;
 
-    await expect(prepareDelegatedContainerWorkspace(runtime, identity, undefined, prepare))
+    await expect(prepareAgentContainerWorkspace(runtime, 'delegated', identity, undefined, prepare))
       .rejects.toMatchObject({ name: 'AgentLaunchError', retryable: false });
     expect(prepare).not.toHaveBeenCalled();
     expect(runtime.remove).not.toHaveBeenCalled();
