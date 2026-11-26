@@ -9,6 +9,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import * as runner from '../../../tools/util/CommandRunner';
+import { BaseTool } from '../../../tools/base';
+import { toolDecisionPort } from '../../../tools/toolDecisionPort';
+import { GitStatusWorker } from '../../../tools/github/git_status';
 import { ExecWorker } from '../../../tools/meta/exec';
 import { AgentContainerRuntimeRegistry, agentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
 import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
@@ -52,6 +55,57 @@ const host = getMCPServerHost();
 const worker = () => { const w = new ClerkWorker(); w.name = 'clerk_get_user'; return w; };
 const resolver = new ClerkToolSessionResolver(host, { issueLocalBrokerContext: async() => { throw Error('unexpected fallback'); } },
   () => null, new AgentAwarenessPolicy());
+
+// Check authorization decisions only; these fixtures never dispatch a Clerk request.
+const clerkAllowed = (id: string) => resolver.resolveSession(id, 'clerk_get_user', new AbortController().signal, state)
+  .then(() => true, error => { if (error.status !== 403) throw error; return false; });
+
+describe('session registration authority', () => {
+  it('admits a paired launcher and provider only while their original pair is live', async() => {
+    const port = host['port']; host['port'] = 1;
+    const issuer = new ContainerSessionLeases(binding, host, ['clerk_get_user'], 'fixture', key, 60_000,
+      { replace: async() => {}, remove: async() => {} });
+    const launcher = host.registerSession(state, 60_000, binding);
+    const provider = host.registerSession(state, 60_000, binding);
+    try {
+      expect(await clerkAllowed(launcher.id)).toBe(false);
+      issuer.issue(launcher.id);
+      await issuer.prepare(provider.id);
+      expect(await clerkAllowed(launcher.id)).toBe(true);
+      expect(await clerkAllowed(provider.id)).toBe(true);
+      launcher.revoke();
+      expect(await clerkAllowed(provider.id)).toBe(false);
+    } finally { launcher.revoke(); provider.revoke(); await issuer.close(); host['port'] = port; }
+  });
+
+  it('keeps tool-created MCP sessions and their descendants ordinary even with a live issuer', async() => {
+    const port = host['port']; host['port'] = 1;
+    const issuer = new ContainerSessionLeases(binding, host, ['clerk_get_user'], 'fixture', key, 60_000,
+      { replace: async() => {}, remove: async() => {} });
+    const launcher = host.registerSession(state, 60_000, binding);
+    const created: ReturnType<typeof host.registerSession>[] = [];
+    class RegisterChild extends BaseTool {
+      name = 'fixture'; description = '';
+      protected async _validatedCall() {
+        const child = host.registerSession(state, 60_000, binding);
+        created.push(child);
+        await issuer.prepare(child.id);
+        return { successBoolean: true, responseString: 'registered' };
+      }
+    }
+    const decisions = vi.spyOn(toolDecisionPort.resolve(), 'requiresApproval').mockResolvedValue(false);
+    try {
+      issuer.issue(launcher.id);
+      const register = new RegisterChild();
+      for (let depth = 0; depth < 2; depth++) {
+        if (depth) register.executionContext = host.peekToolSession(created[0].id)!.executionContext;
+        expect((await register.invoke({}, state)).success).toBe(true);
+      }
+      expect(await Promise.all(created.map(child => clerkAllowed(child.id)))).toEqual([false, false]);
+      expect(await clerkAllowed(launcher.id)).toBe(true);
+    } finally { decisions.mockRestore(); created.forEach(child => child.revoke()); launcher.revoke(); await issuer.close(); host['port'] = port; }
+  });
+});
 
 describe('launcher compatibility', () => {
   it.each([['persistent', createAgentContainerLifecycle], ['standalone', runAgentContainer]] as const)(
@@ -124,24 +178,49 @@ describe('owned lease renewal', () => {
   });
 });
 
+async function inventory(scoped: boolean) {
+  const lifecycle = 'a6d55df4-acbf-412d-baea-b91ee1f24a2a';
+  const directory = '/dev/shm/sulla-agent-secrets/' + binding.podId + '-' + lifecycle;
+  const runtime = { list: async() => [{ ID: 'a'.repeat(64) }], inspect: async() => ({ Name: '/' + binding.podId,
+    State: { Running: true }, Mounts: [{ Type: 'bind', Destination: '/run/secrets/sulla-agent', Source: directory }],
+    Config: { WorkingDir: binding.workspacePath, User: '1000:1000', Labels: {
+      ...(scoped ? { 'com.sulla.capability-scopes': JSON.stringify(['meta/ping', 'clerk_get_user']) } : {}),
+      'com.sulla.agent.transport-version': '2', 'com.sulla.workload': 'agent', 'com.sulla.capability-jti': lifecycle,
+      'com.sulla.job-id': binding.jobId, 'com.sulla.task-index': '0', 'com.sulla.subject': binding.subject,
+      'com.sulla.agent-id': binding.agentId, 'com.sulla.thread-id': binding.threadId, 'com.sulla.device-id': binding.deviceId,
+    } } }) };
+  const registry = new AgentContainerRuntimeRegistry(new GuestAgentContainerRuntimeSupervisor(runtime as never));
+  const parent = { ...await verifyCapabilityToken(issueCapabilityToken({ sub: binding.subject, pod_id: binding.podId,
+    agent_id: binding.agentId, job_id: binding.jobId, task_index: 0, thread_id: binding.threadId, device_id: binding.deviceId,
+    jti: lifecycle, tool_session_generation: 'old', scopes: ['meta/ping', 'clerk_get_user'], expiresInSeconds: 120 }, key), key), request_id: 'fixture' };
+  return { lifecycle, directory, registry, parent };
+}
+
 describe('cold container inventory', () => {
+  it('runs credential-scoped Git status after recovery without delegating the credential', async() => {
+    const { registry, parent } = await inventory(true);
+    await registry.rehydrate();
+    const scoped = { ...parent, scopes: ['github/git_status'], credential_scope: { integration_id: 'github', account_id: 'fixture' } };
+    const runtime = registry.forExecution(scoped, 'agent-local')!;
+    expect(runtime.podId).toBe(binding.podId);
+    const git = new GitStatusWorker();
+    git.executionContext = scoped;
+    const guest = vi.spyOn(runner, 'runCommand').mockImplementation(async cmd => {
+      expect(registry.current()).toBe(runtime);
+      return { stdout: cmd.includes('--show-toplevel') ? '/fixture' : cmd.includes('--abbrev-ref') ? 'fixture-branch' : '', stderr: '', exitCode: 0 };
+    });
+    try {
+      const result = await registry.withRuntime(runtime, () => git['_validatedCall']({ absolutePath: '/fixture' }));
+      expect(result.successBoolean).toBe(true);
+      expect(result.responseString).toContain('Working tree clean');
+      expect(() => registry.sessionLeases(runtime)).toThrow('Invalid authority for recovered container');
+    } finally { guest.mockRestore(); }
+  });
+
   it.each([
     { scoped: false, caller: 'stale' }, { scoped: true, caller: 'stale' }, { scoped: true, caller: 'absent' },
   ])('runs an ordinary nested CLI with $caller parent (persisted scopes: $scoped)', async({ scoped, caller }) => {
-    const lifecycle = 'a6d55df4-acbf-412d-baea-b91ee1f24a2a';
-    const directory = '/dev/shm/sulla-agent-secrets/' + binding.podId + '-' + lifecycle;
-    const runtime = { list: async() => [{ ID: 'a'.repeat(64) }], inspect: async() => ({ Name: '/' + binding.podId,
-      State: { Running: true }, Mounts: [{ Type: 'bind', Destination: '/run/secrets/sulla-agent', Source: directory }],
-      Config: { WorkingDir: binding.workspacePath, User: '1000:1000', Labels: {
-        ...(scoped ? { 'com.sulla.capability-scopes': JSON.stringify(['meta/ping', 'clerk_get_user']) } : {}),
-        'com.sulla.agent.transport-version': '2', 'com.sulla.workload': 'agent', 'com.sulla.capability-jti': lifecycle,
-        'com.sulla.job-id': binding.jobId, 'com.sulla.task-index': '0', 'com.sulla.subject': binding.subject,
-        'com.sulla.agent-id': binding.agentId, 'com.sulla.thread-id': binding.threadId, 'com.sulla.device-id': binding.deviceId,
-      } } }) };
-    const registry = new AgentContainerRuntimeRegistry(new GuestAgentContainerRuntimeSupervisor(runtime as never));
-    const parent = { ...await verifyCapabilityToken(issueCapabilityToken({ sub: binding.subject, pod_id: binding.podId,
-      agent_id: binding.agentId, job_id: binding.jobId, task_index: 0, thread_id: binding.threadId, device_id: binding.deviceId,
-      jti: lifecycle, tool_session_generation: 'old', scopes: ['meta/ping', 'clerk_get_user'], expiresInSeconds: 120 }, key), key), request_id: 'fixture' };
+    const { lifecycle, directory, registry, parent } = await inventory(scoped);
     const dir = mkdtempSync(join(tmpdir(), 'cold-lease-'));
     const helper = fileURLToPath(new URL('../../../../../../services/sulla-agent/secret-env.sh', import.meta.url));
     writeFileSync(join(dir, 'SULLA_TOOL_SESSION'), 'old-default');
@@ -158,6 +237,7 @@ describe('cold container inventory', () => {
       if (out.status !== 0) return { stdout: '', stderr: 'nested CLI wrapper has no process lease', exitCode: 77 };
       const [id, token] = out.stdout.split('\n');
       const proof = await verifyCapabilityToken(token, key, { category: 'meta', tool: 'ping' });
+      expect(await clerkAllowed(id)).toBe(false);
       if (caller === 'stale') expect(proof.exp).toBeLessThanOrEqual(parent.exp);
       expect(proof.jti).toBe(lifecycle);
       expect(proof.tool_session_generation).toBeUndefined();
