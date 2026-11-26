@@ -43,8 +43,9 @@ async function snapshot() {
   const settings = Object.fromEntries((await db.query<{ property: string; value: string }>('SELECT * FROM sulla_settings')).rows.map(r => [r.property, r.value]));
   const routing = JSON.parse(settings.modelRouting);
   const stable = defs.find(r => r.id === 'stable')!;
-  return { defs, settings, stable, routing, route: captureWorkerRoute(stable.slug, stable.id, routing.workerBindings ?? {}),
-    seen: (await db.query<{ slug: string }>('SELECT slug FROM agent_builtin_seed_ledger ORDER BY slug')).rows.map(r => r.slug) };
+  const route = captureWorkerRoute(stable.slug, stable.id, routing.workerBindings ?? {});
+  const seen = (await db.query<{ slug: string }>('SELECT slug FROM agent_builtin_seed_ledger ORDER BY slug')).rows.map(r => r.slug);
+  return { defs, settings, stable, routing, route, seen };
 }
 
 it.each([
