@@ -92,6 +92,23 @@ describe('DetailedTimelineProjection', () => {
     expect(items.filter(item => item.kind === 'message').map(item => item.entry.id)).toEqual(['user', 'reply']);
   });
 
+  it('replaces Standard tool activity only, while retaining other Standard activity beside trace rows', () => {
+    // risk: suppressing an ordinary Standard activity because another trace row shares its source.
+    const messages = [
+      { id: asMessageId('user'), kind: 'user', createdAt: 1, text: 'run' },
+      { id: asMessageId('tool'), kind: 'tool', createdAt: 2, tool: 'Shell', recordedToolName: 'exec', desc: 'run', status: 'ok', input: 'echo safe' },
+      { id: asMessageId('status'), kind: 'thinking', createdAt: 3, thoughts: ['Preparing the response'], reportingActivity: 'status', completed: true },
+      { id: asMessageId('reply'), kind: 'sulla', createdAt: 4, text: 'done' },
+    ] satisfies Message[];
+    const reporting = new TranscriptReporting();
+    const entries = reporting.entries(messages, 'debug');
+    const items = new DetailedTimelineProjection(undefined, reporting).project(messages, entries);
+
+    expect(items.filter(item => item.kind === 'message' && item.entry.kind === 'activity')
+      .map(item => item.entry.sourceId)).toEqual(['status']);
+    expect(items.filter(item => item.kind === 'trace').map(item => item.row.kind)).toEqual(['tool', 'thought']);
+  });
+
   it('keeps Standard cards and adds detailed-only events once, in timestamp order', () => {
     // risk: losing Standard items, duplicating detail-only events, or grouping work away from its time.
     const messages = [

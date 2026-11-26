@@ -173,7 +173,7 @@ export class DetailedTimelineProjection {
   }
 
   private isRepresentedByTrace(entry: TranscriptEntry, rows: readonly TraceRow[]): boolean {
-    if (entry.kind === 'activity') return rows.length > 0;
+    if (entry.kind === 'activity') return rows.some(row => row.kind === 'tool');
     switch (entry.message.kind) {
       case 'channel': return rows.some(row => row.verb === 'Received');
       case 'memory': return rows.some(row => row.kind === 'memory');
