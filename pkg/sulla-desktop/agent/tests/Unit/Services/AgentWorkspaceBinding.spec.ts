@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -21,6 +21,12 @@ vi.mock('node:child_process', async(importActual) => {
     // Remap only guest filesystem constants and provide deterministic df output.
     execFile: (_binary: string, args: string[], options: Parameters<typeof actual.execFile>[2], callback: any) => {
       const [program, ...command] = args.slice(2).map(arg => arg
+        // CI has neither CAP_SYS_ADMIN nor a Docker socket. Substitute only bind(2)
+        // and the Docker executable; the broker, reader, publisher and Git are real.
+        .replaceAll('/bin/df', `${ guest.root }/bin/df`)
+        .replaceAll('/usr/bin/docker', `${ guest.root }/bin/docker`)
+        .replace('main(MountPins)', 'main(type("FixturePins", (MountPins,), {"bind": lambda self, fd: self.handles.proc(fd)}))')
+        .replaceAll('/mnt/data/.sulla-stable-seed', `${ guest.root }/.sulla-stable-seed`)
         .replaceAll('/mnt/worktrees', `${ guest.root }/worktrees`)
         .replaceAll('/mnt/data/sulla/runtime', `${ guest.root }/runtime`));
       (options as any).env = {
@@ -47,8 +53,8 @@ describe('durable Git workspace initialization', () => {
   const local = (name: string) => path.join(guest.root, name);
   const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   const sourceRemote = 'https://github.example.test/team/repo.git';
-  const uid = process.getuid!();
-  const gid = process.getgid!();
+  const uid = process.getuid!() || 65534;
+  const gid = process.getgid!() || 65534;
   const seedGitWorktreeIntoStableGuest = (source: string, workspace: string, job?: string, identity = async() => ({ uid, gid })) =>
     productionSeed(source, workspace, job, { image: 'seed-fixture', identity });
   function legacyCheckout(name: string): string {
@@ -67,6 +73,8 @@ describe('durable Git workspace initialization', () => {
     mkdirSync(local('runtime/conversations/task/workspace'), { recursive: true });
     mkdirSync(local('worktrees/repo'), { recursive: true });
     mkdirSync(local('bin'));
+    copyFileSync(path.resolve('pkg/sulla-desktop/agent/tests/Support/stable-seed-container.py'), local('bin/docker'));
+    chmodSync(local('bin/docker'), 0o700);
     writeFileSync(local('bin/df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 999999999 1 %s 1%% /\\n" "$GUEST_FREE_KIB"\n', { mode: 0o700 });
     const source = local('worktrees/repo');
     git(source, 'init', '-b', 'worker-branch');
@@ -144,13 +152,24 @@ describe('durable Git workspace initialization', () => {
     expect(git(repo, 'rev-parse', '--is-bare-repository')).toBe('true');
     await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
     expect(git(local('runtime/conversations/task/workspace'), 'rev-parse', 'HEAD')).toBe(head);
-    const calls: string[][] = readFileSync(local('helper-calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    const calls: Array<{ argv: string[]; operation: string }> = readFileSync(local('helper-calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     expect(calls.length).toBeGreaterThanOrEqual(2);
-    for (const argv of calls) {
+    expect(calls.map(call => call.operation)).toContain('publish');
+    for (const { argv, operation } of calls) {
       expect(uid).toBeGreaterThan(0);
       expect(argv[argv.indexOf('--user') + 1]).toBe(`${ uid }:${ gid }`);
       expect(argv[argv.indexOf('--network') + 1]).toBe('none');
-      expect(argv).toContain('--read-only');
+      expect(argv).toEqual(expect.arrayContaining(['--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges', '--entrypoint=/usr/bin/env']));
+      const mounts = argv.filter((_, i) => argv[i - 1] === '--mount');
+      const writable = mounts.filter(m => !m.endsWith(',readonly'));
+      if (operation === 'publish') {
+        expect(mounts).toHaveLength(2);
+        expect(writable).toHaveLength(1);
+        expect(writable[0]).toContain('dst=/seed/stage,');
+      } else {
+        expect(writable).toEqual([]);
+        expect(mounts.every(m => m.includes('dst=/seed/'))).toBe(true);
+      }
     }
   });
 
@@ -159,6 +178,50 @@ describe('durable Git workspace initialization', () => {
     await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target, undefined,
       async() => ({ uid: badUid as number, gid }))).rejects.toThrow(/identity/i);
     expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('worker-branch');
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+  });
+
+  it.each(['extra ref', 'different head'])('rejects a frozen bundle with %s before publication', async(kind) => {
+    const repo = local('worktrees/repo');
+    git(repo, 'branch', 'extra');
+    if (kind === 'different head') {
+      git(repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'other');
+    }
+    git(repo, 'bundle', 'create', local('substitute.bundle'), 'refs/heads/worker-branch',
+      ...(kind === 'extra ref' ? ['refs/heads/extra'] : []));
+    if (kind === 'different head') git(repo, 'reset', '--hard', 'extra');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow('publish');
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+  });
+
+  it('refuses a replaced empty target and leaves the prior directory untouched', async() => {
+    writeFileSync(local('swap'), '');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow('target changed');
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+    expect(existsSync(local('runtime/conversations/task/prior/.git'))).toBe(false);
+  });
+
+  it('does not fall back to guest Git without an isolated reader', async() => {
+    writeFileSync(local('offline'), '');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow('confined');
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+  });
+
+  it.each(['overflow', 'partial'])('discards a producer stream on %s without starting a publisher', async(fault) => {
+    guest.freeKiB = 1024 * 1024 + 1024;
+    writeFileSync(local(fault), '');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target))
+      .rejects.toThrow(fault === 'overflow' ? /disk is full/i : /bundle failed/);
+    expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
+    const calls = readFileSync(local('helper-calls'), 'utf8').trim().split('\n').map(line => JSON.parse(line).operation);
+    expect(calls).not.toContain('publish');
+  });
+
+  it('does not seed dirty source bytes even if the worker index assumes the file is unchanged', async() => {
+    const repo = local('worktrees/repo');
+    git(repo, 'update-index', '--assume-unchanged', 'marker');
+    writeFileSync(path.join(repo, 'marker'), 'not committed');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).rejects.toThrow('bundle failed');
     expect(existsSync(local('runtime/conversations/task/workspace/.git'))).toBe(false);
   });
 
@@ -225,7 +288,8 @@ describe('durable Git workspace initialization', () => {
     writeFileSync(path.join(stage, 'partial'), 'left by an interrupted first seed');
     guest.freeKiB = 99999999;
     await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target, 'job-1-0')).resolves.toBe(target);
-    expect(existsSync(stage)).toBe(false);
+    // Old staging was beneath a worker-writable parent. Never clean it as root.
+    expect(readFileSync(path.join(stage, 'partial'), 'utf8')).toBe('left by an interrupted first seed');
     writeFileSync(local('runtime/conversations/task/workspace/marker'), 'work after retry');
     await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target, 'job-1-0')).resolves.toBe(target);
     expect(readFileSync(local('runtime/conversations/task/workspace/marker'), 'utf8')).toBe('work after retry');

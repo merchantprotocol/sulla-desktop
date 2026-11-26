@@ -8,6 +8,9 @@ import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import seedBroker from '@pkg/assets/scripts/stable-seed-broker.py?raw';
+import seedPublisher from '@pkg/assets/scripts/stable-seed-publisher.py?raw';
+import seedReader from '@pkg/assets/scripts/stable-seed-reader.py?raw';
 import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
@@ -228,6 +231,7 @@ export async function seedGitWorktreeIntoStableGuest(source: string, target: str
   const identity = await (runtime.identity ?? configuredSeedIdentity)();
   if (![identity?.uid, identity?.gid].every(id => Number.isSafeInteger(id) && id > 0)) throw new Error('Invalid guest seed identity');
   if (!runtime.image || runtime.image.startsWith('-')) throw new Error('Missing trusted seed image');
+  if (/[\r\n\0]/.test(source)) throw new Error('Invalid stable seed path');
   const normalizedSource = path.posix.resolve(source);
   if (normalizedSource !== '/mnt/worktrees' && !normalizedSource.startsWith('/mnt/worktrees/')) {
     throw new Error('Container workspacePath must be an existing worktree under /mnt/worktrees');
@@ -235,100 +239,13 @@ export async function seedGitWorktreeIntoStableGuest(source: string, target: str
   const boundedTarget = assertGuestPath(target, [GUEST_CONVERSATIONS_ROOT]);
   if (existingJobKey && !/^[a-zA-Z0-9_.-]+$/.test(existingJobKey)) throw new Error('Invalid existing worktree job key');
   const workspace = await runGuest([
-    'python3', '-c',
-    [
-      'import fcntl, os, sys',
-      'root, command, *args = sys.argv[1:]',
-      'fd = os.open(root + "/.workspace-seed.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)',
-      'fcntl.flock(fd, fcntl.LOCK_EX)',
-      'os.set_inheritable(fd, True)',
-      'os.execvp("sh", ["sh", "-c", command, *args])',
-    ].join('\n'), GUEST_CONVERSATIONS_ROOT,
-    [
-      'set -eu',
-      'umask 077',
-      'source_input="$1"; target="$2"; root="$3"; reserve_kib="$4"; legacy_root="$5"; legacy_key="$6"',
-      'case "$target" in "$root"/*/workspace) ;; *) exit 73;; esac',
-      '[ -d "$target" ] && [ "$(realpath "$target")" = "$target" ]',
-      'marker="$target/.git/sulla-workspace-binding"',
-      'if [ -f "$marker" ]; then [ "$(realpath "$marker")" = "$marker" ] && [ "$(sed -n "1p" "$marker")" = "$source_input" ] || { echo "stable workspace belongs to another seed" >&2; exit 74; }; git -c safe.directory="$target" -C "$target" rev-parse --is-inside-work-tree >/dev/null; printf "%s" "$target"; exit 0; fi',
-      'if [ -n "$legacy_key" ] && [ -n "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ]; then [ -e "$target/.git" ] && git -c safe.directory="$target" -C "$target" rev-parse --is-inside-work-tree >/dev/null || { echo "refusing an unbound non-Git stable workspace" >&2; exit 76; }; printf "%s" "$target"; exit 0; fi',
-      '[ -z "$(find "$target" -mindepth 1 -maxdepth 1 -print -quit)" ] || { echo "refusing to replace a nonempty unbound stable workspace" >&2; exit 76; }',
-      'source=$(realpath "$source_input")',
-      'case "$source" in /mnt/worktrees/*) ;; *) exit 73;; esac',
-      '[ -d "$source" ] && [ ! -L "$source_input" ]',
-      'git_source() { GIT_OPTIONAL_LOCKS=0 git --no-replace-objects -c safe.directory="$source" -C "$source" "$@"; }',
-      '[ "$(realpath "$(git_source rev-parse --show-toplevel)")" = "$source" ]',
-      'common=$(git_source rev-parse --path-format=absolute --git-common-dir); repository=$(basename "$(dirname "$common")"); common=$(realpath "$common")',
-      // A linked checkout may live here while the primary repo is elsewhere.
-      // Trust only the Git-registered backlink; never mount or copy its backing directory.
-      [
-        'case "$common" in /mnt/worktrees/*) ;; *)',
-        'admin=$(realpath "$(git_source rev-parse --absolute-git-dir)")',
-        '[ "$(dirname "$admin")" = "$common/worktrees" ] && [ -f "$source/.git" ] && [ ! -L "$source/.git" ] || exit 73',
-        '[ -f "$admin/gitdir" ] && [ ! -L "$admin/gitdir" ] || exit 73',
-        'IFS= read -r backlink < "$admin/gitdir" || exit 73',
-        'case "$backlink" in /*) ;; *) backlink="$admin/$backlink";; esac',
-        '[ "$(realpath "$backlink")" = "$source/.git" ] || exit 73',
-        ';; esac',
-      ].join('\n'),
-      'head=$(git_source rev-parse HEAD)',
-      'branch=$(git_source symbolic-ref --quiet --short HEAD || true)',
-      'remote=$(git_source remote get-url origin 2>/dev/null || true)',
-      'case "$remote" in *://*@*|http*://*[?#]*) echo "refusing a Git remote containing credentials" >&2; exit 78;; esac',
-      'remote_head=""; if [ -n "$branch" ]; then [ "$(git_source rev-parse "refs/heads/$branch")" = "$head" ]; remote_head=$(git_source rev-parse --verify "refs/remotes/origin/$branch" 2>/dev/null || true); fi',
-      [
-        'if [ -n "$legacy_key" ]; then',
-        '# Reproduce the old checkout prefix, including the mktemp prefix limit.',
-        'prefix=$(printf "%s-%s-%s-" "$repository" "${branch:-detached-$(printf %.12s "$head")}" "$legacy_key" | LC_ALL=C sed \'s/[^a-zA-Z0-9_.-]/-/g\')',
-        'legacy_prefix=$(printf %.80s "$prefix")',
-        'unsafe_checkout() { echo "could not identify a single safe retained checkout for the interrupted task" >&2; exit 74; }',
-        'set -- "$legacy_root/$legacy_prefix"????????',
-        'if [ -e "$1" ] || [ -L "$1" ]; then',
-        '[ "$#" -eq 1 ] && [ "$prefix" = "$legacy_prefix" ] || unsafe_checkout',
-        'checkout="$1"; suffix=${checkout#"$legacy_root/$legacy_prefix"}',
-        'case "$suffix" in *[!A-Za-z0-9]*) unsafe_checkout;; esac',
-        '[ -d "$checkout/.git" ] && [ "$(realpath "$checkout/.git")" = "$checkout/.git" ] || unsafe_checkout',
-        'git_legacy() { git -c safe.directory="$checkout" -C "$checkout" "$@"; }',
-        '[ "$(git_legacy rev-parse --show-toplevel)" = "$checkout" ] && git_legacy merge-base --is-ancestor "$head" HEAD || unsafe_checkout',
-        'legacy_remote=$(git_legacy remote get-url origin 2>/dev/null || true)',
-        'if [ "$legacy_remote" != "$remote" ]; then',
-        'case "$legacy_remote" in "$checkout".bundle-????????-????-????-????-????????????) [ -z "$remote" ] || unsafe_checkout;; *) unsafe_checkout;; esac',
-        'fi',
-        'printf "%s" "$checkout"; exit 0;',
-        'fi',
-        'fi',
-      ].join('\n'),
-      '[ -z "$(git_source status --porcelain=v1 --untracked-files=normal)" ] || { echo "container workspacePath must be clean before guest transport" >&2; exit 77; }',
-      'stage="$(dirname "$target")/.workspace-initializing"',
-      'rm -rf -- "$stage"',
-      'trap \'rm -rf -- "$stage"\' EXIT',
-      'trap \'exit 75\' INT TERM',
-      'workspace_size=$(du -sk "$source") && workspace_size=${workspace_size%%[!0-9]*}',
-      'disk=$(df -Pk "$target"); free=$(printf "%s\\n" "$disk" | awk \'NR == 2 {print $4}\')',
-      '[ -n "$workspace_size" ] && [ -n "$free" ]',
-      // Leave room for both the bundle and the unpacked objects, plus the checkout and VM reserve.
-      'budget=$(( (free - reserve_kib - workspace_size) / 2 )); [ "$budget" -gt 0 ] || { echo "no space left on device for a durable workspace and VM reserve" >&2; exit 79; }',
-      'git init -q "$stage"',
-      'git_stage() { git -c safe.directory="$stage" -C "$stage" "$@"; }',
-      'bundle="$stage/.git/sulla-seed.bundle"; ref=HEAD; if [ -n "$branch" ]; then ref="refs/heads/$branch"; fi',
-      '(ulimit -f "$budget"; git_source bundle create - "$ref") > "$bundle"',
-      '[ "$(git_stage bundle list-heads "$bundle")" = "$head $ref" ] || { echo "approved Git ref moved during transport" >&2; exit 74; }',
-      'git_stage bundle unbundle "$bundle" >/dev/null; rm -- "$bundle"',
-      'git_stage checkout --detach "$head" >/dev/null 2>&1',
-      'if [ -n "$branch" ]; then git_stage checkout -B "$branch" "$head" >/dev/null 2>&1; fi',
-      '[ "$(git_stage rev-parse HEAD)" = "$head" ]',
-      'if [ -n "$remote" ]; then git_stage remote add origin "$remote"; fi',
-      'if [ -n "$branch" ] && [ -n "$remote_head" ] && git_stage cat-file -e "$remote_head^{commit}" 2>/dev/null; then git_stage update-ref "refs/remotes/origin/$branch" "$remote_head"; fi',
-      'printf "%s\\n%s\\n" "$source_input" "$head" > "$stage/.git/sulla-workspace-binding"',
-      'python3 -c \'import os, sys; os.replace(sys.argv[1], sys.argv[2])\' "$stage" "$target"',
-      'trap - EXIT INT TERM',
-      'printf "%s" "$target"',
-    ].join('; '),
-    'sulla-stable-workspace-seed', normalizedSource, boundedTarget, GUEST_CONVERSATIONS_ROOT, String(WORKSPACE_DISK_RESERVE_KIB),
-    GUEST_AGENT_WORKSPACES_ROOT, existingJobKey ?? '',
+    '/usr/bin/python3', '-IS', '-c', seedBroker, normalizedSource, boundedTarget, GUEST_CONVERSATIONS_ROOT,
+    GUEST_AGENT_WORKSPACES_ROOT, '/mnt/data/.sulla-stable-seed', String(identity.uid), String(identity.gid),
+    runtime.image, String(WORKSPACE_DISK_RESERVE_KIB), existingJobKey ?? '', seedReader + '\n' + seedPublisher,
   ], undefined, TRANSFER_TIMEOUT_MS);
-  return await existingGuestPath(workspace, [workspace === boundedTarget ? GUEST_CONVERSATIONS_ROOT : GUEST_AGENT_WORKSPACES_ROOT]);
+  if (workspace === boundedTarget) return workspace;
+  if (!existingJobKey || path.posix.dirname(workspace) !== GUEST_AGENT_WORKSPACES_ROOT) throw new Error('Invalid retained workspace');
+  return assertGuestPath(workspace, [GUEST_AGENT_WORKSPACES_ROOT]);
 }
 
 export async function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): Promise<void> {
