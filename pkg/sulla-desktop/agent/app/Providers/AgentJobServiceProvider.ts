@@ -25,6 +25,7 @@ import { StrandedManagerDetector } from '../Services/StrandedManagerDetector';
 import { StrandedManagerScheduler } from '../Services/StrandedManagerScheduler';
 import { RunActivityManagerActivitySource, type RunActivityReader } from '../Services/RunActivityManagerActivitySource';
 import { JobStopService } from '../Services/JobStopService';
+import { ActiveThreadRunRegistry } from '../Services/ActiveThreadRunRegistry';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
@@ -65,6 +66,7 @@ export class AgentJobServiceProvider {
   readonly custody: JobCustodyService;
   readonly custodyCallerVerifier: CustodyCallerVerifier;
   readonly custodyLineage: JobTaskCustodyLineage;
+  readonly activeThreadRuns = new ActiveThreadRunRegistry();
 
   constructor(runActivity: RunActivityReader = RunActivity) {
     const connection = new DesktopPostgresConnection(postgresClient);
@@ -95,7 +97,7 @@ export class AgentJobServiceProvider {
     const custodyPolicy = new JobCustodyAuthorityPolicy(liveness, this.custodyLineage, new TopLevelHumanSessionAuthorityRule(conversations));
     this.custody = new JobCustodyService(custodyRepository, custodyPolicy, new NoopCustodyChangeNotifier(), clock);
     this.custodyCallerVerifier = new CustodyCallerVerifier(taskLocator, conversations);
-    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator);
+    const stops = new JobStopService(this.states, this.runtime, clock, taskLocator, this.activeThreadRuns);
     const messages: JobWrapUpMessageSender = { send: async(input) => { const { sendJobMessage } = await import('../../tools/agents/send_job_message'); return sendJobMessage(input); } };
     this.wrapUp = new JobWrapUpService(stops, messages);
     this.service = new AgentJobService(this.jobs, this.runtime, recovery, clock, new JobIdGenerator(clock), taskLocator, this.states, stops, this.wrapUp);

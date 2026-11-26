@@ -136,7 +136,7 @@ export class BackendGraphWebSocketService {
   // channel (e.g. multiple chat tabs sharing the desktop WebSocket) can
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
-  private activeAborts = new Map<string, AbortService>();
+  private activeAborts = agentJobProvider.activeThreadRuns;
   private suspendedRuns = new Set<string>();
   private readonly relayRuns = new Map<string, { id: string; controller: AbortController }>();
   private readonly readinessWaits = new Map<string, Set<AbortController>>();

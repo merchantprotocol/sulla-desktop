@@ -18,10 +18,10 @@ export class RecoveredAgentTaskDispatcher {
 
   async dispatchIfRunning(claimedJob: AgentJob, taskIndex: number, waitUntilReady: () => Promise<void>): Promise<boolean> {
     await waitUntilReady();
+    const signal = this.jobs.ensureTaskAbortSignal(claimedJob.jobId, taskIndex);
     const current = await this.jobs.getJob(claimedJob.jobId);
     if (current?.status !== 'running' || current.tasks[taskIndex]?.status !== 'running') return false;
 
-    const signal = this.jobs.ensureTaskAbortSignal(current.jobId, taskIndex);
     if (signal.aborted) return false;
     const controller = new AbortController();
     const bridge = new AbortSignalBridge(signal, controller);
