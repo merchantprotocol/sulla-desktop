@@ -46,20 +46,7 @@ export interface WorkerChartAgentRow {
   y: number;
 }
 
-export interface WorkerChartGroupRow {
-  kind: 'group';
-  key: string;
-  /** Parent represented by the expand/collapse chip. */
-  agent: WorkerChartAgent;
-  hiddenAgents: readonly WorkerChartAgent[];
-  parentId: string;
-  expanded: boolean;
-  depth: number;
-  x: number;
-  y: number;
-}
-
-export type WorkerChartRow = WorkerChartAgentRow | WorkerChartGroupRow;
+export type WorkerChartRow = WorkerChartAgentRow;
 export interface WorkerChartLayoutResult { rows: WorkerChartRow[]; contentHeight: number }
 
 export type WorkerChartLink =
@@ -78,14 +65,13 @@ export class WorkerChartLayout {
     root: WorkerChartAgent | null,
     rail: boolean,
     collapsedDoneIds: ReadonlySet<string>,
-    expandedGroupIds: ReadonlySet<string> = new Set(),
   ): WorkerChartLayoutResult {
     if (!root) return { rows: [], contentHeight: 0 };
 
     const rows: WorkerChartRow[] = [];
     const step = rail ? this.railRowHeight : this.rowHeight;
     let y = rail ? 8 : 2;
-    this.appendAgent(root, null, 0, rail, collapsedDoneIds, expandedGroupIds, rows, depth => {
+    this.appendAgent(root, null, 0, rail, collapsedDoneIds, rows, depth => {
       if (rail && rows.length > 0 && depth === 1) y += 6;
       const current = y;
       y += step;
@@ -100,7 +86,6 @@ export class WorkerChartLayout {
     depth: number,
     rail: boolean,
     collapsedDoneIds: ReadonlySet<string>,
-    expandedGroupIds: ReadonlySet<string>,
     rows: WorkerChartRow[],
     nextY: (depth: number) => number,
   ): void {
@@ -111,43 +96,8 @@ export class WorkerChartLayout {
     });
 
     const children = (agent.children ?? []).filter(child => !collapsedDoneIds.has(child.id));
-    if (children.length > 3 && !expandedGroupIds.has(agent.id)) {
-      const prioritized = [...children].sort((left, right) => this.overflowPriority(left) - this.overflowPriority(right));
-      const visibleIds = new Set(prioritized.slice(0, 2).map(child => child.id));
-      for (const child of children) {
-        if (visibleIds.has(child.id)) {
-          this.appendAgent(child, agent.id, depth + 1, rail, collapsedDoneIds, expandedGroupIds, rows, nextY);
-        }
-      }
-      rows.push({
-        kind: 'group', key: `group:${agent.id}`, agent,
-        hiddenAgents: children.filter(child => !visibleIds.has(child.id)),
-        parentId: agent.id, expanded: false, depth: depth + 1,
-        x: rail ? 0 : (depth + 1) * this.indent,
-        y: nextY(depth + 1),
-      });
-      return;
-    }
-
     for (const child of children) {
-      this.appendAgent(child, agent.id, depth + 1, rail, collapsedDoneIds, expandedGroupIds, rows, nextY);
-    }
-    if (children.length > 3) {
-      rows.push({
-        kind: 'group', key: `group:${agent.id}`, agent,
-        hiddenAgents: [], parentId: agent.id, expanded: true, depth: depth + 1,
-        x: rail ? 0 : (depth + 1) * this.indent,
-        y: nextY(depth + 1),
-      });
-    }
-  }
-
-  private overflowPriority(agent: WorkerChartAgent): number {
-    switch (agent.state) {
-      case 'needs-you': return 0;
-      case 'failed': return 1;
-      case 'working': return 2;
-      default: return 3;
+      this.appendAgent(child, agent.id, depth + 1, rail, collapsedDoneIds, rows, nextY);
     }
   }
 
@@ -185,7 +135,6 @@ export class WorkerChartGeometry {
     if (rail) return [];
     const links: WorkerChartLink[] = [];
     for (const parent of rows) {
-      if (parent.kind !== 'agent') continue;
       const children = rows.filter(row => row.parentId === parent.agent.id);
       const lastChild = children[children.length - 1];
       if (lastChild) {

@@ -6,7 +6,7 @@
 import { computed, nextTick, ref, watch, type ComputedRef } from 'vue';
 
 import type { WorkerChartControllerSources } from './WorkerChartController';
-import type { WorkerChartAgent, WorkerChartGroupRow, WorkerChartLayoutResult, WorkerChartRow } from './workerChartModel';
+import type { WorkerChartAgent, WorkerChartLayoutResult, WorkerChartRow } from './workerChartModel';
 
 /** Owns the worker-chart overlay, hover, keyboard, popover positioning and focus lifecycle. */
 export class WorkerChartOverlayController {
@@ -41,7 +41,7 @@ export class WorkerChartOverlayController {
     });
     this.stopWatches.push(watch(chart, () => {
       const rows = this.rows;
-      if (this.selectedAgentId.value && !rows.some(row => row.kind === 'agent' && row.agent.id === this.selectedAgentId.value)) {
+      if (this.selectedAgentId.value && !rows.some(row => row.agent.id === this.selectedAgentId.value)) {
         this.dismissPopover(true, true);
       } else if (this.hoveredRowKey.value && !rows.some(row => row.key === this.hoveredRowKey.value)) {
         this.dismissPopover(false);
@@ -75,12 +75,7 @@ export class WorkerChartOverlayController {
   public get ready(): boolean { return this.popoverReady.value }
   public get popoverId(): string { return `worker-chart-${this.sources.instanceId}-popover` }
   public get activePopoverAgent(): WorkerChartAgent | null {
-    const row = this.activeRowValue?.value;
-    return row?.kind === 'agent' ? row.agent : null;
-  }
-  public get activePopoverGroup(): WorkerChartGroupRow | null {
-    const row = this.activeRowValue?.value;
-    return row?.kind === 'group' ? row : null;
+    return this.activeRowValue?.value?.agent ?? null;
   }
 
   public mount(): void {
