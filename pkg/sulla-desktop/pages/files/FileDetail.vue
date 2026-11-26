@@ -123,12 +123,13 @@ import { supportsDocumentEditor } from './editor/editorTypes';
 
 import type { FilesDataSource, FilesDetail, FilesItem, FilesRetentionPolicy, FilesSnapshot, FilesTrashFile, FilesVersion, ShareActivity, ShareLink } from './types';
 
-const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions' }>();
+const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSource:FilesDataSource; collection:FilesSnapshot['collection']; initialTab?:'Details' | 'Versions'; previewVersionId?: string }>();
 const emit = defineEmits<{ close:[]; open:[]; share:[]; restored:[]; 'trash-outcome':[message:string]; 'open-linked':[fileId:string, path:string] }>();
 const item = reactive<FilesItem>({ ...props.item });
 const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
 const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
 const previewError = ref('');
+const previewVersion = computed(() => props.previewVersionId || item.currentVersionId);
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
 const mediaTabs = ['Preview', 'Transcript', 'Chapters'] as const; const sideTabs = ['Details', 'Versions', 'Access', 'Activity'] as const;
 const name = computed(() => item.path.split('/').at(-1) || item.path); const isUseCase = computed(() => item.path.startsWith('Sulla/Use Cases/')); const activeVersionId = computed(() => item.publishedVersionId || null); const pathCrumbs = computed(() => item.path.split('/').slice(0, -1));
@@ -149,7 +150,17 @@ const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
 const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
-const allActivity = computed(() => [...(detail.value?.activity || []).map(event => ({ id: event.id, who: event.who_id, action: event.action, at: event.at, detail: event.device_or_run_id })), ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
+const allActivity = computed(() => [
+  ...(detail.value?.activity || []).map(event => {
+    let detail = event.device_or_run_id;
+    if (event.action === 'use-case-model-conflict' && event.message) {
+      const version = versions.value.find(row => row.id === event.version_id)?.versionNumber ?? event.version_id;
+      detail = version ? `Version ${ version } · ${ event.message }` : event.message;
+    }
+    return { id: event.id, who: event.who_id, action: event.action, at: event.at, detail };
+  }),
+  ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail })),
+].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
 
 onMounted(async() => {
   const [metadata] = await Promise.allSettled([props.dataSource.detail(item.id)]);
@@ -165,7 +176,7 @@ onMounted(async() => {
   else error.value ||= history.reason instanceof Error ? history.reason.message : String(history.reason);
   const [publicLinks, source] = await Promise.allSettled([
     props.dataSource.listPublicLinks?.() || Promise.resolve([]),
-    supportsMedia.value ? props.dataSource.mediaUrl(item.id, item.currentVersionId) : Promise.resolve(''),
+    supportsMedia.value ? props.dataSource.mediaUrl(item.id, previewVersion.value) : Promise.resolve(''),
   ]);
   if (publicLinks.status === 'fulfilled') links.value = publicLinks.value;
   if (source.status === 'fulfilled') mediaUrl.value = source.value;
@@ -173,7 +184,7 @@ onMounted(async() => {
   if (activeLink.value && props.dataSource.shareActivity) linkActivity.value = await props.dataSource.shareActivity(activeLink.value.id).catch(() => []);
   loading.value = false;
 });
-async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, item.currentVersionId) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, previewVersion.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
 type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
 const lifecycleForm = reactive({ enabled: item.versioning?.enabled ?? false, majorMinor: item.versioning?.majorMinor ?? false, requireApproval: item.versioning?.requireApproval ?? false, requireCheckout: item.versioning?.requireCheckout ?? false });
@@ -324,7 +335,7 @@ function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B
 function formatDate(value:string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function shortDate(value:string) { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(value)) }
 function initials(value:string) { return value.split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?' }
-function activityLabel(action:string) { return ({ preview: 'opened this file', download: 'downloaded this file', viewed: 'opened the public link', downloaded: 'downloaded from the public link', transcript: 'added a transcript', upload: 'uploaded this file', 'version-restore': 'restored a version' } as Record<string, string>)[action] || action.replaceAll('-', ' ') }
+function activityLabel(action:string) { return ({ preview: 'opened this file', download: 'downloaded this file', viewed: 'opened the public link', downloaded: 'downloaded from the public link', transcript: 'added a transcript', upload: 'uploaded this file', 'version-restore': 'restored a version', 'use-case-model-conflict': 'reported a model settings conflict' } as Record<string, string>)[action] || action.replaceAll('-', ' ') }
 function fileIcon(mime:string) { if (mime.startsWith('video/')) return icons.video; if (mime.startsWith('audio/')) return icons.audio; if (mime.startsWith('image/')) return icons.image; if (mime === 'application/pdf') return icons.pdf; return icons.file }
 const icons = {
   previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',

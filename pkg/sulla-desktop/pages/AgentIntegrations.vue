@@ -154,15 +154,17 @@
 
               <!-- Integration Grid -->
               <div class="flex-1 min-w-0">
-                <p
-                  v-if="loadError"
-                  role="alert"
-                  class="mb-4 text-sm text-[var(--status-error)]"
-                >
-                  {{ loadError }}
+                <ConfigurationLoadState
+                  v-if="categoryLoading || loadError"
+                  label="Loading integrations…"
+                  :error="loadError ? 'Couldn’t load integrations.' : ''"
+                  @retry="loadIntegrations"
+                />
+                <p v-if="vaultLocked && !categoryLoading" role="status" class="mb-4 text-sm text-[var(--text-secondary)]">
+                  Unlock Password Vault to see connection status.
                 </p>
                 <!-- Search results: grouped by category -->
-                <template v-if="isSearching">
+                <template v-if="!categoryLoading && !loadError && isSearching">
                   <div
                     v-if="searchResultsByCategory.length === 0"
                     class="flex h-40 items-center justify-center text-sm text-[var(--text-muted)] "
@@ -203,7 +205,7 @@
                               </div>
                               <div class="flex items-center gap-2">
                                 <div
-                                  v-if="!integration.comingSoon"
+                                  v-if="!vaultLocked && !integration.comingSoon"
                                   class="flex items-center gap-2"
                                 >
                                   <div
@@ -269,35 +271,9 @@
                 </template>
 
                 <!-- Normal view: flat list for active category / popular -->
-                <template v-else>
+                <template v-else-if="!categoryLoading && !loadError">
                   <div
-                    v-if="categoryLoading"
-                    class="flex h-40 items-center justify-center text-sm text-[var(--text-dim)] "
-                  >
-                    <svg
-                      class="animate-spin -ml-1 mr-2 h-4 w-4"
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                    >
-                      <circle
-                        class="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        stroke-width="4"
-                      />
-                      <path
-                        class="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      />
-                    </svg>
-                    Loading integrations…
-                  </div>
-                  <div
-                    v-else-if="filteredIntegrations.length === 0"
+                    v-if="filteredIntegrations.length === 0"
                     class="flex h-40 items-center justify-center text-sm text-[var(--text-muted)] "
                   >
                     No integrations found.
@@ -328,7 +304,7 @@
                           </div>
                           <div class="flex items-center gap-2">
                             <div
-                              v-if="!integration.comingSoon"
+                              v-if="!vaultLocked && !integration.comingSoon"
                               class="flex items-center gap-2"
                             >
                               <div
@@ -405,11 +381,13 @@ import { useRouter } from 'vue-router';
 
 import AgentHeader from './agent/AgentHeader.vue';
 
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
 import { integrations as fullCatalog } from '@pkg/agent/integrations/catalog';
 import { popularIntegrations } from '@pkg/agent/integrations/popular';
 import type { Integration } from '@pkg/agent/integrations/types';
 import { getExtensionService } from '@pkg/agent/services/ExtensionService';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
+import { ConfigurationLoadPolicy, useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 import { useTheme } from '@pkg/composables/useTheme';
 import { formatFuzzyTime } from '@pkg/utils/dateFormat';
 
@@ -446,10 +424,10 @@ function isImageIcon(icon?: string): boolean {
 
 const search = ref('');
 const activeCategory = ref<string | null>(null);
-const categoryLoading = ref(false);
-const loadError = ref('');
 
 const integrationsList = ref<Integration[]>([]);
+const vaultLocked = ref(false);
+const loadPolicy = new ConfigurationLoadPolicy();
 const mergedIntegrations = ref<Record<string, Integration>>({});
 const popularCount = computed(() => Object.keys(popularIntegrations).length);
 
@@ -554,7 +532,7 @@ const searchResultsByCategory = computed(() => {
     if (!byCategory.has(integration.category)) {
       byCategory.set(integration.category, []);
     }
-    byCategory.get(integration.category)!.push(integration);
+    byCategory.get(integration.category)!.push(mergedIntegrations.value[integration.id] ?? integration);
   }
 
   const groups: { category: string; integrations: Integration[] }[] = [];
@@ -583,7 +561,7 @@ function loadCategory(categoryName: string): Record<string, Integration> {
 }
 
 /** Load popular view (default) and hydrate connection status */
-async function loadPopularView() {
+async function popularView() {
   const merged: Record<string, Integration> = { ...popularIntegrations };
 
   // Also merge extension integrations
@@ -595,53 +573,29 @@ async function loadPopularView() {
     }
   } catch { /* ignore */ }
 
-  await hydrateConnectionStatus(merged);
+  return merged;
+}
+
+const { loading: categoryLoading, error: loadError, start: loadIntegrations } = useConfigurationLoad(async() => {
+  const category = activeCategory.value;
+  await integrationService.initialize();
+  const entries = category === null ? await popularView() : loadCategory(category);
+  let merged = entries;
+  let locked = false;
+  try {
+    merged = Object.fromEntries(await Promise.all(Object.entries(entries).map(async([id, integration]) => [
+      id, { ...integration, connected: await integrationService.isAnyAccountConnected(id) },
+    ])));
+  } catch (cause) {
+    if (!loadPolicy.isVaultLocked(cause)) throw cause;
+    locked = true;
+  }
+  if (category !== activeCategory.value) return false;
+  vaultLocked.value = locked;
   mergedIntegrations.value = merged;
   integrationsList.value = Object.values(merged);
-}
-
-/** Load a specific category view and hydrate connection status */
-async function loadCategoryView(categoryName: string) {
-  categoryLoading.value = true;
-  try {
-    const merged: Record<string, Integration> = { ...loadCategory(categoryName) };
-    await hydrateConnectionStatus(merged);
-    mergedIntegrations.value = merged;
-    integrationsList.value = Object.values(merged);
-  } finally {
-    categoryLoading.value = false;
-  }
-}
-
-/** Hydrate connection status from IntegrationService for all entries */
-async function hydrateConnectionStatus(entries: Record<string, Integration>) {
-  const ids = Object.keys(entries);
-  const results = await Promise.all(ids.map(async(id) => {
-    try {
-      const connected = await integrationService.isAnyAccountConnected(id);
-      return { id, connected };
-    } catch {
-      return { id, connected: false };
-    }
-  }));
-  for (const { id, connected } of results) {
-    if (entries[id]) entries[id].connected = connected;
-  }
-}
-
-// Watch category changes → lazy-load or return to popular
-watch(activeCategory, async(newCategory) => {
-  loadError.value = '';
-  try {
-    if (newCategory === null) {
-      await loadPopularView();
-    } else {
-      await loadCategoryView(newCategory);
-    }
-  } catch (error) {
-    loadError.value = `Couldn't load integrations: ${ error instanceof Error ? error.message : String(error) }`;
-  }
 });
+watch(activeCategory, loadIntegrations);
 
 const connectIntegration = async(id: string) => {
   try {
@@ -675,19 +629,11 @@ const disconnectIntegration = async(id: string) => {
   }
 };
 
-onMounted(async() => {
+onMounted(() => {
   // Build stable sidebar counts from the full catalog
   buildCategoryCounts();
 
-  try {
-    await integrationService.initialize();
-
-    // Load the popular/default view
-    await loadPopularView();
-  } catch (error) {
-    console.error('Failed to load integrations:', error);
-    loadError.value = `Couldn't load your integrations: ${ error instanceof Error ? error.message : String(error) }`;
-  }
+  void loadIntegrations();
 });
 </script>
 

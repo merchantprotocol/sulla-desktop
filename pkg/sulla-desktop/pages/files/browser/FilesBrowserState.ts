@@ -28,6 +28,7 @@ export class FilesBrowserState {
   readonly operationError = ref('');
   readonly operationNotice = ref('');
   readonly selected = ref<DisplayEntry | null>(null);
+  readonly detailVersionId = ref<string>();
   readonly detailTab = ref<'details' | 'versions'>('details');
   readonly expandedFolders = ref(new Set<string>());
   readonly nativeSources = ref<FilesNativeSource[]>([]);

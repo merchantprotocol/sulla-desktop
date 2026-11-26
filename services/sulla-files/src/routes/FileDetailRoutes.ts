@@ -51,7 +51,7 @@ export class FileDetailRoutes {
       versionId ? this.details.version(versionId) : Promise.resolve(undefined),
       versionId ? this.details.recording(file.id, versionId) : Promise.resolve(undefined),
       this.details.edges(file.id),
-      this.details.activity(file.id),
+      this.details.activity(file.id, draftVisible),
     ]);
     const links = [];
     for (const edge of edgeRows) {

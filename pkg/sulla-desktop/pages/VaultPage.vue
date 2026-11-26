@@ -11,26 +11,24 @@
     :class="{ popup: props.surface === 'popup' }"
     aria-label="Password Manager"
   >
-    <div v-if="starting" class="vault-state">
-      <strong>Getting your vault ready…</strong>
-      <span>The secure vault is still starting. This retries automatically.</span>
-    </div>
-    <div v-else-if="error" class="vault-state">
-      <strong>Vault unavailable</strong>
-      <span>{{ error }}</span>
-      <button type="button" @click="open">Retry</button>
-    </div>
-    <div v-else-if="loading" class="vault-state">Opening secure vault…</div>
+    <ConfigurationLoadState
+      v-if="loading || starting || error"
+      class="vault-state"
+      :label="starting ? 'Waiting for Password Vault…' : 'Opening Password Vault…'"
+      :error="error"
+      @retry="open"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type WatchStopHandle } from 'vue';
 
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
+import { ConfigurationLoadPolicy } from '@pkg/composables/useConfigurationLoad';
 import { useTheme } from '@pkg/composables/useTheme';
 import { readVaultTheme } from '@pkg/shared/vaultTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { isTransientVaultError } from '@pkg/utils/vaultTransient';
 
 const host = ref<HTMLElement | null>(null);
 const { currentTheme } = useTheme();
@@ -49,18 +47,41 @@ const props = withDefaults(defineProps<{
 const loading = ref(true);
 const error = ref('');
 const starting = ref(false);
-const MAX_AUTO_RETRIES = 45;
-let autoRetries = 0;
+const loadPolicy = new ConfigurationLoadPolicy();
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let opening = false;
 const ownerId = crypto.randomUUID();
 let observer: ResizeObserver | null = null;
 let stopActiveWatch: WatchStopHandle | null = null;
 let lifecycleGeneration = 0;
 const claimant: Claimant = { ownerId, modal: props.modal, reopen: () => { void open() } };
 
-function bounds(): { x: number; y: number; width: number; height: number } {
+function canOpen(): boolean {
+  return props.active && viewHolder() === claimant && !document.hidden;
+}
+
+function retryWhenVisible(): void {
+  starting.value = true;
+  if (!canOpen()) return;
+  retryTimer = setTimeout(() => { retryTimer = null; void open() }, 2_000);
+}
+
+async function onVisibilityChange(): Promise<void> {
+  if (!canOpen() || opening || retryTimer || error.value) return;
+  if (loading.value || starting.value) {
+    await open();
+    return;
+  }
+  // Another Vault tab may have replaced the window's protected view while
+  // this tab was hidden. Keep the existing session when it still owns it.
+  const generation = lifecycleGeneration;
+  const owned = await ipcRenderer.invoke('vault:view-owned', ownerId).catch(() => false);
+  if (!owned && generation === lifecycleGeneration && canOpen() && !opening) await open();
+}
+
+function bounds(): { x: number; y: number; width: number; height: number } | null {
   const rect = host.value?.getBoundingClientRect();
-  if (!rect) return { x: 0, y: 0, width: 1, height: 1 };
+  if (!rect || rect.width < 1 || rect.height < 1) return null;
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
 
@@ -71,9 +92,16 @@ async function open(): Promise<void> {
   loading.value = true;
   error.value = '';
   await nextTick();
-  if (!props.active || generation !== lifecycleGeneration || viewHolder() !== claimant) return;
+  if (!canOpen() || generation !== lifecycleGeneration) return;
+  const rect = bounds();
+  // A restored tab can mount before the shell gives its native host a size.
+  if (!rect) {
+    retryWhenVisible();
+    return;
+  }
+  opening = true;
   try {
-    await ipcRenderer.invoke('vault:view-open', bounds(), {
+    const result = await ipcRenderer.invoke('vault:view-open', rect, {
       integrationId: props.integrationId,
       accountId:     props.accountId,
       surface:       props.surface,
@@ -84,23 +112,24 @@ async function open(): Promise<void> {
       restoreFiles: props.restoreFiles,
       connect:      props.connect ? JSON.parse(JSON.stringify(props.connect)) : undefined,
     });
-    if (!props.active || generation !== lifecycleGeneration) return;
-    loading.value = false;
-    starting.value = false;
-    autoRetries = 0;
-  } catch (cause) {
-    if (!props.active || generation !== lifecycleGeneration) return;
-    loading.value = false;
-    if (isTransientVaultError(cause) && autoRetries < MAX_AUTO_RETRIES) {
-      // The vault container is still coming up: keep the user informed and retry on our own.
-      starting.value = true;
-      autoRetries += 1;
-      retryTimer = setTimeout(() => { void open() }, 2_000);
-
+    if (generation !== lifecycleGeneration) return;
+    if (result.state === 'cancelled') {
+      retryWhenVisible();
       return;
     }
+    loading.value = false;
+    starting.value = false;
+  } catch (cause) {
+    if (generation !== lifecycleGeneration) return;
+    if (loadPolicy.isTransient(cause)) {
+      retryWhenVisible();
+      return;
+    }
+    loading.value = false;
     starting.value = false;
     error.value = cause instanceof Error ? cause.message : 'The local vault service did not answer.';
+  } finally {
+    if (generation === lifecycleGeneration) opening = false;
   }
 }
 
@@ -113,6 +142,9 @@ watch(currentTheme, async() => {
 
 function hide(): void {
   lifecycleGeneration += 1;
+  opening = false;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
   void ipcRenderer.invoke('vault:view-hide', ownerId);
 }
 
@@ -131,8 +163,10 @@ function deactivate(): void {
 }
 
 onMounted(() => {
+  document.addEventListener('visibilitychange', onVisibilityChange);
   observer = new ResizeObserver(() => {
-    if (props.active) void ipcRenderer.invoke('vault:view-bounds', ownerId, bounds());
+    const rect = bounds();
+    if (rect && canOpen()) void ipcRenderer.invoke('vault:view-bounds', ownerId, rect);
   });
   if (host.value) observer.observe(host.value);
   stopActiveWatch = watch(() => props.active, (active) => {
@@ -142,8 +176,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  if (retryTimer) clearTimeout(retryTimer);
-  retryTimer = null;
+  document.removeEventListener('visibilitychange', onVisibilityChange);
   stopActiveWatch?.();
   stopActiveWatch = null;
   observer?.disconnect();
@@ -171,7 +204,5 @@ function release(claimant: Claimant): void {
 <style scoped>
 .vault-host { position: relative; width: 100%; height: 100%; min-height: 420px; background: var(--bg-page); }
 .vault-host.popup { min-height: 100%; background: var(--bg-page); }
-.vault-state { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; color: var(--text-secondary); }
-.vault-state strong { color: var(--text-primary); }
-.vault-state button { border: 1px solid var(--border-default); border-radius: .5rem; padding: .5rem .9rem; background: var(--accent); color: var(--text-on-accent); }
+.vault-state { position: absolute; inset: 0; }
 </style>

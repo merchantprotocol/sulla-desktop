@@ -89,8 +89,9 @@
 
     <FileDetail
       v-else-if="snapshot"
-      :key="`${selected.id}:${selected.currentVersionId}`"
+      :key="`${selected.id}:${detailVersionId || selected.currentVersionId}:${detailTab}`"
       :item="selected"
+      :preview-version-id="detailVersionId"
       :trash-item="selected.trashItem?.kind === 'file' ? selected.trashItem : undefined"
       :collection="snapshot.collection"
       :data-source="dataSource"
@@ -131,7 +132,7 @@ const emit = defineEmits<{ 'navigation-consumed': []; 'open-editor': [item:Files
 const browser = useFilesBrowser(props, emit);
 const { icons } = browser;
 const dataSource = computed(() => props.dataSource);
-const { snapshot, loading, error, section, selected, detailTab, browserSurface, mainSurface } = browser.state;
+const { snapshot, loading, error, section, selected, detailTab, detailVersionId, browserSurface, mainSurface } = browser.state;
 const { readOnlyArea, emptyTitle, emptyCopy } = browser.location;
 const { visibleEntries } = browser.listing;
 const { refresh } = browser.refresher;
