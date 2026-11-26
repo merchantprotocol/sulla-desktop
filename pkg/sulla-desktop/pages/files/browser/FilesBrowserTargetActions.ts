@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { supportsDocumentEditor } from '../editor/editorTypes';
 import { FilesBrowserState } from './FilesBrowserState';
 import { FilesFileBookmarker } from './FilesFileBookmarker';
 
@@ -22,7 +21,7 @@ export class FilesBrowserTargetActions {
 
     if (action === 'open') { browser.navigation.activate(target); return }
     if (action === 'new-folder' || action === 'new-file') { if (target.folder) await (action === 'new-folder' ? browser.creation.newFolder(target.path) : browser.creation.newFile(target.path)); return }
-    if (action === 'open-sulla') { if (!target.folder && supportsDocumentEditor(target.path)) state.emit('open-editor', target, state.snapshot.value?.collection.id); else browser.navigation.selectEntry(target); return }
+    if (action === 'open-sulla') { browser.navigation.openInSulla(target); return }
     if (action === 'native-open') { await browser.refresher.runMutation(() => (source.openFileWithDefaultApp ?? source.openFile).call(source, target.id, target.currentVersionId), false); return }
     if (action === 'reveal') {
       if (!source.capabilities.nativeReveal || !source.revealFile) return;

@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { openDocumentTab, type FilesNavigationPayload, type FilesNavigationResult } from '@pkg/composables/useBrowserTabs';
+import { openWorkspaceTab, type FilesNavigationPayload, type FilesNavigationResult } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import { DesktopFilesDataSource } from './files/DesktopFilesDataSource';
@@ -30,6 +30,7 @@ const dataSource = new DesktopFilesDataSource();
 const bookmarkCreator = { create: (input: { kind: 'bookmark'; title: string; url: string }) => ipcRenderer.invoke('bookmarks:create', input) };
 
 function openEditor(item:FilesItem, collectionId?:string):void {
-  openDocumentTab({ fileId: item.id, path: item.path, collectionId });
+  void openWorkspaceTab({ mode: 'paper', documentFile: { fileId: item.id, path: item.path, collectionId } })
+    .catch(error => console.error('[FilesPage] Could not open document tab', error));
 }
 </script>

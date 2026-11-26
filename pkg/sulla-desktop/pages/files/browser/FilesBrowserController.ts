@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { FileDetailPreviewRouter } from '../FileDetailPreviewRouter';
+import { documentEditorTypeIdForPath } from '../editor/editorTypes';
+
 import { FilesBrowserCreation } from './FilesBrowserCreation';
 import { FilesBrowserDialogs } from './FilesBrowserDialogs';
 import { FilesBrowserDragDrop } from './FilesBrowserDragDrop';
@@ -19,6 +22,7 @@ import { FilesBrowserLiveUpdates } from './FilesBrowserLiveUpdates';
 import { FilesBrowserLocation } from './FilesBrowserLocation';
 import { FilesBrowserMenus } from './FilesBrowserMenus';
 import { FilesBrowserNavigation } from './FilesBrowserNavigation';
+import { FilesBrowserOpenDecision } from './FilesBrowserOpenDecision';
 import { FilesBrowserQuickLook } from './FilesBrowserQuickLook';
 import { FilesBrowserReceipts } from './FilesBrowserReceipts';
 import { FilesBrowserRefresher } from './FilesBrowserRefresher';
@@ -64,6 +68,7 @@ export class FilesBrowserController {
   readonly liveUpdates:FilesBrowserLiveUpdates;
   readonly search:FilesBrowserSearch;
   readonly folderLoader:FilesBrowserFolderLoader;
+  readonly openDecision:FilesBrowserOpenDecision;
   readonly navigation:FilesBrowserNavigation;
   readonly dragSnapshots:FilesDragSnapshots;
   readonly dragDrop:FilesBrowserDragDrop;
@@ -98,6 +103,7 @@ export class FilesBrowserController {
     this.liveUpdates = new FilesBrowserLiveUpdates(this);
     this.search = new FilesBrowserSearch(this);
     this.folderLoader = new FilesBrowserFolderLoader(this);
+    this.openDecision = new FilesBrowserOpenDecision(new FileDetailPreviewRouter(), documentEditorTypeIdForPath);
     this.navigation = new FilesBrowserNavigation(this);
     this.dragSnapshots = new FilesDragSnapshots(this);
     this.dragDrop = new FilesBrowserDragDrop(this);
