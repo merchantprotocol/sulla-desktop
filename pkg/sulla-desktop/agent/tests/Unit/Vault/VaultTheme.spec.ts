@@ -41,6 +41,7 @@ describe('vault presentation bridge', () => {
       // The provider's own variables and page background resolve to the injected theme.
       expect(declarations).toEqual(expect.arrayContaining([
         expect.objectContaining({ prop: '--paper', value: 'var(--bg-page)', important: true }),
+        expect.objectContaining({ selector: ':root,body', prop: '--content-bg', value: 'var(--bg-page)', important: true }),
         expect.objectContaining({ prop: '--bg-page', value: 'rgb(12, 20, 30)', important: true }),
         expect.objectContaining({ selector: 'body', prop: 'background', value: 'var(--bg-page)', important: true }),
         expect.objectContaining({ selector: 'body', prop: 'color', value: 'var(--text-primary)', important: true }),

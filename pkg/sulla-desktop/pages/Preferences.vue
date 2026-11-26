@@ -11,6 +11,7 @@
 import { computed, nextTick, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
 import { useStore } from 'vuex';
 
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
 import PrefIcon from '@pkg/components/settings/PrefIcon.vue';
 import AccountSection from '@pkg/components/settings/sections/AccountSection.vue';
 import AdvancedSection from '@pkg/components/settings/sections/AdvancedSection.vue';
@@ -27,6 +28,7 @@ import ThreatProtectionSection from '@pkg/components/settings/sections/ThreatPro
 import VoiceSection from '@pkg/components/settings/sections/VoiceSection.vue';
 import WorkflowsSection from '@pkg/components/settings/sections/WorkflowsSection.vue';
 import { useEngineSettings } from '@pkg/composables/preferences/useEngineSettings';
+import { useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 import { useTheme } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { PREFERENCES_NAV, PreferencesSectionId, resolvePreferencesSection } from '@pkg/utils/preferencesModel';
@@ -79,8 +81,6 @@ const KEYWORDS: Record<PreferencesSectionId, string> = {
 };
 
 const STORAGE_KEY = 'sulla.preferences.section';
-const loaded = ref(false);
-const loadFailed = ref(false);
 const query = ref('');
 const current = ref<PreferencesSectionId>(resolvePreferencesSection(localStorage.getItem(STORAGE_KEY)) ?? 'general');
 const version = ref('');
@@ -128,18 +128,17 @@ function onUpdaterState(_event: unknown, state: { currentVersion: string, update
   updateAvailable.value = state.updateAvailable;
 }
 
-async function load() {
-  loaded.value = false;
-  try {
-    await store.dispatch('credentials/fetchCredentials');
-    await store.dispatch('preferences/fetchPreferences');
-    await store.dispatch('preferences/fetchLocked');
-    loadFailed.value = !!store.getters['preferences/hasError'];
-  } catch {
-    loadFailed.value = true;
-  }
-  loaded.value = true;
-}
+const { loading, error: loadError, start: load } = useConfigurationLoad(async() => {
+  const page = new URLSearchParams(window.location.search);
+  const startupId = page.get('startupId');
+  if (startupId) await ipcRenderer.invoke('sulla-settings:wait-for-backends', { startupId, windowKey: page.get('windowKey') || 'main' });
+  await store.dispatch('credentials/fetchCredentials');
+  store.commit('preferences/SET_HAS_ERROR', false);
+  const preferencesStatus = await store.dispatch('preferences/fetchPreferences');
+  const lockedStatus = await store.dispatch('preferences/fetchLocked');
+  if ([preferencesStatus, lockedStatus].some(status => [502, 503, 504].includes(status))) return false;
+  if (store.getters['preferences/hasError']) throw new Error('Couldn’t load preferences.');
+});
 
 onBeforeMount(() => {
   ipcRenderer.on('updater:state', onUpdaterState);
@@ -224,31 +223,12 @@ onBeforeUnmount(() => {
           class="page"
           :class="{ narrow: current !== 'models' }"
         >
-          <div
-            v-if="!loaded"
-            class="loading"
-          >
-            Loading preferences…
-          </div>
-          <div
-            v-else-if="loadFailed"
-            class="alert"
-          >
-            <PrefIcon name="alert" />
-            <div class="x">
-              <b>Sulla couldn’t load your preferences.</b>
-              <span>The settings service didn’t answer. Try again in a moment.</span>
-            </div>
-            <div class="r">
-              <button
-                type="button"
-                class="btn"
-                @click="load"
-              >
-                Try again
-              </button>
-            </div>
-          </div>
+          <ConfigurationLoadState
+            v-if="loading || loadError"
+            label="Loading preferences…"
+            :error="loadError ? 'Couldn’t load preferences.' : ''"
+            @retry="load"
+          />
           <component
             :is="sectionComponent"
             v-else
