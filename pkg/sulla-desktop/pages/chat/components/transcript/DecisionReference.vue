@@ -22,7 +22,7 @@
   />
   <div v-else class="decision-reference">
     <span>{{ label }}</span>
-    <button type="button" @click="store.show(decisionId)">Open For You</button>
+    <button type="button" @click="store.show(decisionId)">Open Decide</button>
   </div>
 </template>
 
@@ -43,7 +43,7 @@ const active = computed(() => !!routedRecord.value && DecisionAttention.active(r
 const routeBusy = computed(() => !!routedRecord.value && store.busy(routedRecord.value.id));
 const label = computed(() => {
   const record = store.decisions.value.find(item => item.id === decisionId.value);
-  return record ? `${DecisionAttention.label(record, store.now.value)} · For You` : 'Request saved in For You';
+  return record ? `${DecisionAttention.label(record, store.now.value)} · Decide` : 'Request saved in Decide';
 });
 const approvalMessage = computed(() => {
   if (props.msg.kind !== 'tool_approval') return undefined;

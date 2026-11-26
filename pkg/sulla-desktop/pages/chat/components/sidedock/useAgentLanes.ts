@@ -316,7 +316,7 @@ export class AgentLanesBindings {
       if (!count) return activity;
       return {
         state: 'you', lead: 'Needs you',
-        parts: [`${count} ${count === 1 ? 'request' : 'requests'} in For You`, ...(activity.state === 'idle' ? [] : activity.parts)],
+        parts: [`${count} ${count === 1 ? 'request' : 'requests'} in Decide`, ...(activity.state === 'idle' ? [] : activity.parts)],
       };
     });
 

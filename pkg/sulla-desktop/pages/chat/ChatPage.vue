@@ -119,7 +119,7 @@
 
 <script setup lang="ts">
 import { findAgentBySlug } from '@pkg/shared/agentJobNames';
-import { computed, inject, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import Canvas             from './components/chrome/Canvas.vue';
@@ -829,9 +829,15 @@ const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
 // ─── Dock position: bottom of the chat, or the right-hand side column ───
-const { position: dockPosition, sideRatio } = DockPositions.use();
+const { position: dockPosition, setPosition, sideRatio } = DockPositions.use();
 const dockSide = computed(() => dockPosition.value === 'side');
 const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
+// A transcript link reveals the same scoped decision in the dock, even when the drawer is closed.
+watch(chatDecisionStore.openVersion, async() => {
+  setPosition('side');
+  await nextTick();
+  sideDock.value?.selectTab('decisions');
+});
 // The right drawer (side dock) holds the agent lanes, results, decisions and files.
 // It never takes the message box: that stays at the bottom of the chat.
 // Find chat (⌘P): past chats, pins, and this chat's decisions and results.
