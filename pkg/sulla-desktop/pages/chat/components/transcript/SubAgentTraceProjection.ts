@@ -16,6 +16,7 @@ import type { TraceRow, SubAgentTraceStatus, SubAgentTraceDetails } from './trac
 
 export interface SubAgentTraceInput {
   agents?: readonly AgentStateRow[];
+  histories?: ReadonlyMap<string, AgentTraceHistoryData>;
 }
 
 interface JobTrace {
@@ -27,6 +28,7 @@ interface JobTrace {
   result?: { item: AgentResultItem; at: number; message: ProactiveMessage };
   legacy?: ProactiveMessage;
   native?: SubAgentMessage;
+  history?: AgentTraceHistoryData;
 }
 
 const states: Record<AgentRowState, SubAgentTraceStatus> = {
@@ -109,7 +111,7 @@ export class SubAgentTraceProjection {
       const get = (key: string): JobTrace => {
         let job = jobs.get(key);
         if (!job) {
-          job = { key, first: message, live: agents.get(key) };
+          job = { key, first: message, live: agents.get(key), history: input.histories?.get(key) };
           jobs.set(key, job);
         }
         return job;
@@ -146,6 +148,8 @@ export class SubAgentTraceProjection {
     const { launch, exchange, legacy, native, live } = job;
     const rows: TraceRow[] = [];
 
+    rows.push(...this.checkinRows(job, aggregate));
+
     if (launch) rows.push({ ...aggregate, id: `subagent:${job.key}:handoff`, kind: 'handoff', icon: 'handoff',
       verb: 'Handed off to', status: live ? states[live.state] : 'starting', note: launch.summary || undefined,
       at: launch.createdAt, anchorEntryId: String(launch.id), sourceMessageId: String(launch.id) });
@@ -180,16 +184,17 @@ export class SubAgentTraceProjection {
       verb: 'Result from', status: settled.status, note: settled.note, at: settled.at,
       anchorEntryId: settled.sourceMessageId, sourceMessageId: settled.sourceMessageId,
       ...(settled.durationLabel ? { durationLabel: settled.durationLabel } : {}) });
-    else if (exchange?.status === 'running') rows.push({ ...aggregate, id: `subagent:${job.key}:checkin:${exchange.createdAt}`,
+    else if (exchange?.status === 'running' && !this.hasRecordedCheckin(job, exchange.createdAt, exchange.summary)) rows.push({ ...aggregate, id: `subagent:${job.key}:exchange:${exchange.createdAt}`,
       kind: 'activity', icon: 'dot', verb: 'Check-in', status: live ? states[live.state] : 'working',
       note: exchange.summary || undefined, at: exchange.createdAt, anchorEntryId: String(exchange.id), sourceMessageId: String(exchange.id) });
 
-    if (live && !settled) {
-      const at = this.timestamp(live.lastCheckinAt) ?? this.timestamp(live.lastActivityAt) ?? this.timestamp(live.startedAt);
+    if (live) {
+      const checkinAt = this.timestamp(live.lastCheckinAt);
+      const at = checkinAt ?? this.timestamp(live.lastActivityAt) ?? this.timestamp(live.startedAt);
       const note = live.lastCheckinSummary || live.stateReason || live.waitReason || undefined;
-      if (at !== undefined && note) {
+      if (at !== undefined && note && !this.hasRecordedCheckin(job, checkinAt, live.lastCheckinSummary)) {
         const sourceMessageId = String(launch?.id ?? job.first.id);
-        rows.push({ ...aggregate, id: `subagent:${job.key}:status:${at}`, kind: 'activity', icon: 'dot',
+        rows.push({ ...aggregate, id: `subagent:${job.key}:live-status`, kind: 'activity', icon: 'dot',
           verb: 'Status', status: states[live.state], note, at, anchorEntryId: sourceMessageId, sourceMessageId });
       }
     }
@@ -197,6 +202,28 @@ export class SubAgentTraceProjection {
     if (!rows.length) rows.push({ ...aggregate, id: `subagent:${job.key}:status`, kind: 'activity', icon: 'dot',
       verb: 'Status', at: job.first.createdAt, anchorEntryId: String(job.first.id), sourceMessageId: String(job.first.id) });
     return rows;
+  }
+
+  private checkinRows(job: JobTrace, aggregate: TraceRow): TraceRow[] {
+    const checkins = [...(job.history?.checkins ?? [])].sort((left, right) => left.createdAt - right.createdAt);
+    const sourceMessageId = String(job.launch?.id ?? job.first.id);
+    return checkins.map((checkin, index) => ({
+      ...aggregate,
+      id: `subagent:${job.key}:checkin:${checkin.createdAt}:${index}`,
+      kind: 'activity', icon: 'dot', verb: 'Check-in', target: checkin.step || 'Progress update', targetIsCode: false,
+      ...(checkin.percent !== undefined ? { keyArgs: `${checkin.percent}%` } : {}),
+      status: 'ok',
+      note: [checkin.summary,
+        ...(checkin.blockers.length ? [`Blockers:\n${checkin.blockers.join('\n')}`] : []),
+        ...(checkin.filesTouched.length ? [`Files touched:\n${checkin.filesTouched.join('\n')}`] : []),
+      ].filter(Boolean).join('\n'),
+      at: checkin.createdAt, anchorEntryId: sourceMessageId, sourceMessageId,
+    }));
+  }
+
+  private hasRecordedCheckin(job: JobTrace, at: number | undefined, summary?: string | null): boolean {
+    return at !== undefined && !!summary && (job.history?.checkins.some(checkin =>
+      checkin.createdAt === at && checkin.summary === summary) ?? false);
   }
 
   private taskKey(jobId: string, index = 0): string { return `${ jobId }:${ index }`; }

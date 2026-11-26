@@ -110,6 +110,7 @@ import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useResultActivity } from '../../composables/useResultActivity';
+import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { ApprovalTranscriptProjector } from '../../services/ApprovalTranscriptProjector';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
@@ -129,6 +130,7 @@ const traceProjection = new DetailedTraceProjection();
 const timelineProjection = new DetailedTimelineProjection(traceProjection, reporting);
 const citationProjection = new ReplyCitationProjection();
 const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
+const threadAgentActivity = inject(THREAD_AGENT_ACTIVITY_KEY, undefined);
 const { activity: resultActivity } = useResultActivity();
 
 const transcriptMessages = computed(() => approvalProjector.project(
@@ -205,6 +207,7 @@ const detailedTimeline = computed(() => timelineProjection.project(
   transcriptEntries.value,
   agentState?.snapshot.value.rows,
   waiting.value,
+  threadAgentActivity?.traceHistories.value,
 ));
 function detailedJumpEntries(): Array<{ id: string; sourceId?: string }> {
   const entries: Array<{ id: string; sourceId?: string }> = [];

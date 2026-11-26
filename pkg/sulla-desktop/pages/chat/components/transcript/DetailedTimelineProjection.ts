@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import type { Message, SullaMessage, UserMessage } from '../../models/Message';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { DetailedTraceProjection } from './DetailedTraceProjection';
 import type { TraceRow } from './traceTypes';
@@ -85,8 +86,9 @@ export class DetailedTimelineProjection {
     standardEntries: readonly TranscriptEntry[],
     agents?: readonly AgentStateRow[],
     waiting?: { message: UserMessage; since: number } | null,
+    histories?: ReadonlyMap<string, AgentTraceHistoryData>,
   ): DetailedTimelineItem[] {
-    const rows = this.traceProjection.projectRows(messages, standardEntries, { agents });
+    const rows = this.traceProjection.projectRows(messages, standardEntries, { agents, histories });
     const entriesBySource = this.entriesBySource(standardEntries);
     const rowsBySource = this.rowsBySource(rows);
     const entryIndexById = new Map(standardEntries.map((entry, index) => [entry.id, index]));

@@ -10,6 +10,7 @@ import { SubAgentTraceProjection } from '@pkg/pages/chat/components/transcript/S
 import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
 import type { Message } from '@pkg/pages/chat/models/Message';
 import { asMessageId } from '@pkg/pages/chat/types/chat';
+import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import type { AgentResultItem } from '@pkg/shared/agentResults/AgentResultCard';
 
@@ -97,6 +98,37 @@ describe('Option A transcript policy', () => {
 });
 
 describe('Option A Detailed sub-agent row', () => {
+  it('keeps every historical check-in in place with stable ids after the worker settles', () => {
+    // risk: live updates overwrite prior check-ins or settlement removes the worker's recorded history.
+    const history: AgentTraceHistoryData = {
+      checkins: [
+        { step: 'implement', summary: 'First update\nFull summary', filesTouched: ['one.ts'], blockers: [], createdAt: 4_000 },
+        { step: 'verify', summary: 'Second update', filesTouched: ['two.ts'], blockers: ['CI pending'], percent: 70, createdAt: 5_000 },
+      ],
+      messages: [],
+    };
+    const histories = new Map([['job-1:0', history]]);
+    const latest = { ...live('working'), lastCheckinAt: new Date(5_000).toISOString(), lastCheckinSummary: 'Second update' };
+    const projection = new SubAgentTraceProjection();
+    const events = (messages: readonly Message[], checkinHistory: ReadonlyMap<string, AgentTraceHistoryData>) =>
+      [...projection.eventRowsByMessage(messages, { agents: [latest], histories: checkinHistory }).values()].flat();
+    const first = events([launch, reply], histories).filter(row => row.verb === 'Check-in');
+
+    expect(first.map(row => [row.id, row.at, row.target, row.note])).toEqual([
+      ['subagent:job-1:0:checkin:4000:0', 4_000, 'implement', 'First update\nFull summary\nFiles touched:\none.ts'],
+      ['subagent:job-1:0:checkin:5000:1', 5_000, 'verify', 'Second update\nBlockers:\nCI pending\nFiles touched:\ntwo.ts'],
+    ]);
+    expect(first[1]).toMatchObject({ keyArgs: '70%', status: 'ok', sourceMessageId: 'launch' });
+
+    const appendedHistory: AgentTraceHistoryData = { ...history, checkins: [...history.checkins,
+      { step: 'complete', summary: 'Final update', filesTouched: [], blockers: [], createdAt: 6_000 }] };
+    const settled = events([launch, reply, card(result('completed'))], new Map([['job-1:0', appendedHistory]]));
+    const settledCheckins = settled.filter(row => row.verb === 'Check-in');
+    expect(settledCheckins.slice(0, first.length).map(row => row.id)).toEqual(first.map(row => row.id));
+    expect(settledCheckins).toHaveLength(3);
+    expect(settled.some(row => row.kind === 'result' && row.status === 'returned')).toBe(true);
+  });
+
   it('keeps one row per job that changes in place from starting through parked, no check-in and returned', () => {
     // risk: a second card per job or a status word outside the approved seven.
     const base = [launch, reply] as const;
