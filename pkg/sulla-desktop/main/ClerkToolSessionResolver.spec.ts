@@ -17,12 +17,10 @@ const context: ToolExecutionContext = {
   exp: Math.floor(now / 1_000) + 300, scopes: [], request_id: 'request-a', jti: 'jti-a',
 };
 
-const paired = { generation: context.jti, expiresAt: now + 30_000 };
 function fixture(session: ToolSession | null = {
-  id: 'bearer-a', clerk: paired,
+  id: 'bearer-a', clerk: 'local',
   state: { metadata: { agentId: 'agent-a', threadId: 'thread-a', allowedToolNames: ['clerk_delete_user'] } } as any,
   createdAt: now, lastUsedAt: now, expiresAt: now + 30_000, ttlMs: 30_000,
-  executionContext: context,
 }) {
   const getToolSession = vi.fn(() => session);
   const issueLocalBrokerContext = vi.fn(async() => context);
@@ -52,13 +50,12 @@ describe('Clerk tool-session authorization', () => {
     await expect(f.resolver.resolve(request('Bearer installation-token'), 'clerk_delete_user', new AbortController().signal)).rejects.toThrow('verified agent');
     await expect(f.resolver.resolve(request(), 'clerk_create_user', new AbortController().signal)).rejects.toThrow('not authorized');
 
-    f.setSession({ ...({} as ToolSession), id: 'bearer-a', clerk: paired, state: { metadata: { agentId: 'agent-a', threadId: 'thread-a', allowedToolNames: ['clerk_delete_user'] } } as any,
-      createdAt: now, lastUsedAt: now, expiresAt: now, ttlMs: 30_000, executionContext: { ...context, exp: Math.floor(now / 1_000) - 1 } });
+    f.setSession({ ...({} as ToolSession), id: 'bearer-a', clerk: 'local', state: { metadata: { agentId: 'agent-a', threadId: 'thread-a', allowedToolNames: ['clerk_delete_user'] } } as any,
+      createdAt: now, lastUsedAt: now, expiresAt: now, ttlMs: 30_000 });
     await expect(f.resolver.resolve(request(), 'clerk_delete_user', new AbortController().signal)).rejects.toThrow('invalid or expired');
 
-    f.setSession({ ...({} as ToolSession), id: 'bearer-a', clerk: paired, state: { metadata: { threadId: 'thread-a', allowedToolNames: ['clerk_delete_user'] } } as any,
-      createdAt: now, lastUsedAt: now, expiresAt: now + 30_000, ttlMs: 30_000,
-      executionContext: { ...context, agent_id: undefined } });
+    f.setSession({ ...({} as ToolSession), id: 'bearer-a', clerk: 'local', state: { metadata: { threadId: 'thread-a', allowedToolNames: ['clerk_delete_user'] } } as any,
+      createdAt: now, lastUsedAt: now, expiresAt: now + 30_000, ttlMs: 30_000 });
     await expect(f.resolver.resolve(request(), 'clerk_delete_user', new AbortController().signal)).rejects.toThrow('missing trusted agent context');
   });
 
@@ -72,8 +69,8 @@ describe('Clerk tool-session authorization', () => {
 
   it('authorizes and revalidates the registered prefixed Clerk tool name used by internal routes', async() => {
     const f = fixture({
-      id: 'bearer-a', clerk: paired, state: { metadata: { agentId: 'agent-a', threadId: 'thread-a', allowedToolNames: ['clerk_list_users'] } } as any,
-      createdAt: now, lastUsedAt: now, expiresAt: now + 30_000, ttlMs: 30_000, executionContext: context,
+      id: 'bearer-a', clerk: 'local', state: { metadata: { agentId: 'agent-a', threadId: 'thread-a', allowedToolNames: ['clerk_list_users'] } } as any,
+      createdAt: now, lastUsedAt: now, expiresAt: now + 30_000, ttlMs: 30_000,
     });
     const caller = await f.resolver.resolve(request(), 'clerk_list_users', new AbortController().signal);
 

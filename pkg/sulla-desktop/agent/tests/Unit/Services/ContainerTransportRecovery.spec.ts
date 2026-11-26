@@ -13,7 +13,7 @@ import { BaseTool } from '../../../tools/base';
 import { toolDecisionPort } from '../../../tools/toolDecisionPort';
 import { GitStatusWorker } from '../../../tools/github/git_status';
 import { ExecWorker } from '../../../tools/meta/exec';
-import { AgentContainerRuntimeRegistry, agentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
+import { AgentContainerRuntimeRegistry, agentContainerRuntimeRegistry, ContainerExecutionContextFactory } from '../../../services/AgentContainerRuntimeRegistry';
 import { toolSessionOrigin } from '../../../services/ToolSessionOrigin';
 import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
 import { EventEmitter } from 'node:events';
@@ -84,6 +84,38 @@ describe('session registration authority', () => {
         expect(host.peekToolSession(launcher.id)!.clerk).toBe('ordinary');
       } finally { launcher.revoke(); await issuer.close(); host['port'] = port; }
     });
+
+  it('does not trust a legacy server-side pair or a local marker on a container execution context', async() => {
+    const port = host['port']; host['port'] = 1;
+    const launcher = host.registerSession(state, 60_000, binding);
+    try {
+      const record = host.peekToolSession(launcher.id)!;
+      const pair = { generation: record.executionContext!.jti, expiresAt: record.expiresAt };
+      for (const marker of [pair, 'local']) {
+        Object.assign(record, { clerk: marker }); // Simulate a pre-deny record, not request metadata.
+        await expect(resolver.resolveSession(launcher.id, 'clerk_get_user', new AbortController().signal))
+          .rejects.toThrow('clerk_container_isolation_unavailable');
+      }
+    } finally { launcher.revoke(); host['port'] = port; }
+  });
+
+  it('allows a host-local root, but a container rebind permanently removes its Clerk authority', async() => {
+    const port = host['port']; host['port'] = 1;
+    const root = host.registerSession(state, 60_000);
+    const proof = new ContainerExecutionContextFactory().create(state, 60_000, { ...binding, podId: 'desktop-main' })!;
+    const local = { issueLocalBrokerContext: vi.fn(async() => proof) };
+    const policy = new ClerkToolSessionResolver(host, local, () => null, new AgentAwarenessPolicy());
+    const resolve = () => policy.resolveSession(root.id, 'clerk_get_user', new AbortController().signal);
+    try {
+      const caller = await resolve();
+      expect(caller.execution?.pod_id).toBe('desktop-main');
+      host.rebindSession(root.id, state, 60_000, binding);
+      await expect(caller.revalidate!()).rejects.toThrow('clerk_container_isolation_unavailable');
+      host.rebindSession(root.id, state, 60_000);
+      await expect(resolve()).rejects.toThrow('clerk_container_isolation_unavailable');
+      expect(local.issueLocalBrokerContext).toHaveBeenCalledTimes(1);
+    } finally { root.revoke(); host['port'] = port; }
+  });
 
   it('keeps tool-created MCP sessions and their descendants ordinary even with a live issuer', async() => {
     const port = host['port']; host['port'] = 1;
@@ -160,7 +192,7 @@ describe('launcher compatibility', () => {
         const proof = await verifyCapabilityToken(files.get('SULLA_API_TOKEN'), key, { category: 'meta', tool: 'ping' });
         expect(proof.tool_session_generation).toBeUndefined();
         await expect(resolver.bindForwarded(worker(), 'clerk_get_user', files.get('SULLA_TOOL_SESSION'),
-          { ...proof, request_id: 'fixture' }, new AbortController().signal)).rejects.toThrow('session-bound');
+          { ...proof, request_id: 'fixture' }, new AbortController().signal)).rejects.toThrow('clerk_container_isolation_unavailable');
       } finally { host['port'] = port; vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetAgentContainerImageResolution(); }
     });
 });
@@ -179,11 +211,14 @@ describe('owned lease renewal', () => {
       const proof = { ...await verifyCapabilityToken(leases.issue(a.id), key), request_id: 'held' };
       const held = worker();
       await expect(resolver.bindForwarded(held, held.name, a.id, proof, new AbortController().signal)).rejects.toMatchObject({ status: 403 });
-      await leases.prepare(b.id); b.revoke();
+      await leases.prepare(b.id);
+      expect(host.peekToolSession(b.id)?.clerk).toBe('ordinary');
+      expect(await clerkAllowed(b.id)).toBe(false);
+      b.revoke();
       clock.mockReturnValue(start + 960_000);
       expect(host.peekToolSession(a.id)).toBeNull(); // Sweep before timer callback.
       await renew();
-      const fresh = await verifyCapabilityToken(files.get('SULLA_API_TOKEN'), key);
+      const fresh = await verifyCapabilityToken(files.get('SULLA_API_TOKEN'), key, { category: 'meta', tool: 'ping' });
       expect(fresh.tool_session_generation).toBe(host.peekToolSession(a.id)?.executionContext?.jti);
       expect(fresh.tool_session_generation).not.toBe(proof.tool_session_generation);
       expect(host.peekToolSession(b.id)).toBeNull();
