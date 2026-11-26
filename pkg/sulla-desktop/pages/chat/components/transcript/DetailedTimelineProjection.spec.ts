@@ -6,6 +6,8 @@ import type { Message } from '../../models/Message';
 import { asMessageId } from '../../types/chat';
 import { TranscriptReporting } from './toolGroups';
 import { DetailedTimelineProjection, DetailedTimelineSegmenter } from './DetailedTimelineProjection';
+import { DetailedTimelineElementRegistrar } from './DetailedTimelineElementRegistrar';
+import { TranscriptJump } from '../../messages/transcriptJump';
 
 describe('DetailedTimelineProjection', () => {
   it('keeps a working agent from saying it needs the user and places queued waiting after the newest bubble', () => {
@@ -230,5 +232,34 @@ describe('DetailedTimelineProjection', () => {
     expect(segments).toHaveLength(2);
     expect(segments[0].items.some(item => item.kind === 'trace' && item.row.kind === 'result')).toBe(true);
     expect(segments[1].leading.some(item => item.kind === 'message' && item.entry.id === 'next-user')).toBe(true);
+  });
+});
+
+describe('Detailed timeline trace registration', () => {
+  it('keeps an approval jump on the visible approval card instead of the same-id trace row', () => {
+    // risk: an actionable approval jump lands on a read-only status row, hiding Approve/Deny.
+    const card = { nodeType: 1, isConnected: true, scrollIntoView: vi.fn() };
+    const trace = { nodeType: 1, isConnected: true, scrollIntoView: vi.fn() };
+    const jumper = new TranscriptJump();
+    jumper.register('approval-1', card);
+    const registrar = new DetailedTimelineElementRegistrar((id, element) => jumper.register(id, element));
+
+    registrar.registerTrace({ id: 'approval-1' }, trace, new Set(['approval-1']));
+
+    expect(jumper.jump([{ id: 'approval-1' }], 'approval-1', true)).toBe(true);
+    expect(card.scrollIntoView).toHaveBeenCalledOnce();
+    expect(trace.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('still resolves a source-message jump to its trace row without a source-id alias registration', () => {
+    // risk: removing the source-message alias breaks jumps to thought, sub-agent, or tool rows.
+    const trace = { nodeType: 1, isConnected: true, scrollIntoView: vi.fn() };
+    const jumper = new TranscriptJump();
+    const registrar = new DetailedTimelineElementRegistrar((id, element) => jumper.register(id, element));
+
+    registrar.registerTrace({ id: 'trace:thought-1' }, trace, new Set(['thought-message-1']));
+
+    expect(jumper.jump([{ id: 'trace:thought-1', sourceId: 'thought-message-1' }], 'thought-message-1', true)).toBe(true);
+    expect(trace.scrollIntoView).toHaveBeenCalledOnce();
   });
 });

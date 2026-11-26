@@ -81,6 +81,7 @@ import { computed } from 'vue';
 import MessageRouter from './MessageRouter.vue';
 import TraceRow from './TraceRow.vue';
 import TurnWaiting from './TurnWaiting.vue';
+import { DetailedTimelineElementRegistrar } from './DetailedTimelineElementRegistrar';
 import { DetailedTimelineSegmenter, type DetailedTimelineItem } from './DetailedTimelineProjection';
 import type { TraceRow as TraceRowModel } from './traceTypes';
 
@@ -90,6 +91,7 @@ const props = defineProps<{
 }>();
 defineEmits<{ (event: 'stop'): void; (event: 'resend'): void }>();
 const segmenter = new DetailedTimelineSegmenter();
+const elementRegistrar = new DetailedTimelineElementRegistrar(props.registerElement);
 const segments = computed(() => segmenter.segment(props.items));
 const ownedMessageIds = computed(() => {
   const ids = new Set<string>();
@@ -101,10 +103,7 @@ const ownedMessageIds = computed(() => {
 });
 
 function registerTrace(row: TraceRowModel, element: unknown): void {
-  props.registerElement(row.id, element);
-  if (row.sourceMessageId && !ownedMessageIds.value.has(row.sourceMessageId)) {
-    props.registerElement(row.sourceMessageId, element);
-  }
+  elementRegistrar.registerTrace(row, element, ownedMessageIds.value);
 }
 
 function registerLine(id: string, element: unknown): void { props.registerElement(id, element); }
