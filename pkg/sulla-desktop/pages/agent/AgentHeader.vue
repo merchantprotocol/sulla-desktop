@@ -1137,9 +1137,8 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const { working, snapshot } = bt.mode === 'chat' ? windowTabStrip.readActivity(bt.id) : { working: false, snapshot: undefined };
-    const activity = snapshot?.state ?? (working ? 'working' : undefined);
-    const statusLine = bt.mode === 'chat' ? snapshot?.detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
+    const { working, activity, detail } = windowTabStrip.readHeaderActivity(bt);
+    const statusLine = bt.mode === 'chat' ? detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
 
     map.set(id, {
       id,
