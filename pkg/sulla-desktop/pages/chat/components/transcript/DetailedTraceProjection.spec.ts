@@ -130,8 +130,8 @@ describe('DetailedTraceProjection', () => {
     rendered.unmount();
   });
 
-  it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
-    // risk: shared transcript mutation and incorrect insertion order.
+  it('projects ordered per-message rows for status mapping without mutating frozen messages', () => {
+    // risk: shared transcript mutation or trace rows losing their source message identity.
     const messages = Object.freeze([
       Object.freeze({ id: asMessageId('user-1'), kind: 'user', createdAt: 1, text: 'run it' }),
       Object.freeze({ id: asMessageId('thinking-1'), kind: 'thinking', createdAt: 2, thoughts: ['Searching files'], reportingActivity: 'tool', startedAt: 2, completed: true }),
@@ -142,9 +142,8 @@ describe('DetailedTraceProjection', () => {
     const reporting = new TranscriptReporting();
     const standard = reporting.entries(messages, 'info');
     const [turn] = new DetailedTraceProjection().project(messages, standard);
-    expect(turn.anchorEntryId).toBe('reply-1');
     expect(turn.rows.map(row => row.kind)).toEqual(['thought', 'tool']);
-    expect(turn.rows.every(row => row.anchorEntryId === 'reply-1')).toBe(true);
+    expect(turn.rows.map(row => row.anchorEntryId)).toEqual(['thinking-1', 'tool-1']);
     expect(turn.usage).toMatchObject({ model: 'test-model', totalTokens: 3 });
     expect(JSON.stringify(messages)).toBe(before);
   });

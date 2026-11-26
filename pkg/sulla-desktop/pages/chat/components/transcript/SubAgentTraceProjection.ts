@@ -65,7 +65,7 @@ export class SubAgentTraceProjection {
     return `${ statuses.length } ${ statuses.length === 1 ? 'agent' : 'agents' }: ${ parts }`;
   }
 
-  rowsByMessage(messages: readonly Message[], input: SubAgentTraceInput): Map<string, TraceRow[]> {
+  statusRowsByMessage(messages: readonly Message[], input: SubAgentTraceInput): Map<string, TraceRow[]> {
     const result = new Map<string, TraceRow[]>();
     for (const job of this.jobs(messages, input)) {
       const source = String(job.first.id);

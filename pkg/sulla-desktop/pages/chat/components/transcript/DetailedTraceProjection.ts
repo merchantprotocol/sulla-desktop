@@ -14,8 +14,6 @@ import type { SubAgentTraceStatus, TraceIcon, TraceRow, TraceRowKind, TraceRowSt
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
 export class DetailedTraceProjection {
-  static readonly trailingAnchor = '__trace-trailing__';
-
   constructor(
     private readonly reporting = new TranscriptReporting(),
     private readonly serializer = new TracePayloadSerializer(),
@@ -26,23 +24,21 @@ export class DetailedTraceProjection {
 
   project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
     const activities = this.debugActivities(messages, standardEntries);
-    const subagents = this.subagents.rowsByMessage(messages, subagentInput);
+    const subagents = this.subagents.statusRowsByMessage(messages, subagentInput);
     return this.groups(messages).map((group, index) => {
-      const reply = group.find(message => message.kind === 'sulla' || message.kind === 'streaming');
-      const last = group[group.length - 1];
-      const anchorEntryId = this.anchorFor(reply, last.createdAt, standardEntries);
       const rows = group.flatMap(message => {
-        const jobRows = subagents.get(message.id) ?? [];
-        subagents.delete(message.id);
-        return [...this.rowsFor(message, anchorEntryId, activities.get(message.id)),
-          ...jobRows.map(row => ({ ...row, anchorEntryId }))];
+        const sourceId = String(message.id);
+        const jobRows = subagents.get(sourceId) ?? [];
+        subagents.delete(sourceId);
+        return [...this.rowsFor(message, sourceId, activities.get(message.id)),
+          ...jobRows.map(row => ({ ...row, anchorEntryId: sourceId }))];
       });
       const usage = this.usage(group);
       const agentSummary = SubAgentTraceProjection.summary(rows.flatMap(row => row.subagent ? [row.status as SubAgentTraceStatus] : []));
       const sourceCount = rows.filter(row => row.kind === 'source').length;
       // A blocked worker or a pending approval in this turn needs the human.
       const waitingOnYou = rows.some(row => (row.subagent && row.status === 'blocked') || (row.kind === 'approval' && row.status === 'waiting'));
-      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, anchorEntryId, rows,
+      return { id: `trace:${group[0]?.turnId ?? group[0]?.id ?? index}`, rows,
         ...(usage ? { usage } : {}), ...(agentSummary ? { agentSummary } : {}),
         ...(sourceCount ? { sourceCount } : {}), ...(waitingOnYou ? { waitingOnYou } : {}) };
     }).filter(turn => turn.rows.length > 0 || Boolean(turn.usage));
@@ -69,16 +65,6 @@ export class DetailedTraceProjection {
     ).map(item => item.row);
   }
 
-  byAnchor(turns: readonly TraceTurn[]): Map<string, TraceTurn[]> {
-    const anchors = new Map<string, TraceTurn[]>();
-    for (const turn of turns) {
-      const siblings = anchors.get(turn.anchorEntryId);
-      if (siblings) siblings.push(turn);
-      else anchors.set(turn.anchorEntryId, [turn]);
-    }
-    return anchors;
-  }
-
   private groups(messages: readonly Message[]): Message[][] {
     const groups: Message[][] = [];
     let current: Message[] = [];
@@ -100,13 +86,6 @@ export class DetailedTraceProjection {
       result.set(entry.sourceId, values);
     }
     return result;
-  }
-
-  private anchorFor(reply: Message | undefined, groupLastCreatedAt: number, entries: readonly TranscriptEntry[]): string {
-    const own = reply && entries.find(entry => entry.sourceId === reply.id);
-    if (own) return own.id;
-    const next = entries.find(entry => entry.createdAt >= groupLastCreatedAt);
-    return next?.id ?? DetailedTraceProjection.trailingAnchor;
   }
 
   private rowsFor(message: Message, anchor: string, activities?: readonly string[]): TraceRow[] {
