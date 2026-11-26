@@ -112,7 +112,7 @@ describe('Codex quiet stream watchdog', () => {
     // risk: a Codex worker dies without evidence explaining whether the CLI, provider, memory or an in-flight tool stalled
     const run = await launch();
     for (let index = 0; index < 25; index++) run.proc.stdout.write(`${ JSON.stringify({ type: 'item.completed', item: { id: `reasoning-${ index }`, type: 'reasoning' } }) }\n`);
-    run.proc.stderr.write('Authorization: Bearer synthetic-secret-do-not-persist');
+    run.proc.stderr.write('TypeError: {\"access_token\":\"json-secret\",\"password\": \"pw\"}\nAuthorization: Basic basic-secret\nGET /?key=query-secret\nprovider echoed partial tool argument');
     await vi.advanceTimersByTimeAsync(2 * 60_000 + 30_000);
     providerBridgeActivity.publishRetryStatus('codex-watchdog-test-pod', { status: 429 });
     await vi.advanceTimersByTimeAsync(2 * 60_000 + 59_000);
@@ -140,7 +140,8 @@ describe('Codex quiet stream watchdog', () => {
     expect(record.suspendMarks).toHaveProperty('lastResumeAt');
     expect(record.events).toHaveLength(20);
     expect(record.events[record.events.length - 1].type).toBe('provider_retry_503');
-    expect(record.stderrTail).not.toContain('synthetic-secret-do-not-persist');
+    expect(record.stderrSummary).toEqual({ errorName: 'TypeError', firstLine: '[omitted: stderr content excluded]', exitCode: null, signal: null });
+    expect(JSON.stringify(record)).not.toMatch(/json-secret|basic-secret|query-secret|partial tool argument/);
     expect(record).toHaveProperty('cgroupMemory');
     expect(run.outcome().message).toContain('check_agent_jobs(jobId="evidence-job")');
     expect(run.outcome().message).toContain('tasks[2].cliStallEvidence');

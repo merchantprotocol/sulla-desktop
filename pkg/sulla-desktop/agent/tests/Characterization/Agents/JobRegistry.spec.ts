@@ -80,7 +80,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
     const evidence: AgentCliStallEvidence = {
       recordedAt: new Date().toISOString(), provider: 'codex', jobId: job.jobId, taskIndex: 0, threadId,
       events: [{ timestamp: new Date().toISOString(), type: 'item.started' }], toolsInFlight: [{ name: 'command_execution', startedAt: new Date().toISOString() }],
-      child: { pid: 72, providerPid: 91, alive: true, exitCode: null, signal: null }, stderrTail: 'synthetic provider diagnostic', lastProviderRetry: null,
+      child: { pid: 72, providerPid: 91, alive: true, exitCode: null, signal: null }, stderrSummary: { errorName: null, firstLine: '[omitted: stderr content excluded]', exitCode: null, signal: null }, lastProviderRetry: null,
       promptLength: 123, processRssBytes: 4096, cgroupMemory: { currentBytes: 8192, maxBytes: 16384 },
       suspendMarks: { lastSuspendAt: null, lastResumeAt: null }, appStartedAt: new Date(Date.now() - 60_000).toISOString(),
     };

@@ -159,7 +159,7 @@ export class CliStallEvidenceRecorder {
         exitCode: Number.isInteger(snapshot.exitCode) ? snapshot.exitCode : null,
         signal: typeof snapshot.signal === 'string' && /^SIG[A-Z0-9]+$/.test(snapshot.signal) ? snapshot.signal : null,
       },
-      stderrTail: this.sanitizeStderr(snapshot.stderr, [...(snapshot.sensitiveContent ?? []), ...this.messageText(snapshot.messages ?? [])]),
+      stderrSummary: this.stderrSummary(snapshot.stderr, snapshot.exitCode, snapshot.signal),
       lastProviderRetry: snapshot.lastProviderRetry
         ? { status: snapshot.lastProviderRetry.status, timestamp: this.iso(snapshot.lastProviderRetry.at) }
         : null,
@@ -181,24 +181,16 @@ export class CliStallEvidenceRecorder {
     return String(value).replace(/[^A-Za-z0-9_.:-]/g, '_').slice(0, 80) || 'unknown';
   }
 
-  private messageText(messages: ChatMessage[]): string[] {
-    return messages.flatMap(message => typeof message.content === 'string'
-      ? [message.content]
-      : message.content.flatMap(block => block.type === 'text' ? [block.text] : []))
-      .filter(text => text.trim().length >= 8);
-  }
-
-  private sanitizeStderr(value: string, sensitiveContent: string[]): string {
-    if (sensitiveContent.some(text => text.trim().length >= 8 && value.includes(text.trim()))) return '[omitted: stderr echoed request content]';
-    const redacted = value
-      .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gi, '[redacted private key]')
-      .replace(/\bBearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
-      .replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, '[redacted credential]')
-      .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[redacted]')
-      .replace(/\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[redacted JWT]');
-    let tail = Buffer.from(redacted, 'utf8').subarray(-2048).toString('utf8');
-    while (Buffer.byteLength(tail, 'utf8') > 2048) tail = tail.slice(1);
-    return tail;
+  private stderrSummary(value: string, exitCode: number | null, signal: NodeJS.Signals | null): AgentCliStallEvidence['stderrSummary'] {
+    const firstLine = value.split(/\r?\n/, 1)[0].trim();
+    const namedError = firstLine.match(/^([A-Za-z][A-Za-z0-9_.]*(?:Error|Exception))\s*(?::|\b)/)?.[1];
+    const genericError = /^error\s*:/i.test(firstLine) ? 'Error' : null;
+    return {
+      errorName: namedError ? this.safeType(namedError) : genericError,
+      firstLine: firstLine ? '[omitted: stderr content excluded]' : null,
+      exitCode: Number.isInteger(exitCode) ? exitCode : null,
+      signal: typeof signal === 'string' && /^SIG[A-Z0-9]+$/.test(signal) ? signal : null,
+    };
   }
 
   private iso(at: number): string {

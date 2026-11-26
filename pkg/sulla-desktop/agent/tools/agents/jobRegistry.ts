@@ -64,7 +64,7 @@ export interface AgentCliStallEvidence {
   events: Array<{ timestamp: string; type: string }>;
   toolsInFlight: Array<{ name: string; startedAt: string }>;
   child: { pid: number | null; providerPid: number | null; alive: boolean; exitCode: number | null; signal: NodeJS.Signals | null };
-  stderrTail: string;
+  stderrSummary: { errorName: string | null; firstLine: string | null; exitCode: number | null; signal: NodeJS.Signals | null };
   lastProviderRetry: { status: 429 | 503; timestamp: string } | null;
   promptLength: number;
   processRssBytes: number | null;

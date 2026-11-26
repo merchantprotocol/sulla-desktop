@@ -136,7 +136,7 @@ describe('check_agent_jobs stall evidence', () => {
     const evidence = {
       recordedAt: '2026-11-26T05:00:00.000Z', provider: 'codex' as const, jobId: 'stalled-job', taskIndex: 0, threadId: 'stalled-thread',
       events: [{ timestamp: '2026-11-26T04:59:00.000Z', type: 'item.started' }], toolsInFlight: [{ name: 'command_execution', startedAt: '2026-11-26T04:58:00.000Z' }],
-      child: { pid: 72, providerPid: 91, alive: true, exitCode: null, signal: null }, stderrTail: 'provider stream closed', lastProviderRetry: null,
+      child: { pid: 72, providerPid: 91, alive: true, exitCode: null, signal: null }, stderrSummary: { errorName: null, firstLine: '[omitted: stderr content excluded]', exitCode: null, signal: null }, lastProviderRetry: null,
       promptLength: 256, processRssBytes: 1048576, cgroupMemory: { currentBytes: 4096, maxBytes: 8192 },
       suspendMarks: { lastSuspendAt: null, lastResumeAt: null }, appStartedAt: '2026-11-26T04:00:00.000Z',
     };
