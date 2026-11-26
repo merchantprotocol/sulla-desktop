@@ -54,16 +54,17 @@ async function launch(runtime: 'container' | 'guest' = 'container') {
   } as any);
   const service = createCodexService('gpt-6-luna', 'max') as any;
   vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
+  const abortController = new AbortController();
   let outcome: any;
   const activities: Array<{ message: string; reportingActivity?: string }> = [];
   const liveness = vi.fn();
   const finished = service.runCodex([
     { role: 'system', content: 'A synthetic watchdog test.' }, { role: 'user', content: 'Test only.' },
-  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test' })
+  ], { onActivity: (message: string, reportingActivity?: string) => activities.push({ message, reportingActivity }), onLiveness: liveness }, { conversationId: 'watchdog-test', signal: abortController.signal })
     .then((value: unknown) => { outcome = value }, (error: Error) => { outcome = error });
   await vi.advanceTimersByTimeAsync(0);
   proc.emit('spawn');
-  return { proc, finished, outcome: () => outcome, activities, liveness };
+  return { proc, finished, outcome: () => outcome, activities, liveness, abortController };
 }
 
 describe('Codex quiet stream watchdog', () => {
@@ -149,6 +150,19 @@ describe('Codex quiet stream watchdog', () => {
     expect(run.outcome().message).toContain('tool still running for 120m: command_execution');
     expect(run.outcome()).toMatchObject({ retrySafe: false, unsafeToFallback: true });
     expect(run.outcome().message).not.toContain('no output for 3 minutes');
+  });
+
+  it('does not stop a real 40-minute command while it is still running', async() => {
+    // risk: a legitimate long build is stopped by the removed dead-run silence watcher.
+    const run = await launch();
+    emit(run, { type: 'item.started', item: { id: 'build-40m', type: 'command_execution', command: 'yarn build' } });
+    await vi.advanceTimersByTimeAsync(40 * 60_000);
+    expect(run.proc.kill).not.toHaveBeenCalled();
+
+    run.abortController.abort();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await run.finished;
+    expect(run.outcome()).toMatchObject({ name: 'AbortError' });
   });
 
   it('counts model output relayed by the provider bridge (reasoning) as activity', async() => {

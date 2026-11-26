@@ -164,8 +164,6 @@ export const createJob = (...args: Parameters<typeof agentJobProvider.service.cr
 export const updateJobTask = (...args: Parameters<typeof agentJobProvider.service.updateJobTask>) => agentJobProvider.service.updateJobTask(...args);
 export const getJobsForParentThread = (...args: Parameters<typeof agentJobProvider.service.getJobsForParentThread>) => agentJobProvider.service.getJobsForParentThread(...args);
 export const dismissJobTask = (...args: Parameters<typeof agentJobProvider.service.dismissJobTask>) => agentJobProvider.service.dismissJobTask(...args);
-export const registerJobWatcher = (...args: Parameters<typeof agentJobProvider.service.registerJobWatcher>) => agentJobProvider.service.registerJobWatcher(...args);
-export const releaseJobWatcher = (...args: Parameters<typeof agentJobProvider.service.releaseJobWatcher>) => agentJobProvider.service.releaseJobWatcher(...args);
 export const getTaskAbortSignal = (...args: Parameters<typeof agentJobProvider.service.getTaskAbortSignal>) => agentJobProvider.service.getTaskAbortSignal(...args);
 export const abortJob = (...args: Parameters<typeof agentJobProvider.service.abortJob>) => agentJobProvider.service.abortJob(...args);
 export const stopJobTask = (...args: Parameters<typeof agentJobProvider.service.stopJobTask>) => agentJobProvider.service.stopJobTask(...args);

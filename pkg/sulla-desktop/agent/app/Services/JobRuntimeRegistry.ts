@@ -8,11 +8,10 @@ export class JobRuntimeRegistry extends Service {
   static readonly DEFAULT_TERMINAL_CACHE_LIMIT = 100;
   readonly jobs = new Map<string, AgentJob>();
   readonly abortScopes = new Map<string, JobAbortScope>();
-  readonly watchers = new Map<string, () => void>();
   private started = false;
   start(): void { this.started = true; }
-  stop(): void { for (const value of this.abortScopes.values()) value.abortJob(); for (const stop of this.watchers.values()) stop(); this.reset(); this.started = false; }
-  reset(): void { this.jobs.clear(); this.abortScopes.clear(); this.watchers.clear(); }
+  stop(): void { for (const value of this.abortScopes.values()) value.abortJob(); this.reset(); this.started = false; }
+  reset(): void { this.jobs.clear(); this.abortScopes.clear(); }
   isStarted(): boolean { return this.started; }
 
   /** Recovery reuses the same stop path as a newly spawned job. */
@@ -36,8 +35,6 @@ export class JobRuntimeRegistry extends Service {
     for (const job of candidates) {
       this.jobs.delete(job.jobId);
       this.abortScopes.delete(job.jobId);
-      this.watchers.get(job.jobId)?.();
-      this.watchers.delete(job.jobId);
     }
     return candidates.map(job => job.jobId);
   }

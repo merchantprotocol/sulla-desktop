@@ -4,7 +4,6 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { DeferredStallInput } from '../../app/Services/DeferredStallInput';
-import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { BaseTool, ToolResponse } from '../base';
 import { extractAgentTurnOutcome } from './agentTurnOutcome';
 import {
@@ -16,7 +15,6 @@ import {
 import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
 import {
-  abortJob,
   completeJob,
   createJob,
   failJob,
@@ -29,8 +27,6 @@ import {
   recordTaskCompletion,
   stoppedTaskResult,
   MAX_SUBAGENT_DEPTH,
-  registerJobWatcher,
-  releaseJobWatcher,
   resolveAgentDepth,
   updateJobTask,
 } from './jobRegistry';
@@ -51,7 +47,6 @@ import {
   safeStartDelegation,
   type AgentDelegationStart,
 } from '../../database/models/AgentDelegationModel';
-import { AgentJobMessagingModel } from '../../database/models/AgentJobMessagingModel';
 import { saveThreadState } from '../../nodes/ThreadStateStore';
 import { combineAborts } from '../../services/AbortService';
 import { notifyAgentCompletionsReady } from '../../services/AgentCompletionInbox';
@@ -66,7 +61,7 @@ import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 import { budgetPolicyService } from '../../services/BudgetPolicyService';
 import { budgetWorkerAdmission, countBudgetWorkers } from '../../services/BudgetWorkerAdmission';
 import { workerModelRouting, installWorkerRoute } from '../../services/WorkerModelRouting';
-import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
+import { RunActivity } from '../../services/RunActivity';
 import { JobLineageRootChatThreadFinder, TabVisibilityResolver, type TabVisibilityDecision } from '../../services/TabVisibilityResolver';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 
@@ -456,7 +451,7 @@ export class SpawnAgentWorker extends BaseTool {
     const depth = parentDepth + 1;
     const title = task.label?.trim() || childAgent.name;
 
-    const [{ nextThreadId }, { resolveRoutableAgent, SULLA_DESKTOP_CHANNEL_ID }, { openAgentTab, stopAgentTab }] = await Promise.all([
+    const [{ nextThreadId }, { resolveRoutableAgent }, { openAgentTab }] = await Promise.all([
       import('../../services/GraphRegistry'),
       import('../../services/ChatAgentRouting'),
       import('../../services/AgentTabOpener'),
@@ -500,23 +495,6 @@ export class SpawnAgentWorker extends BaseTool {
 
     const delegationId = await safeStartDelegation(this.delegationFor(task, { via: 'agent_tab', childThreadId, refId: job.jobId }));
 
-    // A tab waiting on its human is idle, not dead: only a turn in flight that
-    // has gone silent counts as a dead run.
-    const stopWatch = watchForDeadRun(job.jobId, async(reason, kind) => {
-      const label = kind === 'tool_hung' ? 'hung tool' : 'dead run';
-      if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `${ label }: ${ reason }`) !== 'stopped') return;
-      releaseJobWatcher(job.jobId);
-      const message = `${ label }: ${ reason }; tab job stopped`;
-      console.warn(`[spawn_agent] Tab job ${ job.jobId } ${ message }`);
-      await stopAgentTab(childThreadId, `No agent activity while working (${ reason }). The parent was told and can relaunch.`);
-      await safeFinishDelegationByRef(job.jobId, { outcome: 'failed', detail: message });
-      await deliverJobCompletion(job, [], -1, message);
-    }, async() => {
-      const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
-      return !getBackendGraphWebSocketService().hasActiveRun(SULLA_DESKTOP_CHANNEL_ID, childThreadId);
-    }, { createdAt: job.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(job.jobId)).some(item => item.latestCheckin !== null) });
-    registerJobWatcher(job.jobId, stopWatch);
-
     try {
       await openAgentTab({
         jobId:           job.jobId,
@@ -537,7 +515,6 @@ export class SpawnAgentWorker extends BaseTool {
         runOverrides: { model: task.model, provider: task.provider, effort: task.effort, runLocation: task.runLocation },
       });
     } catch (err) {
-      releaseJobWatcher(job.jobId);
       failJob(job.jobId, (err as Error).message);
       await safeFinishDelegation(delegationId, { outcome: 'failed', detail: `error: ${ (err as Error).message }` });
       throw err;
@@ -1073,26 +1050,10 @@ export class SpawnAgentWorker extends BaseTool {
       activityJobId = job.jobId;
       for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(job.jobId, index)!;
 
-      // A job whose whole agent tree goes silent is dead: stop it (which hands
-      // back any task it owns) and tell the parent, instead of waiting forever
-      // on a provider call that will never return.
-      let stoppedAsDead = false;
-      const stopDeadRunWatch = watchForDeadRun(job.jobId, async(reason, kind) => {
-        const label = kind === 'tool_hung' ? 'hung tool' : 'dead run';
-        if (abortJob(job.jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `${ label }: ${ reason }`) !== 'stopped') return;
-        stoppedAsDead = true;
-        const message = `${ label }: ${ reason }; job stopped`;
-        console.warn(`[spawn_agent] Async job ${ job.jobId } ${ message }`);
-        const stoppedJob = await getJob(job.jobId);
-        if (stoppedJob) await deliverJobCompletion(stoppedJob, [], -1, message);
-      }, async() => false, { createdAt: job.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(job.jobId)).some(item => item.latestCheckin !== null) });
-
       // Launch in background — do not await
       const backgroundRun = executeAll()
         .then(async(results) => {
           await completeJob(job.jobId, results);
-          if (stoppedAsDead) return; // the parent was already told
-
           const failed = results.find(result => result.status === 'error');
           console.log(`[spawn_agent] Async job ${ job.jobId } ${ failed ? 'failed' : 'completed' } — ${ results.length } result(s), each delivered on settlement`);
         })
@@ -1100,11 +1061,9 @@ export class SpawnAgentWorker extends BaseTool {
           if (err?.runtimeInterrupted || agentExecutionReadiness.draining) return;
           failJob(job.jobId, (err as Error).message);
           console.error(`[spawn_agent] Async job ${ job.jobId } failed:`, err);
-          if (stoppedAsDead) return;
           const failedJob = await getJob(job.jobId);
           if (failedJob) await deliverJobCompletion(failedJob, [], -1, (err as Error).message);
-        })
-        .finally(async() => { stopDeadRunWatch(); });
+        });
       trackHiddenAgentRun(backgroundRun);
 
       const policy = await budgetPolicyService.read();
@@ -1143,15 +1102,9 @@ export class SpawnAgentWorker extends BaseTool {
         message: `A matching labeled spawn already exists with status "${ syncJob.status }"; reused the existing job.`,
       });
     }
-    let stopDeadRunWatch: (() => void) | undefined;
     const jobId = syncJob.jobId;
     activityJobId = jobId;
     for (let index = 0; index < tasks.length; index++) taskAbortSignals[index] = getTaskAbortSignal(jobId, index)!;
-    // Stopping a dead job hands its tasks back even if the hung call never returns.
-    stopDeadRunWatch = watchForDeadRun(jobId, (reason, kind) => {
-      const label = kind === 'tool_hung' ? 'hung tool' : 'dead run';
-      if (abortJob(jobId, StopPrincipal.system('SpawnAgentDeadRunWatcher'), `${ label }: ${ reason }`) === 'stopped') console.warn(`[spawn_agent] Sync job ${ jobId } ${ label }: ${ reason }; job stopped`);
-    }, async() => false, { createdAt: syncJob.createdAt, hasCheckin: async() => Object.values(await AgentJobMessagingModel.telemetryForJob(jobId)).some(item => item.latestCheckin !== null) });
     let results: AgentJobResult[];
     try {
       results = await trackHiddenAgentRun(executeAll());
@@ -1159,8 +1112,6 @@ export class SpawnAgentWorker extends BaseTool {
       if ((err as any)?.runtimeInterrupted || agentExecutionReadiness.draining) throw executionAbort();
       failJob(syncJob.jobId, (err as Error).message);
       throw err;
-    } finally {
-      stopDeadRunWatch?.();
     }
     // The caller is reading the results right here; only the durable display /
     // ownership record needs settling, not a background wake.

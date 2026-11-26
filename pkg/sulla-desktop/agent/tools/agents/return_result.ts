@@ -7,7 +7,7 @@ import { BaseTool, ToolResponse } from '../base';
 import { contractCandidate, contractReturnStatus, normalizeContract, validateContractResult } from './contract';
 import { deliverJobCompletion, returnedJobResult } from './jobDelivery';
 import { emitSubAgentExchange } from './jobExchange';
-import { completeJob, findTaskByThread, recordTaskReturn, releaseJobWatcher } from './jobRegistry';
+import { completeJob, findTaskByThread, recordTaskReturn } from './jobRegistry';
 import { safeFinishDelegationByRef } from '../../database/models/AgentDelegationModel';
 import { agentJobProvider } from '../../app/Providers/AgentJobServiceProvider';
 import { ReviewItemClosureValidator } from '../../app/Services/ReviewItemClosureValidator';
@@ -142,7 +142,6 @@ async function finishTabJob(job: AgentJob, taskIndex: number): Promise<void> {
   const threadId = task.threadId ?? '';
   const result = returnedJobResult(task, task.label, threadId);
 
-  releaseJobWatcher(job.jobId);
   await completeJob(job.jobId, [result]);
   await emitSubAgentExchange(job.parentChannel, job.parentThreadId, {
     direction:      'from_agent',

@@ -54,15 +54,6 @@ async dismissJobTask(jobId: string, parentThreadId: string, taskIndex: number): 
   });
   return true;
 }
-/** Keep a job's dead-run watcher until releaseJobWatcher (tab this.runtime.jobs). */
-registerJobWatcher(jobId: string, stop: () => void): void {
-  this.runtime.watchers.get(jobId)?.();
-  this.runtime.watchers.set(jobId, stop);
-}
-releaseJobWatcher(jobId: string): void {
-  this.runtime.watchers.get(jobId)?.();
-  this.runtime.watchers.delete(jobId);
-}
 /** The task-specific abort signal wired into exactly one delegated runner. */
 getTaskAbortSignal(jobId: string, taskIndex: number): AbortSignal | undefined { return this.runtime.abortScopes.get(jobId)?.taskSignal(taskIndex); }
 /** Ensure restart-recovered dispatches can be cancelled by the normal stop service. */
