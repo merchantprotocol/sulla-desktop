@@ -29,14 +29,19 @@ export class ContainerExecutionContextFactory {
 }
 
 export interface AgentContainerRuntimeBinding { podId: string; subject: string; orgId?: string; agentId?: string; jobId: string; taskIndex?: number; threadId?: string; deviceId: string; workspacePath: string; }
-export interface AgentContainerRuntimeSupervisor { liveBindings(): Promise<AgentContainerRuntimeBinding[]>; }
+export interface AgentContainerRuntimeSupervisor {
+  liveBindings(): Promise<AgentContainerRuntimeBinding[]>;
+  recoveredLeases?(binding: AgentContainerRuntimeBinding, caller?: ToolExecutionContext): ContainerSessionLeases | undefined;
+}
 
 /** Injectible owner of container bindings and fail-closed boot rehydration. */
 export class AgentContainerRuntimeRegistry {
   private readonly bindings = new Map<string, AgentContainerRuntimeBinding>();
   // Keep signing authority out of serializable runtime bindings and snapshots.
   private readonly leases = new WeakMap<AgentContainerRuntimeBinding, ContainerSessionLeases>();
-  sessionLeases(binding: AgentContainerRuntimeBinding) { return this.leases.get(binding); }
+  sessionLeases(binding: AgentContainerRuntimeBinding) {
+    return this.leases.get(binding) ?? this.supervisor?.recoveredLeases?.(binding);
+  }
   private readonly activeRuntime = new AsyncLocalStorage<AgentContainerRuntimeBinding>();
   private rehydrated: Promise<void> = Promise.resolve();
   private rebindPending = true;
@@ -79,11 +84,23 @@ export class AgentContainerRuntimeRegistry {
     if (ctx.sub !== binding.subject || ctx.org_id !== binding.orgId || ctx.agent_id !== binding.agentId || ctx.job_id !== binding.jobId || ctx.thread_id !== binding.threadId || ctx.device_id !== binding.deviceId) throw Object.assign(new Error('Agent tool context is not bound to this live container job'), { reason: 'container_job_mismatch' });
     return binding;
   }
-  forExecution(ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined { return target === 'agent-local' && ctx.pod_id ? this.require(ctx) : undefined; }
+  forExecution(ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined {
+    if (target !== 'agent-local' || !ctx.pod_id) return undefined;
+    const binding = this.require(ctx);
+    const recovered = this.supervisor?.recoveredLeases?.(binding, ctx);
+    if (!recovered) return binding;
+    // Never share a caller-bounded authority with a different concurrent dispatch.
+    const dispatch = { ...binding };
+    this.leases.set(dispatch, recovered);
+    return dispatch;
+  }
 }
 
 class DeferredAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
   private source?: AgentContainerRuntimeSupervisor;
+  recoveredLeases(binding: AgentContainerRuntimeBinding, caller?: ToolExecutionContext) {
+    return this.source?.recoveredLeases?.(binding, caller);
+  }
   configure(source: AgentContainerRuntimeSupervisor): void { this.source = source }
   liveBindings(): Promise<AgentContainerRuntimeBinding[]> {
     if (!this.source) throw new Error('Agent container runtime supervisor is not configured');

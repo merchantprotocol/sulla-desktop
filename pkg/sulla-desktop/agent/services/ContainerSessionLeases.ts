@@ -30,6 +30,7 @@ export class ContainerSessionLeases {
     private readonly ttlMs: number,
     private readonly files: SessionLeaseFiles,
     private readonly version: '1' | '2' = '2',
+    private readonly ceiling = Infinity,
   ) {}
 
   /** Establish the single launcher default. Process leases never acquire ownership. */
@@ -50,7 +51,7 @@ export class ContainerSessionLeases {
         ctx.task_index !== b.taskIndex || ctx.thread_id !== b.threadId || ctx.device_id !== b.deviceId) {
       throw new Error('No live tool session for this container lease');
     }
-    const exp = Math.min(ctx.exp, Math.floor(session.expiresAt / 1000), now + Math.ceil(this.ttlMs / 1000));
+    const exp = Math.min(this.ceiling, ctx.exp, Math.floor(session.expiresAt / 1000), now + Math.ceil(this.ttlMs / 1000));
     if (exp <= now) throw new Error('Container tool session expired');
     this.expiresAt = Math.max(this.expiresAt, exp);
     return issueCapabilityToken({

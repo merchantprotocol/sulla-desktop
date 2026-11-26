@@ -72,6 +72,7 @@ import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { getSullaFilesMountManager } from '@pkg/main/sullaFilesMountManager';
 import { filesGuestBindsForAnchor } from '@pkg/backend/guestMountInfo';
 import { applyCurrentEgressPolicy, egressEnforced } from '@pkg/main/threat-proxy';
+import { RecoveredContainerLeaseAuthority } from './RecoveredContainerLeaseAuthority';
 import { ContainerSessionLeases, type SessionLeaseFiles } from './ContainerSessionLeases';
 import { deriveCapabilitySigningKey } from '@pkg/runtime/capabilityToken';
 import type { ContainerRuntimeDriver, ContainerSpec } from '@pkg/runtime/containerRuntime';
@@ -382,6 +383,23 @@ export interface LegacyAgentContainerIdentityResolver {
 export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRuntimeSupervisor {
   constructor(private readonly runtime: ContainerRuntimeDriver = new GuestDockerRuntimeDriver(),
     private readonly legacyIdentity?: LegacyAgentContainerIdentityResolver, private readonly timeoutMs = 10_000) {}
+  private readonly recovered = new RecoveredContainerLeaseAuthority((binding, scopes, lifecycle, directory, uid, gid, ceiling, paired, containerId) => {
+    const secret = getChatCompletionsServer().getApiToken();
+    if (!secret) throw new Error('Desktop tool API is not initialized');
+    const files = new GuestSessionLeaseFiles(directory, { uid, gid });
+    return new ContainerSessionLeases(binding, getMCPServerHost(), scopes, lifecycle, deriveCapabilitySigningKey(secret),
+      LEASE_MS, {
+        replace: async(name, value) => {
+          const current = await this.withTimeout(this.runtime.inspect(containerId), 'recover lease');
+          if (!current?.State?.Running || current.Config?.Labels?.['com.sulla.capability-jti'] !== lifecycle) {
+            throw new Error('Recovered container lifecycle ended');
+          }
+          await files.replace(name, value);
+        },
+        remove: name => files.remove(name),
+      }, paired ? '2' : '1', ceiling);
+  });
+  recoveredLeases(...args: Parameters<RecoveredContainerLeaseAuthority['issuer']>) { return this.recovered.issuer(...args); }
   private withTimeout<T>(operation: Promise<T>, action: string): Promise<T> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`Agent container inventory ${ action } timed out after ${ this.timeoutMs }ms; retry is required.`)), this.timeoutMs);
@@ -403,9 +421,11 @@ export class GuestAgentContainerRuntimeSupervisor implements AgentContainerRunti
         ? await this.legacyIdentity?.resolve(jobId, taskIndex) : undefined;
       const subject = labels['com.sulla.subject'] || legacy?.subject; const deviceId = labels['com.sulla.device-id'] || legacy?.deviceId;
       if (!subject || !deviceId) continue;
-      bindings.push({ podId: details.Name?.replace(/^\//, '') ?? container.Names, subject,
+      const binding = { podId: details.Name?.replace(/^\//, '') ?? container.Names, subject,
         orgId: labels['com.sulla.org-id'] || legacy?.orgId, agentId: labels['com.sulla.agent-id'] || legacy?.agentId,
-        jobId, taskIndex, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' });
+        jobId, taskIndex, threadId: labels['com.sulla.thread-id'] || legacy?.threadId, deviceId, workspacePath: details?.Config?.WorkingDir ?? '' };
+      this.recovered.remember(binding, details, details.Id ?? container.ID ?? container.Id);
+      bindings.push(binding);
     }
     return bindings;
   }
@@ -1436,6 +1456,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         'com.sulla.thread-id':      metadata.threadId ?? '',
         'com.sulla.device-id':      deviceId,
         'com.sulla.capability-jti': capabilityJti,
+        ...(version === '2' ? { 'com.sulla.capability-scopes': JSON.stringify(scopes) } : {}),
         'com.sulla.capability-exp': String(issuer.expiresAt),
       },
       autoRemove: true,
@@ -1794,6 +1815,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         'com.sulla.thread-id':      metadata.threadId ?? '',
         'com.sulla.device-id':      deviceId,
         'com.sulla.capability-jti': capabilityJti,
+        ...(version === '2' ? { 'com.sulla.capability-scopes': JSON.stringify(scopes) } : {}),
         'com.sulla.capability-exp': String(issuer.expiresAt),
       },
       autoRemove:  true,

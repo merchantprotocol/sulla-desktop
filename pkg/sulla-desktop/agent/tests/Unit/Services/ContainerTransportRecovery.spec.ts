@@ -3,17 +3,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import '../../Support/TestHomeEnv';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import * as runner from '../../../tools/util/CommandRunner';
+import { ExecWorker } from '../../../tools/meta/exec';
+import { AgentContainerRuntimeRegistry, agentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
 import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import type { BaseThreadState } from '../../../nodes/Graph';
-import { deriveCapabilitySigningKey, verifyCapabilityToken } from '@pkg/runtime/capabilityToken';
+import { deriveCapabilitySigningKey, verifyCapabilityToken, issueCapabilityToken } from '@pkg/runtime/capabilityToken';
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { ClerkToolSessionResolver } from '@pkg/main/ClerkToolSessionResolver';
 import { AgentAwarenessPolicy } from '../../../services/AgentAwarenessPolicy';
 import { ClerkWorker } from '../../../tools/clerk/ClerkWorker';
-import { createAgentContainerLifecycle, runAgentContainer, resetAgentContainerImageResolution } from '../../../services/AgentContainerLauncher';
+import { createAgentContainerLifecycle, runAgentContainer, resetAgentContainerImageResolution, GuestAgentContainerRuntimeSupervisor } from '../../../services/AgentContainerLauncher';
 
 const edges = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock('node:child_process', async original => ({ ...await original<typeof import('node:child_process')>(), spawn: edges.spawn }));
@@ -113,5 +121,59 @@ describe('owned lease renewal', () => {
       a.revoke(); await expect(renew()).rejects.toThrow();
       expect(host.peekToolSession(a.id)).toBeNull();
     } finally { a.revoke(); b.revoke(); await leases.close(); clock.mockRestore(); host['port'] = port; }
+  });
+});
+
+describe('cold container inventory', () => {
+  it.each([false, true])('runs a fresh nested CLI without inheriting an old Clerk pair (persisted scopes: %s)', async(scoped) => {
+    const lifecycle = 'a6d55df4-acbf-412d-baea-b91ee1f24a2a';
+    const directory = '/dev/shm/sulla-agent-secrets/' + binding.podId + '-' + lifecycle;
+    const runtime = { list: async() => [{ ID: 'a'.repeat(64) }], inspect: async() => ({ Name: '/' + binding.podId,
+      State: { Running: true }, Mounts: [{ Type: 'bind', Destination: '/run/secrets/sulla-agent', Source: directory }],
+      Config: { WorkingDir: binding.workspacePath, User: '1000:1000', Labels: {
+        ...(scoped ? { 'com.sulla.capability-scopes': JSON.stringify(['meta/ping', 'clerk_get_user']) } : {}),
+        'com.sulla.agent.transport-version': '2', 'com.sulla.workload': 'agent', 'com.sulla.capability-jti': lifecycle,
+        'com.sulla.job-id': binding.jobId, 'com.sulla.task-index': '0', 'com.sulla.subject': binding.subject,
+        'com.sulla.agent-id': binding.agentId, 'com.sulla.thread-id': binding.threadId, 'com.sulla.device-id': binding.deviceId,
+      } } }) };
+    const registry = new AgentContainerRuntimeRegistry(new GuestAgentContainerRuntimeSupervisor(runtime as never));
+    const parent = { ...await verifyCapabilityToken(issueCapabilityToken({ sub: binding.subject, pod_id: binding.podId,
+      agent_id: binding.agentId, job_id: binding.jobId, task_index: 0, thread_id: binding.threadId, device_id: binding.deviceId,
+      jti: lifecycle, tool_session_generation: 'old', scopes: ['meta/ping', 'clerk_get_user'], expiresInSeconds: 120 }, key), key), request_id: 'fixture' };
+    const dir = mkdtempSync(join(tmpdir(), 'cold-lease-'));
+    const helper = fileURLToPath(new URL('../../../../../../services/sulla-agent/secret-env.sh', import.meta.url));
+    writeFileSync(join(dir, 'SULLA_TOOL_SESSION'), 'old-default');
+    edges.spawn.mockImplementation((_cmd, argv: string[]) => {
+      const p = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+      const target = argv.find(s => s.startsWith(directory + '/LEASE_'));
+      if (target) p.stdin.on('data', chunk => writeFileSync(join(dir, target.slice(directory.length + 1)), chunk));
+      queueMicrotask(() => p.emit('close', 0)); return p;
+    });
+    const port = host['port']; host['port'] = 1;
+    const running = vi.spyOn(host, 'running', 'get').mockReturnValue(true);
+    const guest = vi.spyOn(runner, 'runCommand').mockImplementation(async command => {
+      const out = spawnSync('sh', ['-ec', command, 'fixture', helper, dir], { encoding: 'utf8', env: { PATH: '/bin:/usr/bin' } });
+      if (out.status !== 0) return { stdout: '', stderr: 'nested CLI wrapper has no process lease', exitCode: 77 };
+      const [id, token] = out.stdout.split('\n');
+      const proof = await verifyCapabilityToken(token, key, { category: 'meta', tool: 'ping' });
+      expect(proof.exp).toBeLessThanOrEqual(parent.exp);
+      expect(proof.jti).toBe(lifecycle);
+      expect(proof.tool_session_generation).toBe(scoped ? host.peekToolSession(id)?.executionContext?.jti : undefined);
+      await expect(resolver.bindForwarded(worker(), 'clerk_get_user', id, parent, new AbortController().signal))
+        .rejects.toMatchObject({ status: 403 });
+      return { stdout: 'pong', stderr: '', exitCode: 0 };
+    });
+    try {
+      await registry.rehydrate();
+      const recovered = registry.forExecution(parent, 'agent-local')!;
+      const release = agentContainerRuntimeRegistry.register(recovered, registry.sessionLeases(recovered));
+      try {
+        const exec = new ExecWorker(); exec.setState(state);
+        const result = await agentContainerRuntimeRegistry.withRuntime(recovered, () => exec['_validatedCall']({
+          command: '. "$1"; load_sulla_tool_session "$2"; load_sulla_api_token "$2"; printf "%s\\n%s" "$SULLA_TOOL_SESSION" "$SULLA_API_TOKEN"',
+        }));
+        expect(result).toMatchObject({ successBoolean: true, responseString: 'pong' });
+      } finally { release(); }
+    } finally { guest.mockRestore(); running.mockRestore(); host['port'] = port; rmSync(dir, { recursive: true, force: true }); }
   });
 });
