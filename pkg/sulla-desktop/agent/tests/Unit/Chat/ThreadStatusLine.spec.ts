@@ -103,6 +103,32 @@ describe('the activity line above the message box', () => {
     expect(tabStrip.readActivity('tab-1').snapshot).toBeUndefined();
   });
 
+  it('keeps header attention states independent of the working meter', () => {
+    const events = new EventTarget();
+    const strip = new WindowTabStripState(events, ipcRenderer);
+    const tab = { id: 'tab-1', mode: 'chat' };
+    const setRunning = (running: boolean) => events.dispatchEvent(new CustomEvent('sulla:chat-running', {
+      detail: { tabId: tab.id, running },
+    }));
+
+    strip.connect();
+    try {
+      for (const state of ['you', 'stalled', 'waiting'] as const) {
+        strip.setSnapshot(tab.id, { state });
+        for (const working of [true, false]) {
+          setRunning(working);
+          expect(strip.readHeaderActivity(tab)).toMatchObject({ working, activity: state });
+        }
+      }
+      strip.clearSnapshot(tab.id);
+      setRunning(true);
+      expect(strip.readHeaderActivity(tab)).toMatchObject({ working: true, activity: 'working' });
+      expect(strip.readHeaderActivity({ ...tab, mode: 'browser' })).toMatchObject({ working: false, activity: undefined });
+    } finally {
+      strip.dispose();
+    }
+  });
+
   it('nudges a silent agent from its row with one click', async() => {
     const w = mountLine([row('quiet')]);
     await w.find('.ta-line').trigger('click');
