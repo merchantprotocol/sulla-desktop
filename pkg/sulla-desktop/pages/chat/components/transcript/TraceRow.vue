@@ -214,7 +214,7 @@ function toggle(): void { disclosure.toggle(props.row.id); }
 .dtr-ic { position: relative; z-index: 1; grid-column: 1; grid-row: 1; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--bg-page); color: var(--text-muted); }
 .dtr-ic svg, .dtr-x svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .dtr-what { grid-column: 2; grid-row: 1; min-width: 0; padding: 2px 0; color: var(--text-secondary); font: 13px/20px var(--font-body); overflow-wrap: anywhere; }
-.dtr-row[data-kind="thought"] .dtr-what { grid-column: 2 / -1; }
+.dtr-row[data-kind="thought"] .dtr-what { grid-column: 2 / -1; white-space: pre-wrap; }
 .dtr-verb { color: var(--text-primary); font-weight: 500; }
 .dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface); color: var(--text-primary); font: 12.5px var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dtr-args { display: inline-block; max-width: 100%; margin-left: 6px; color: var(--text-muted); font: 11.5px var(--font-mono, ui-monospace, monospace); overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; }

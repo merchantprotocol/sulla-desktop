@@ -146,7 +146,11 @@ export class DetailedTraceProjection {
   }
 
   private rowsForThinking(message: ThinkingMessage, anchor: string): TraceRow[] {
-    return message.thoughts.map((thought, index) => this.row(`${message.id}:thought:${index}`, 'thought', 'Thought', thought, 'ok', anchor, message.createdAt, undefined, undefined, new TracePayload([message.thoughts, message.summary], () => this.serializer.serialize({ thoughts: message.thoughts, summary: message.summary }))));
+    return message.thoughts.map((thought, index) => {
+      const row = this.row(`${message.id}:thought:${index}`, 'thought', 'Thought', thought, 'ok', anchor, message.createdAt, undefined, undefined,
+        new TracePayload([message.thoughts, message.summary], () => this.serializer.serialize({ thoughts: message.thoughts, summary: message.summary })));
+      return { ...row, target: thought };
+    });
   }
 
   private rowsForTool(message: ToolMessage, anchor: string): TraceRow[] {

@@ -117,6 +117,19 @@ describe('DetailedTraceProjection', () => {
     expect(rows[0]).toMatchObject({ kind: 'approval', status: 'failed' });
   });
 
+  it('keeps raw thought whitespace in the trace row and rendered text', () => {
+    // risk: collapsing or trimming an agent's exact thought changes the reasoning event shown to an engineer.
+    const thought = '\nTHOUGHT_START:\n  repeated   spaces stay\nTHOUGHT_END\n';
+    const message = { id: asMessageId('thought-raw'), kind: 'thinking', createdAt: 10,
+      startedAt: 10, completed: true, thoughts: [thought] } satisfies Message;
+    const row = new DetailedTraceProjection().projectRows([message], [])[0];
+    const rendered = mount(TraceRow, { props: { row } });
+
+    expect(row.target).toBe(thought);
+    expect(rendered.find('.dtr-what').element.textContent).toBe(thought);
+    rendered.unmount();
+  });
+
   it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
     // risk: shared transcript mutation and incorrect insertion order.
     const messages = Object.freeze([
