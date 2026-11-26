@@ -320,7 +320,7 @@ dbDescribe('agent job lifecycle with real Postgres', () => {
   });
   it('renames installed built-ins twice without changing parked jobs, settings ownership or custom agents', async() => {
     const { postgresClient } = await import('../../../database/PostgresClient');
-    const { up } = await import('../../../database/migrations/0170_builtin_agent_identities');
+    const { up } = await import('../../../database/migrations/0174_builtin_agent_identities');
     const { AgentDefinitionModel } = await import('../../../database/models/AgentDefinitionModel');
 
     await database.query(`INSERT INTO agent_definitions (id, slug, name, is_builtin, prompt_content, can_call, enabled)
