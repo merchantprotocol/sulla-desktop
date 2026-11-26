@@ -946,8 +946,16 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-wrap {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 15;
   box-sizing: border-box; padding: 0 20px 48px;
+  container-name: composer-wrap; container-type: inline-size;
 }
 .composer-inner { position: relative; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
+/* ChatPage clips its column; keep the halo inside the wrapper's safe x padding on narrow panes. */
+@container composer-wrap (max-width: 780px) {
+  .composer-halo { left: -20px; right: -20px; }
+}
+@container composer-wrap (max-width: 680px) {
+  .composer-halo { left: -10px; right: -10px; }
+}
 .chat-root.artifact-open .composer-wrap { left: 0; right: 0; }
 .chat-root.artifact-open .composer-inner { max-width: 760px; }
 .composer-up-row { display: flex; align-items: flex-end; gap: 12px; min-width: 0; margin-bottom: 12px; padding: 0 10px; }
