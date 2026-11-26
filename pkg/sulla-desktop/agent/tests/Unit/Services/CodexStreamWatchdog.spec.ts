@@ -17,7 +17,9 @@ vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
 }));
 // Container runs carry a runtime pod; VM runs have none and rely on the bridge lease's pod.
 const runtimePod = vi.hoisted(() => ({ id: 'codex-watchdog-test-pod' as string | undefined }));
+const runSleep = vi.hoisted(() => ({ cliChildStarted: vi.fn(), cliChildEnded: vi.fn() }));
 const VM_LEASE_POD = 'sulla-guest-codex-watchdog-lease';
+vi.mock('../../../app/Services/AgentWorkSleepPrevention', () => ({ agentWorkSleepPrevention: runSleep }));
 vi.mock('../../../services/AgentContainerRuntimeRegistry', () => ({
   currentAgentContainerRuntime: () => runtimePod.id
     ? { podId: runtimePod.id, subject: 'test', jobId: 'test', deviceId: 'test', workspacePath: '/tmp' }
@@ -34,7 +36,7 @@ vi.mock('../../../tools/agents/workerMessaging', () => ({ prepareWorkerTurnPromp
 vi.mock('../../../utils/steerChannel', () => ({ onSteer: () => () => {}, markSteerPending: vi.fn() }));
 vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 
-beforeEach(() => { runtimePod.id = 'codex-watchdog-test-pod'; vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
+beforeEach(() => { runtimePod.id = 'codex-watchdog-test-pod'; runSleep.cliChildStarted.mockClear(); runSleep.cliChildEnded.mockClear(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-16T12:00:00Z')) });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() });
 
 async function launch(runtime: 'container' | 'guest' = 'container') {
@@ -153,6 +155,16 @@ describe('Codex quiet stream watchdog', () => {
     run.proc.emit('close', 0, null);
     await run.finished;
     expect(run.evidence).toEqual([]);
+  });
+
+  it('holds system sleep only while a real CLI child is alive', async() => {
+    // risk: a live worker CLI is killed by system sleep or a completed child leaks the hold
+    const run = await launch();
+    expect(runSleep.cliChildStarted).toHaveBeenCalledWith(expect.stringMatching(/^codex:/));
+    run.proc.exitCode = 0;
+    run.proc.emit('close', 0, null);
+    await run.finished;
+    expect(runSleep.cliChildEnded).toHaveBeenCalledWith(expect.stringMatching(/^codex:/));
   });
 
   it('resets the silence clock when stdout arrives at 2:59', async() => {

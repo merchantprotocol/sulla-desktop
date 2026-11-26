@@ -2,8 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { AgentJob } from '../../tools/agents/jobRegistry';
-import type { AgentStateService } from './AgentStateService';
+import { startCaffeinate, stopCaffeinate } from '@pkg/main/SleepPreventionService';
 
 export const AGENT_WORK_CAFFEINATE_KEY = 'agent-work';
 
@@ -12,85 +11,51 @@ export interface CaffeinateHold {
   stopCaffeinate(key: string): void;
 }
 
-/** Maintains one keyed system-sleep hold while any delegated task or chat run is active. */
+/** Holds sleep prevention only for work executing in this process, never a durable job status. */
 export class AgentWorkSleepPrevention {
-  private readonly activeJobs = new Set<string>();
-  private readonly activeChatRuns = new Set<string>();
-  private pendingSnapshotChanges?: Map<string, boolean>;
-  private reconciliation?: Promise<void>;
+  private readonly chatRuns = new Set<string>();
+  private readonly hiddenRunners = new Set<string>();
+  private readonly cliChildren = new Set<string>();
   private held = false;
-  private readonly unsubscribe: () => void;
 
   constructor(
-    private readonly states: Pick<AgentStateService, 'onJobChange' | 'refreshLive'>,
     private readonly caffeinate: CaffeinateHold,
     private readonly holdKey = AGENT_WORK_CAFFEINATE_KEY,
-  ) {
-    this.unsubscribe = states.onJobChange((_previous, next) => this.jobChanged(next));
-  }
+  ) {}
 
-  /** Rebuild process-local job state once startup recovery has finished. */
-  reconcileAfterRecovery(): Promise<void> {
-    if (this.reconciliation) return this.reconciliation;
-    const reconciliation = this.reconcileJobs();
-    this.reconciliation = reconciliation.finally(() => { this.reconciliation = undefined });
-    return this.reconciliation;
-  }
+  chatRunStarted(key: string): void { this.begin(this.chatRuns, key) }
+  chatRunEnded(key: string): void { this.end(this.chatRuns, key) }
+  hiddenRunnerStarted(key: string): void { this.begin(this.hiddenRunners, key) }
+  hiddenRunnerEnded(key: string): void { this.end(this.hiddenRunners, key) }
+  cliChildStarted(key: string): void { this.begin(this.cliChildren, key) }
+  cliChildEnded(key: string): void { this.end(this.cliChildren, key) }
 
-  chatRunStarted(key: string): void {
-    if (!key || this.activeChatRuns.has(key)) return;
-    this.activeChatRuns.add(key);
-    this.syncHold();
-  }
-
-  chatRunEnded(key: string): void {
-    if (!this.activeChatRuns.delete(key)) return;
-    this.syncHold();
-  }
+  /** Reassert only process-local state after recovery; durable job statuses are not liveness. */
+  async reconcileAfterRecovery(): Promise<void> { this.syncHold() }
 
   dispose(): void {
-    this.unsubscribe();
-    this.activeJobs.clear();
-    this.activeChatRuns.clear();
+    this.chatRuns.clear(); this.hiddenRunners.clear(); this.cliChildren.clear();
     this.syncHold();
   }
 
-  private async reconcileJobs(): Promise<void> {
-    const pending = new Map<string, boolean>();
-    this.pendingSnapshotChanges = pending;
-    try {
-      const jobs = await this.states.refreshLive();
-      const active = new Set(jobs.filter(job => this.hasRunningWork(job)).map(job => job.jobId));
-      for (const [jobId, isActive] of pending) this.setJobState(active, jobId, isActive);
-      this.activeJobs.clear();
-      for (const jobId of active) this.activeJobs.add(jobId);
-    } finally {
-      if (this.pendingSnapshotChanges === pending) this.pendingSnapshotChanges = undefined;
-      this.syncHold();
-    }
-  }
-
-  private jobChanged(job: AgentJob): void {
-    const isActive = this.hasRunningWork(job);
-    this.setJobState(this.activeJobs, job.jobId, isActive);
-    this.pendingSnapshotChanges?.set(job.jobId, isActive);
+  private begin(runs: Set<string>, key: string): void {
+    if (!key || runs.has(key)) return;
+    runs.add(key);
     this.syncHold();
   }
 
-  private hasRunningWork(job: AgentJob): boolean {
-    return job.status === 'running' || job.tasks.some(task => task.status === 'running');
-  }
-
-  private setJobState(jobs: Set<string>, jobId: string, active: boolean): void {
-    if (active) jobs.add(jobId);
-    else jobs.delete(jobId);
+  private end(runs: Set<string>, key: string): void {
+    if (!runs.delete(key)) return;
+    this.syncHold();
   }
 
   private syncHold(): void {
-    const shouldHold = this.activeJobs.size > 0 || this.activeChatRuns.size > 0;
+    const shouldHold = this.chatRuns.size + this.hiddenRunners.size + this.cliChildren.size > 0;
     if (shouldHold === this.held) return;
     this.held = shouldHold;
     if (shouldHold) this.caffeinate.startCaffeinate(this.holdKey);
     else this.caffeinate.stopCaffeinate(this.holdKey);
   }
 }
+
+export const agentWorkSleepPrevention = new AgentWorkSleepPrevention({ startCaffeinate, stopCaffeinate });

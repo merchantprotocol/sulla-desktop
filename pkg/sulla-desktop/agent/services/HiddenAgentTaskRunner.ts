@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { AgentJobResult, AgentJobTask } from '../tools/agents/jobRegistry';
+import { agentWorkSleepPrevention, type AgentWorkSleepPrevention } from '../app/Services/AgentWorkSleepPrevention';
 
 export interface ReopenableTaskRun {
   task: AgentJobTask;
@@ -21,11 +22,20 @@ export interface HiddenTaskExecution {
 
 /** Stable runner boundary shared by initial launches now and reopened generations in PR B. */
 export class HiddenAgentTaskRunner implements ReopenableTaskRunner {
-  constructor(private readonly execution: HiddenTaskExecution) {}
+  constructor(
+    private readonly execution: HiddenTaskExecution,
+    private readonly workActivity: Pick<AgentWorkSleepPrevention, 'hiddenRunnerStarted' | 'hiddenRunnerEnded'> = agentWorkSleepPrevention,
+  ) {}
 
   async run(input: ReopenableTaskRun): Promise<AgentJobResult> {
     if (!input.threadId) throw new Error('Hidden task execution requires a persisted threadId.');
     if (!Number.isInteger(input.generation) || input.generation < 1) throw new Error('Hidden task generation must be a positive integer.');
-    return this.execution.execute(input);
+    const runKey = `hidden:${ input.threadId }`;
+    this.workActivity.hiddenRunnerStarted(runKey);
+    try {
+      return await this.execution.execute(input);
+    } finally {
+      this.workActivity.hiddenRunnerEnded(runKey);
+    }
   }
 }

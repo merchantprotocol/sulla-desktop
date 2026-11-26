@@ -808,7 +808,8 @@ export class BackendGraphWebSocketService {
     for (;;) {
       await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
       try {
-        await this.recoverRuntimeWork(); await agentJobProvider.workSleepPrevention.reconcileAfterRecovery().catch(error => console.warn('[BackendGraphWS] Agent-work sleep hold recovery failed:', error));
+        await this.recoverRuntimeWork();
+        await agentJobProvider.workSleepPrevention.reconcileAfterRecovery();
         return;
       } catch (error: any) {
         if (error?.name === 'AbortError' || this.recoveryAbort.signal.aborted) return;

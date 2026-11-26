@@ -55,6 +55,7 @@ import Logging from '@pkg/utils/logging';
 import { TurnHopTiming } from '../utils/turnHopTiming';
 import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
 import { CliStallEvidenceRecorder, durableCliStallEvidenceWriter, type CliStallEvidenceWriter } from '../services/CliStallEvidenceRecorder';
+import { agentWorkSleepPrevention } from '../app/Services/AgentWorkSleepPrevention';
 import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeRegistry';
@@ -1073,6 +1074,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
     }
 
     const setupDoneAt = Date.now();
+    const cliChildActivityKey = `claude:${ crypto.randomUUID() }`;
     const proc: childProcess.ChildProcessWithoutNullStreams = transport.spawn({
       context: transportContext,
       providerCommand,
@@ -1325,7 +1327,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         };
 
         // Start the heartbeat + stall watchdog once the process has spawned.
-        proc.once('spawn', () => { spawnedAt = Date.now(); onSpawned() });
+        proc.once('spawn', () => {
+          agentWorkSleepPrevention.cliChildStarted(cliChildActivityKey);
+          spawnedAt = Date.now(); onSpawned();
+        });
 
         /**
        * Summarise a tool_use block for the activity line. The structured
@@ -1789,6 +1794,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         proc.stderr.on('data', onStderrData);
 
         const onProcError = (err: Error) => {
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           stopHeartbeat();
           stopStallWatchdog();
           closeSteering();
@@ -1912,6 +1918,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         };
 
         const onProcClose = async(code: number | null) => {
+          agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
           logRunPhase();
           const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
           stopHeartbeat();

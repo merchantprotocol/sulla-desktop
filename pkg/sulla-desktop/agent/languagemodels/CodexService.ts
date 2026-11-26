@@ -26,6 +26,7 @@ import { currentAgentContainerRuntime } from '../services/AgentContainerRuntimeR
 import { providerBridgeActivity } from '../../vault-broker/ProviderBridgeActivity';
 import { LONG_TOOL_CEILING_MS, RunLivenessClock, type RunToolInFlight } from '../services/RunLivenessClock';
 import { CliStallEvidenceRecorder, durableCliStallEvidenceWriter, type CliStallEvidenceWriter } from '../services/CliStallEvidenceRecorder';
+import { agentWorkSleepPrevention } from '../app/Services/AgentWorkSleepPrevention';
 import { CliStallRecoveryPolicy } from './CliStallRecoveryPolicy';
 import { CodexFailureDiagnostics } from './codexFailureDiagnostics';
 import { codexSandboxArgs, CODEX_MEMORY_CONFIG_OVERRIDES, CODEX_NATIVE_SPAWN_FEATURE_PINS } from './codexSandboxPolicy';
@@ -881,6 +882,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           }
           : {}),
       });
+      const cliChildActivityKey = `codex:${ diagnosticRunId }`;
       proc.once('exit', () => instructionsFile.dispose());
       if (transportContext.runtime === 'guest') {
         proc.once('close', () => this.cleanupGuestCodexPluginTemp());
@@ -1040,7 +1042,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           });
         }, STALL_CHECK_MS);
       };
-      proc.once('spawn', startStallWatchdog);
+      proc.once('spawn', () => {
+        agentWorkSleepPrevention.cliChildStarted(cliChildActivityKey);
+        startStallWatchdog();
+      });
 
       // ── Live steering ("Send now" while the turn runs) ─────────────
       // `codex exec` reads exactly one prompt, so a steer can't be written
@@ -1299,6 +1304,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       });
 
       proc.on('error', (err) => {
+        agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
         if (settled) return;
         settled = true;
         stopStallWatchdog();
@@ -1313,6 +1319,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       });
 
       proc.on('close', async(code, signal) => {
+        agentWorkSleepPrevention.cliChildEnded(cliChildActivityKey);
         logRunPhase();
         if (settled) return;
         if (stdoutBuffer.trim()) {
