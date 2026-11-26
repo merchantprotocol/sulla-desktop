@@ -271,7 +271,7 @@ html.dark .worker-chart__popover {
 .worker-chart__spark { display: flex; align-items: flex-end; gap: 1px; height: 30px; border-radius: 4px; overflow: hidden; background: linear-gradient(to top, color-mix(in srgb, var(--mk-ac) 7%, transparent), transparent); }
 .worker-chart__activity-bar { flex: 1; height: 100%; background: color-mix(in srgb, var(--mk-ac) 34%, var(--mk-cd)); transform-origin: 50% 100%; transition: transform 480ms var(--mk-std); }
 .worker-chart__spark-label { display: flex; justify-content: space-between; margin: 4px 0 12px; color: var(--mk-text3); font-size: 10.5px; }
-.worker-chart__open { display: flex; align-items: center; justify-content: center; width: 100%; height: 32px; padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: var(--mk-ac); color: var(--mk-on-ac); font: inherit; font-size: 12.5px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: transform 120ms var(--mk-std); }
+.worker-chart__open { display: flex !important; align-items: center; justify-content: center; width: 100%; height: 32px; min-height: 0; margin: 0; padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: var(--mk-ac) !important; color: var(--mk-on-ac) !important; font: inherit; font-size: 12.5px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; transition: transform 120ms var(--mk-std); }
 .worker-chart__open:active { transform: scale(.97); }
 .worker-chart-row-move { transition: transform 480ms var(--mk-std); }
 .worker-chart-row-enter-active { transition: transform 480ms var(--mk-std), opacity 240ms var(--mk-std); }
