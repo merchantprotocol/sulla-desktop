@@ -9,6 +9,7 @@ vi.mock('electron', () => ({
   WebContentsView: class {
     webContents = { loadURL: vi.fn(), on: vi.fn(), isDestroyed: () => false, close: vi.fn() };
     setBounds = vi.fn();
+    setBackgroundColor = vi.fn();
   },
 }));
 vi.mock('@pkg/window', () => ({ windowMapping: {} }));

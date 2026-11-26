@@ -41,6 +41,8 @@ import { VaultViewManager, type VaultViewReservation } from '@pkg/window/vaultVi
 class RecordingVaultViewManager extends VaultViewManager {
   readonly shown: string[] = [];
 
+  override async prepareView(): Promise<null> { return null }
+
   override show(reservation: VaultViewReservation, _window: Electron.BrowserWindow, url: string): Promise<boolean> {
     if (!this.isCurrent(reservation)) return Promise.resolve(false);
     this.shown.push(`${ reservation.ownerId } ${ new URL(url).pathname }`);
