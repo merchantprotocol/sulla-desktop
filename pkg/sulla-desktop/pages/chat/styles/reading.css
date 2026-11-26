@@ -140,6 +140,8 @@
 .chat-turn.you {
   width: fit-content;
   max-width: 72%;
+  /* Leave room for Edit and Copy below the bubble, before the next reply's header actions. */
+  margin-block-end: 24px;
   padding: 11px 16px;
   border-radius: 18px 18px 6px 18px;
   background: color-mix(in srgb, var(--accent) 16%, transparent);

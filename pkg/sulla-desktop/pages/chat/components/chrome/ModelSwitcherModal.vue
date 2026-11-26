@@ -20,6 +20,18 @@
           Run in container
         </label>
         <div class="mlist">
+          <button
+            type="button"
+            class="mitem mdefault"
+            :class="{ active: selector.isDefaultValue }"
+            :aria-current="selector.isDefaultValue ? 'true' : undefined"
+            @click="pickDefault"
+          >
+            <span class="model-copy">
+              <span class="name">Default</span>
+              <small class="model-mode">Follow Preferences → New chats</small>
+            </span>
+          </button>
           <template v-if="filteredAgents.length">
             <div class="mgroup-head">
               <span class="provider">Agents</span>
@@ -31,7 +43,7 @@
               :title="a.description || a.slug"
               @click="pickAgent(a)"
             >
-              <span class="name">{{ a.name }}</span>
+              <span class="name">{{ a.name }}<small v-if="(agentNameCounts.get(a.name.toLowerCase()) ?? 0) > 1" class="agent-id"> · {{ a.slug }}</small></span>
               <span v-if="a.slug === activeAgentId" class="tier active">active</span>
               <span v-else class="tier">{{ a.model || 'default' }}</span>
             </div>
@@ -112,6 +124,15 @@ const providerGroups = computed(() => selector.providerGroups.value);
 
 const activeAgentId = computed(() => selector.activeAgentId.value);
 
+const agentNameCounts = computed(() => {
+  const counts = new Map<string, number>();
+  for (const agent of selector.agentOptions.value) {
+    const name = agent.name.toLowerCase();
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts;
+});
+
 const filteredAgents = computed(() => {
   const q = query.value.trim().toLowerCase();
   const agents = selector.agentOptions.value;
@@ -149,6 +170,11 @@ watch(open, (isOpen) => {
 
 function setRunLocation(event: Event): void {
   controller.thread.value = { ...controller.thread.value, runLocation: (event.target as HTMLInputElement).checked ? 'container' : 'vm' };
+}
+
+function pickDefault(): void {
+  selector.selectDefault();
+  controller.closeModal();
 }
 
 async function pick(option: ModelOption): Promise<void> {
@@ -248,11 +274,16 @@ function pickAgent(agent: AgentOption): void {
   cursor: pointer; transition: background 0.1s ease;
 }
 .mitem:hover { background: var(--accent-dim); }
+.mdefault {
+  width: 100%; border: 0; background: transparent; color: inherit; text-align: left;
+}
+.mdefault:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: -2px; }
 .mitem .name {
   font-family: var(--font-mono); font-size: 12.5px; color: var(--text-primary); font-weight: 600;
   min-width: 0;
   white-space: nowrap; text-overflow: ellipsis; overflow: hidden;
 }
+.mitem .agent-id { color: var(--text-secondary); font-weight: 400; }
 .mitem .model-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .mitem .model-mode {
   color: var(--text-muted); font-family: var(--font-mono); font-size: 9.5px;

@@ -30,6 +30,7 @@ export class InternalTabViewIpc implements MainProcessIpcStep {
       manager.openWorkspaceTab(event.sender, request);
     });
     Electron.ipcMain.on('internal-tab-view:chat-running', (event: Electron.IpcMainEvent, tabId: string, running: boolean, activity?: unknown) => {
+      if (event.senderFrame !== event.sender.mainFrame) return;
       if (typeof running === 'boolean') manager.notifyChatRunning(event.sender, tabId, running, activity);
     });
     // One-way renderer updates need ipcMain.on; the proxy registrar only guarantees handle().

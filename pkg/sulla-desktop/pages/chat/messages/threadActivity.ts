@@ -6,16 +6,18 @@
 import { AgentStallClassification } from '@pkg/shared/agentState/AgentStallClassification';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
+import type { ChatTabActivityState as ThreadActivityState } from '@pkg/shared/ChatTabActivity';
 import type { Message } from '../models/Message';
 
 /**
  * What a chat thread is doing right now, so a thread never looks the same
  * whether Sulla is busy, waiting, blocked on the user or idle.
  * Priority: needs you > stalled > working > quiet > waiting > idle. Quiet is an
- * agent with no output lately whose container is still running; stalled is one
- * that stopped responding (or that we cannot see running).
+ * agent with no recent output whose runtime is confirmed alive. Stalled is a
+ * silent agent whose runtime is gone or cannot be confirmed
+ * (AgentStallClassification, shared with the side panel and parent notices).
  */
-export type ThreadActivityState = 'you' | 'stalled' | 'working' | 'quiet' | 'waiting' | 'idle';
+export type { ChatTabActivityState as ThreadActivityState } from '@pkg/shared/ChatTabActivity';
 
 export interface ThreadActivityItem {
   state:  Exclude<ThreadActivityState, 'idle'>;
@@ -134,6 +136,11 @@ function humanItems(messages: readonly Message[]): ThreadActivityItem[] {
   return items;
 }
 
+export function hasActiveChatWork(running: boolean, agents: readonly AgentStateRow[]): boolean {
+  return running || agents.some(row => row.state === 'working' || row.state === 'queued'
+    || (row.state === 'quiet' && row.runtimeAlive === true));
+}
+
 export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity {
   const items = [
     ...humanItems(input.messages),
@@ -169,7 +176,8 @@ export function deriveThreadActivity(input: ThreadActivityInput): ThreadActivity
   } else if (has('quiet')) {
     state = 'quiet';
     const waiting = items.filter(item => item.state === 'waiting' && item.ref.kind === 'agent').length;
-    parts = [`${ plural(count('quiet'), 'agent') } quiet`, 'still running', ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : [])];
+    const confirmed = input.agents.every(row => row.state !== 'quiet' || row.runtimeAlive === true);
+    parts = [`${ plural(count('quiet'), 'agent') } quiet`, ...(confirmed ? ['still running'] : []), ...(waiting ? [`${ plural(waiting, 'agent') } waiting`] : [])];
   } else if (has('waiting')) {
     state = 'waiting';
     const parked = input.agents.filter(row => row.state === 'parked' && parkedActivity(row).state === 'waiting');

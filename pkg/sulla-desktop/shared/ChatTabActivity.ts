@@ -7,6 +7,7 @@ export type ChatTabActivityState = 'you' | 'stalled' | 'working' | 'quiet' | 'wa
 export interface ChatTabActivitySnapshot {
   state:   ChatTabActivityState;
   detail?: string;
+  active?: boolean;
 }
 
 export type ChatTabActivityArgs = [tabId: string, running: boolean, activity?: ChatTabActivitySnapshot];
@@ -16,5 +17,6 @@ export function isChatTabActivitySnapshot(value: unknown): value is ChatTabActiv
   if (!value || typeof value !== 'object') return false;
   const snapshot = value as Partial<ChatTabActivitySnapshot>;
   if (!['you', 'stalled', 'working', 'quiet', 'waiting', 'idle'].includes(snapshot.state as string)) return false;
+  if (snapshot.active !== undefined && typeof snapshot.active !== 'boolean') return false;
   return snapshot.detail === undefined || (typeof snapshot.detail === 'string' && snapshot.detail.length <= 240);
 }

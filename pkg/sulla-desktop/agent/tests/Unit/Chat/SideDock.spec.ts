@@ -14,6 +14,7 @@ import SideDock from '@pkg/pages/chat/components/sidedock/SideDock.vue';
 import { DOCK_POSITION_KEY, DockPositions, SIDE_RATIO_DEFAULT, SIDE_RATIO_KEY } from '@pkg/pages/chat/composables/useDockPosition';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
 import { activityBins, ActivityTrail, chatDecisions, ciStateOf, groupResults, laneStep } from '@pkg/pages/chat/messages/sideDock';
+import { deriveThreadActivity } from '@pkg/pages/chat/messages/threadActivity';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_channel: string): Promise<unknown> => Promise.resolve([])) }));
@@ -70,7 +71,11 @@ function mountWith(component: any, { rows = [] as any[], messages = [] as any[],
   });
 }
 
-beforeEach(() => { localStorage.clear(); DockPositions.resetForTests(); invoke.mockResolvedValue([]) });
+beforeEach(() => {
+  localStorage.clear();
+  DockPositions.resetForTests();
+  invoke.mockImplementation(channel => Promise.resolve(channel === 'chat-workflow:outcomes' ? { history: [], reports: [] } : []));
+});
 afterEach(() => { document.body.innerHTML = ''; invoke.mockClear() });
 
 describe('where the dock lives', () => {
@@ -126,11 +131,11 @@ describe('the side dock tabs', () => {
     invoke.mockImplementation(channel => Promise.resolve(channel === 'decisions:conversation' ? [{ id: 'q-m1', conversationId: 'thread-1', kind: 'question', status: 'expired', attention: 'active', createdAt: NOW, expiresAt: 1, title: 'Question', questions: [] }] : []));
     const plain = mountWith(SideDock, { messages: [question('m1')] });
     await flushPromises();
-    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'For You1', 'Files']);
+    expect(plain.findAll('.sdk-tab').map(t => t.text())).toEqual(['Sulla', 'Results', 'For You1', 'AI Team', 'Files']);
     const withArtifacts = mountWith(SideDock, { artifacts: 2 });
     expect(withArtifacts.findAll('.sdk-tab').map(t => t.text())).toContain('Artifacts2');
-    await withArtifacts.findAll('.sdk-tab')[1].trigger('click');
-    expect(withArtifacts.find('.sdk-tab[aria-selected="true"]').text()).toBe('Results');
+    await withArtifacts.findAll('.sdk-tab').find(tab => tab.text() === 'Files')!.trigger('click');
+    expect(withArtifacts.find('.sdk-tab[aria-selected="true"]').text()).toBe('Files');
   });
 });
 
@@ -146,58 +151,201 @@ describe('agent lanes', () => {
     expect(lanes.find('.wy-list').exists()).toBe(false);
     expect(lanes.text()).toContain('For You');
     expect(lanes.find('.ln-sum').text()).toMatch(/^Needs you·1 request in For You·2 agents running/);
-    const rows = lanes.findAll('.ln-row');
-    expect(rows[0].find('.ln-av').classes()).toContain('ln-spin');
-    expect(rows[0].find('.ln-step').text()).toContain('running pnpm test');
-    expect(rows[0].find('.ln-step').text()).toContain('Model / effort not reported');
-    expect(rows[1].classes()).toContain('ln-child');
-    expect(rows[1].find('.ln-av').attributes('title')).toBe('opus-worker · started by codex-luna-worker');
-    expect(lanes.find('.ln-fin summary').text()).toContain('Finished · 1');
+    expect(lanes.find('.handoff-map').exists()).toBe(true);
+    const review = lanes.get('[data-job-key="j2:0"]');
+    await review.trigger('click');
+    expect(review.attributes('aria-expanded')).toBe('true');
+    const card = lanes.get(`[id="${ review.attributes('aria-controls') }"]`);
+    expect(card.element.parentElement).toBe(review.element.parentElement);
+    expect(card.text()).toContain('No model output recorded');
+    expect(card.text()).toContain('running pnpm test');
+    expect(card.text()).not.toContain('Review of the fix');
+    expect(lanes.get('.ln-relationships').text()).toContain('Assigned by');
+    await lanes.get('[data-job-key="j1:0"]').trigger('click');
+    expect(review.attributes('aria-expanded')).toBe('true');
+    expect(lanes.findAll('.ln-work').at(-1)?.get('summary').text()).toContain('Finished1');
   });
 
-  it('groups exact follow-ups, keeps unlinked work separate and preserves collapse while live state changes', async() => {
+  it('puts exact follow-ups and direct handoffs under one chat lead and preserves collapse during updates', async() => {
     const build = row('build:0', 'working', { label: 'Build invoice' });
     const review = row('review:0', 'working', { label: 'Review invoice', followUpOf: { jobId: 'build', taskIndex: 0 } });
     const unrelated = row('other:0', 'working', { label: 'Review invoice' });
     const lanes = mountWith(AgentLanes, { rows: [build, review, unrelated] });
     const groups = lanes.findAll('.ln-work');
-    expect(groups).toHaveLength(2);
-    expect(groups[0].find('.ln-work-heading').text()).toContain('Build invoice');
-    expect(groups[0].findAll('.ln-agent')).toHaveLength(2);
-    expect(groups[0].text()).toContain('Follow-up to Build invoice');
-    expect(groups[1].find('.ln-work-heading').text()).toContain('Unlinked work');
-    (groups[0].element as HTMLDetailsElement).open = false; await groups[0].trigger('toggle');
+    expect(groups).toHaveLength(1);
+    expect(groups[0].get('.ln-work-heading').text()).toContain('Current work');
+    expect(groups[0].findAll('.ln-job')).toHaveLength(4);
+    expect(groups[0].get('[data-job-key^="chat-lead-"]').text()).toContain('Coordinating');
+    expect(groups[0].get('.ln-work-heading').text()).toContain('3 working');
+    expect(groups[0].get('[data-job-key="build:0"]').element.closest('.handoff-node')?.textContent).toContain('Assigned by Chat lead');
+    expect(groups[0].get('[data-job-key="review:0"]').element.closest('.handoff-node')?.textContent).toContain('Follows Build invoice');
+    (groups[0].element as HTMLDetailsElement).open = false;
+    await groups[0].trigger('toggle');
     const client = lanes.vm.$.appContext.provides[AGENT_STATE_CLIENT_KEY as symbol];
     client.snapshot.value = { version: 2, rows: [{ ...build, state: 'done' }, review, unrelated] };
     await flushPromises();
-    expect((lanes.find('.ln-work').element as HTMLDetailsElement).open).toBe(false);
-    expect(lanes.find('.ln-work').text()).toContain('Earlier task · Reported done');
-    expect(lanes.find('.ln-work').findAll('.ln-agent')).toHaveLength(2);
+    expect((lanes.get('.ln-work').element as HTMLDetailsElement).open).toBe(false);
+    expect(lanes.get('[data-job-key="build:0"]').text()).toContain('Returned');
+    expect(lanes.findAll('[data-job-key="build:0"]')).toHaveLength(1);
   });
 
-  // risk: in a narrow column the agent's name crowded the task out entirely
-  it('leads with the task, tags the agent on its avatar, and opens details on click', async() => {
-    const lanes = mountWith(AgentLanes, { rows: [row('j1:0', 'working', { agentId: 'codex-sol-worker', lastCheckinSummary: 'Pushed fix commit bb3f01443952aea49f2eff28109f09d6a7954975' })] });
-    const lane = lanes.find('.ln-agent');
-    expect(lane.find('.ln-l1 .ln-task').text()).toBe('Fix · FE #1358 deep-link scan');
-    expect(lane.find('.ln-av').text()).toBe('CS');
-    expect(lane.find('.ln-step').text()).toContain('Model / effort not reported');
-    expect(lane.find('.ln-more').exists()).toBe(false);
+  it('preserves a completed follow-up target outside the recent snapshot and ignores other chats', async() => {
+    const build = row('build:0', 'done', { label: 'Build invoice' });
+    const review = row('review:0', 'working', { label: 'Review invoice', followUpOf: { jobId: 'build', taskIndex: 0 } });
+    const wrong = row('wrong:0', 'done', { label: 'Other chat', rootThreadId: 'another-thread' });
+    invoke.mockImplementation(channel => Promise.resolve(channel === 'chat-workflow:history' ? [build, wrong] : []));
+    const lanes = mountWith(AgentLanes, { rows: [review] });
+    await flushPromises();
+    await lanes.get('[data-job-key="review:0"]').trigger('click');
+    const relationship = lanes.get('[data-job-key="review:0"]').element.closest('.handoff-node')!.querySelector('.ln-relationships')!;
+    expect(relationship.textContent).toContain('Follows');
+    await lanes.findAll('.ln-relationships .ln-link').find(link => link.text().includes('Build invoice'))!.trigger('click');
+    expect(lanes.get('[data-job-key="build:0"]').attributes('aria-expanded')).toBe('true');
+    expect(lanes.findAll('[data-job-key="build:0"]')).toHaveLength(1);
+    expect(lanes.text()).not.toContain('Other chat');
+  });
 
-    await lane.find('.ln-step').trigger('click');
-    expect(lanes.find('.ln-more').text()).toContain('codex-sol-worker');
-    expect(lanes.find('.ln-more').text()).toContain('bb3f014');
-    expect(lanes.find('.ln-msg input').exists()).toBe(true);
+  it('makes requested/mapped and recorded models separately inspectable as the same job updates', async() => {
+    const modelStatus = { model: 'gpt-6-luna', provider: 'codex', effort: 'max', source: 'requested', mapping: 'Worker mapping' };
+    const first = row('j1:0', 'working', { modelStatus, lastCheckinSummary: 'Pushed bb3f01443952aea49f2eff28109f09d6a7954975' });
+    const lanes = mountWith(AgentLanes, { rows: [first] });
+    await lanes.get('[data-job-key="j1:0"]').trigger('click');
+    expect(lanes.get('[data-job-key="j1:0"]').text()).toContain('Worker mapping · gpt-6-luna · Max');
+    const firstDetail = lanes.get(`[id="${ lanes.get('[data-job-key="j1:0"]').attributes('aria-controls') }"]`);
+    expect(firstDetail.get('.ln-more').text()).toContain('No model output recorded');
+    expect(firstDetail.get('.ln-latest').text()).toContain('bb3f014');
+    const client = lanes.vm.$.appContext.provides[AGENT_STATE_CLIENT_KEY as symbol];
+    client.snapshot.value = { version: 2, rows: [{ ...first, state: 'done', jobRestartResumeCount: 1, responseModels: [{ model: 'gpt-6.2-sol', effort: 'high', source: 'resolved' }] }] };
+    await flushPromises();
+    expect(lanes.findAll('[data-job-key="j1:0"]')).toHaveLength(1);
+    expect(lanes.get('[data-job-key="j1:0"]').text()).toContain('Response · gpt-6.2-sol · High');
+    expect(firstDetail.get('.ln-more').text()).toContain('Worker mappinggpt-6-luna · Max');
+    expect(firstDetail.get('.ln-more').text()).toContain('Resumed 1 time');
+    expect((lanes.get('.ln-work').element as HTMLDetailsElement).open).toBe(true);
+  });
 
-    await lanes.find('.ln-chev').trigger('click');
-    expect(lanes.find('.ln-more').exists()).toBe(false);
+  it('calls a silent agent stalled unless its runtime is confirmed alive, matching the status line', async() => {
+    const rows = [
+      row('unknown:0', 'quiet', { runtimeAlive: null }), row('unset:0', 'quiet'),
+      row('gone:0', 'quiet', { runtimeAlive: false }), row('alive:0', 'quiet', { runtimeAlive: true }),
+    ];
+    const lanes = mountWith(AgentLanes, { rows });
+    await flushPromises();
+    const label = (key: string) => lanes.get(`[data-job-key="${ key }"] .ln-job-state`).text();
+    // Each side-panel label must agree with what the status line and tab dot derive for the same row.
+    for (const item of rows) {
+      const statusLine = deriveThreadActivity({ running: false, messages: [], agents: [item], heartbeatMinutes: null }).state;
+      expect(label(item.key), item.key).toBe(statusLine === 'stalled' ? 'No progress' : 'Quiet');
+    }
+    expect(label('unknown:0')).toBe('No progress'); // risk: "Quiet" here while the tab dot says stalled
+    expect(label('unset:0')).toBe('No progress');
+    expect(label('alive:0')).toBe('Quiet');
   });
 
   it('asks before stopping an agent', async() => {
     const lanes = mountWith(AgentLanes, { rows: [row('j1:0', 'working')] });
-    const stop = lanes.find('.ln-stop');
+    await lanes.get('[data-job-key="j1:0"]').trigger('click');
+    const stop = lanes.get('.ln-stop');
     await stop.trigger('click');
-    expect(stop.attributes('aria-label')).toBe('Click again to stop');
+    expect(stop.text()).toBe('Click again to stop');
+  });
+});
+
+describe('work outcomes', () => {
+  it('retains returned reports after all live rows expire and opens the exact earlier report from Full history', async() => {
+    vi.useFakeTimers();
+    const manager = row('manager:0', 'parked', { label: 'IDS alerts', waitingOnChildren: 1 });
+    const review = row('review:0', 'done', { label: 'IDS review', parentJobId: 'manager', parentTaskIndex: 0 });
+    const dryRun = row('dry:0', 'done', { label: 'IDS dry-run', parentJobId: 'manager', parentTaskIndex: 0 });
+    const reports = [review, dryRun].map((run, index) => ({
+      item: {
+        jobId:     run.jobId,
+        taskIndex: 0,
+        label:     run.label,
+        status:    'completed',
+        purpose:   'qa',
+        verdict:   'Done',
+        endedAt:   index + 1,
+        outcome:   run.label + ' returned',
+        report:    run.label + ' original report',
+      },
+    }));
+    const earlier = row('earlier:0', 'done', { label: 'IDS earlier review', parentJobId: 'manager', parentTaskIndex: 0 });
+    reports.push({ item: { ...reports[0].item, jobId: earlier.jobId, label: earlier.label, report: 'Prior report' } });
+    const history = [{ ...manager, state: 'done' }, review, dryRun, earlier];
+    invoke.mockImplementation(channel => Promise.resolve({
+      'chat-workflow:outcomes': { history, reports },
+      'chat-workflow:history':  history,
+      'chat-workflow:get':      { canEdit: false, leadModels: [], agents: [], providers: [], steps: {} },
+    }[channel] ?? []));
+    const dock = mountWith(SideDock, { rows: [manager, review, dryRun] });
+    try {
+      await vi.advanceTimersByTimeAsync(200);
+      expect(dock.find('.ln-recent-outcomes').exists()).toBe(false);
+      const reviewButton = dock.get('[data-job-key="review:0"]');
+      expect(reviewButton.text()).toContain('1 report');
+      await reviewButton.trigger('click');
+      const detail = dock.get(`[id="${ reviewButton.attributes('aria-controls') }"]`);
+      expect(detail.get('.outcome-report[data-report-key="review:0"] pre').text()).toBe('IDS review original report');
+      expect(detail.find('[data-report-key="dry:0"]').exists()).toBe(false);
+      expect(detail.find('[data-report-key="earlier:0"]').exists()).toBe(false);
+      expect(dock.get('.ln-build-outcomes [data-report-key="earlier:0"] pre').text()).toBe('Prior report');
+
+      const client = dock.vm.$.appContext.provides[AGENT_STATE_CLIENT_KEY as symbol];
+      client.snapshot.value = { version: 2, rows: [] };
+      await flushPromises();
+      expect(dock.find('.handoff-map, .handoff-fan, .handoff-list').exists()).toBe(true);
+      expect(dock.get('.ln-work-heading').text()).toContain('Latest handoff');
+      expect(dock.get('[data-job-key="chat-lead-thread-1:0"]').text()).toContain('Chat lead');
+      expect(dock.find('[data-job-key="review:0"]').exists()).toBe(true);
+      expect(dock.find('[data-job-key="dry:0"]').exists()).toBe(false);
+      expect(dock.get('.ln-build-outcomes').text()).toContain('IDS dry-run');
+      expect(dock.findAll('.work-outcome')).toHaveLength(2);
+
+      await dock.findAll('.sdk-tab').find(tab => tab.text() === 'AI Team')!.trigger('click');
+      await flushPromises();
+      expect(dock.get('.workflow h2').text()).toBe('AI Team');
+      expect(dock.find('.wf-outcome-link').exists()).toBe(false);
+      await dock.findAll('.sdk-tab').find(tab => tab.text() === 'Sulla')!.trigger('click');
+      await dock.get('.ln-history').trigger('click');
+      await flushPromises();
+      expect(dock.get('.workflow h2').text()).toBe('Full history');
+      expect(dock.get('.sdk-tab[aria-selected="true"]').text()).toBe('Sulla');
+      await dock.findAll('.wf-node').find(node => node.text().includes('IDS review'))!.trigger('click');
+      await dock.get('.wf-outcome-link').trigger('click');
+      const report = dock.get('.outcome-report[data-report-key="review:0"]');
+      expect((report.element as HTMLDetailsElement).open).toBe(true);
+      expect((dock.get('.outcome-evidence').element as HTMLDetailsElement).open).toBe(true);
+      expect(dock.get('.sdk-tab[aria-selected="true"]').text()).toBe('Sulla');
+    } finally {
+      dock.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries stale saved outcomes with visible progress and keeps the Activity tab removed', async() => {
+    vi.useFakeTimers();
+    invoke.mockImplementation(channel => channel === 'chat-workflow:outcomes'
+      ? Promise.reject(new Error('Connection terminated due to connection timeout'))
+      : Promise.resolve([]));
+    const dock = mountWith(SideDock, { rows: [row('j1:0', 'done')] });
+    try {
+      await vi.advanceTimersByTimeAsync(6_900);
+      await flushPromises();
+      expect(dock.get('.ln-outcome-error').text()).toContain('may be stale');
+      expect(dock.findAll('.sdk-tab').some(tab => tab.text() === 'Activity')).toBe(false);
+
+      invoke.mockImplementation(channel => Promise.resolve(channel === 'chat-workflow:outcomes' ? { history: [], reports: [] } : []));
+      await dock.get('.ln-outcome-error button').trigger('click');
+      expect(dock.find('.ln-outcome-error').exists()).toBe(false);
+      expect(dock.text()).toContain('Loading saved outcomes');
+      await vi.advanceTimersByTimeAsync(200);
+      await flushPromises();
+      expect(dock.find('.ln-outcome-error').exists()).toBe(false);
+    } finally {
+      dock.unmount();
+      vi.useRealTimers();
+    }
   });
 });
 
