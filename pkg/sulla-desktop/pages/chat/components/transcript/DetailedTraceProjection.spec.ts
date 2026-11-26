@@ -197,6 +197,16 @@ describe('DetailedTraceProjection', () => {
     expect(JSON.parse(row.payload!.serialize()).input).toBe(input);
   });
 
+  it('keeps long event summaries complete in row data for CSS-only visual ellipsizing', () => {
+    // risk: silently truncating recorded event details before they reach the timeline.
+    const summary = 'x'.repeat(301);
+    const memory = { kind: 'memory', id: 'memory-long-summary', createdAt: 2, action: 'Saved', memId: 'memory-1', summary } as const;
+    const [row] = new DetailedTraceProjection().projectRows([memory as never], []);
+
+    expect(row.keyArgs).toBe(summary);
+    expect(row.keyArgs).toHaveLength(summary.length);
+  });
+
   it('presents inline image bytes as an image resource, never as visible base64 text', () => {
     // risk: image visibility — screenshots render as images while remaining available as non-text payload data.
     const image = 'SYNTHETIC_IMAGE_BYTES';
