@@ -12,21 +12,24 @@
  */
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { AgentJobLivenessPolicy } from './AgentJobLivenessPolicy';
-import { runTools, type ToolInFlight } from './RunToolTracker';
+import { RunToolTracker, type ToolInFlight } from './RunToolTracker';
+import { SuspendAwareClock } from './SuspendAwareClock';
 import { LONG_TOOL_CEILING_MS, describeHungTool, toolHoldsRunAlive } from './RunLivenessClock';
 
+const clock = new SuspendAwareClock();
+const runTools = new RunToolTracker(() => clock.now());
 const lastActivity = new Map<string, number>();
 
 export const RunActivity = {
   begin(key: string): void {
-    lastActivity.set(key, Date.now());
+    lastActivity.set(key, clock.now());
     acquireChatActivity(`run:${ key }`);
   },
 
   touch(metadata: any): void {
     const keys = metadata?.activityKeys;
     if (!Array.isArray(keys) || keys.length === 0) return;
-    const now = Date.now();
+    const now = clock.now();
     for (const key of keys) {
       if (typeof key === 'string') lastActivity.set(key, now);
     }
@@ -81,7 +84,7 @@ export function watchForDeadRun(
   key: string,
   onDead: (reason: string, kind: DeadRunKind) => void | Promise<void>,
   stillAlive: () => Promise<boolean> = async() => false,
-  liveness: { createdAt: number; hasCheckin: () => Promise<boolean> } = { createdAt: Date.now(), hasCheckin: async() => false },
+  liveness: { createdAt: number; hasCheckin: () => Promise<boolean> } = { createdAt: clock.now(), hasCheckin: async() => false },
   policy = new AgentJobLivenessPolicy(),
 ): () => void {
   RunActivity.begin(key);
@@ -90,7 +93,7 @@ export function watchForDeadRun(
     void (async() => {
       if (fired) return;
       const minutes = await deadRunMinutes();
-      const now = Date.now();
+      const now = clock.now();
       // A tool still running (a long shell command emits nothing until it ends) is
       // activity, up to the ceiling; a wait on the human (approval, question) always is.
       const tool = RunActivity.toolInFlight(key);

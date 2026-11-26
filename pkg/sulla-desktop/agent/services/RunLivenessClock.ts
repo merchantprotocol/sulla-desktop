@@ -14,6 +14,8 @@
  * as a dead agent. Two hours matches the old approval-wait allowance and is
  * far beyond any sane build, test suite or command.
  */
+import { SuspendAwareClock } from './SuspendAwareClock';
+
 export const LONG_TOOL_CEILING_MS = 2 * 60 * 60_000;
 
 export interface RunToolInFlight { name: string; startedAt: number }
@@ -62,15 +64,18 @@ export function describeHungTool(tool: RunToolInFlight, now: number = Date.now()
  */
 export class RunLivenessClock {
   private lastActivityAt: number;
+  private readonly clock: () => number;
   private readonly tools = new Map<string, RunToolInFlight>();
 
   constructor(
     private readonly silenceLimitMs: number,
     private readonly toolCeilingMs: number = LONG_TOOL_CEILING_MS,
-    private readonly clock: () => number = () => Date.now(),
+    clock?: () => number,
     private readonly externalActivityAt: () => number = () => 0,
   ) {
-    this.lastActivityAt = clock();
+    const suspendAwareClock = new SuspendAwareClock();
+    this.clock = clock ?? (() => suspendAwareClock.now());
+    this.lastActivityAt = this.clock();
   }
 
   /** Restart the silence window (process spawned). */

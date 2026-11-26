@@ -55,6 +55,7 @@ import { ConversationThreadStore } from '../database/models/ConversationThreadSt
 import { AgentTurnStopper } from './AgentTurnStopper';
 import { AbortSignalBridge } from '../app/Services/AbortSignalBridge';
 import { RecoveredAgentTaskDispatcher } from './RecoveredAgentTaskDispatcher';
+import { HiddenAgentRunInterrupter, HiddenAgentWakeRecovery } from './HiddenAgentWakeRecovery';
 import { AgentOrchestratorMessageFormatter } from './AgentOrchestratorMessageFormatter';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -141,6 +142,7 @@ export class BackendGraphWebSocketService {
   private readonly readinessWaits = new Map<string, Set<AbortController>>();
   private readonly dispatchedRuns = new Set<Promise<unknown>>();
   private readonly recoveryAbort = new AbortController();
+  private readonly hiddenWorkerWakeRecovery = new HiddenAgentWakeRecovery({ list: () => agentJobProvider.jobs.jobsForList(1, false) }, new HiddenAgentRunInterrupter({ get: threadId => GraphRegistry.get(threadId)?.state }), (job, taskIndex) => this.resumeInterruptedTask(job, taskIndex));
   private recoveryStarted = false;
   private readonly recoveryCutoff = Date.now();
   private readonly agentInbox: AgentInbox;
@@ -556,10 +558,9 @@ export class BackendGraphWebSocketService {
     this.conversationContainers.clear();
     this.subscribedChannels.clear();
   }
-
   /** Stamp only runs actually in flight when macOS suspends. */
   handleSuspend(): void {
-    this.suspendedRuns = new Set(this.activeAborts.keys());
+    this.suspendedRuns = new Set(this.activeAborts.keys()); this.hiddenWorkerWakeRecovery.suspend();
     console.log(`[BackendGraphWS] System suspending with ${ this.suspendedRuns.size } in-flight chat run(s)`);
   }
 
@@ -575,7 +576,7 @@ export class BackendGraphWebSocketService {
       .map(key => this.resumeContexts.get(key))
       .filter((context): context is NonNullable<typeof context> => !!context);
     this.suspendedRuns.clear();
-    this.reinitialize();
+    this.reinitialize(); void this.hiddenWorkerWakeRecovery.resume().catch(err => console.error('[BackendGraphWS] Failed to continue hidden workers after resume:', err));
     if (interrupted.length) console.log(`[BackendGraphWS] Continuing ${ interrupted.length } chat thread(s) interrupted by system sleep`);
     for (const context of interrupted) {
       // Give the aborted runs a moment to unwind their finally blocks first.
@@ -589,7 +590,6 @@ export class BackendGraphWebSocketService {
       }, RESUME_CONTINUE_DELAY_MS);
     }
   }
-
   private async conversationContainer(
     channelId: string,
     threadId: string,
