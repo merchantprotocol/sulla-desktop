@@ -130,6 +130,21 @@ export class ThemeStore {
     }
   }
 
+  applyCachedTheme(): void {
+    this.currentTheme.value = this.cachedTheme();
+    this.applyThemeClass(this.currentTheme.value);
+  }
+
+  private cachedTheme(): ThemeName {
+    try {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      if (ThemeStore.isValidTheme(stored)) return stored;
+      return ThemeStore.migrateLegacyTheme(stored) ?? DEFAULT_THEME;
+    } catch {
+      return DEFAULT_THEME;
+    }
+  }
+
   async loadThemeFromSettings(): Promise<ThemeName> {
     try {
       const saved = await this.settings.get(THEME_SETTING_KEY, null);
@@ -144,18 +159,7 @@ export class ThemeStore {
       // SullaSettingsModel not ready yet — fall through to localStorage
     }
 
-    // Fallback: check localStorage (legacy support)
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (ThemeStore.isValidTheme(stored)) {
-      return stored;
-    }
-    const migratedStored = ThemeStore.migrateLegacyTheme(stored);
-    if (migratedStored) {
-      return migratedStored;
-    }
-
-    // Final fallback
-    return DEFAULT_THEME;
+    return this.cachedTheme();
   }
 
   async persistTheme(theme: ThemeName): Promise<void> {

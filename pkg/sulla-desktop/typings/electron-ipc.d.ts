@@ -78,7 +78,6 @@ export interface SullaFileReference {
  */
 export interface IpcMainEvents {
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
-  'internal-tab-view:chat-activity': (tabId: string, state: import('@pkg/shared/chatTabActivity').ChatTabActivity | null) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
   'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
@@ -1376,7 +1375,6 @@ export interface IpcRendererEvents {
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
   'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
-  'internal-tab-view:chat-activity': (tabId: string, state: import('@pkg/shared/chatTabActivity').ChatTabActivity | null) => void;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:loaded': (tabId: string) => void;
