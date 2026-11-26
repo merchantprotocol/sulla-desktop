@@ -86,6 +86,22 @@ beforeEach(() => {
 });
 
 describe('Product Owner chat routing', () => {
+  it('previews and delegates the shipped mockup step to the exact retained built-in only', async() => {
+    const lead = { root, caller: 'account-manager', lead: true };
+    f.definitions[0].can_call = ['mockup-designer'];
+    const retained = definition('mockup-designer', [], { is_builtin: true });
+    f.definitions.push(retained);
+    f.resolve.mockResolvedValue([sol]);
+    const preview = async() => (await productOwnerWorkflow.getProductOwnerWorkflow(root)).steps.mockup?.preview;
+    expect(await preview()).toMatchObject({ agent: retained.slug, candidates: [sol] });
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, undefined, 'mockup')).resolves.toMatchObject({ slug: retained.slug });
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, 'designer', 'mockup')).rejects.toThrow();
+    f.definitions.pop();
+    f.definitions.push(definition('mockup-designer'));
+    expect(await preview()).toMatchObject({ status: 'blocked', agent: 'designer' });
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, undefined, 'mockup')).rejects.toThrow();
+  });
+
   it('stores only this chat’s supported ordered route and changes only later launches', async() => {
     const init = await productOwnerWorkflow.getProductOwnerWorkflow(root);
     expect(init.canEdit).toBe(true);
