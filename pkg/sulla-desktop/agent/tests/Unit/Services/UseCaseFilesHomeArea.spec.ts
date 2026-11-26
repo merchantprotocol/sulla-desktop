@@ -138,8 +138,8 @@ function publication(rows: Root[] = [yamlRoot, jsonRoot], content = winner) {
     if (endpoint.includes('/preview?')) return new Response(row.id === JSON_FILE ? content : 'slug: opus-worker\nname: Opus Worker\nsystemPrompt: YAML prompt');
     return Response.json(row);
   };
-  const scan = () => new SullaUseCaseFiles((endpoint, init) => Promise.resolve(response(endpoint, init)), { announce }).scan();
-  return { scan, announce, audits };
+  const scanner = () => new SullaUseCaseFiles((endpoint, init) => Promise.resolve(response(endpoint, init)), { announce });
+  return { scan: () => scanner().scan(), scanner, announce, audits };
 }
 
 describe('publication ownership after the identity migration', () => {
@@ -193,6 +193,25 @@ describe('publication ownership after the identity migration', () => {
     else await scan();
     expect(await readRows()).toEqual(before);
     expect(announce).not.toHaveBeenCalled();
+  });
+
+  it('preserves both published rows when the loader skips the checked root', async() => {
+    await migratedPackage(true);
+    const yml = { ...yamlRoot, path: folder + 'agent.yml' };
+    const yaml = { ...yamlRoot, id: '00000000-0000-4000-8000-000000000004', published_version_id: V2 };
+    await f.app.query(`INSERT INTO agent_definitions(id,slug,name,use_case_file_id,use_case_version_id,status,enabled,system_prompt)
+      VALUES ('second','opus-worker','Other',$1,$2,'production',true,'second prompt')`, [yaml.id, V2]);
+    const { scanner, announce, audits } = publication([yml, yaml, jsonRoot], '');
+    const first = scanner();
+    for (const service of [first, first, scanner()]) {
+      await expect(service.scan()).rejects.toThrow('Use Case activation will retry for: agents/opus-worker');
+      expect(await readRows()).toEqual([original, {
+        id: 'second', slug: 'opus-worker', system_prompt: 'second prompt', use_case_file_id: yaml.id,
+        use_case_version_id: V2, status: 'production', enabled: true,
+      }]);
+      expect(announce).not.toHaveBeenCalled();
+      expect(audits).toEqual([expect.objectContaining({ action: 'use-case-index-error', fileId: yaml.id, versionId: V2 })]);
+    }
   });
 
   it.each([
