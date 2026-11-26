@@ -154,7 +154,7 @@ export class TranscriptReporting {
     if (!report) return;
     const label = message.kind === 'user' && message.voiceIdentity ? 'Voice' : report.label;
     const classification = message.kind === 'sulla' || message.kind === 'streaming' ||
-      message.kind === 'html' || message.kind === 'channel' || message.kind === 'proactive'
+      message.kind === 'html' || message.kind === 'proactive'
       ? message.agentReporting : undefined;
     if (classification === 'brief' || classification === 'standard') {
       yield { ...base, label, kind: 'card', message, level: classification === 'brief' ? 'fatal' : 'info' };

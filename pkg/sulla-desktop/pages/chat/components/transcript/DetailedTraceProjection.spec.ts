@@ -57,6 +57,22 @@ describe('DetailedTraceProjection', () => {
     }
   });
 
+  it.each(['brief', 'standard'] as const)('keeps channel traffic out of Standard for %s agent reporting', agentReporting => {
+    // risk: a producer classification accidentally promotes agent traffic into the human-facing transcript.
+    const body = `CHANNEL_START:${ 'complete peer report · '.repeat(160) }:CHANNEL_END`;
+    const message = {
+      id: asMessageId(`channel-${agentReporting}`), kind: 'channel', createdAt: 1,
+      agent: 'Heartbeat', channel: 'heartbeat', text: body, agentReporting,
+    } satisfies Message;
+    const reporting = new TranscriptReporting();
+    const standard = reporting.standardEntries([message], 'info');
+
+    expect(standard).toEqual([]);
+    const rows = new DetailedTraceProjection().project([message], standard).flatMap(turn => turn.rows);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ verb: 'Received', note: body });
+  });
+
   it('preserves every pre-existing Standard item when peer-message metadata is present', () => {
     // risk: transcript regression — filtering agent messages must not alter human-facing messages, approvals, or evidence.
     const user = { id: asMessageId('standard-user'), kind: 'user', createdAt: 1, text: 'please run this' } as const;
