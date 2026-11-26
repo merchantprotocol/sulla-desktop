@@ -259,7 +259,9 @@ class Checkout:
                 exclude = self.handles.optional('info/exclude', self.common)
             except ValueError:  # A component failed the no-follow type check: ignore no files.
                 exclude = None
-            if exclude is not None and os.fstat(exclude).st_size <= 64 * 1024:
+            # Bind only a single-name inode: a second hard link could project an out-of-tree file.
+            info = os.fstat(exclude) if exclude is not None else None
+            if info is not None and info.st_nlink == 1 and info.st_size <= 64 * 1024:
                 paths['exclude'] = '/seed/exclude'
                 mounts.append((self.pins.bind(exclude), paths['exclude'], False))
         if op in ('bundle', 'size', 'clean'):
