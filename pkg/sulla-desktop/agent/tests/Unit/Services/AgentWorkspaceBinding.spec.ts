@@ -94,6 +94,23 @@ describe('durable Git workspace initialization', () => {
     expect(readFileSync(path.join(workspace, 'marker'), 'utf8')).toBe('uncommitted progress');
   });
 
+  it('seeds an in-root linked worktree from its registered external primary checkout only', async() => {
+    const primary = local('primary');
+    renameSync(local('worktrees/repo'), primary);
+    const linked = local('worktrees/linked');
+    git(primary, 'worktree', 'add', '-b', 'delegated', linked);
+    const impostor = local('worktrees/impostor');
+    mkdirSync(impostor);
+    writeFileSync(path.join(impostor, '.git'), readFileSync(path.join(linked, '.git')));
+
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/impostor', target)).rejects.toThrow();
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/linked', target)).resolves.toBe(target);
+    const workspace = local('runtime/conversations/task/workspace');
+    expect(git(workspace, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('delegated');
+    expect(git(workspace, 'rev-parse', 'HEAD')).toBe(git(linked, 'rev-parse', 'HEAD'));
+    expect(git(workspace, 'rev-parse', '--path-format=absolute', '--git-common-dir')).toBe(path.join(workspace, '.git'));
+  });
+
   it.each(['branch', 'detached'])('seeds only approved %s history on first use with mixed ownership', async(mode) => {
     const source = local('worktrees/repo');
     const workspace = local('runtime/conversations/task/workspace');
