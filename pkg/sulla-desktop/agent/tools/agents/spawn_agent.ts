@@ -978,6 +978,7 @@ export class SpawnAgentWorker extends BaseTool {
         taskIndex: index,
         threadId,
         generation: jobTasks[index].generation ?? 1,
+        activityKeys: RunActivity.inherit(metadata, ...(activityJobId ? [activityJobId, `${ activityJobId }#${ index }`] : [])),
       });
       const execution = budgetWorkerAdmission.run(async() => {
         const policy = await budgetPolicyService.read();

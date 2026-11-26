@@ -13,37 +13,70 @@
 import { acquireChatActivity, releaseChatActivity } from '@pkg/main/SleepPreventionService';
 import { SuspendAwareClock } from './SuspendAwareClock';
 
-const clock = new SuspendAwareClock();
-const lastActivity = new Map<string, number>();
+export interface RunActivityClock {
+  now(): number;
+  toWallTime(logicalTime: number): number;
+}
 
-export const RunActivity = {
+export interface RunActivityHold {
+  acquireChatActivity(key: string): void;
+  releaseChatActivity(key: string): void;
+}
+
+/** Owns app-activity holds and liveness timestamps for in-process run lifetimes. */
+export class RunActivityService {
+  private readonly lastActivity = new Map<string, number>();
+  private readonly activeRuns = new Map<string, number>();
+
+  constructor(
+    private readonly clock: RunActivityClock,
+    private readonly hold: RunActivityHold,
+  ) {}
+
   begin(key: string): void {
-    lastActivity.set(key, clock.now());
-    acquireChatActivity(`run:${ key }`);
-  },
+    if (!key) return;
+    const activeCount = this.activeRuns.get(key) ?? 0;
+    this.activeRuns.set(key, activeCount + 1);
+    this.lastActivity.set(key, this.clock.now());
+    if (activeCount === 0) this.hold.acquireChatActivity(`run:${ key }`);
+  }
 
   touch(metadata: any): void {
     const keys = metadata?.activityKeys;
     if (!Array.isArray(keys) || keys.length === 0) return;
-    const now = clock.now();
+    const now = this.clock.now();
     for (const key of keys) {
-      if (typeof key === 'string') lastActivity.set(key, now);
+      if (typeof key === 'string' && this.activeRuns.has(key)) this.lastActivity.set(key, now);
     }
-  },
+  }
 
   /** Keys a child graph should carry: its parent's plus any of its own. */
   inherit(parentMetadata: any, ...own: string[]): string[] {
     const inherited = Array.isArray(parentMetadata?.activityKeys) ? parentMetadata.activityKeys : [];
     return [...new Set([...inherited, ...own].filter((key): key is string => typeof key === 'string' && key.length > 0))];
-  },
+  }
 
   lastActivityAt(key: string): number | undefined {
-    const activityAt = lastActivity.get(key);
-    return activityAt === undefined ? undefined : clock.toWallTime(activityAt);
-  },
+    const activityAt = this.lastActivity.get(key);
+    return activityAt === undefined ? undefined : this.clock.toWallTime(activityAt);
+  }
 
   end(key: string): void {
-    lastActivity.delete(key);
-    releaseChatActivity(`run:${ key }`);
-  },
-};
+    const activeCount = this.activeRuns.get(key);
+    if (activeCount === undefined) return;
+    if (activeCount > 1) {
+      this.activeRuns.set(key, activeCount - 1);
+      return;
+    }
+    this.activeRuns.delete(key);
+    this.lastActivity.delete(key);
+    this.hold.releaseChatActivity(`run:${ key }`);
+  }
+}
+
+class SleepPreventionRunActivityHold implements RunActivityHold {
+  acquireChatActivity(key: string): void { acquireChatActivity(key) }
+  releaseChatActivity(key: string): void { releaseChatActivity(key) }
+}
+
+export const RunActivity = new RunActivityService(new SuspendAwareClock(), new SleepPreventionRunActivityHold());
