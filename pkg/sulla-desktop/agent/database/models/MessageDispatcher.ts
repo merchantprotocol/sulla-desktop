@@ -732,7 +732,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (m.kind === 'streaming' && m.threadId === msgThreadId && belongsToReply(m)) recentStreamIndexes.push(i);
     }
 
-    if (!terminalRunError && recentStreamIndexes.length > 0) {
+    if (!terminalRunError && data?.standaloneReply !== true && recentStreamIndexes.length > 0) {
       // The user has already seen the streaming segments. NEVER wipe them
       // here — abort messages, error notices, and other status pings would
       // erase the actual response content (this is the bug where hitting
