@@ -15,8 +15,8 @@ export function newerBuiltinAgentSlug(slug: string): string | undefined {
 }
 
 /** Prefer the exact identity, including custom agents that own a colliding slug. */
-export function findAgentBySlug<T extends { slug: string; isBuiltin?: boolean }>(agents: readonly T[], slug: string | null | undefined): T | undefined {
+export function findAgentBySlug<T extends { slug: string; isBuiltin?: boolean; is_builtin?: boolean }>(agents: readonly T[], slug: string | null | undefined): T | undefined {
   const alias = slug ? newerBuiltinAgentSlug(slug) : undefined;
   return agents.find(agent => agent.slug === slug) ??
-    (alias ? agents.find(agent => agent.isBuiltin && agent.slug === alias) : undefined);
+    (alias ? agents.find(agent => (agent.isBuiltin ?? agent.is_builtin) && agent.slug === alias) : undefined);
 }

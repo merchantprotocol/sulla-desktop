@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { BUILTIN_AGENT_RENAMES } from '../../shared/agentJobNames';
+import { BUILTIN_AGENT_RENAMES, findAgentBySlug } from '../../shared/agentJobNames';
 import { createHash } from 'node:crypto';
 
 import { randomUUID } from 'node:crypto';
@@ -28,6 +28,7 @@ import { workerModelRouting } from './WorkerModelRouting';
 import { isProductOwnerStep, PRODUCT_OWNER, WORKFLOW_STEPS, workflowCompany } from '../../shared/productOwnerWorkflow';
 
 import type { ChatModelPickerSelection, DelegatedWorkflowStep, ProductOwnerStep, WorkflowChoice, WorkflowPlan, WorkflowSaveInput } from '../../shared/productOwnerWorkflow';
+import type { AgentDefinition } from '../database/models/AgentDefinitionModel';
 import type { AgentJob } from '../tools/agents/jobRegistry';
 import type { ModelCandidate } from '../languagemodels/modelRouter';
 import type { ResultReference } from '../../shared/agentResults/AgentResultCard';
@@ -97,11 +98,22 @@ async function shippedWorkflowAgent(slug: string | null | undefined): Promise<st
   return agent && !agent.is_builtin ? rename[0] : rename[1];
 }
 
-async function permittedCallee(ownerSlug: string, slug: string) {
-  const [owner, target] = await Promise.all([agentDefinitionService.findBySlug(ownerSlug), agentDefinitionService.findBySlug(slug)]);
-  if (!owner || !target || !isActiveAgent(target) || target.id === owner.id) throw new Error('Choose an enabled agent from the delegating agent’s team.');
+/** Resolve selectors against the full directory before excluding inactive targets.
+ * A colliding custom slug (even an inactive one) never grants access to a different definition. */
+function callableTeam(definitions: AgentDefinition[], owner: AgentDefinition | undefined) {
+  if (!owner) return [];
   const team = owner.can_call ?? [];
-  if (team.length && !team.includes('*') && !team.includes(target.slug)) throw new Error('This agent is outside the delegating agent’s team.');
+  const allowed = team.length && !team.includes('*')
+    ? new Set(team.map(slug => findAgentBySlug(definitions, slug)?.id)) : null;
+  return definitions.filter(agent => agent.id !== owner.id && isActiveAgent(agent) && (!allowed || allowed.has(agent.id)));
+}
+
+async function permittedCallee(ownerSlug: string, slug: string) {
+  const definitions = await agentDefinitionService.list();
+  const owner = findAgentBySlug(definitions, ownerSlug);
+  const target = findAgentBySlug(definitions, slug);
+  if (!owner || !target || !isActiveAgent(target) || target.id === owner.id) throw new Error('Choose an enabled agent from the delegating agent’s team.');
+  if (!callableTeam(definitions, owner).some(agent => agent.id === target.id)) throw new Error('This agent is outside the delegating agent’s team.');
   return target;
 }
 
@@ -199,17 +211,17 @@ export class ProductOwnerWorkflowService extends ProductOwnerWorkflowHistory {
       (selection.mode === 'explicit' ? rememberedAgent || SULLA_DESKTOP_CHANNEL_ID : PRODUCT_OWNER);
     await Promise.all(WORKFLOW_STEPS.map(async(step, index) => {
       const saved = overrides[index] as StoredChoice | null;
-      const slug = saved?.agentSlug ?? await shippedWorkflowAgent(step.agent);
+      const selector = saved?.agentSlug ?? await shippedWorkflowAgent(step.agent);
+      const definition = findAgentBySlug(definitions, selector);
+      const slug = definition?.slug ?? selector;
       const binding = slug ? defaults.workerBindings?.[slug] : undefined;
-      const definition = definitions.find(item => item.slug === slug);
       steps[step.id] = {
         choice: { agentSlug: saved?.agentSlug, candidates: saved?.candidates ?? [], independentReview: saved?.independentReview },
         inherited: binding && !binding.pendingPublication && definition?.id === binding.agentId ? binding.candidates : [],
         revision: saved?.revision ?? '',
         allowedAgents: (() => {
           const owner = step.id === 'implementation' || step.id === 'review' ? builder : PRODUCT_OWNER;
-          const roster = definitions.find(agent => agent.slug === owner)?.can_call ?? [];
-          return agents.filter(agent => agent.slug !== owner && (!roster.length || roster.includes('*') || roster.includes(agent.slug))).map(agent => agent.slug);
+          return callableTeam(definitions, findAgentBySlug(definitions, owner)).map(agent => agent.slug);
         })(),
       };
 
@@ -350,7 +362,7 @@ export class ProductOwnerWorkflowService extends ProductOwnerWorkflowHistory {
       if (!slug && !fallbackSlug) throw new Error('Choose an eligible agent from the team directory or assign one in AI Team.');
       // A named specialist needs the same team permission as the step's default one.
       const agent = await permittedCallee(scope.caller, slug ?? fallbackSlug!);
-      return slug ? { step, inlineAcceptance } : { step, slug: agent.slug, inlineAcceptance };
+      return slug === agent.slug ? { step, inlineAcceptance } : { step, slug: agent.slug, inlineAcceptance };
     }
     const agent = await permittedCallee(scope.caller, saved.agentSlug ?? slug ?? fallbackSlug ?? '');
     if (saved.agentId && saved.agentId !== agent.id) throw new Error('This chat’s assigned agent was replaced. Update the Workflow selection.');
