@@ -27,7 +27,7 @@
       class="ln-for-you"
       @click="openForYou()"
     >
-      Open For You
+      Open Decide
     </button>
     <p v-if="outcomesLoading && outcomes.length" class="ln-outcome-refresh" role="status">
       Refreshing saved outcomes…
@@ -98,7 +98,7 @@
                   </template>
                   <template v-for="decision in linkedQuestions(node.row)" :key="decision.id">
                     <dt>Related request</dt>
-                    <dd><button type="button" class="ln-link" @click="openForYou(decision.id)">{{ decision.title || 'Open For You' }}</button></dd>
+                    <dd><button type="button" class="ln-link" @click="openForYou(decision.id)">{{ decision.title || 'Open Decide' }}</button></dd>
                   </template>
                 </dl>
                 <div class="ln-actions">
