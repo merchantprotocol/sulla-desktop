@@ -10,6 +10,9 @@ import { ipcMain } from 'electron';
 import { FilesTool } from './common';
 import { AgentFileOpenRoutePolicy } from './AgentFileOpenRoutePolicy';
 import { InlineFileReferenceMessageFactory } from './InlineFileReferenceMessage';
+import { recentFileOpenRegistry } from './RecentFileOpenRegistry';
+
+import type { RecentFileOpenCoordinator } from './RecentFileOpenRegistry';
 
 import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
@@ -21,12 +24,12 @@ interface FilesRecord { file: { id:string; collection_id:string; path:string } }
 interface OpenResult { opened:boolean; tabId:string; path:string; how:string }
 
 const SULLA_FILES_ROOT = '/mnt/sulla-files/';
-const RECENT_OPEN_WINDOW_MS = 1_500;
+const INLINE_FOLDER_ERROR = 'Inline cards are for files; that path is a folder. Open it with placement "tab" or use files/list.';
 
 class FilesOpenPathNormalizer {
   normalize(value:string):string {
     const trimmed = value.trim().replaceAll('\\', '/');
-    if (!trimmed) throw new Error('path cannot be empty');
+    if (!trimmed) return SULLA_FILES_ROOT;
     const isSullaFilesRoot = trimmed === SULLA_FILES_ROOT.slice(0, -1) || trimmed === SULLA_FILES_ROOT;
     const isSullaFilesAbsolute = isSullaFilesRoot || trimmed.startsWith(SULLA_FILES_ROOT);
     if (isSullaFilesRoot) return SULLA_FILES_ROOT;
@@ -44,13 +47,12 @@ class FilesOpenPathNormalizer {
 export class FilesOpenWorker extends FilesTool {
   name = '';
   description = '';
-  private readonly recentOpens = new Map<string, { expiresAt:number; result:Promise<ToolResponse> }>();
 
   constructor(
     private readonly routePolicy = new AgentFileOpenRoutePolicy(),
     private readonly inlineReferenceFactory = new InlineFileReferenceMessageFactory(),
     private readonly pathNormalizer = new FilesOpenPathNormalizer(),
-    private readonly now:() => number = Date.now,
+    private readonly recentOpenRegistry:RecentFileOpenCoordinator = recentFileOpenRegistry,
   ) {
     super();
   }
@@ -61,10 +63,14 @@ export class FilesOpenWorker extends FilesTool {
     if (!hasPath && !fileId) throw new Error('path or file_id is required');
     let collectionId = '';
     let resolvedPath = '';
+    let fileKind:'file' | 'folder' = 'file';
 
     if (hasPath) {
       const absolutePath = this.pathNormalizer.normalize(String(input.path));
-      if (absolutePath === SULLA_FILES_ROOT) throw new Error('That Sulla Files path is a folder. Use files/list to view its contents.');
+      if (absolutePath === SULLA_FILES_ROOT) {
+        if (input.placement === 'inline') throw new Error(INLINE_FOLDER_ERROR);
+        throw new Error('That Sulla Files path is a folder. Use files/list to view its contents.');
+      }
       let resolved;
       try {
         resolved = await this.resolvePath({ ...input, path: absolutePath });
@@ -73,15 +79,21 @@ export class FilesOpenWorker extends FilesTool {
         throw error;
       }
       if (!resolved) throw new Error('That Sulla Files path was not found');
-      if (resolved.kind === 'folder') throw new Error('That Sulla Files path is a folder. Use files/list to view its contents.');
       collectionId = resolved.collectionId;
+      const isFolder = resolved.kind === 'folder';
+      if (isFolder && input.placement === 'inline') throw new Error(INLINE_FOLDER_ERROR);
       fileId = resolved.fileId ?? '';
-      // FileResolveRoutes returns folderPath as the file's parent directory
-      // (collection-relative). Append the file name so the editor gets the
-      // document itself, still collection-relative like the id path.
       const requested = absolutePath.slice(SULLA_FILES_ROOT.length);
-      const fileName = requested.slice(requested.lastIndexOf('/') + 1);
-      resolvedPath = resolved.folderPath === undefined ? requested : (resolved.folderPath ? `${ resolved.folderPath }/${ fileName }` : fileName);
+      if (isFolder) {
+        resolvedPath = resolved.folderPath ?? requested;
+        fileKind = 'folder';
+      } else {
+        // FileResolveRoutes returns folderPath as the file's parent directory
+        // (collection-relative). Append the file name so the editor gets the
+        // document itself, still collection-relative like the id path.
+        const fileName = requested.slice(requested.lastIndexOf('/') + 1);
+        resolvedPath = resolved.folderPath === undefined ? requested : (resolved.folderPath ? `${ resolved.folderPath }/${ fileName }` : fileName);
+      }
     } else {
       let record:FilesRecord;
       try {
@@ -99,7 +111,7 @@ export class FilesOpenWorker extends FilesTool {
     }
 
     const metadata = this.state?.metadata as Record<string, any> | undefined;
-    const decision = this.routePolicy.route(input.placement, {
+    const context = {
       threadId:             metadata?.threadId,
       executionThreadId:    this.executionContext?.thread_id,
       hasChatTransport:     typeof this.sendChatMessage === 'function',
@@ -108,15 +120,19 @@ export class FilesOpenWorker extends FilesTool {
       isRelayed:            metadata?.relayed === true,
       isChatMuted:          !!metadata?._muteWsChat,
       isSubconsciousSilent: !!metadata?.subconsciousSilent,
-    });
+    };
+    let decision = this.routePolicy.route(input.placement, context);
+    if (fileKind === 'folder' && input.placement !== 'tab' && decision.kind === 'inline') {
+      decision = this.routePolicy.route('tab', context);
+    }
     console.log(`[files/open] route thread=${ metadata?.threadId || '(none)' } placement=${ input.placement ?? 'default' } eligible=${ decision.kind === 'inline' ? 'yes' : 'no' } decision=${ decision.kind } reason=${ decision.kind === 'inline' ? 'visible-desktop-chat' : decision.reason }`);
     if (decision.kind === 'reject') throw new Error(decision.message);
     const threadId = typeof metadata?.threadId === 'string' ? metadata.threadId.trim() : '';
-    const key = threadId ? JSON.stringify([threadId, fileId, decision.kind, input.mode ?? 'edit']) : '';
-    return this.openOnce(key, () => this.present(input, fileId, collectionId, resolvedPath, decision));
+    const key = threadId ? JSON.stringify([threadId, fileId || resolvedPath, decision.kind, input.mode ?? 'edit']) : '';
+    return this.recentOpenRegistry.openOnce(key, () => this.present(input, fileId, collectionId, resolvedPath, fileKind, decision));
   }
 
-  private async present(input:any, fileId:string, collectionId:string, resolvedPath:string, decision:Exclude<FileOpenRouteDecision, { kind:'reject' }>):Promise<ToolResponse> {
+  private async present(input:any, fileId:string, collectionId:string, resolvedPath:string, fileKind:'file' | 'folder', decision:Exclude<FileOpenRouteDecision, { kind:'reject' }>):Promise<ToolResponse> {
     if (decision.kind === 'inline') {
       const record = this.inlineReferenceFactory.create({
         threadId: decision.threadId,
@@ -131,9 +147,11 @@ export class FilesOpenWorker extends FilesTool {
 
     const agentWindow = getActiveAgentWindow();
     if (!agentWindow) {
-      if (decision.reason === 'requested-tab') throw new Error('Main Sulla Desktop window is not available yet');
+      if (decision.reason === 'requested-tab' && input.placement === 'tab') throw new Error('Main Sulla Desktop window is not available yet');
       const reason = decision.reason === 'sub-agent'
         ? 'Inline cards only show in a visible Desktop chat; this agent is hidden and no Files tab is available.'
+        : fileKind === 'folder'
+          ? 'That path is a folder and must open in the Files tab, but no Files tab is available for this call.'
         : 'Inline cards only show in a visible Desktop chat; no Files tab is available for this call.';
       return { successBoolean: true, responseString: JSON.stringify({ opened: false, reason }) };
     }
@@ -150,35 +168,16 @@ export class FilesOpenWorker extends FilesTool {
         if (reply?.opened !== true) return reject(new Error('Sulla Desktop did not select the requested Files item'));
         resolve(reply);
       });
-      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: 'file', mode: input.mode ?? 'edit', focus: input.focus !== false });
+      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: fileKind, mode: input.mode ?? 'edit', focus: input.focus !== false });
       if (agentWindow.webContents.isLoading()) agentWindow.webContents.once('did-finish-load', dispatch); else dispatch();
     });
     if (input.focus !== false) agentWindow.focus();
-    return { successBoolean: true, responseString: JSON.stringify(result) };
-  }
-
-  private async openOnce(key:string, open:() => Promise<ToolResponse>):Promise<ToolResponse> {
-    if (!key) return open();
-    const now = this.now();
-    for (const [recentKey, entry] of this.recentOpens) {
-      if (entry.expiresAt <= now) this.recentOpens.delete(recentKey);
-    }
-    const existing = this.recentOpens.get(key);
-    if (existing && existing.expiresAt > now) return existing.result;
-
-    const result = open();
-    const entry = { expiresAt: now + RECENT_OPEN_WINDOW_MS, result };
-    this.recentOpens.set(key, entry);
-    try {
-      const response = await result;
-      try {
-        if (JSON.parse(response.responseString)?.opened === false && this.recentOpens.get(key) === entry) this.recentOpens.delete(key);
-      } catch { /* A response without an opened flag can still be safely reused. */ }
-      return response;
-    } catch (error) {
-      if (this.recentOpens.get(key) === entry) this.recentOpens.delete(key);
-      throw error;
-    }
+    const reason = decision.reason === 'requested-tab'
+      ? (fileKind === 'folder' && input.placement !== 'tab' ? 'That folder was opened in the Files tab; inline cards are for files.' : undefined)
+      : decision.reason === 'sub-agent'
+        ? 'Inline cards only appear in a visible Desktop chat; this hidden sub-agent call was opened in the Files tab instead.'
+        : 'Inline cards only appear in a visible Desktop chat; this call was opened in the Files tab instead.';
+    return { successBoolean: true, responseString: JSON.stringify({ ...result, ...(reason ? { reason } : {}) }) };
   }
 
   private isNotFound(error:unknown):boolean {

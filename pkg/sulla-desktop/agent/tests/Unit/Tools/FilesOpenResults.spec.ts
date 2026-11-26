@@ -23,6 +23,13 @@ vi.mock('@pkg/window/agentWindowTrust', () => ({ agentWindowFromSender: () => nu
 import { FilesOpenWorker } from '../../../tools/files/open';
 import { filesToolManifests } from '../../../tools/files/manifests';
 import { toolDecisionPort, UnavailableToolDecisionPort } from '../../../tools/toolDecisionPort';
+import { RecentFileOpenRegistry } from '../../../tools/files/RecentFileOpenRegistry';
+import type { ToolResponse } from '../../../tools/base';
+import type { RecentFileOpenCoordinator } from '../../../tools/files/RecentFileOpenRegistry';
+
+class UncachedRecentFileOpenRegistry implements RecentFileOpenCoordinator {
+  openOnce(_key:string, open:() => Promise<ToolResponse>):Promise<ToolResponse> { return open(); }
+}
 
 const openManifest = filesToolManifests.find(manifest => manifest.name === 'open')!;
 const fileResponse = { file: { id: 'file-1', collection_id: 'collection-1', path: 'Projects/example/file.md' } };
@@ -32,8 +39,11 @@ function response(body: unknown) {
   return { status: 200, json: async() => body } as Response;
 }
 
-function worker(metadata: Record<string, unknown> = { threadId: 'thread-1', desktopChatVisible: true }) {
-  const instance = new FilesOpenWorker();
+function worker(
+  metadata: Record<string, unknown> = { threadId: 'thread-1', desktopChatVisible: true },
+  recentOpenRegistry:RecentFileOpenCoordinator = new UncachedRecentFileOpenRegistry(),
+) {
+  const instance = new FilesOpenWorker(undefined, undefined, undefined, recentOpenRegistry);
   instance.schemaDef = openManifest.schemaDef;
   instance.name = openManifest.name;
   instance.metadata.category = 'files';
@@ -43,13 +53,13 @@ function worker(metadata: Record<string, unknown> = { threadId: 'thread-1', desk
   return { instance, state, invoke: (input: unknown) => instance.invoke(input, state) };
 }
 
-function installFileManagerWindow() {
+function installFileManagerWindow(opened = true) {
   const webContents:any = {
     isLoading: () => false,
     once: vi.fn(),
     send: vi.fn((_channel: string, payload: any) => {
       queueMicrotask(() => harness.replyListener?.({ sender: webContents }, {
-        opened: true, tabId: 'files-tab-1', path: payload.path, how: 'file-manager-viewer',
+        opened, tabId: 'files-tab-1', path: payload.path, how: 'file-manager-viewer',
       }));
     }),
   };
@@ -111,7 +121,11 @@ describe('files/open clear results', () => {
     const result = await call.invoke({ path: 'Projects/example/file.md' });
 
     expect(result.success).toBe(true);
-    expect(JSON.parse(result.result as string)).toMatchObject({ opened: true, tabId: 'files-tab-1' });
+    expect(JSON.parse(result.result as string)).toMatchObject({
+      opened: true,
+      tabId: 'files-tab-1',
+      reason: expect.stringMatching(/inline cards only appear in a visible Desktop chat/i),
+    });
     expect(call.instance.sendChatMessage).not.toHaveBeenCalled();
     expect(activeWindow.webContents.send).toHaveBeenCalledTimes(1);
   });
@@ -135,7 +149,7 @@ describe('files/open clear results', () => {
   });
 
   it('does not cache a no-window fallback as if the file had opened', async() => {
-    const call = worker({ threadId: 'api-thread', desktopChatVisible: false });
+    const call = worker({ threadId: 'api-thread', desktopChatVisible: false }, new RecentFileOpenRegistry());
     const first = await call.invoke({ path: 'Projects/example/file.md' });
     expect(JSON.parse(first.result as string).opened).toBe(false);
     const activeWindow = installFileManagerWindow();
@@ -155,7 +169,6 @@ describe('files/open clear results', () => {
 
   it.each([
     ['missing path or id', {}, /path or file_id is required/],
-    ['empty path', { path: '   ' }, /path cannot be empty/],
     ['dot traversal', { path: '../private.txt' }, /inside Sulla Files/],
     ['absolute traversal', { path: '/etc/passwd' }, /absolute paths outside Sulla Files are not allowed/],
     ['Windows absolute traversal', { path: 'C:\\Users\\private.txt' }, /absolute paths outside Sulla Files are not allowed/],
@@ -175,21 +188,44 @@ describe('files/open clear results', () => {
     expect(harness.containerRequest).not.toHaveBeenCalled();
   });
 
-  it('identifies a folder path and suggests files/list without dispatching an open', async() => {
+  it.each([undefined, 'tab'] as const)('opens a folder path in the Files tab when placement is %s', async(placement) => {
+    // risk: navigation — folder paths must retain their legacy Files-tab behavior rather than erroring as non-files.
+    harness.containerRequest.mockImplementationOnce(async() => response({
+      collectionId: 'collection-1', folderPath: 'Projects/example', kind: 'folder',
+    }));
+    const activeWindow = installFileManagerWindow();
+    const result = await worker().invoke({ path: 'Projects/example', ...(placement ? { placement } : {}) });
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.result as string)).toMatchObject({ opened: true, path: 'Projects/example' });
+    if (!placement) expect(JSON.parse(result.result as string).reason).toMatch(/folder was opened in the Files tab/i);
+    expect(activeWindow.webContents.send).toHaveBeenCalledWith('agent-command', expect.objectContaining({
+      command: 'open-files-item', kind: 'folder', path: 'Projects/example',
+    }));
+  });
+
+  it('returns a file-specific inline error for a folder path', async() => {
     harness.containerRequest.mockImplementationOnce(async() => response({
       collectionId: 'collection-1', folderPath: 'Projects/example', kind: 'folder',
     }));
     installFileManagerWindow();
-    const result = await worker().invoke({ path: 'Projects/example' });
+    const result = await worker().invoke({ path: 'Projects/example', placement: 'inline' });
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/is a folder.*files\/list/i);
+    expect(result.error).toBe('Inline cards are for files; that path is a folder. Open it with placement "tab" or use files/list.');
     expect(harness.activeWindow.webContents.send).not.toHaveBeenCalled();
   });
 
-  it('identifies the Sulla Files root itself as a folder', async() => {
-    const result = await worker().invoke({ path: '/mnt/sulla-files' });
+  it.each(['/mnt/sulla-files', '/mnt/sulla-files/', ''])('identifies the Sulla Files root path %s as a folder without a request', async(path) => {
+    // risk: path traversal — root inputs must stop before Files lookup and never be mistaken for a file.
+    const result = await worker().invoke({ path });
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/is a folder.*files\/list/i);
+    expect(harness.containerRequest).not.toHaveBeenCalled();
+  });
+
+  it('identifies the Sulla Files root as a folder even with inline placement', async() => {
+    const result = await worker().invoke({ path: '/mnt/sulla-files/', placement: 'inline' });
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('Inline cards are for files; that path is a folder. Open it with placement "tab" or use files/list.');
     expect(harness.containerRequest).not.toHaveBeenCalled();
   });
 
@@ -227,23 +263,59 @@ describe('files/open clear results', () => {
     expect(result.error).toBe(message);
   });
 
-  it('deduplicates the same file card in one thread for the short retry window', async() => {
-    // risk: UI idempotency — a retry must not create duplicate inline file cards in the same chat.
-    const call = worker();
-    const first = await call.invoke({ path: 'Projects/example/file.md' });
-    const second = await call.invoke({ path: 'Projects/example/file.md' });
+  it('deduplicates across separately constructed workers for 1.5 seconds, then allows a new card', async() => {
+    // risk: UI idempotency — ToolRegistry creates one worker per call, so the shared main-process registry must suppress real retries.
+    let now = 0;
+    const registry = new RecentFileOpenRegistry(() => now);
+    const firstWorker = worker(undefined, registry);
+    const secondWorker = worker(undefined, registry);
+    const first = await firstWorker.invoke({ path: 'Projects/example/file.md' });
+    const second = await secondWorker.invoke({ path: 'Projects/example/file.md' });
     expect(first.success).toBe(true);
     expect(second.success).toBe(true);
-    expect(call.instance.sendChatMessage).toHaveBeenCalledTimes(1);
+    expect(firstWorker.instance.sendChatMessage).toHaveBeenCalledTimes(1);
+    expect(secondWorker.instance.sendChatMessage).not.toHaveBeenCalled();
+
+    now = 1_499;
+    await worker(undefined, registry).invoke({ path: 'Projects/example/file.md' });
+    expect(firstWorker.instance.sendChatMessage).toHaveBeenCalledTimes(1);
+    now = 1_500;
+    const afterWindow = worker(undefined, registry);
+    await afterWindow.invoke({ path: 'Projects/example/file.md' });
+    expect(afterWindow.instance.sendChatMessage).toHaveBeenCalledTimes(1);
   });
 
   it('deduplicates a repeated tab open in the same thread for the short retry window', async() => {
     // risk: UI idempotency — retrying the same tab request must not create another Files tab.
     const activeWindow = installFileManagerWindow();
-    const call = worker();
+    const call = worker(undefined, new RecentFileOpenRegistry());
     await call.invoke({ path: 'Projects/example/file.md', placement: 'tab' });
     const second = await call.invoke({ path: 'Projects/example/file.md', placement: 'tab' });
     expect(second.success).toBe(true);
     expect(activeWindow.webContents.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not cache failed opens, and bounds and expires entries on access', async() => {
+    // risk: UI idempotency — rejected opens must be retryable and stale file keys must not accumulate forever.
+    let now = 0;
+    const registry = new RecentFileOpenRegistry(() => now, 1_500, 2);
+    const open = vi.fn(async() => ({ successBoolean: true, responseString: JSON.stringify({ opened: true }) }));
+    await registry.openOnce('a', open);
+    await registry.openOnce('b', open);
+    await registry.openOnce('c', open);
+    await registry.openOnce('a', open);
+    expect(open).toHaveBeenCalledTimes(4);
+
+    now = 1_500;
+    await registry.openOnce('d', open);
+    await registry.openOnce('b', open);
+    expect(open).toHaveBeenCalledTimes(6);
+
+    const failedOpen = vi.fn()
+      .mockRejectedValueOnce(new Error('open failed'))
+      .mockResolvedValue({ successBoolean: true, responseString: '{"opened":true}' });
+    await expect(registry.openOnce('failed', failedOpen)).rejects.toThrow('open failed');
+    await expect(registry.openOnce('failed', failedOpen)).resolves.toMatchObject({ successBoolean: true });
+    expect(failedOpen).toHaveBeenCalledTimes(2);
   });
 });
