@@ -52,6 +52,8 @@ const perf = Logging.perf;
 export class CodexAssistantMessageStream {
   private collectedText = '';
   private awaitingCompletedMessage = false;
+  private hasCompletedMessage = false;
+  private messageStarted = false;
 
   constructor(private readonly callbacks: Partial<StreamCallbacks>) {}
 
@@ -59,6 +61,7 @@ export class CodexAssistantMessageStream {
 
   appendDelta(delta: string): void {
     if (!delta) return;
+    this.startMessage();
     this.awaitingCompletedMessage = true;
     this.collectedText += delta;
     try { this.callbacks.onToken?.(delta) } catch { /* observer callback */ }
@@ -73,8 +76,8 @@ export class CodexAssistantMessageStream {
       return;
     }
 
-    const separator = this.collectedText.trim() ? '\n\n' : '';
-    this.collectedText += separator + text;
+    this.startMessage();
+    this.collectedText += text;
     try { this.callbacks.onToken?.(text) } catch { /* observer callback */ }
     this.finishBoundary();
   }
@@ -86,7 +89,15 @@ export class CodexAssistantMessageStream {
   }
 
   private finishBoundary(): void {
+    if (this.messageStarted) this.hasCompletedMessage = true;
+    this.messageStarted = false;
     try { this.callbacks.onMessageBoundary?.() } catch { /* observer callback */ }
+  }
+
+  private startMessage(): void {
+    if (this.messageStarted) return;
+    if (this.hasCompletedMessage && this.collectedText.trim()) this.collectedText += '\n\n';
+    this.messageStarted = true;
   }
 }
 
@@ -415,9 +426,6 @@ export class CodexService extends BaseLanguageModel {
         canRetry: () => !toolStarted,
         onRetry:  (error, attempt) => failureDiagnostics.retry(error, attempt, options.conversationId ?? '__default__', runOptions.diagnosticRunId),
       });
-      // runCodex retains provider message separators in its final transcript.
-      // Use the callback transcript only as a fallback when a CLI emitted live
-      // text but failed to return it in the terminal result.
       if (streamedText && !result.text) result.text = streamedText;
       const response: NormalizedResponse = {
         content:  result.text,
