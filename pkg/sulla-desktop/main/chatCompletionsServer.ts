@@ -11,6 +11,8 @@ import path from 'node:path';
 import cors from 'cors';
 import express, { Request, Response, NextFunction } from 'express';
 
+import { ToolApprovalGate } from '@pkg/agent/tools/ToolApprovalGate';
+import { toolDecisionPort } from '@pkg/agent/tools/toolDecisionPort';
 import { ClerkApiRoute } from './ClerkApiRoute';
 import { getMCPServerHost } from './MCPServerHost';
 import { ChatToolRequestSecurity } from './ChatToolRequestSecurity';
@@ -1286,7 +1288,7 @@ export class ChatCompletionsServer {
 
   private clerkRoute(): ClerkApiRoute {
     const callerResolver = this.clerkSessionResolver();
-    return new ClerkApiRoute(createDesktopClerkClient, (request, name, signal) => callerResolver.resolve(request, name, signal));
+    return new ClerkApiRoute(createDesktopClerkClient, (request, name, signal) => callerResolver.resolve(request, name, signal), new ToolApprovalGate(toolDecisionPort.resolve()));
   }
 
   private async handleIntegrationCall(req: Request, res: Response) {

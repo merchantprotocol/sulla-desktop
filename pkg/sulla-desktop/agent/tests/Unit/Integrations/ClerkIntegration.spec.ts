@@ -23,6 +23,7 @@ import { LocalVaultBrokerClient } from '../../../../vault-broker';
 import { ClerkClient, ClerkError, clerkSettings } from '../../../integrations/clerk/ClerkClient';
 import { ClerkWorker } from '../../../tools/clerk/ClerkWorker';
 import { clerkToolManifests } from '../../../tools/clerk/manifests';
+import { ToolApprovalGate } from '../../../tools/ToolApprovalGate';
 import { toolDecisionPort } from '../../../tools/toolDecisionPort';
 
 import type { DecisionOutcome, DecisionRecord } from '@pkg/shared/decisions';
@@ -756,9 +757,33 @@ describe('Clerk guarded egress', () => {
     expect(f.send).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['get_user', 'clerk_get_user', { params: { user_id: 'user_a' } }],
+    ['clerk_raw_request', 'clerk_raw_request', { path: '/users/user_a' }],
+    [undefined, 'clerk_raw_request', { path: '/users/user_a' }],
+  ] as const)('holds HTTP %s behind its canonical Decide policy until approved', async(endpoint, canonical, input) => {
+    const f = fixture();
+    const requiresApproval = vi.fn(async(name: string) => name === canonical);
+    const route = new ClerkApiRoute(() => f.client, async(_request, _name, signal) => ({ ...f.caller, signal }),
+      new ToolApprovalGate({ request: f.decide, requiresApproval }));
+    const response = proxyResponse();
+    const dispatched = route.handle(proxyRequest(input), response, endpoint);
+    await vi.waitFor(() => expect(f.decide).toHaveBeenCalledTimes(1));
+    expect(f.decide.mock.calls[0][0]).toMatchObject({ kind: 'approval', toolName: canonical, conversationId: 'test-thread' });
+    expect(f.requests).toHaveLength(0);
+    expect(f.send).not.toHaveBeenCalled();
+    f.settle('approved');
+    await dispatched;
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+    expect(f.send).toHaveBeenCalledTimes(1);
+    expect(requiresApproval).toHaveBeenCalledTimes(1);
+    expect(f.decide).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects wrapped Clerk raw envelopes on both API routes before applying defaults', async() => {
     const f = fixture();
-    const route = new ClerkApiRoute(() => f.client, (_request, _name, signal) => Promise.resolve({ ...f.caller, signal }));
+    const route = new ClerkApiRoute(() => f.client, (_request, _name, signal) => Promise.resolve({ ...f.caller, signal }),
+      new ToolApprovalGate({ request: f.decide, requiresApproval: async() => false }));
     for (const endpoint of [undefined, 'clerk_raw_request']) {
       const response = proxyResponse();
       await route.handle(proxyRequest({ params: { path: '/users/user_a' } }), response, endpoint);
@@ -777,7 +802,8 @@ describe('Clerk guarded egress', () => {
     const f = fixture();
     const input = { method: 'POST', path: '/organizations/org_a/invitations/inv_a/revoke', environment: 'production', confirm: 'true' };
     await expect(f.client.named('raw_request', input, f.caller)).rejects.toThrow('requires confirm');
-    const proxy = new ClerkApiRoute(() => f.client, (_request, _name, signal) => Promise.resolve({ ...f.caller, signal }));
+    const proxy = new ClerkApiRoute(() => f.client, (_request, _name, signal) => Promise.resolve({ ...f.caller, signal }),
+      new ToolApprovalGate({ request: f.decide, requiresApproval: async() => false }));
     const response = proxyResponse();
     const request = proxyRequest(input);
     await proxy.handle(request, response);
