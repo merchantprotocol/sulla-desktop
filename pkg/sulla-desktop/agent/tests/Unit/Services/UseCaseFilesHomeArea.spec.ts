@@ -59,7 +59,7 @@ const APP_SCHEMA = `
     soul_content TEXT NOT NULL DEFAULT '', allowed_tools TEXT[] NOT NULL DEFAULT '{}', skill_refs TEXT[] NOT NULL DEFAULT '{}', routine_refs TEXT[] NOT NULL DEFAULT '{}',
     model_priority JSONB NOT NULL DEFAULT '[]'::jsonb, version TEXT, status TEXT NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT TRUE,
     config JSONB NOT NULL DEFAULT '{}'::jsonb, prompt_content TEXT NOT NULL DEFAULT '', goals_content TEXT NOT NULL DEFAULT '', prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb,
-    provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB, source_kind TEXT NOT NULL DEFAULT 'local', when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '',
+    provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB, agent_awareness BOOLEAN NOT NULL DEFAULT TRUE, source_kind TEXT NOT NULL DEFAULT 'local', when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '',
     send TEXT NOT NULL DEFAULT '', returns TEXT NOT NULL DEFAULT '', cost_tier TEXT, can_call TEXT[] NOT NULL DEFAULT '{}', front_door BOOLEAN,
     use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
