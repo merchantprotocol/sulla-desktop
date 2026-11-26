@@ -1835,6 +1835,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       let output = '';
       let providerBuffer = '';
       let streamText = '';
+      let replyStreamId = crypto.randomUUID();
       let lastStreamFlush = 0;
       let settled = false;
       let abortForceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1896,7 +1897,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
           reject(new AggregateError(error ? [error, cleanupError] : [cleanupError], 'Agent container cleanup remains pending'));
           return;
         }
-        emitProvider('', 'streaming_complete').catch(() => {});
+        closeStreamingSegment();
         emitProvider('', 'thinking_complete').catch(() => {});
         if (error) {
           if (cleanupReceipt.recoveryWorkspacePath) {
@@ -1918,7 +1919,10 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if (!channel || !threadId) return;
         await getWebSocketClientService().send(channel, {
           type: 'assistant_message',
-          data: { content, role: 'assistant', kind, thread_id: threadId, timestamp: Date.now() },
+          data: {
+            content, role: 'assistant', kind, thread_id: threadId, timestamp: Date.now(),
+            ...(kind === 'streaming' || kind === 'streaming_complete' ? { replyStreamId } : {}),
+          },
         }).catch(() => {});
       };
       const flushStream = (force = false) => {
@@ -1928,11 +1932,15 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         const content = stripProtocolTagsStreaming(streamText);
         if (content.trim()) emitProvider(content, 'streaming').catch(() => {});
       };
-      const activity = (message: string) => {
-        if (!message) return;
+      const closeStreamingSegment = () => {
         flushStream(true);
         if (streamText.trim()) emitProvider('', 'streaming_complete').catch(() => {});
         streamText = '';
+        replyStreamId = crypto.randomUUID();
+      };
+      const activity = (message: string) => {
+        if (!message) return;
+        closeStreamingSegment();
         emitProvider(message, 'thinking').catch(() => {});
       };
       const processProviderLine = (line: string) => {
@@ -1953,7 +1961,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
           }
           if (kind === 'agent_message' && event.type === 'item.completed' && typeof item.text === 'string') {
             streamText += `${ streamText.trim() ? '\n\n' : '' }${ item.text }`;
-            flushStream(true);
+            closeStreamingSegment();
           } else if (event.type === 'item.started') {
             if (kind === 'command_execution') activity(typeof item.command === 'string' ? `$ ${ item.command.slice(0, 120) }` : 'Running a shell command');
             else if (kind === 'file_change') activity('Editing files');
@@ -1969,6 +1977,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
         if (nested?.type === 'content_block_delta' && nested.delta?.type === 'thinking_delta' && typeof nested.delta.thinking === 'string') {
           activity(`💭 ${ nested.delta.thinking.replace(/\s+/g, ' ').trim().slice(0, 220) }`);
         }
+        if (nested?.type === 'message_stop') closeStreamingSegment();
         if (nested?.type === 'content_block_start' && nested.content_block?.type === 'tool_use') {
           activity(`Using ${ nested.content_block.name ?? 'a tool' }`);
           // Claude Code: in flight until its tool_result comes back in a user message.

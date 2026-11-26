@@ -62,6 +62,25 @@ import paths from '@pkg/utils/paths';
 
 const log = Logging.background;
 
+/** Turns Claude stream-json message stops into assistant segment boundaries. */
+export class ClaudeAssistantMessageStream {
+  private hasText = false;
+
+  constructor(private readonly callbacks: Partial<StreamCallbacks>) {}
+
+  noteText(): void { this.hasText = true; }
+
+  onStreamEvent(type: string): void {
+    if (type === 'message_start' || type === 'message_stop') this.finish();
+  }
+
+  finish(): void {
+    if (!this.hasText) return;
+    this.hasText = false;
+    try { this.callbacks.onMessageBoundary?.() } catch { /* observer callback */ }
+  }
+}
+
 function redactClaudeDiagnostic(value: unknown, messages: ChatMessage[]): string {
   const raw = value instanceof Error ? value.message : String(value ?? '');
   const promptText = messages.flatMap(message => typeof message.content === 'string'
@@ -1143,6 +1162,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         let stdoutBuffer = '';
         let stderrBuffer = '';
         let textCollected = '';
+        const assistantMessages = new ClaudeAssistantMessageStream(callbacks);
         let capturedSessionId: string | undefined = existingSession;
         let lastUsage: any;
         let errored = false;
@@ -1559,7 +1579,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           // tool_use block starts, thinking starts.
           const ev = parsed?.event;
           if (ev) {
-            if (!firstStreamAt && ev.type === 'message_start') firstStreamAt = Date.now();
+            if (ev.type === 'message_start') {
+              assistantMessages.onStreamEvent(ev.type);
+              if (!firstStreamAt) firstStreamAt = Date.now();
+            }
+            if (ev.type === 'message_stop') {
+              assistantMessages.onStreamEvent(ev.type);
+              return;
+            }
           // Text chunks → stream to caller as content
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
               if (!promptConsumed) return;   // a CLI-initiated turn's text, not ours
@@ -1569,6 +1596,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               textDeltaCount++;
               if (!firstTextDeltaAt) firstTextDeltaAt = Date.now();
               textCollected += ev.delta.text;
+              assistantMessages.noteText();
               try { callbacks.onToken?.(ev.delta.text) } catch { /* ignore */ }
               return;
             }
@@ -1689,11 +1717,13 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             } else {
               if (typeof parsed.result === 'string' && !textCollected) {
                 textCollected = parsed.result;
+                assistantMessages.noteText();
                 try { callbacks.onToken?.(parsed.result) } catch { /* ignore */ }
               }
               // Usage capture is best-effort — never block on failure.
               recordUsage(parsed).catch(() => { /* ignore */ });
             }
+            assistantMessages.finish();
             // A steer written after Claude's last tool boundary hasn't been
             // consumed yet — Claude runs it as a follow-up turn right after this
             // result. Keep the turn open for it. The grace timer covers a CLI
