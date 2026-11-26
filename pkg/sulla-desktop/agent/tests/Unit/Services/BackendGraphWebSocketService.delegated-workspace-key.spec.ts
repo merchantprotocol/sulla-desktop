@@ -7,6 +7,8 @@ import crypto from 'node:crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resolveLaunchModelPrecedence } from '../../../languagemodels/modelPrecedence';
+
 const { createAgentContainerLifecycle } = vi.hoisted(() => ({
   createAgentContainerLifecycle: vi.fn((_run: any) => Promise.resolve({ closed: false, close: vi.fn(() => Promise.resolve()) })),
 }));
@@ -48,6 +50,7 @@ const parkedIdentity = (visibility: 'hidden' | 'tab' | undefined, threadId = THR
   job:       { jobId: 'job-1', status: 'running', parentChannel: 'sulla-desktop', visibility, tasks: [] },
   task:      { agentId: 'codex-sol-worker', threadId, status: 'parked', depth: 1, visibility },
   taskIndex,
+  modelPrecedence: resolveLaunchModelPrecedence({}),
   agentId:   'codex-sol-worker',
 }) as any;
 
