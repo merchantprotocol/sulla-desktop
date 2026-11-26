@@ -128,6 +128,18 @@ class SeedSourceRepository:
             raise ValueError('container workspacePath must be clean before guest transport')
         index.unlink()
         self.git.run('read-tree', self.head)
+        if 'exclude' in self.paths:
+            # A read-only pin fixes identity, not size. Never use a truncated set of patterns.
+            limit = 64 * 1024
+            try:
+                with open(self.paths['exclude'], 'rb') as pinned:
+                    patterns = pinned.read(limit + 1)
+            except PermissionError:
+                patterns = b''  # Never retry with the broker's privileges.
+            if patterns and len(patterns) <= limit:
+                info = index.parent / 'info'
+                info.mkdir(exist_ok=True)
+                (info / 'exclude').write_bytes(patterns)
         if self.git.run('status', '--porcelain=v1', '--ignore-submodules=all', '--untracked-files=normal').stdout:
             raise ValueError('container workspacePath must be clean before guest transport')
 

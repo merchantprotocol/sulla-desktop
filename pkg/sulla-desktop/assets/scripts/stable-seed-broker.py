@@ -205,7 +205,7 @@ class ContainerRunner:
 
 class Checkout:
     def __init__(self, path, directory, h, pins, private, allow_link, module=None):
-        self.pins, self.private = pins, private
+        self.pins, self.private, self.handles = pins, private, h
         dot = h.pin('.git', directory, lambda m: stat.S_ISDIR(m) or stat.S_ISREG(m))
         self.linked = stat.S_ISREG(os.fstat(dot).st_mode)
         if self.linked and module:
@@ -252,7 +252,16 @@ class Checkout:
         self.mounts.append((str(self.mask), '/seed/objects/info', False))
 
     def read(self, runner, op, expected='', **kwargs):
-        mounts = list(self.mounts)
+        mounts, paths = list(self.mounts), dict(self.paths)
+        if op in ('bundle', 'clean'):
+            # Only a clean check uses repository-local ignore patterns. Do not expose info/ itself.
+            try:
+                exclude = self.handles.optional('info/exclude', self.common)
+            except ValueError:  # A component failed the no-follow type check: ignore no files.
+                exclude = None
+            if exclude is not None and os.fstat(exclude).st_size <= 64 * 1024:
+                paths['exclude'] = '/seed/exclude'
+                mounts.append((self.pins.bind(exclude), paths['exclude'], False))
         if op in ('bundle', 'size', 'clean'):
             mask = self.mask
             if self.linked:
@@ -260,7 +269,7 @@ class Checkout:
                 mask.touch(exist_ok=True)
             mounts += [(self.pins.bind(self.directory), self.paths['checkout'], False),
                        (str(mask), self.paths['checkout'] + '/.git', False)]
-        return runner.run(mounts, op, self.paths, self.ref, expected, **kwargs)
+        return runner.run(mounts, op, paths, self.ref, expected, **kwargs)
 
 
 class StableSeed:
