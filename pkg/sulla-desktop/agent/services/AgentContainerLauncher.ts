@@ -1434,7 +1434,7 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
         createEphemeral: (key: string) => createGuestRuntimeDirectory(GUEST_AGENT_WORKSPACES_ROOT, `${ key }-`),
         seedEphemeral:   seedGitWorktreeIntoGuest,
         prepareStableSource: () => ensureGuestWorktreeDirectories(identity),
-        seedStable:      seedGitWorktreeIntoStableGuest,
+        seedStable:      (source: string, target: string, key?: string) => seedGitWorktreeIntoStableGuest(source, target, key, { image }),
       };
       if (!stableKey) {
         const workspace = await AgentWorkspaceBinder.bind({ jobKey, source: run.workspacePath }, operations);
