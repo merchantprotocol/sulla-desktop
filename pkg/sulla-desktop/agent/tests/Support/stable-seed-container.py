@@ -69,7 +69,8 @@ with tempfile.TemporaryDirectory() as tmp:
             os.chown(projected, uid, gid)
         elif os.path.isdir(src):
             shutil.copytree(src, projected, symlinks=True,
-                            ignore=shutil.ignore_patterns('.git' if key == 'checkout' else 'info'))
+                            ignore=lambda dirname, _: (['.git'] if key == 'checkout' else ['info'])
+                            if dirname == src else [])
         else:
             shutil.copyfile(src, projected)
         paths[key] = str(projected)
