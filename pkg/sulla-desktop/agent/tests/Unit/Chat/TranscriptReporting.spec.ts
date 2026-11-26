@@ -664,7 +664,7 @@ it('ticks only a mounted working sub-agent and stops ticking when it settles', a
     const wrapper = fixture.mount('info');
     const baseline = startTicker.mock.calls.length;
     await wrapper.setProps({ reportingLevel: 'debug' });
-    const elapsed = () => wrapper.get('.dtr-agent .dtr-dur').text();
+    const elapsed = () => wrapper.get('li.dtr-row[data-status="working"] .dtr-dur').text();
     expect(elapsed()).toBe('1s');
     expect(startTicker).toHaveBeenCalledTimes(baseline + 1);
     vi.advanceTimersByTime(1_000);

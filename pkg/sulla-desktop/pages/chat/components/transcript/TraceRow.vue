@@ -43,7 +43,7 @@
         <code v-if="row.targetIsCode" class="dtr-tg">{{ row.target }}</code><span v-else class="dtr-tg">{{ row.target }}</span>
         <span v-if="row.keyArgs" class="dtr-args">{{ row.keyArgs }}</span>
       </div>
-      <span class="dtr-m"><span class="dtr-dur">{{ row.kind === 'handoff' && row.subagent ? duration : row.durationLabel }}</span><span class="dtr-st" :data-s="row.status">{{ row.status }}</span></span>
+      <span class="dtr-m"><span class="dtr-dur">{{ row.subagent ? duration : row.durationLabel }}</span><span class="dtr-st" :data-s="row.status">{{ row.status }}</span></span>
       <button
         v-if="row.payload" type="button" class="dtr-x" :aria-expanded="open" :aria-controls="payloadId"
         :aria-label="`Raw payload for ${row.verb} ${row.target}`"
@@ -182,7 +182,7 @@ const rowNow = ref(Date.now());
 const ticking = computed(() => {
   const agent = props.row.subagent;
   // Time since launch for every unsettled state; total run time once it ends.
-  return (props.row.kind === 'subagent' || props.row.kind === 'handoff') && agent?.startedAt !== undefined && agent.endedAt === undefined &&
+  return agent?.startedAt !== undefined && agent.endedAt === undefined &&
     !['returned', 'failed', 'stopped'].includes(props.row.status);
 });
 watch(ticking, (active, _, onCleanup) => {
