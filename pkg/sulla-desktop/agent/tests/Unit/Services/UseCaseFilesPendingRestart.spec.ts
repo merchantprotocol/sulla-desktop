@@ -57,7 +57,7 @@ const SCHEMA = `
     soul_content TEXT NOT NULL DEFAULT '', allowed_tools TEXT[] NOT NULL DEFAULT '{}', skill_refs TEXT[] NOT NULL DEFAULT '{}', routine_refs TEXT[] NOT NULL DEFAULT '{}',
     model_priority JSONB NOT NULL DEFAULT '[]'::jsonb, version TEXT, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','production','archive')),
     enabled BOOLEAN NOT NULL DEFAULT TRUE, config JSONB NOT NULL DEFAULT '{}'::jsonb, prompt_content TEXT NOT NULL DEFAULT '', goals_content TEXT NOT NULL DEFAULT '',
-    prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb, provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB,
+    prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb, provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB, agent_awareness BOOLEAN NOT NULL DEFAULT TRUE,
     source_kind TEXT NOT NULL DEFAULT 'local' CHECK (source_kind IN ('local','filesystem-import','marketplace')),
     when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '', send TEXT NOT NULL DEFAULT '', returns TEXT NOT NULL DEFAULT '',
     cost_tier TEXT CHECK (cost_tier IS NULL OR cost_tier IN ('low','medium','high')), can_call TEXT[] NOT NULL DEFAULT '{}', front_door BOOLEAN,
