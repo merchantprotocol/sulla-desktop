@@ -47,8 +47,17 @@ export function resolveLaunchModelPrecedence(input: ResolveLaunchModelPrecedence
     try {
       const choice = effectiveModelChoice({ provider: resolvedProvider, model, effort });
       if (choice.mode !== 'pin' || choice.provider !== resolvedProvider || choice.model !== model) throw unavailable(resolvedProvider, model);
+      // A validated exact route carries the subscription approval through tab dispatch and recovery.
+      // Legacy mappings (or a stale route beside a different override) must still lose to the pin.
+      const route = input.workerModelRoute;
+      const exact = route?.requestedModel;
+      const selected = route?.candidates[0];
+      const approved = exact && route?.selected === 0 && route.candidates.length === 1 &&
+        exact.provider === resolvedProvider && exact.model === model && exact.effort === effort &&
+        selected?.provider === exact.provider && selected.model === exact.model && selected.effort === exact.effort;
       return {
         step: 'override',
+        ...(approved ? { workerModelRoute:route } : {}),
         requested: { provider: resolvedProvider, model, ...(typeof effort === 'string' ? { effort } : {}) },
         choice,
       };
