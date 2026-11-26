@@ -223,6 +223,22 @@ describe('publication ownership after the identity migration', () => {
     }
   });
 
+  it('preserves both owners when the loader selects canonical YAML and the folder row owns YML', async() => {
+    await migratedPackage(true);
+    const yaml = { ...yamlRoot, published_version_id: '00000000-0000-4000-8000-000000000005' };
+    const yml = { ...yamlRoot, id: '00000000-0000-4000-8000-000000000004', path: folder + 'agent.yml' };
+    await f.app.query(`INSERT INTO agent_definitions(id,slug,name,use_case_file_id,use_case_version_id,status,enabled,system_prompt)
+      VALUES ('second','opus-worker','Other',$1,$2,'production',true,'second prompt')`, [yml.id, yml.published_version_id]);
+    const { scan, announce } = publication([yaml, yml, jsonRoot], '');
+
+    await expect(scan()).rejects.toThrow('Use Case activation will retry for: agents/opus-worker');
+    expect(await readRows()).toEqual([original, {
+      id: 'second', slug: 'opus-worker', system_prompt: 'second prompt', use_case_file_id: yml.id,
+      use_case_version_id: yml.published_version_id, status: 'production', enabled: true,
+    }]);
+    expect(announce).not.toHaveBeenCalledWith(expect.objectContaining({ change: 'deleted' }));
+  });
+
   it.each([
     { label: 'unrelated root', row: { ...yamlRoot, id: HOME } },
     { label: 'nested decoy', row: { ...yamlRoot, path: folder + 'nested/agent.yaml' } },
