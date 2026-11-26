@@ -112,7 +112,7 @@ describe('Capsule chat composer', () => {
   let activityFixture: {
     threadId: Ref<string | undefined>;
     checkIns: Ref<StatusRollupItem[]>;
-    statusItemShown: ReturnType<typeof vi.fn>;
+    projection: Ref<{ agents: { state: 'working' | 'quiet' | 'done' }[] }>; statusItemShown: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -125,8 +125,8 @@ describe('Capsule chat composer', () => {
     controller = new ChatController();
     const statusThreadId = ref<string | undefined>();
     const checkIns = ref<StatusRollupItem[]>([]);
-    const statusItemShown = vi.fn();
-    activityFixture = { threadId: statusThreadId, checkIns, statusItemShown };
+    const statusItemShown = vi.fn(), projection = ref({ agents: [] as { state: 'working' | 'quiet' | 'done' }[] });
+    activityFixture = { threadId: statusThreadId, checkIns, projection, statusItemShown };
     wrapper = mount(Composer, {
       props: { reportingLevel: 'debug' },
       global: {
@@ -134,7 +134,7 @@ describe('Capsule chat composer', () => {
           [ChatControllerKey as symbol]: controller,
           [AGENT_STATE_CLIENT_KEY as symbol]: { snapshot: ref({ rows: [] }) },
           [THREAD_AGENT_ACTIVITY_KEY as symbol]: {
-            checkIns,
+            checkIns, projection,
             rootFallback: ref<StatusRollupItem | null>(null),
             attachConsumer: vi.fn(),
             detachConsumer: vi.fn(),
@@ -177,15 +177,15 @@ describe('Capsule chat composer', () => {
     return event;
   }
 
-  it('tracks local and remote run state and marks the halo inactive while the host is hidden', async() => {
+  it('keeps the glow breathing through multi-tool and sub-agent runs while respecting host visibility', async() => {
     // risk: availability — a busy thread must keep the Capsule run indicator active independent of event frequency.
     controller.send('Start a local fixture run.');
     await flushPromises();
     expect(capsule().get('.composer-capsule').classes()).toContain('is-running');
 
-    window.dispatchEvent(new CustomEvent('chat:activity', { detail: { message: 'another update' } }));
-    window.dispatchEvent(new CustomEvent('chat:activity', { detail: { message: 'another update' } }));
-    expect(capsule().get('.composer-capsule').classes()).toContain('is-running');
+    const messageId = controller.messages.value[0]!.id;
+    ['search', 'write'].forEach(tool => { controller.transitionRun({ type: 'spawnTool', messageId, tool }); expect(controller.isRunning.value).toBe(true); controller.transitionRun({ type: 'toolDone' }); expect(controller.isRunning.value).toBe(true); });
+    expect(capsule().get('.composer-halo--breathing').element.style.animation).toBe('composer-glow-breathe 3.2s ease-in-out infinite');
 
     const visibilityState = vi.spyOn(document, 'visibilityState', 'get');
     visibilityState.mockReturnValue('hidden');
@@ -210,16 +210,16 @@ describe('Capsule chat composer', () => {
     expect(capsule().get('.composer-capsule').classes()).not.toContain('document-hidden');
     controller.stop();
     await flushPromises();
-    expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running');
+    expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running'); expect(capsule().get('.composer-halo--breathing').element.style.animation).toBe('none');
 
     const remote = fixture.remoteSessions.at(-1);
-    remote.remote.value = true;
-    remote.running.value = true;
+    activityFixture.projection.value.agents = [{ state: 'working' }]; await flushPromises();
+    expect([capsule().get('.composer-capsule').classes(), capsule().get('.composer-halo--breathing').element.style.animation]).toEqual([expect.arrayContaining(['is-running', 'glow-on']), 'composer-glow-breathe 3.2s ease-in-out infinite']);
+    activityFixture.projection.value.agents = [{ state: 'quiet' }]; remote.remote.value = true; remote.running.value = true;
     await flushPromises();
     expect(capsule().get('.composer-capsule').classes()).toContain('is-running');
-    remote.running.value = false;
-    await flushPromises();
-    expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running');
+    remote.running.value = false; await flushPromises();
+    expect(capsule().get('.composer-capsule').classes()).not.toContain('is-running'); expect(capsule().get('.composer-halo--breathing').element.style.animation).toBe('none');
   });
 
   it('relays a newly shown mounted roll-up item through the shared chat activity path', async() => {
