@@ -202,6 +202,8 @@ describe('cold container inventory', () => {
     const { registry, parent } = await inventory(true);
     await registry.rehydrate();
     const scoped = { ...parent, scopes: ['github/git_status'], credential_scope: { integration_id: 'github', account_id: 'fixture' } };
+    expect(() => registry.forExecution({ ...scoped, task_index: 1 }, 'agent-local')).toThrow();
+    expect(() => registry.forExecution({ ...scoped, exp: 0 }, 'agent-local')).toThrow();
     const runtime = registry.forExecution(scoped, 'agent-local')!;
     expect(runtime.podId).toBe(binding.podId);
     const git = new GitStatusWorker();

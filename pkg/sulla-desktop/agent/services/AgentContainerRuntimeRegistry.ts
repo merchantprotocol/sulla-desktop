@@ -99,6 +99,9 @@ export class AgentContainerRuntimeRegistry {
     if (target !== 'agent-local' || !ctx.pod_id) return undefined;
     const binding = this.require(ctx);
     if (!this.recovered.has(binding)) return binding;
+    if (ctx.task_index !== binding.taskIndex || !Number.isFinite(ctx.exp) || ctx.exp <= Math.floor(Date.now() / 1000)) {
+      throw new Error('Invalid identity or expiry for recovered container');
+    }
     // Never share a caller-bounded authority with a different concurrent dispatch.
     const dispatch = { ...binding };
     this.dispatches.set(dispatch, { binding, caller: structuredClone(ctx) });
