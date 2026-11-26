@@ -258,7 +258,10 @@ export class ChatCompletionsServer {
       if (data.token) {
         this.apiToken = data.token;
         console.log('[ChatCompletionsAPI] Bearer token loaded from file');
-        if (data.pid === process.pid && data.port === port) return;
+        if (data.pid !== process.pid || data.port !== port) {
+          await this.refreshApiDescriptor(tokenPath, data.token, port);
+        }
+        return;
       }
     } catch {
       // File doesn't exist yet — fall through to generate
@@ -288,6 +291,27 @@ export class ChatCompletionsServer {
       await SullaSettingsModel.set('sullaApiToken', this.apiToken, 'string');
     } catch {
       // DB may not be ready yet — that's fine, file is the primary store
+    }
+  }
+
+  private async refreshApiDescriptor(tokenPath: string, token: string, port: number): Promise<void> {
+    try {
+      const temporary = `${ tokenPath }.${ crypto.randomUUID() }.tmp`;
+      const file = await fs.promises.open(temporary, 'wx', 0o600);
+      try {
+        try {
+          await file.writeFile(JSON.stringify({ token, port, pid: process.pid }, null, 2));
+        } finally {
+          await file.close();
+        }
+        await fs.promises.rename(temporary, tokenPath);
+      } catch (error) {
+        await fs.promises.unlink(temporary);
+        throw error;
+      }
+    } catch {
+      // The file token still authenticates the server. Stale discovery must fail closed.
+      console.warn('[ChatCompletionsAPI] Could not refresh discovery descriptor; continuing with the existing token');
     }
   }
 
