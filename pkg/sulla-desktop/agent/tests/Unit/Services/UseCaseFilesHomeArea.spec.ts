@@ -37,8 +37,6 @@ vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
 import { up as renameBuiltins } from '@pkg/agent/database/migrations/0174_builtin_agent_identities';
 import { SullaUseCaseFiles } from '@pkg/main/sullaUseCaseFiles';
 
-import type { PoolClient } from 'pg';
-
 const OWNER = 'owner-principal';
 const HOME = '11111111-1111-4111-8111-111111111111';
 const LOGS = '22222222-2222-4222-8222-222222222222';
@@ -113,8 +111,8 @@ async function migratedPackage(completed: boolean) {
   `);
   if (completed) await f.app.exec('UPDATE use_case_files_state SET initial_export_completed_at=now()');
   await f.app.query(`INSERT INTO agent_definitions(id,slug,name,is_builtin,use_case_file_id,use_case_version_id,status,system_prompt)
-    VALUES ('original','opus-worker','Opus Worker',true,$1,$2,'production','original prompt')`, [FILE,V1]);
-  await f.app.transaction((tx: PoolClient) => renameBuiltins(tx));
+    VALUES ('original','opus-worker','Opus Worker',true,$1,$2,'production','original prompt')`, [FILE, V1]);
+  await f.app.transaction((tx: import('pg').PoolClient) => renameBuiltins(tx));
 }
 
 const JSON_FILE = '00000000-0000-4000-8000-000000000003';
@@ -125,12 +123,12 @@ const jsonRoot = { id: JSON_FILE, path: folder + 'agent.json', published_version
 const winner = JSON.stringify({ apiVersion: 'sulla/v3', kind: 'Agent', metadata: { slug: 'opus-worker', title: 'Opus Worker' }, spec: { prompt: 'JSON prompt' } });
 const readRows = async() => (await f.app.query('SELECT id,slug,system_prompt,use_case_file_id,use_case_version_id,status,enabled FROM agent_definitions ORDER BY id')).rows;
 const original = { id: 'original', slug: 'advisor', system_prompt: 'original prompt', use_case_file_id: FILE, use_case_version_id: V1, status: 'production', enabled: true };
-type Root = { id: string; path: string; published_version_id: string | null; deleted_at?: string };
+interface Root { id: string; path: string; published_version_id: string | null; deleted_at?: string }
 
 function publication(rows: Root[] = [yamlRoot, jsonRoot], content = winner) {
   const announce = vi.fn();
   const audits: any[] = [];
-  const scan = () => new SullaUseCaseFiles(async(endpoint, init) => {
+  const response = (endpoint: string, init?: RequestInit) => {
     if (endpoint === '/v1/local/system-areas') return Response.json([{ id: HOME, systemArea: 'sulla' }]);
     if (endpoint.startsWith('/v1/files?')) return Response.json(rows);
     if (endpoint.startsWith('/v1/files/publish-requests?')) return Response.json({ requests: [{ file_id: JSON_FILE, version_id: V2, path: jsonRoot.path, status: 'approved' }] });
@@ -139,7 +137,8 @@ function publication(rows: Root[] = [yamlRoot, jsonRoot], content = winner) {
     if (!row) throw new Error(endpoint);
     if (endpoint.includes('/preview?')) return new Response(row.id === JSON_FILE ? content : 'slug: opus-worker\nname: Opus Worker\nsystemPrompt: YAML prompt');
     return Response.json(row);
-  }, { announce }).scan();
+  };
+  const scan = () => new SullaUseCaseFiles((endpoint, init) => Promise.resolve(response(endpoint, init)), { announce }).scan();
   return { scan, announce, audits };
 }
 

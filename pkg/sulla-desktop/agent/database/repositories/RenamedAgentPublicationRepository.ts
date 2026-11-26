@@ -2,10 +2,10 @@
 import { newerBuiltinAgentSlug } from '../../../shared/agentJobNames';
 
 export interface PublishedAgentRow {
-  id: string;
-  source_kind: string;
+  id:                  string;
+  source_kind:         string;
   removed_from_editor: boolean;
-  use_case_file_id: string | null;
+  use_case_file_id:    string | null;
   use_case_version_id: string | null;
 }
 
