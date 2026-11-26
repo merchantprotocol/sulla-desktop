@@ -255,11 +255,12 @@ export class ChatCompletionsServer {
     try {
       const raw = await fs.promises.readFile(tokenPath, 'utf-8');
       const data = JSON.parse(raw);
-      if (data.token) {
-        this.apiToken = data.token;
+      const fileToken = data.token;
+      if (typeof fileToken === 'string' && fileToken.length > 0) {
+        this.apiToken = fileToken;
         console.log('[ChatCompletionsAPI] Bearer token loaded from file');
         if (data.pid !== process.pid || data.port !== port) {
-          await this.refreshApiDescriptor(tokenPath, data.token, port);
+          await this.refreshApiDescriptor(tokenPath, fileToken, port);
         }
         return;
       }
@@ -268,7 +269,7 @@ export class ChatCompletionsServer {
     }
 
     // 2. Try reading from DB (migration from older version)
-    const dbToken = this.apiToken || await SullaSettingsModel.get('sullaApiToken');
+    const dbToken = await SullaSettingsModel.get('sullaApiToken');
     if (dbToken) {
       this.apiToken = dbToken;
     } else {

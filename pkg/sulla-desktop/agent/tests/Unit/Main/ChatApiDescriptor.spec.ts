@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { ChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import paths from '@pkg/utils/paths';
 
@@ -44,6 +45,19 @@ describe('chat API descriptor at startup', () => {
     expect(server.getApiToken()).toBe('fixture');
     expect(JSON.parse(await readFile(descriptor, 'utf8'))).toEqual({ token: 'fixture', pid: process.pid, port: 0 });
     expect((await stat(descriptor)).mode & 0o777).toBe(0o600);
+  });
+
+  it.each(['missing', 'invalid'] as const)('uses the replacement settings token on restart when the descriptor is %s', async(condition) => {
+    await server.start(0);
+    await server.stop();
+    await rm(descriptor);
+    if (condition === 'invalid') await writeFile(descriptor, JSON.stringify({ token: 42 }));
+    vi.mocked(SullaSettingsModel.get).mockResolvedValue('replacement');
+
+    await server.start(0);
+    expect(server.getApiToken()).toBe('replacement');
+    expect(JSON.parse(await readFile(descriptor, 'utf8')).token).toBe('replacement');
+    expect(SullaSettingsModel.set).toHaveBeenLastCalledWith('sullaApiToken', 'replacement', 'string');
   });
 
   // Root bypasses the directory write permission this case exercises.
