@@ -228,9 +228,10 @@ function detailedJumpEntries(): Array<{ id: string; sourceId?: string }> {
   return entries;
 }
 function resend(): void {
-  const text = waiting.value?.message.text;
-  controller.stop();
-  if (text) controller.send(text);
+  const message = waiting.value?.message ?? latestUserMessage.value;
+  if (!message?.text.trim() || message.attachments?.length) return;
+  if (controller.isRunning.value) controller.stop();
+  controller.send(message.text);
 }
 
 const latestUserMessage = computed(() => [...controller.messages.value].reverse().find((message): message is UserMessage => message.kind === 'user'));
@@ -238,12 +239,6 @@ const canRetryLatestUserMessage = computed(() => {
   const message = latestUserMessage.value;
   return Boolean(message?.text.trim() && !message.attachments?.length);
 });
-function retryLatestMessage(): void {
-  const message = latestUserMessage.value;
-  if (!message?.text.trim() || message.attachments?.length) return;
-  if (controller.isRunning.value) controller.stop();
-  controller.send(message.text);
-}
 
 const typingState = new TypingIndicatorState();
 const typingIndicator = typingState.state;
@@ -256,7 +251,7 @@ const typingInput = computed(() => {
   }
   const currentTurn = latestUserIndex < 0 ? [] : messages.slice(latestUserIndex + 1);
   const assistantStreaming = currentTurn.some(message => message.kind === 'streaming');
-  const finalReply = TypingIndicatorState.hasTerminalReply(currentTurn, runState);
+  const finalReply = currentTurn.some(message => message.kind === 'sulla');
   const agents = threadAgentActivity?.projection.value.agents ?? [];
   const mappedAgents: TypingIndicatorAgent[] = agents.map(agent => {
     const activityKey = [agent.state, agent.row.lastActivityAt ?? '', agent.row.lastCheckinAt ?? '',

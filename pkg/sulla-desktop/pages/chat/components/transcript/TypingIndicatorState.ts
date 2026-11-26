@@ -6,7 +6,6 @@
 import { reactive, readonly } from 'vue';
 
 import type { AgentRowState } from '@pkg/shared/agentState/AgentStateSnapshot';
-import type { Message } from '../../models/Message';
 import type { RunState } from '../../models/RunState';
 
 export type TypingIndicatorKind = 'hidden' | 'running' | 'streaming' | 'tool' | 'parked' | 'stalled' | 'error' | 'stopped';
@@ -65,13 +64,6 @@ export const browserTypingIndicatorClock: TypingIndicatorClock = {
 export class TypingIndicatorState {
   /** The approved typing-indicator mockup marks a no-event loop stalled at 60 seconds. */
   static readonly stalledAfterMs = 60_000;
-
-  /** A Sulla message is final only after it closes the current user turn. */
-  static hasTerminalReply(currentTurn: readonly Message[], runState: RunState): boolean {
-    const lastMessage = currentTurn[currentTurn.length - 1];
-    if (lastMessage?.kind !== 'sulla') return false;
-    return runState.phase === 'idle' || runState.phase === 'error' || runState.phase === 'paused';
-  }
 
   static timestamp(value: string | null | undefined): number {
     if (!value) return 0;
