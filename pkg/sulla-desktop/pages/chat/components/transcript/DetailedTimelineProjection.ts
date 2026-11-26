@@ -91,19 +91,20 @@ export class DetailedTimelineProjection {
     const rows = this.traceProjection.projectRows(messages, standardEntries, { agents });
     const entriesBySource = this.entriesBySource(standardEntries);
     const rowsBySource = this.rowsBySource(rows);
+    const entryIndexById = new Map(standardEntries.map((entry, index) => [entry.id, index]));
     const groups = this.groups(ordered.map(item => item.message));
     const orderById = new Map(ordered.map((item, index) => [String(item.message.id), index]));
     const result: DetailedTimelineItem[] = [];
 
     for (const group of groups) {
       const groupIds = new Set(group.map(message => String(message.id)));
-      const groupRows = rows.filter(row => groupIds.has(row.sourceMessageId ?? ''));
+      const groupRows = group.flatMap(message => rowsBySource.get(String(message.id)) ?? []);
       const userMessages = group.filter((message): message is UserMessage => message.kind === 'user');
 
       for (const message of userMessages) {
         for (const entry of entriesBySource.get(String(message.id)) ?? []) {
           result.push({ id: `message:${entry.id}`, at: entry.createdAt, kind: 'message', entry,
-            streamingParagraphBreak: this.streamingBreak(standardEntries, entry.id) });
+            streamingParagraphBreak: this.streamingBreak(standardEntries, entryIndexById, entry.id) });
         }
       }
 
@@ -127,7 +128,7 @@ export class DetailedTimelineProjection {
             // TranscriptReporting's debug activity text is replaced by the full trace row.
             if (this.isRepresentedByTrace(entry, sourceRows)) continue;
             events.push({ item: { id: `message:${entry.id}`, at: entry.createdAt, kind: 'message', entry,
-              streamingParagraphBreak: this.streamingBreak(standardEntries, entry.id) }, sourceOrder, localOrder: localOrder++ });
+              streamingParagraphBreak: this.streamingBreak(standardEntries, entryIndexById, entry.id) }, sourceOrder, localOrder: localOrder++ });
           }
           for (const row of sourceRows) events.push({ item: { id: `trace:${row.id}`, at: row.at ?? message.createdAt, kind: 'trace', row }, sourceOrder, localOrder: localOrder++ });
         }
@@ -193,9 +194,9 @@ export class DetailedTimelineProjection {
     return result;
   }
 
-  private streamingBreak(entries: readonly TranscriptEntry[], id: string): boolean {
-    const index = entries.findIndex(entry => entry.id === id);
-    return index >= 0 && this.reporting.isStreamingContinuation(entries, index);
+  private streamingBreak(entries: readonly TranscriptEntry[], indexById: ReadonlyMap<string, number>, id: string): boolean {
+    const index = indexById.get(id);
+    return index !== undefined && this.reporting.isStreamingContinuation(entries, index);
   }
 
   private header(group: readonly Message[], rows: readonly TraceRow[], waiting?: { message: UserMessage; since: number }): DetailedTimelineHeader {

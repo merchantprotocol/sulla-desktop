@@ -152,6 +152,21 @@ describe('DetailedTimelineProjection', () => {
       .map(item => item.entry.message.text)).toEqual(['First answer.', 'A separate follow-up answer.']);
   });
 
+  it('preserves streaming paragraph continuity while projecting entries by id', () => {
+    // risk: a projection lookup optimization silently removes a paragraph break from one reply stream.
+    const messages = [
+      { id: asMessageId('user'), kind: 'user', createdAt: 100, text: 'question' },
+      { id: asMessageId('first'), kind: 'sulla', createdAt: 200, text: 'First paragraph.', replyStreamId: 'stream-1' },
+      { id: asMessageId('continuation'), kind: 'streaming', createdAt: 300, startedAt: 300,
+        text: 'Second paragraph.', replyStreamId: 'stream-1' },
+    ] satisfies Message[];
+    const reporting = new TranscriptReporting();
+    const items = new DetailedTimelineProjection(undefined, reporting).project(messages, reporting.standardEntries(messages, 'info'));
+
+    expect(items.find(item => item.kind === 'message' && item.entry.id === 'continuation'))
+      .toMatchObject({ kind: 'message', streamingParagraphBreak: true });
+  });
+
   it('places a returned sub-agent result at its own later timestamp instead of under the launch', () => {
     // risk: a long-running worker result being accumulated above the reply that launched it.
     const messages = [
