@@ -28,10 +28,13 @@ import { SyntheticFilesDataSource } from '../SyntheticFilesDataSource';
 
 describe('Files page open routing in a hosted tab', () => {
   let unmount:(() => void) | undefined;
+  let navigateTabListener:((event:Event) => void) | undefined;
 
   afterEach(() => {
     unmount?.();
     unmount = undefined;
+    if (navigateTabListener) window.removeEventListener('sulla:navigate-tab', navigateTabListener);
+    navigateTabListener = undefined;
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     window.history.replaceState({}, '', '/');
@@ -47,6 +50,20 @@ describe('Files page open routing in a hosted tab', () => {
     window.history.replaceState({}, '', '/?tabHost=1&tabId=files-tab&windowKey=main');
     state.dataSource = new SyntheticFilesDataSource();
     state.ipc.sendSync.mockReturnValue({ id: 'files-tab', url: 'about:blank', title: 'File Manager', favicon: '', loading: false, mode: 'files' });
+
+    const { openWorkspaceTab, useBrowserTabs } = await import('@pkg/composables/useBrowserTabs');
+    const ownerFocusedTabIds:string[] = [];
+    navigateTabListener = event => ownerFocusedTabIds.push((event as CustomEvent<{ tabId:string }>).detail.tabId);
+    window.addEventListener('sulla:navigate-tab', navigateTabListener);
+    const hostedUrl = `${ window.location.pathname }${ window.location.search }${ window.location.hash }`;
+    state.ipc.invoke.mockImplementation(async(channel:string, request?:any) => {
+      if (channel !== 'internal-tab-view:open-workspace-tab') return undefined;
+      // Simulate the actual owner renderer's AgentRouter handler after the
+      // main process forwards this tab-host IPC request.
+      window.history.replaceState({}, '', '/?windowKey=main');
+      try { await openWorkspaceTab(request) } finally { window.history.replaceState({}, '', hostedUrl) }
+      return undefined;
+    });
 
     // FilesPage is the real BrowserTab screen; the datasource is the shipped
     // synthetic adapter so the test touches no user files or Files service.
@@ -78,6 +95,10 @@ describe('Files page open routing in a hosted tab', () => {
       documentFile: { fileId: 'synthetic-notes', path: 'Projects/Alpha/meeting-notes.md', collectionId: 'synthetic-collection' },
     });
     expect(state.ipc.invoke.mock.calls.filter(([channel]) => channel === 'internal-tab-view:open-workspace-tab')).toHaveLength(2);
+    const openedPaperTabs = useBrowserTabs().tabs.filter(tab => tab.mode === 'paper' && tab.documentFile?.fileId === 'synthetic-notes');
+    expect(openedPaperTabs).toHaveLength(1);
+    expect(openedPaperTabs[0].documentFile).toEqual({ fileId: 'synthetic-notes', path: 'Projects/Alpha/meeting-notes.md', collectionId: 'synthetic-collection' });
+    expect(ownerFocusedTabIds).toEqual([openedPaperTabs[0].id, openedPaperTabs[0].id]);
 
     const videoRow = wrapper.findAll('tr.row').find(row => row.text().includes('demo-recording.mp4'));
     expect(videoRow, 'the synthetic video row should be mounted').toBeDefined();
