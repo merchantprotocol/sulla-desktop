@@ -20,23 +20,35 @@ export class BuiltinAgentIdentitiesMigration {
     const rows = (await client.query('SELECT * FROM agent_definitions FOR UPDATE')).rows.map(rowToDefinition);
     const liveIds = new Set(rows.map(row => row.id));
     const bySlug = new Map(rows.map(row => [row.slug, row]));
+    const settings = (await client.query(`SELECT property, value FROM sulla_settings
+      WHERE property IN ('modelRouting','modelDefaults') OR property LIKE 'productOwnerWorkflow.%' FOR UPDATE`)).rows;
+    const routing = BuiltinAgentIdentitiesMigration.parseSetting(settings.find(setting => setting.property === 'modelRouting')?.value);
+    const deferred = new Set<string>();
     const renames = new Map<string, string>();
     const movedDefinitions = new Map<string, string>();
     for (const [oldSlug, slug] of BUILTIN_AGENT_RENAMES) {
       const row = bySlug.get(oldSlug);
       if (row?.is_builtin && !bySlug.has(slug)) {
-        renames.set(oldSlug, slug);
-        movedDefinitions.set(oldSlug, row.id);
+        const reason = BuiltinAgentIdentitiesMigration.conflict(routing, oldSlug, slug, row.id, liveIds);
+        if (reason) {
+          deferred.add(oldSlug);
+          console.warn(`Deferring built-in ${ oldSlug } → ${ slug }: ${ reason }; retaining the ${ oldSlug } route.`);
+        } else {
+          renames.set(oldSlug, slug);
+          movedDefinitions.set(oldSlug, row.id);
+        }
       }
+    }
+    for (const [oldSlug, slug] of BUILTIN_AGENT_RENAMES) {
       // Copy the deletion marker too, so an intentionally removed agent stays removed.
       await client.query(`INSERT INTO agent_builtin_seed_ledger (slug)
-        SELECT $2 FROM agent_builtin_seed_ledger WHERE slug = $1 ON CONFLICT (slug) DO NOTHING`, [oldSlug, slug]);
+        SELECT $2 FROM agent_builtin_seed_ledger WHERE slug = $1 UNION SELECT $2 WHERE $3::boolean ON CONFLICT (slug) DO NOTHING`, [oldSlug, slug, deferred.has(oldSlug)]);
     }
 
     for (const row of rows) {
       const identity = row.is_builtin ? BUILTIN_AGENT_RENAMES.find(([previous]) => previous === row.slug) : undefined;
       const slug = renames.get(row.slug) ?? row.slug;
-      const name = identity && row.name === identity[2] ? identity[3] : row.name;
+      const name = !deferred.has(row.slug) && identity && row.name === identity[2] ? identity[3] : row.name;
       const canCall = row.can_call.map(callee => renames.get(callee) ?? callee);
       if (slug === row.slug && name === row.name && canCall.every((callee, i) => callee === row.can_call[i])) continue;
 
@@ -51,12 +63,9 @@ export class BuiltinAgentIdentitiesMigration {
     for (const [old, slug] of renames) {
       await client.query("UPDATE sulla_settings SET value = $2 WHERE property = 'defaultAgentId' AND value = $1", [old, slug]);
     }
-    const settings = (await client.query(`SELECT property, value FROM sulla_settings
-      WHERE property IN ('modelRouting','modelDefaults') OR property LIKE 'productOwnerWorkflow.%' FOR UPDATE`)).rows;
     for (const { property, value } of settings) {
-      let state: Record<string, any>;
-      try { state = JSON.parse(value) } catch { continue }
-      if (!state || typeof state !== 'object' || Array.isArray(state)) continue;
+      const state = property === 'modelRouting' ? routing : BuiltinAgentIdentitiesMigration.parseSetting(value);
+      if (!state) continue;
       if (property === 'modelRouting') {
         for (const field of ['workerBindings', 'workerInheritance']) {
           const entries = state[field];
@@ -64,15 +73,6 @@ export class BuiltinAgentIdentitiesMigration {
           for (const [old, slug] of renames) {
             const agentId = movedDefinitions.get(old);
             if (entries[old]?.agentId !== agentId) continue;
-            if (Object.prototype.hasOwnProperty.call(entries, slug)) {
-              const destinationId = entries[slug]?.agentId;
-              // A deleted Studio agent cannot own this key. Never displace an unknown or live owner:
-              // failing the migration transaction keeps the old slug and its working route together.
-              if (typeof destinationId !== 'string' || !destinationId ||
-                  (destinationId !== agentId && liveIds.has(destinationId))) {
-                throw new Error(`Cannot move ${ field } from ${ old } to ${ slug }: conflicting definition ownership.`);
-              }
-            }
             entries[slug] = entries[old];
             delete entries[old];
           }
@@ -87,6 +87,25 @@ export class BuiltinAgentIdentitiesMigration {
       if (JSON.stringify(JSON.parse(value)) !== JSON.stringify(state)) {
         await client.query('UPDATE sulla_settings SET value = $2 WHERE property = $1', [property, JSON.stringify(state)]);
       }
+    }
+  }
+  private static parseSetting(value: string | undefined): Record<string, any> | undefined {
+    if (!value) return;
+    try {
+      const state = JSON.parse(value);
+      if (state && typeof state === 'object' && !Array.isArray(state)) return state;
+    } catch { /* Ignore malformed settings, as before. */ }
+  }
+
+  private static conflict(routing: Record<string, any> | undefined, old: string, slug: string, id: string, liveIds: Set<string>): string | undefined {
+    for (const field of ['workerBindings', 'workerInheritance']) {
+      const entries = routing?.[field];
+      if (!entries || !Object.prototype.hasOwnProperty.call(entries, slug)) continue;
+      const owner = entries[slug]?.agentId;
+      if (typeof owner !== 'string' || !owner.trim()) return `${ field } has unknown ownership`;
+      if (owner !== id && liveIds.has(owner)) return `${ field } belongs to another definition`;
+      // Even the same owner must not gain a dormant pin or inheritance choice.
+      if (owner === id && entries[old]?.agentId !== id) return `${ field } would activate an untransferred choice`;
     }
   }
 }
