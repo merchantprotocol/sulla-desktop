@@ -40,15 +40,6 @@
       >{{ controller.thread.value.title }}</span>
     </div>
 
-    <button
-      class="ch-payloads"
-      :class="{ open: activeReportingLevel === 'debug' }"
-      type="button"
-      :aria-hidden="activeReportingLevel !== 'debug'"
-      :tabindex="activeReportingLevel === 'debug' ? 0 : -1"
-      @click="traceDisclosure.toggleAll()"
-    >{{ traceDisclosure.isAllOpen ? 'Close all payloads' : 'Open all payloads' }}</button>
-
     <div
       ref="reportingGroup"
       class="ch-reporting"
@@ -82,10 +73,8 @@ import { computed, inject, nextTick, ref, type Ref } from 'vue';
 import { useChatController } from '../../controller/useChatController';
 
 import type { ReportingLevel } from '../../models/ReportingLevel';
-import { TraceDisclosureController } from '../transcript/traceDisclosure';
 
 const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { default: 'info' });
-const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 const controller = useChatController();
 const reportingModes: Array<{ value: ReportingLevel; label: string; shortLabel: string }> = [
   { value: 'fatal', label: 'Brief', shortLabel: 'B' },
