@@ -15,57 +15,91 @@ import { getActiveAgentWindow } from '@pkg/window/agentWindows';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 
 import type { ToolResponse } from '../base';
+import type { FileOpenRouteDecision } from './AgentFileOpenRoutePolicy';
 
 interface FilesRecord { file: { id:string; collection_id:string; path:string } }
 interface OpenResult { opened:boolean; tabId:string; path:string; how:string }
 
-const fileOpenRoutePolicy = new AgentFileOpenRoutePolicy();
-const inlineFileReferenceFactory = new InlineFileReferenceMessageFactory();
+const SULLA_FILES_ROOT = '/mnt/sulla-files/';
+const RECENT_OPEN_WINDOW_MS = 1_500;
 
-export function normalizeOpenPath(value:string):string {
-  const trimmed = value.trim().replaceAll('\\', '/');
-  if (!trimmed) throw new Error('path cannot be empty');
-  const relative = trimmed.startsWith('/mnt/sulla-files/') ? trimmed.slice('/mnt/sulla-files/'.length) : trimmed.replace(/^\/+/, '');
-  if (!relative || relative.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('path must identify a file or folder inside Sulla Files');
-  return `/mnt/sulla-files/${ relative }`;
+class FilesOpenPathNormalizer {
+  normalize(value:string):string {
+    const trimmed = value.trim().replaceAll('\\', '/');
+    if (!trimmed) throw new Error('path cannot be empty');
+    const isSullaFilesRoot = trimmed === SULLA_FILES_ROOT.slice(0, -1) || trimmed === SULLA_FILES_ROOT;
+    const isSullaFilesAbsolute = isSullaFilesRoot || trimmed.startsWith(SULLA_FILES_ROOT);
+    if (isSullaFilesRoot) return SULLA_FILES_ROOT;
+    if ((trimmed.startsWith('/') && !isSullaFilesAbsolute) || /^[a-zA-Z]:\//.test(trimmed) || /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) {
+      throw new Error('path must be relative to Sulla Files or begin with /mnt/sulla-files/; absolute paths outside Sulla Files are not allowed');
+    }
+    const relative = isSullaFilesAbsolute ? trimmed.slice(SULLA_FILES_ROOT.length) : trimmed;
+    if (!relative || relative.split('/').some(part => !part || part === '.' || part === '..')) {
+      throw new Error('path must identify a file or folder inside Sulla Files');
+    }
+    return `${ SULLA_FILES_ROOT }${ relative }`;
+  }
 }
 
 export class FilesOpenWorker extends FilesTool {
   name = '';
   description = '';
+  private readonly recentOpens = new Map<string, { expiresAt:number; result:Promise<ToolResponse> }>();
+
+  constructor(
+    private readonly routePolicy = new AgentFileOpenRoutePolicy(),
+    private readonly inlineReferenceFactory = new InlineFileReferenceMessageFactory(),
+    private readonly pathNormalizer = new FilesOpenPathNormalizer(),
+    private readonly now:() => number = Date.now,
+  ) {
+    super();
+  }
 
   protected async _validatedCall(input:any):Promise<ToolResponse> {
-    if (!input.path && !input.file_id) throw new Error('path or file_id is required');
+    const hasPath = input.path !== undefined && input.path !== null;
     let fileId = typeof input.file_id === 'string' ? input.file_id.trim() : '';
+    if (!hasPath && !fileId) throw new Error('path or file_id is required');
     let collectionId = '';
     let resolvedPath = '';
-    let kind:'file' | 'folder' = 'file';
 
-    if (input.path) {
-      const resolved = await this.resolvePath({ ...input, path: normalizeOpenPath(String(input.path)) });
+    if (hasPath) {
+      const absolutePath = this.pathNormalizer.normalize(String(input.path));
+      if (absolutePath === SULLA_FILES_ROOT) throw new Error('That Sulla Files path is a folder. Use files/list to view its contents.');
+      let resolved;
+      try {
+        resolved = await this.resolvePath({ ...input, path: absolutePath });
+      } catch (error) {
+        if (this.isNotFound(error)) throw new Error('That Sulla Files path was not found', { cause: error });
+        throw error;
+      }
       if (!resolved) throw new Error('That Sulla Files path was not found');
-      kind = resolved.kind;
+      if (resolved.kind === 'folder') throw new Error('That Sulla Files path is a folder. Use files/list to view its contents.');
       collectionId = resolved.collectionId;
       fileId = resolved.fileId ?? '';
       // FileResolveRoutes returns folderPath as the file's parent directory
-      // (collection-relative). For files, append the file name so the editor
-      // gets the document itself, still collection-relative like the id path.
-      const requested = normalizeOpenPath(String(input.path)).slice('/mnt/sulla-files/'.length);
-      if (kind === 'folder') {
-        resolvedPath = resolved.folderPath ?? requested;
-      } else {
-        const fileName = requested.slice(requested.lastIndexOf('/') + 1);
-        resolvedPath = resolved.folderPath === undefined ? requested : (resolved.folderPath ? `${ resolved.folderPath }/${ fileName }` : fileName);
-      }
+      // (collection-relative). Append the file name so the editor gets the
+      // document itself, still collection-relative like the id path.
+      const requested = absolutePath.slice(SULLA_FILES_ROOT.length);
+      const fileName = requested.slice(requested.lastIndexOf('/') + 1);
+      resolvedPath = resolved.folderPath === undefined ? requested : (resolved.folderPath ? `${ resolved.folderPath }/${ fileName }` : fileName);
     } else {
-      const record = await this.containerJson<FilesRecord>(`/v1/agent-files/${ encodeURIComponent(fileId) }`, input);
+      let record:FilesRecord;
+      try {
+        record = await this.containerJson<FilesRecord>(`/v1/agent-files/${ encodeURIComponent(fileId) }`, input);
+      } catch (error) {
+        if (this.isNotFound(error)) throw new Error('That Sulla Files file_id was not found', { cause: error });
+        throw error;
+      }
+      if (!record?.file || typeof record.file.id !== 'string' || typeof record.file.collection_id !== 'string' || typeof record.file.path !== 'string') {
+        throw new Error('That Sulla Files file_id was not found');
+      }
       fileId = record.file.id;
       collectionId = record.file.collection_id;
       resolvedPath = record.file.path;
     }
 
-    const metadata = (this as any).state?.metadata as Record<string, any> | undefined;
-    const decision = kind === 'folder' ? { kind: 'legacy-tab' as const, reason: 'folder' } : fileOpenRoutePolicy.route(input.placement, {
+    const metadata = this.state?.metadata as Record<string, any> | undefined;
+    const decision = this.routePolicy.route(input.placement, {
       threadId:             metadata?.threadId,
       executionThreadId:    this.executionContext?.thread_id,
       hasChatTransport:     typeof this.sendChatMessage === 'function',
@@ -77,8 +111,14 @@ export class FilesOpenWorker extends FilesTool {
     });
     console.log(`[files/open] route thread=${ metadata?.threadId || '(none)' } placement=${ input.placement ?? 'default' } eligible=${ decision.kind === 'inline' ? 'yes' : 'no' } decision=${ decision.kind } reason=${ decision.kind === 'inline' ? 'visible-desktop-chat' : decision.reason }`);
     if (decision.kind === 'reject') throw new Error(decision.message);
+    const threadId = typeof metadata?.threadId === 'string' ? metadata.threadId.trim() : '';
+    const key = threadId ? JSON.stringify([threadId, fileId, decision.kind, input.mode ?? 'edit']) : '';
+    return this.openOnce(key, () => this.present(input, fileId, collectionId, resolvedPath, decision));
+  }
+
+  private async present(input:any, fileId:string, collectionId:string, resolvedPath:string, decision:Exclude<FileOpenRouteDecision, { kind:'reject' }>):Promise<ToolResponse> {
     if (decision.kind === 'inline') {
-      const record = inlineFileReferenceFactory.create({
+      const record = this.inlineReferenceFactory.create({
         threadId: decision.threadId,
         toolCallId: randomUUID(),
         fileId,
@@ -90,7 +130,13 @@ export class FilesOpenWorker extends FilesTool {
     }
 
     const agentWindow = getActiveAgentWindow();
-    if (!agentWindow) throw new Error('Main Sulla Desktop window is not available yet');
+    if (!agentWindow) {
+      if (decision.reason === 'requested-tab') throw new Error('Main Sulla Desktop window is not available yet');
+      const reason = decision.reason === 'sub-agent'
+        ? 'Inline cards only show in a visible Desktop chat; this agent is hidden and no Files tab is available.'
+        : 'Inline cards only show in a visible Desktop chat; no Files tab is available for this call.';
+      return { successBoolean: true, responseString: JSON.stringify({ opened: false, reason }) };
+    }
     const requestId = randomUUID();
     const replyChannel = `agent-command-result:${ requestId }`;
     const result = await new Promise<OpenResult>((resolve, reject) => {
@@ -104,10 +150,38 @@ export class FilesOpenWorker extends FilesTool {
         if (reply?.opened !== true) return reject(new Error('Sulla Desktop did not select the requested Files item'));
         resolve(reply);
       });
-      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind, mode: input.mode ?? 'edit', focus: input.focus !== false });
+      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: 'file', mode: input.mode ?? 'edit', focus: input.focus !== false });
       if (agentWindow.webContents.isLoading()) agentWindow.webContents.once('did-finish-load', dispatch); else dispatch();
     });
     if (input.focus !== false) agentWindow.focus();
     return { successBoolean: true, responseString: JSON.stringify(result) };
+  }
+
+  private async openOnce(key:string, open:() => Promise<ToolResponse>):Promise<ToolResponse> {
+    if (!key) return open();
+    const now = this.now();
+    for (const [recentKey, entry] of this.recentOpens) {
+      if (entry.expiresAt <= now) this.recentOpens.delete(recentKey);
+    }
+    const existing = this.recentOpens.get(key);
+    if (existing && existing.expiresAt > now) return existing.result;
+
+    const result = open();
+    const entry = { expiresAt: now + RECENT_OPEN_WINDOW_MS, result };
+    this.recentOpens.set(key, entry);
+    try {
+      const response = await result;
+      try {
+        if (JSON.parse(response.responseString)?.opened === false && this.recentOpens.get(key) === entry) this.recentOpens.delete(key);
+      } catch { /* A response without an opened flag can still be safely reused. */ }
+      return response;
+    } catch (error) {
+      if (this.recentOpens.get(key) === entry) this.recentOpens.delete(key);
+      throw error;
+    }
+  }
+
+  private isNotFound(error:unknown):boolean {
+    return error instanceof Error && /not found/i.test(error.message);
   }
 }

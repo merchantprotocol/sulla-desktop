@@ -8,6 +8,7 @@ import { hostname } from 'node:os';
 import { filesContainerRequest } from '../../files/containerClient';
 import { BaseTool } from '../base';
 
+import type { ToolResult } from '../../types';
 import type { FilesCallerContext } from '../../files/containerClient';
 
 
@@ -50,6 +51,17 @@ export async function writeUseCaseDraft(
 }
 
 export abstract class FilesTool extends BaseTool {
+  override async call(rawInput: unknown): Promise<ToolResult> {
+    try {
+      return await super.call(rawInput);
+    } catch (error) {
+      // BaseTool validates the manifest before its handler catch block. Keep
+      // malformed Files arguments as ordinary tool errors instead of allowing
+      // the outer Desktop dispatcher to turn them into desktop_tool_failed.
+      return { toolName: this.name, success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   protected context(_input?: unknown): FilesCallerContext {
     if (this.executionContext) return this.executionContext;
     const metadata = (this.state)?.metadata ?? {};
@@ -67,7 +79,26 @@ export abstract class FilesTool extends BaseTool {
 
   protected async containerRequest(path: string, input: unknown, init: RequestInit = {}): Promise<Response> {
     const context = this.context(input);
-    return filesContainerRequest(path, context, init);
+    try {
+      return await filesContainerRequest(path, context, init);
+    } catch (error) {
+      throw this.clearTransportError(error);
+    }
+  }
+
+  private clearTransportError(error: unknown): Error {
+    const details = error instanceof Error ? error : undefined;
+    const value = typeof error === 'object' && error !== null ? error as { name?:unknown; message?:unknown } : undefined;
+    const name = details?.name ?? (typeof value?.name === 'string' ? value.name : undefined);
+    const message = details?.message ?? (typeof value?.message === 'string' ? value.message : String(error));
+    // Preserve the transport's own actionable errors, including the recovery
+    // message introduced by the Files transport owner. Older Electron builds
+    // only expose the browser-generated AbortError/TimeoutError instead.
+    if (/^Sulla Files\b/i.test(message)) return details ?? new Error(message);
+    if (name === 'AbortError' || name === 'TimeoutError') {
+      return new Error('Sulla Files is unreachable right now. Please try again in a moment.', { cause: error });
+    }
+    return details ?? new Error(message);
   }
 
   protected async resolvePath(input: any): Promise<ResolvedFilePath | undefined> {
