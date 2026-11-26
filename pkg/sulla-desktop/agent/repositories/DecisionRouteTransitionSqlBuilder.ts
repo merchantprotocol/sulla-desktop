@@ -20,7 +20,7 @@ export class DecisionRouteTransitionSqlBuilder {
         WHERE id=$1 AND record->>'kind'=$2 AND ${this.openPredicate(recordKind)} AND ${this.actorPredicate()}
           AND record#>>'{route,deliveredAt}' IS NULL
         RETURNING id`,
-      params: [id, recordKind, actor.kind, expectedHolderIndex, actor.threadId ?? '', JSON.stringify(routePatch)],
+      params: [id, recordKind, actor.kind, expectedHolderIndex, actor.kind === 'human' ? '' : actor.threadId ?? '', JSON.stringify(routePatch)],
     };
   }
 
@@ -33,7 +33,7 @@ export class DecisionRouteTransitionSqlBuilder {
           AND ($3 <> 'agent' OR record#>>'{route,authority}'='any')
           AND ($8::bigint IS NULL OR (record#>>'{route,holderDeadline}')::bigint <= $8)
         RETURNING id`,
-      params: [id, recordKind, actor.kind, expectedHolderIndex, actor.threadId ?? '', JSON.stringify(routePatch), JSON.stringify([history]), deadlineNow ?? null],
+      params: [id, recordKind, actor.kind, expectedHolderIndex, actor.kind === 'human' ? '' : actor.threadId ?? '', JSON.stringify(routePatch), JSON.stringify([history]), deadlineNow ?? null],
     };
   }
 
@@ -45,7 +45,7 @@ export class DecisionRouteTransitionSqlBuilder {
         WHERE id=$1 AND record->>'kind'=$2 AND ${this.openPredicate(recordKind)} AND ${this.actorPredicate()}
           AND ${this.settlementPredicate(recordKind)}
         RETURNING id`,
-      params: [id, recordKind, actor.kind, expectedHolderIndex, actor.threadId ?? '', status, JSON.stringify(patch), JSON.stringify(history)],
+      params: [id, recordKind, actor.kind, expectedHolderIndex, actor.kind === 'human' ? '' : actor.threadId ?? '', status, JSON.stringify(patch), JSON.stringify(history)],
     };
   }
 

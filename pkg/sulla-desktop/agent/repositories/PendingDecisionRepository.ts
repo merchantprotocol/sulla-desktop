@@ -206,7 +206,7 @@ export class PendingDecisionRepository {
       threadId: actor.kind === 'agent' ? actor.threadId : record.route?.chain.at(-1)?.threadId ?? record.conversationId,
       agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human',
       action: 'answered', at: Date.now(),
-      ...(actor.note ? { note: actor.note.slice(0, 500) } : {}),
+      ...(actor.kind === 'agent' && actor.note ? { note: actor.note.slice(0, 500) } : {}),
     }];
     const expectedHolder = actor.kind === 'agent' ? record.route?.holderIndex ?? null : null;
     const rows = await this.client.query<{ record: DecisionRecord }>(`WITH chosen AS (
@@ -236,7 +236,7 @@ export class PendingDecisionRepository {
     const actor = record.answeredBy ?? { kind: 'human' as const };
     const history = [{ threadId: actor.kind === 'agent' ? actor.threadId : record.route?.chain.at(-1)?.threadId ?? record.conversationId,
       agentId: actor.kind === 'agent' ? actor.agentId ?? 'agent' : 'human', action: 'answered', at: Date.now(),
-      ...(actor.note ? { note: actor.note.slice(0, 500) } : {}) }];
+      ...(actor.kind === 'agent' && actor.note ? { note: actor.note.slice(0, 500) } : {}) }];
     const expectedHolder = actor.kind === 'agent' ? record.route?.holderIndex ?? null : null;
     const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions SET status='answered',
       record=record || jsonb_build_object('status','answered','attention','answered','answerDelivery','queued','answers',$2::jsonb,'answeredBy',$3::jsonb) ||

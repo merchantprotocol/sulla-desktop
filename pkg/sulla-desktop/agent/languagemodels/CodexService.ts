@@ -1202,7 +1202,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           break;
         case 'exec_command_begin': {
           const cmd = Array.isArray(msg.command) ? msg.command.join(' ') : String(msg.command ?? '');
-          emitActivity(cmd ? `$ ${ pretty(cmd) }` : 'Running a shell command', 'tool');
+          emitActivity(cmd ? `$ ${ cmd }` : 'Running a shell command', 'tool');
           break;
         }
         case 'token_count':

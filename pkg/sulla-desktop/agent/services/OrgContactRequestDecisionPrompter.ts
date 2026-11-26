@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { ContactRequestChoice } from '@sulla/domain';
+import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { OrgContactPrompt, OrgContactPromptOutcome, OrgContactRequestPrompter } from './OrgMessenger';
 
 interface ContactQuestion {
@@ -12,7 +13,7 @@ interface ContactQuestion {
 
 /** The slice of DecisionService the prompter needs; injected so the trust decision is testable. */
 export interface ContactDecisionStore {
-  request(input: { kind: 'question'; title: string; questions: ContactQuestion[]; channel: string; conversationId: string }, timeoutMs: number): Promise<{
+  request(input: { kind: 'question'; title: string; questions: ContactQuestion[]; channel: string; conversationId: string; payload?: DecisionRecord['payload'] }, timeoutMs: number): Promise<{
     record: { id: string };
     result: Promise<{ status: string; answers: { selected: string[] }[] }>;
   }>;

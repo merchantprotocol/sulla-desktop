@@ -117,7 +117,7 @@ export class LateDecisionAnswerHandler {
   private isSameAnswer(record: DecisionRecord, actor: NonNullable<DecisionRecord['answeredBy']>, answers: { question: string; selected: string[] }[]): boolean {
     const savedActor = record.answeredBy;
     if (!savedActor || savedActor.kind !== actor.kind) return false;
-    if (actor.kind === 'agent' && (savedActor.threadId !== actor.threadId || savedActor.agentId !== actor.agentId)) return false;
+    if (actor.kind === 'agent' && (savedActor.kind !== 'agent' || savedActor.threadId !== actor.threadId || savedActor.agentId !== actor.agentId)) return false;
     return JSON.stringify(record.answers ?? []) === JSON.stringify(answers);
   }
 }
