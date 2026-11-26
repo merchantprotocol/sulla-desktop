@@ -150,6 +150,22 @@ describe('configuration startup', () => {
     }
   });
 
+  it('offers a list retry after a failed reload even when there are saved rows', async() => {
+    const rows = [{ id: 'saved', name: 'Saved workflow', status: 'draft' }];
+    invoke.mockResolvedValueOnce(rows).mockRejectedValueOnce(new Error('Invalid workflow schema')).mockResolvedValueOnce([]);
+    const routines = pageScope.run(() => useRoutines())!;
+
+    await routines.load();
+    expect(routines.showListLoadState.value).toBe(false);
+    await routines.refresh();
+    expect(routines.routines.value.map(row => row.id)).toEqual(['saved']);
+    expect(routines.loadError.value).toBe('Invalid workflow schema');
+    expect(routines.showListLoadState.value).toBe(true);
+    await routines.load();
+    expect(routines.showListLoadState.value).toBe(false);
+    expect(routines.routines.value).toEqual([]);
+  });
+
   it('loads saved workflows after startup instead of presenting the unavailable list as empty', async() => {
     invoke.mockRejectedValueOnce(new Error('Workflows are temporarily unavailable while the database reconnects.'))
       .mockResolvedValueOnce([{ id: 'saved-workflow', name: 'Saved workflow', status: 'draft', updatedAt: new Date().toISOString() }]);
