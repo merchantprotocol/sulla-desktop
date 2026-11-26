@@ -122,6 +122,12 @@ AUTH
 }
 
 is_tool_category() {
+  if [ "$LOCAL_DESKTOP" != 1 ]; then
+    # A failed catalog lookup on a configured route is a miss, not a CLI error.
+    # Run the probe in a subshell because tool_api_curl execs curl.
+    (tool_api_curl "/v1/tools/help/$1" -fsS --max-time 2) >/dev/null 2>&1
+    return $?
+  fi
   _status=$(tool_api_curl "/v1/tools/help/$1" -sS --max-time 2 -o /dev/null -w '%{http_code}') || exit $?
   case "$_status" in
     2[0-9][0-9]) return 0 ;;
@@ -137,7 +143,7 @@ is_tool_category() {
 if [ -z "$FIRST" ] || [ "$FIRST" = "--help" ] || [ "$FIRST" = "-h" ] || [ "$FIRST" = "help" ]; then
   _help_url="/v1/tools/help"
   _live=$(tool_api_curl "$_help_url" -fsS --max-time 2 2>/dev/null)
-  if [ "$?" = 69 ]; then printf '%s\n' 'Sulla Desktop is not running. Start it and retry.' >&2; exit 69; fi
+  if [ "$?" = 69 ] && [ "$LOCAL_DESKTOP" = 1 ]; then printf '%s\n' 'Sulla Desktop is not running. Start it and retry.' >&2; exit 69; fi
   if [ -n "$_live" ] && printf '%s' "$_live" | grep -q "Categories"; then
     printf '%s\n' "$_live"
     printf '\nRun "sulla <category> --help" or "sulla <category>" to list tools in a category.\n'
@@ -224,11 +230,14 @@ else
 fi
 
 # ── Execute ──────────────────────────────────────────────────────
-if [ "$METHOD" = "GET" ]; then
-  tool_api_curl "$URL" -sS --fail-with-body
-else
-  tool_api_curl "$URL" -sS --fail-with-body -X POST \
+set -- -s
+if [ "$LOCAL_DESKTOP" = 1 ]; then
+  set -- -sS --fail-with-body
+fi
+if [ "$METHOD" = "POST" ]; then
+  set -- "$@" -X POST \
     -H "Content-Type: application/json" \
     -H "X-Sulla-Tool-Session: ${SULLA_TOOL_SESSION:-}" \
     "$DATA_FLAG" "$DATA_ARG"
 fi
+tool_api_curl "$URL" "$@"
