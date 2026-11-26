@@ -71,7 +71,9 @@ class MountPins:
         src, dst = os.fsencode(self.handles.proc(fd)), os.fsencode(dest)
         # Nonrecursive MS_BIND: do not project any subordinate host mounts.
         if libc.mount(src, dst, None, 4096, None):
-            raise OSError(ctypes.get_errno(), 'cannot pin seed mount')
+            error = ctypes.get_errno()
+            (os.rmdir if is_dir else os.unlink)(dest)
+            raise OSError(error, 'cannot pin seed mount')
         def release():
             if libc.umount2(dst, 2):
                 raise OSError(ctypes.get_errno(), 'cannot release seed mount')
@@ -84,10 +86,22 @@ class ContainerRunner:
     def __init__(self, image, uid, gid, helper):
         self.image, self.uid, self.gid, self.helper = image, uid, gid, helper
 
+    def resolve_image(self):
+        # An image VOLUME silently adds writable mounts. Pin the checked local ID
+        # once so producer and publisher cannot select different image generations.
+        result = subprocess.run(['/usr/bin/docker', 'image', 'inspect', '--format',
+                                 '{{.Id}} {{json .Config.Volumes}}', self.image], check=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd='/',
+                                env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'})
+        image, volumes = result.stdout.decode().strip().split(' ', 1)
+        require(re.fullmatch('sha256:[0-9a-f]{64}', image) and not json.loads(volumes),
+                'unsupported seed image or implicit volumes')
+        self.image = image
+
     def run(self, mounts, operation, paths, *args, output=None, limit=32768):
-        cmd = ['docker', 'run', '--rm', '--pull=never', '--user', f'{self.uid}:{self.gid}',
+        cmd = ['/usr/bin/docker', 'run', '--rm', '--pull=never', '--user', f'{self.uid}:{self.gid}',
                '--network', 'none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
-               '--pids-limit=64', '--ipc=none', '--log-driver=none', '--workdir=/',
+               '--pids-limit=64', '--memory=512m', '--memory-swap=512m', '--ipc=none', '--log-driver=none', '--workdir=/',
                '--tmpfs', '/tmp:rw,nodev,nosuid,noexec,size=256m,mode=1777', '--entrypoint=/usr/bin/env']
         for src, dest, writable in mounts:
             cmd += ['--mount', f'type=bind,src={src},dst={dest},bind-recursive=disabled' +
@@ -95,7 +109,7 @@ class ContainerRunner:
         cmd += [self.image, '-i', 'PATH=/usr/bin:/bin', '/usr/bin/python3', '-IS', '-c', self.helper,
                 str(self.uid), str(self.gid), operation, json.dumps(paths), *args]
         with subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL) as proc:
+                              stderr=subprocess.DEVNULL, cwd='/', env={'PATH': '/usr/bin:/bin', 'HOME': '/nonexistent'}) as proc:
             try:
                 if output is None:
                     result = proc.stdout.read(limit + 1)
@@ -107,7 +121,9 @@ class ContainerRunner:
                         require(total <= limit, 'no space left on device for seed bundle and VM reserve')
                         output.write(chunk)
                     result = None
-                require(proc.wait() == 0, 'confined seed ' + operation + ' failed')
+                code = proc.wait()
+                require(code != 79, 'no space left on device for expanded checkout and VM reserve')
+                require(code == 0, 'confined seed ' + operation + ' failed')
                 return result
             finally:
                 if proc.poll() is None:
@@ -142,8 +158,8 @@ class Checkout:
         tip = h.text(head)
         self.ref = tip[5:] if tip.startswith('ref: ') else 'HEAD'
         require(self.ref == 'HEAD' or (self.ref.startswith('refs/heads/') and
-                all(re.fullmatch(r'[A-Za-z0-9_.-]+', part) and part not in ('.', '..')
-                    for part in self.ref.split('/'))), 'unsupported seed ref')
+                all(part and part not in ('.', '..') for part in self.ref.split('/')) and
+                not any(ord(c) < 32 for c in self.ref)), 'unsupported seed ref')
         self.files = {'objects': h.pin('objects', common), 'config': h.pin('config', common, stat.S_ISREG),
                       'packed': h.optional('packed-refs', common), 'index': h.optional('index', admin),
                       'tip': head if self.ref == 'HEAD' else h.optional(self.ref, common)}
@@ -170,3 +186,149 @@ class Checkout:
             mounts += [(self.pins.bind(self.directory), self.paths['checkout'], False),
                        (str(mask), self.paths['checkout'] + '/.git', False)]
         return runner.run(mounts, op, self.paths, self.ref, expected, **kwargs)
+
+
+class StableSeed:
+    def __init__(self, runner, handles, private, reserve, mounts):
+        self.runner, self.h, self.private, self.reserve = runner, handles, private, reserve
+        self.pins = mounts
+
+    def checkout(self, path, directory, allow_link=False):
+        return Checkout(path, directory, self.h, self.pins, self.private, allow_link)
+
+    def free(self):
+        data = subprocess.check_output(['/bin/df', '-Pk', self.private]).splitlines()
+        return int(data[-1].split()[3])
+
+    def reopen(self, target, directory, source, key):
+        entries = os.listdir(self.h.proc(directory))
+        if not entries:
+            return False
+        require('.git' in entries, 'refusing an unbound non-Git stable workspace')
+        repo = self.checkout(target, directory)
+        marker = self.h.optional('sulla-workspace-binding', repo.common)
+        if marker is not None:
+            require(self.h.text(marker).split('\n')[0] == str(source), 'stable workspace belongs to another seed')
+        else:
+            require(key, 'refusing to replace a nonempty unbound stable workspace')
+        repo.read(self.runner, 'reopen')
+        return True
+
+    def retained(self, repo, metadata, key, legacy):
+        if not key:
+            return
+        try:
+            agents = self.h.pin(legacy)
+        except FileNotFoundError:
+            return
+        ref, head, origin, _ = metadata
+        branch = 'detached-' + head[:12] if ref == 'HEAD' else ref[11:]
+        prefix = re.sub(rb'[^A-Za-z0-9_.-]', b'-', f'{repo.name}-{branch}-{key}-'.encode()).decode('ascii')
+        candidates = [n for n in os.listdir(self.h.proc(agents)) if n.startswith(prefix[:80]) and len(n) == len(prefix[:80]) + 8]
+        if not candidates:
+            return
+        message = 'could not identify a single safe retained checkout for the interrupted task'
+        require(len(candidates) == 1 and len(prefix) <= 80 and re.fullmatch('[A-Za-z0-9]{8}', candidates[0][-8:]), message)
+        path = legacy / candidates[0]
+        existing = self.checkout(path, self.h.pin(candidates[0], agents))
+        stored = json.loads(existing.read(self.runner, 'legacy', head))[2]
+        require(os.path.samestat(os.fstat(existing.directory), os.fstat(self.h.pin(path))), message)
+        require(stored == origin or (not origin and re.fullmatch(re.escape(str(path)) +
+                r'\.bundle-[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', stored)), message)
+        return path
+
+    def handoff(self, stage, parent, target, directory):
+        # Linux renameat checks emptiness atomically, but has no compare-inode option.
+        # Protect this *pinned immediate parent* while checking the target identity.
+        pfd = self.h.keep(os.open(self.h.proc(parent), os.O_RDONLY | os.O_DIRECTORY))
+        info = os.fstat(pfd)
+        require(info.st_uid in (os.geteuid(), self.runner.uid) and not info.st_mode & 0o7000,
+                'unsafe conversation parent permissions')
+        os.fchown(pfd, os.geteuid(), -1)
+        try:
+            require(not os.fstat(pfd).st_mode & 0o022, 'writable conversation parent')
+            require(os.path.samestat(os.fstat(pfd), os.fstat(self.h.pin(target.parent))) and
+                    os.path.samestat(os.fstat(directory), os.stat(target.name, dir_fd=pfd, follow_symlinks=False)),
+                    'stable publication target changed')
+            ready = self.h.pin(stage)
+            os.replace(stage, target.name, dst_dir_fd=pfd)
+            require(os.path.samestat(os.fstat(ready), os.fstat(self.h.pin(target))),
+                    'stable publication parent changed')
+        finally:
+            os.fchown(pfd, info.st_uid, -1)
+
+    def seed(self, source, target, key, legacy):
+        h = self.h
+        parent = h.pin(target.parent)
+        directory = h.pin(target.name, parent)
+        if self.reopen(target, directory, source, key):
+            require(os.path.samestat(os.fstat(directory), os.fstat(h.pin(target))), 'reopen target changed')
+            return target
+        repo = self.checkout(source, h.pin(source), allow_link=True)
+        metadata = json.loads(repo.read(self.runner, 'inspect'))
+        previous = self.retained(repo, metadata, key, legacy)
+        if previous:
+            return previous
+        usage = int(repo.read(self.runner, 'size'))
+        budget = min(8 * 1024**3, (self.free() - self.reserve - usage) * 512)
+        require(budget > 0, 'no space left on device for workspace and VM reserve')
+        approved = json.dumps(metadata)
+        with tempfile.NamedTemporaryFile(dir=self.private) as bundle:
+            repo.read(self.runner, 'bundle', approved, output=bundle, limit=budget)
+            bundle.flush()
+            os.fchmod(bundle.fileno(), 0o444)
+            require(self.free() - usage >= self.reserve, 'no space left on device for checkout and VM reserve')
+            stage = tempfile.mkdtemp(dir=self.private)
+            try:
+                os.chown(stage, self.runner.uid, self.runner.gid)
+                self.runner.run([(bundle.name, '/seed/input', False), (stage, '/seed/stage', True)],
+                                'publish', {'bundle': '/seed/input', 'stage': '/seed/stage'}, approved, str(source), str(self.reserve))
+                require(self.free() >= self.reserve, 'no space left on device for workspace and VM reserve')
+                self.handoff(stage, parent, target, directory)
+            finally:
+                # Only the publisher saw this private mount. No worker-writable parent traversal.
+                if os.path.exists(stage):
+                    import shutil
+                    shutil.rmtree(stage)
+        return target
+
+
+def main(mounts):
+    src, dst, conversations, agents, private, uid, gid, image, reserve, key, helper = sys.argv[1:]
+    src, dst = Path(src), Path(dst)
+    require(dst.name == 'workspace' and dst.parent.parent == Path(conversations) and
+            re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*', dst.parent.name), 'invalid conversation workspace')
+    require(src.is_relative_to('/mnt/worktrees') and src != Path('/mnt/worktrees'), 'invalid checkout')
+    require(int(uid) > 0 and int(gid) > 0, 'invalid seed identity')
+    with Handles() as h:
+        home = Path(private)
+        owner = os.fstat(h.pin(home.parent))
+        require(owner.st_uid == os.geteuid() and not owner.st_mode & 0o022, 'unsafe seed broker parent')
+        home.mkdir(mode=0o700, exist_ok=True)
+        root = h.pin(home)
+        info = os.fstat(root)
+        require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700, 'unsafe seed broker directory')
+        lock = h.keep(os.open(h.proc(root), os.O_RDONLY | os.O_DIRECTORY))
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        require(os.fstat(h.pin(dst)).st_dev == info.st_dev, 'workspace and private staging must share a filesystem')
+        # Do not recursively clean a mount tree, even if an unmount failed.
+        runner = ContainerRunner(image, int(uid), int(gid), helper)
+        runner.resolve_image()
+        work = Path(tempfile.mkdtemp(dir=home))
+        try:
+            with Handles() as pins:
+                seed = StableSeed(runner, pins, work, int(reserve), mounts(work, pins))
+                result = seed.seed(src, dst, key, Path(agents))
+            print(result)
+        finally:
+            for name in ('mask-file', 'mask-dir'):
+                leaf = work / name
+                if leaf.exists():
+                    (leaf.rmdir if leaf.is_dir() else leaf.unlink)()
+            os.rmdir(work)
+
+
+try:
+    main(MountPins)
+except (ValueError, OSError, subprocess.SubprocessError, KeyError) as exc:
+    sys.exit(str(exc) if not isinstance(exc, subprocess.SubprocessError) else 'seed broker command failed')
