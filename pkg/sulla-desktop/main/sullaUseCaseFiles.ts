@@ -270,7 +270,13 @@ export class SullaUseCaseFiles {
     const anchorName = kind === 'agent' ? readAgentPackage(Object.fromEntries(Object.entries(files).map(([name, file]) => [name, text(file)])), packageSlug).anchor : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
     const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }`);
     if (!anchor) throw new Error(`${ type }/${ packageSlug } is missing ${ anchorName }`);
-    if (renamed && anchor.id !== renamed.checkedRootId) throw new RenamedRootMismatch(anchor);
+    if (renamed && anchor.id !== renamed.checkedRootId) {
+      // The loader can skip an empty root. Check ownership against the manifest it actually selected.
+      const otherRootIds = SullaUseCaseFiles.rootAgentAnchors(packageSlug, packageRows).map(row => row.id).filter(id => id !== anchor.id);
+      const owner = await this.renamedPublications.find(packageSlug, [anchor.id, ...otherRootIds]);
+      if (!owner || owner.split) throw new RenamedRootMismatch(anchor);
+      renamed = { ...owner, checkedRootId: anchor.id };
+    }
     const slug = renamed?.slug ?? packageSlug;
     const versionId = String(activePublishedVersion(anchor));
     const manifest = artifact.manifest as any;
