@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import '../../Support/TestHomeEnv';
+import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
@@ -84,4 +85,33 @@ describe('launcher compatibility', () => {
           { ...proof, request_id: 'fixture' }, new AbortController().signal)).rejects.toThrow('session-bound');
       } finally { host['port'] = port; vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetAgentContainerImageResolution(); }
     });
+});
+
+describe('owned lease renewal', () => {
+  it('recovers a swept default after 16 minutes without reviving a provider, revoked launcher, or held call', async() => {
+    const clock = vi.spyOn(Date, 'now'); const start = Date.now();
+    const port = host['port']; host['port'] = 1;
+    const files = new Map<string, string>();
+    const leases = new ContainerSessionLeases(binding, host, ['meta/ping', 'clerk_get_user'], 'fixture', key, 900_000,
+      { replace: async(n, v) => { files.set(n, v); }, remove: async n => { files.delete(n); } });
+    const a = host.registerSession(state, 900_000, binding);
+    const b = host.registerSession(state, 900_000, binding);
+    const renew = () => leases.renew(a.id, () => host.rebindSession(a.id, state, 900_000, binding));
+    try {
+      const proof = { ...await verifyCapabilityToken(leases.issue(a.id), key), request_id: 'held' };
+      const held = worker();
+      await resolver.bindForwarded(held, held.name, a.id, proof, new AbortController().signal);
+      await leases.prepare(b.id); b.revoke();
+      clock.mockReturnValue(start + 960_000);
+      expect(host.peekToolSession(a.id)).toBeNull(); // Sweep before timer callback.
+      await renew();
+      const fresh = await verifyCapabilityToken(files.get('SULLA_API_TOKEN'), key);
+      expect(fresh.tool_session_generation).toBe(host.peekToolSession(a.id)?.executionContext?.jti);
+      expect(fresh.tool_session_generation).not.toBe(proof.tool_session_generation);
+      expect(host.peekToolSession(b.id)).toBeNull();
+      await expect(held['clerkCaller']!.revalidate!()).rejects.toThrow();
+      a.revoke(); await expect(renew()).rejects.toThrow();
+      expect(host.peekToolSession(a.id)).toBeNull();
+    } finally { a.revoke(); b.revoke(); await leases.close(); clock.mockRestore(); host['port'] = port; }
+  });
 });

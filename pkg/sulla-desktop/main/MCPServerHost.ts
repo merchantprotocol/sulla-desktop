@@ -156,6 +156,10 @@ export class MCPServerHost {
     };
   }
 
+  ownLauncherSession(id: string): () => boolean {
+    return this.sessions.ownLauncher(id);
+  }
+
   revokeSession(id: string): void {
     this.sessions.revoke(id);
   }

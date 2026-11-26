@@ -18,11 +18,12 @@ export class ContainerSessionLeases {
   private readonly processes = new Set<string>();
   private pending: Promise<void> = Promise.resolve();
   private closed = false;
+  private launcher?: { id: string; owned: () => boolean };
   expiresAt = 0;
 
   constructor(
     private readonly binding: AgentContainerRuntimeBinding,
-    private readonly sessions: { peekToolSession(id: string): ToolSession | null; revokeSession(id: string): void },
+    private readonly sessions: { peekToolSession(id: string): ToolSession | null; revokeSession(id: string): void; ownLauncherSession(id: string): () => boolean },
     private readonly scopes: string[],
     private readonly lifecycleId: string,
     private readonly signingKey: Buffer,
@@ -31,7 +32,15 @@ export class ContainerSessionLeases {
     private readonly version: '1' | '2' = '2',
   ) {}
 
+  /** Establish the single launcher default. Process leases never acquire ownership. */
   issue(id: string): string {
+    if (this.launcher && (this.launcher.id !== id || !this.launcher.owned())) throw new Error('Launcher session not owned');
+    const token = this.sign(id);
+    this.launcher ??= { id, owned: this.sessions.ownLauncherSession(id) };
+    return token;
+  }
+
+  private sign(id: string): string {
     const session = this.sessions.peekToolSession(id);
     const ctx = session?.executionContext;
     const b = this.binding;
@@ -63,7 +72,7 @@ export class ContainerSessionLeases {
 
   prepare(id: string): Promise<void> {
     return this.enqueue(async() => {
-      const lease = this.issue(id);
+      const lease = this.sign(id);
       this.processes.add(id);
       await this.files.replace(this.file(id), lease);
     });
@@ -80,9 +89,10 @@ export class ContainerSessionLeases {
   renew(id: string, rebindLauncher: () => boolean): Promise<void> {
     return this.enqueue(async() => {
       if (this.closed) return;
-      // Legacy rebind can revive an absent id. Never use that feature for renewal.
-      if (!this.sessions.peekToolSession(id) || !rebindLauncher()) throw new Error('Launcher tool session expired');
-      await this.files.replace('SULLA_API_TOKEN', this.issue(id));
+      if (this.launcher?.id !== id || !this.launcher.owned() || !rebindLauncher()) {
+        throw new Error('Launcher tool session revoked or not owned');
+      }
+      await this.files.replace('SULLA_API_TOKEN', this.sign(id));
       for (const process of this.processes) {
         const live = this.sessions.peekToolSession(process);
         if (!live?.executionContext || Math.floor(Math.min(live.expiresAt / 1000, live.executionContext.exp)) <= Math.floor(Date.now() / 1000)) {
@@ -90,7 +100,7 @@ export class ContainerSessionLeases {
           this.processes.delete(process);
         } else {
           // Do not slide the session, change its graph, or rebind its generation.
-          await this.files.replace(this.file(process), this.issue(process));
+          await this.files.replace(this.file(process), this.sign(process));
         }
       }
     });
@@ -99,6 +109,7 @@ export class ContainerSessionLeases {
   async close(): Promise<void> {
     this.closed = true;
     // A call already held at Decide must lose its session even before guest I/O drains.
+    if (this.launcher?.owned()) this.sessions.revokeSession(this.launcher.id);
     for (const id of this.processes) this.sessions.revokeSession(id);
     await this.pending;
     this.processes.clear(); // The lifecycle removes the entire private directory.

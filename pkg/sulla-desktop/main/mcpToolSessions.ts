@@ -41,6 +41,17 @@ export interface ToolSession {
 export class ToolSessionRegistry {
   private readonly sessions = new Map<string, ToolSession>();
 
+  // Only launcher defaults outlive idle eviction. Revocation/stop invalidates the
+  // captured owner marker even when the session record has already been swept.
+  private readonly launcherOwners = new Map<string, symbol>();
+
+  ownLauncher(id: string): () => boolean {
+    if (!this.peek(id) || this.launcherOwners.has(id)) throw new Error('Launcher session unavailable or already owned');
+    const owner = Symbol();
+    this.launcherOwners.set(id, owner);
+    return () => this.launcherOwners.get(id) === owner;
+  }
+
   register(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS, executionContext?: ToolExecutionContext): string {
     const id = randomBytes(24).toString('base64url');
 
@@ -49,6 +60,7 @@ export class ToolSessionRegistry {
   }
 
   revoke(id: string): void {
+    this.launcherOwners.delete(id);
     this.sessions.delete(id);
   }
 
@@ -108,6 +120,7 @@ export class ToolSessionRegistry {
   }
 
   clear(): void {
+    this.launcherOwners.clear();
     this.sessions.clear();
   }
 
