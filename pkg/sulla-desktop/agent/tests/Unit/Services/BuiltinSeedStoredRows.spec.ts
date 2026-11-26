@@ -142,16 +142,18 @@ describe('seeding built-ins against stored rows', () => {
 
   it('preserves a user-toggled worker awareness value on reseed', async() => {
     // risk: boot-time seeding must not undo the user's explicit worker visibility choice.
-    const worker = getBuiltinAgentSpecs().find(item => item.slug === 'codex-luna-worker')!;
+    const worker = getBuiltinAgentSpecs().find(item => item.slug === 'quick-fixer')!;
     const installed = await seedBuiltinAgents([worker]);
     expect(installed.inserted).toBe(1);
-    const id = String(db.table.stored(worker.slug)!.id);
+    const stored = db.table.stored(worker.slug)!;
+    expect(stored.agent_awareness).toBe(false);
+    const id = String(stored.id);
     await AgentDefinitionModel.update(id, { agentAwareness: true }, undefined, publisher);
 
     const reseeded = await seedBuiltinAgents([worker]);
 
     expect(reseeded.errors).toEqual([]);
-    expect((await AgentDefinitionModel.findBySlug(worker.slug))?.agent_awareness).toBe(true);
+    expect(await AgentDefinitionModel.findBySlug('codex-luna-worker')).toMatchObject({ id, slug: worker.slug, agent_awareness: true });
   });
 
   it('upgrades an untouched built-in prompt and keeps the model class the human chose', async() => {
