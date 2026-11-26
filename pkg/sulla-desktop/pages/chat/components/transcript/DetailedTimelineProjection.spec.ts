@@ -73,6 +73,23 @@ describe('DetailedTimelineProjection', () => {
     expect(standardEntries).toEqual(standardSnapshot);
   });
 
+  it('renders adjacent assistant replies as separate Standard messages', () => {
+    // risk: adjacent replies being merged and dropping a distinct answer from either transcript level.
+    const messages = [
+      { id: asMessageId('user'), kind: 'user', createdAt: 100, text: 'first question' },
+      { id: asMessageId('reply-one'), kind: 'sulla', createdAt: 200, text: 'First answer.' },
+      { id: asMessageId('reply-two'), kind: 'sulla', createdAt: 300, text: 'A separate follow-up answer.' },
+    ] satisfies Message[];
+    const reporting = new TranscriptReporting();
+    const standardEntries = reporting.standardEntries(messages, 'info');
+    const items = new DetailedTimelineProjection(undefined, reporting).project(messages, standardEntries);
+
+    expect(standardEntries.map(entry => entry.sourceId)).toEqual(['user', 'reply-one', 'reply-two']);
+    expect(items.filter(item => item.kind === 'message').map(item => item.entry.id)).toEqual(['user', 'reply-one', 'reply-two']);
+    expect(items.filter(item => item.kind === 'message' && item.entry.kind === 'card' && item.entry.message.kind === 'sulla')
+      .map(item => item.entry.message.text)).toEqual(['First answer.', 'A separate follow-up answer.']);
+  });
+
   it('places a returned sub-agent result at its own later timestamp instead of under the launch', () => {
     // risk: a long-running worker result being accumulated above the reply that launched it.
     const messages = [
