@@ -152,7 +152,17 @@ const mediaMeta = computed(() => detail.value?.recording?.duration_seconds ? `${
 const supportsMedia = computed(() => /^(?:video\/|audio\/)/i.test(item.mime) || /^(?:image\/(?:avif|gif|jpeg|png|webp)|application\/pdf)(?:;|$)/i.test(item.mime));
 const previewStatus = computed(() => previewError.value || (supportsMedia.value ? 'A preview could not be loaded for this file.' : 'This file type does not have an inline preview.'));
 const provenanceTitle = computed(() => item.createdByType === 'agent-run' ? `Sulla · ${ item.createdById }` : owner.value); const provenanceDetail = computed(() => detail.value?.recording ? `Transcribed by ${ detail.value.recording.generator || 'Sulla' } on ${ formatDate(detail.value.recording.generated_at || item.updatedAt) }.` : `Created by ${ detail.value?.provenance.id || item.createdById }.`);
-const allActivity = computed(() => [...(detail.value?.activity || []).map(event => ({ id: event.id, who: event.who_id, action: event.action, at: event.at, detail: event.device_or_run_id })), ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
+const allActivity = computed(() => [
+  ...(detail.value?.activity || []).map(event => {
+    let detail = event.device_or_run_id;
+    if (event.action === 'use-case-model-conflict' && event.message) {
+      const version = versions.value.find(row => row.id === event.version_id)?.versionNumber ?? event.version_id;
+      detail = version ? `Version ${ version } · ${ event.message }` : event.message;
+    }
+    return { id: event.id, who: event.who_id, action: event.action, at: event.at, detail };
+  }),
+  ...linkActivity.value.map(event => ({ id: `link-${ event.id }`, who: 'Public link', action: event.action, at: event.occurredAt, detail: event.detail })),
+].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)));
 
 onMounted(async() => {
   const [metadata] = await Promise.allSettled([props.dataSource.detail(item.id)]);
@@ -329,7 +339,7 @@ function formatBytes(bytes:number) { if (!bytes) return '0 B'; const units = ['B
 function formatDate(value:string) { return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) }
 function shortDate(value:string) { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date(value)) }
 function initials(value:string) { return value.split(/\s+/).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?' }
-function activityLabel(action:string) { return ({ preview: 'opened this file', download: 'downloaded this file', viewed: 'opened the public link', downloaded: 'downloaded from the public link', transcript: 'added a transcript', upload: 'uploaded this file', 'version-restore': 'restored a version' } as Record<string, string>)[action] || action.replaceAll('-', ' ') }
+function activityLabel(action:string) { return ({ preview: 'opened this file', download: 'downloaded this file', viewed: 'opened the public link', downloaded: 'downloaded from the public link', transcript: 'added a transcript', upload: 'uploaded this file', 'version-restore': 'restored a version', 'use-case-model-conflict': 'reported a model settings conflict' } as Record<string, string>)[action] || action.replaceAll('-', ' ') }
 function fileIcon(mime:string) { if (mime.startsWith('video/')) return icons.video; if (mime.startsWith('audio/')) return icons.audio; if (mime.startsWith('image/')) return icons.image; if (mime === 'application/pdf') return icons.pdf; return icons.file }
 const icons = {
   previous: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
