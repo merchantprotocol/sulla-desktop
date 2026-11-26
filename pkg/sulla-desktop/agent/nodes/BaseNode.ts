@@ -2011,7 +2011,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     }
 
     if (reply.content?.trim() || reply.metadata.tool_calls?.length) {
-      const used = { model: reply.metadata.reportedModel || provider.getModel(), modelEvidence: reply.metadata.reportedModel ? 'provider' as const : 'unconfirmed' as const, provider: provider.getProviderId?.() || provider.getProviderName(), effort: provider.getEffort?.() ?? null, source: 'resolved' as const };
+      const used = { model: reply.metadata.reportedModel || provider.getModel(), modelEvidence: reply.metadata.reportedModel ? 'provider' as const : 'unconfirmed' as const, provider: provider.getProviderId?.() || provider.getProviderName?.() || 'unknown', effort: provider.getEffort?.() ?? null, source: 'resolved' as const };
       const prior = state.metadata.workflowResponseModels ?? [];
       const sameModel = (model: import('../../shared/agentState/AgentModelStatus').AgentModelStatusValue) => model.provider === used.provider && model.model === used.model && model.effort === used.effort && model.modelEvidence === used.modelEvidence;
       const fallback = fallbackFrom ?? prior.find(sameModel)?.fallbackFrom;
