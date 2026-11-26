@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import { Notification } from 'electron';
 import yaml from 'yaml';
 
+import { BUILTIN_AGENT_RENAMES, newerBuiltinAgentSlug } from '@pkg/shared/agentJobNames';
 import { AgentModelCategoryPolicy } from '@pkg/agent/languagemodels/AgentModelCategoryPolicy';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { UseCaseRemovalRepository } from '@pkg/agent/database/repositories/UseCaseRemovalRepository';
@@ -246,8 +247,8 @@ export class SullaUseCaseFiles {
    * `pending` is the pre-migration phase: register one brand-new agent from its exact, human-approved
    * root anchor. It never updates an existing row; a concurrent registration wins and is preserved.
    */
-  private async activate(type:UseCaseType, slug:string, packageRows:FilesRow[], pending?:{ anchor:FilesRow }):Promise<void> {
-    if (kindFor(type) === 'agent' && isRetiredCodingManagerSlug(slug)) throw new Error(`agents/${ slug } is retired and cannot be activated`);
+  private async activate(type:UseCaseType, packageSlug:string, packageRows:FilesRow[], pending?:{ anchor:FilesRow }, renamed?:PublishedAgentRow & { slug:string }):Promise<void> {
+    if (kindFor(type) === 'agent' && isRetiredCodingManagerSlug(packageSlug)) throw new Error(`agents/${ packageSlug } is retired and cannot be activated`);
     const published = packageRows.filter(row => activePublishedVersion(row));
     if (!published.length) return;
     const files:Record<string,StoredFile> = {};
@@ -256,17 +257,18 @@ export class SullaUseCaseFiles {
       files[row.path.split('/').slice(3).join('/')] = stored(await this.content(row, version));
     }
     const kind = kindFor(type);
-    const artifact = bundleToArtifact(kind, files, slug);
-    const anchorName = kind === 'agent' ? readAgentPackage(Object.fromEntries(Object.entries(files).map(([name, file]) => [name, text(file)])), slug).anchor : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
-    const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ slug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path === `${ ROOT }/${ type }/${ slug }/${ anchorName }`);
-    if (!anchor) throw new Error(`${ type }/${ slug } is missing ${ anchorName }`);
+    const artifact = bundleToArtifact(kind, files, packageSlug);
+    const anchorName = kind === 'agent' ? readAgentPackage(Object.fromEntries(Object.entries(files).map(([name, file]) => [name, text(file)])), packageSlug).anchor : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
+    const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }`);
+    if (!anchor) throw new Error(`${ type }/${ packageSlug } is missing ${ anchorName }`);
+    const slug = renamed?.slug ?? packageSlug;
     const versionId = String(activePublishedVersion(anchor));
     const manifest = artifact.manifest as any;
     let agentId:string | undefined;
     let createdAgentBinding:{ editToken:string; revision:number } | undefined;
     let observedAgent: PublishedAgentRow | null = null;
     if (kind === 'agent') {
-      observedAgent = await postgresClient.queryOne<PublishedAgentRow>(
+      observedAgent = renamed ?? await postgresClient.queryOne<PublishedAgentRow>(
         `SELECT id,source_kind,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor,use_case_file_id,use_case_version_id FROM agent_definitions WHERE slug=$1`, [slug]) ?? null;
       if (observedAgent?.removed_from_editor) return;
       if (observedAgent && !['local', 'user'].includes(observedAgent.source_kind)) throw new Error(`agents/${ slug } conflicts with an existing ${ observedAgent.source_kind } agent; the existing definition was preserved`);
@@ -276,7 +278,9 @@ export class SullaUseCaseFiles {
     const project = async(client:PoolClient) => {
       if (kind === 'agent') {
         const metadata = manifest.metadata ?? {}; const spec = manifest.spec ?? {}; const directory = spec.directory ?? {};
-        if (manifest.apiVersion !== 'sulla/v3' || !metadata.title || typeof spec.prompt !== 'string' || metadata.slug !== slug) throw new Error(`agents/${ slug } has an invalid sulla/v3 agent.json`);
+        if (manifest.apiVersion !== 'sulla/v3' || !metadata.title || typeof spec.prompt !== 'string' || metadata.slug !== packageSlug) throw new Error(`agents/${ slug } has an invalid sulla/v3 agent.json`);
+        const rename = renamed && BUILTIN_AGENT_RENAMES.find(([old]) => old === packageSlug);
+        const title = rename && metadata.title === rename[2] ? rename[3] : metadata.title;
         const profileChoice = spec.modelChoice?.mode === 'class' ? spec.modelChoice : spec.config?.modelChoice;
         const category = profileChoice?.mode === 'class' ? new AgentModelCategoryPolicy().resolve({ choice: profileChoice, slug }) : null;
         const registered = await client.query(`INSERT INTO agent_definitions(id,slug,name,description,system_prompt,soul_content,allowed_tools,skill_refs,routine_refs,model_priority,version,status,enabled,config,prompt_content,goals_content,prompt_files,provider,model,model_slot,source_kind,when_to_call,when_not_to_call,send,returns,cost_tier,can_call,front_door,use_case_file_id,use_case_version_id,agent_awareness,model_choice)
@@ -288,7 +292,7 @@ export class SullaUseCaseFiles {
             AND agent_definitions.use_case_version_id IS NOT DISTINCT FROM $28
             AND NOT COALESCE(agent_definitions.config @> '{"removedFromEditor":true}'::jsonb,FALSE)` }
           RETURNING id`,
-        [agentId,slug,metadata.title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId,typeof spec.agentAwareness==='boolean'?spec.agentAwareness:null,category ? json(category) : null,...(observedAgent ? [observedAgent.source_kind,observedAgent.use_case_file_id,observedAgent.use_case_version_id] : [])]);
+        [agentId,slug,title,metadata.description??'',spec.prompt,spec.soul??'',strings(spec.tools),strings(spec.skills),strings(spec.routines),json(spec.config??{}),spec.goals??'',json(spec.promptFiles??{}),spec.provider??null,agentModelSlot(spec.modelSlot,spec.model),directory.whenToCall??'',directory.whenNotToCall??'',directory.send??'',directory.returns??'',directory.costTier??null,strings(directory.canCall),typeof directory.frontDoor==='boolean'?directory.frontDoor:null,anchor.id,versionId,typeof spec.agentAwareness==='boolean'?spec.agentAwareness:null,category ? json(category) : null,...(observedAgent ? [observedAgent.source_kind,observedAgent.use_case_file_id,observedAgent.use_case_version_id] : [])]);
         if (!registered.rows.length || String(registered.rows[0]?.id ?? '') !== agentId) {
           throw new Error(`agents/${ slug } ${ pending ? 'was registered concurrently' : 'changed during activation' }; the newer definition was preserved`);
         }
@@ -390,6 +394,14 @@ export class SullaUseCaseFiles {
     return root('agent.json') ?? root('agent.yaml') ?? root('agent.yml');
   }
 
+  private async renamedPublication(slug:string, anchor?:FilesRow) {
+    const canonical = newerBuiltinAgentSlug(slug);
+    // Never redirect a custom package just because its folder matches a historical name.
+    return canonical && anchor ? postgresClient.queryOne<PublishedAgentRow & {slug:string}>(
+      `SELECT id,slug,source_kind,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor,use_case_file_id,use_case_version_id
+         FROM agent_definitions WHERE slug=$1 AND is_builtin AND use_case_file_id=$2`, [canonical, anchor.id]) : null;
+  }
+
   /** True only when Files holds a human-approved publish request for exactly this file version. */
   private async approvedPublication(anchor:FilesRow):Promise<boolean> {
     const query = new URLSearchParams({ status:'approved', fileId:anchor.id });
@@ -444,7 +456,7 @@ export class SullaUseCaseFiles {
       if (!packageRows.some(row => activePublishedVersion(row))) continue;
       if (isRetiredCodingManagerSlug(slug)) continue;
       const anchor = SullaUseCaseFiles.rootAgentAnchor(slug, packageRows);
-      const existing = await postgresClient.queryOne<{ use_case_file_id: string | null; use_case_version_id: string | null; removed_from_editor: boolean }>(
+      const existing = await this.renamedPublication(slug, anchor) ?? await postgresClient.queryOne<{ use_case_file_id: string | null; use_case_version_id: string | null; removed_from_editor: boolean }>(
         `SELECT use_case_file_id,use_case_version_id,config @> '{"removedFromEditor":true}'::jsonb AS removed_from_editor FROM agent_definitions WHERE slug=$1`, [slug]);
       if (existing?.removed_from_editor) continue;
       // The same indexed anchor version is a permanent no-op: owner edits to it are never undone.
@@ -487,12 +499,13 @@ export class SullaUseCaseFiles {
         if (!packageRows.some(row => activePublishedVersion(row))) continue;
         if (type === 'agents' && isRetiredCodingManagerSlug(slug)) continue;
         // An invalid newly-published version never disables the last valid index row.
-        active.add(key);
+        const renamed = type === 'agents' ? await this.renamedPublication(slug, SullaUseCaseFiles.rootAgentAnchor(slug, packageRows)) : null;
+        active.add(renamed ? `agents/${ renamed.slug }` : key);
         if (type === 'skills') {
           const existing = await postgresClient.queryOne<{enabled:boolean;deleted_at:string|null;use_case_file_id:string|null}>('SELECT enabled,deleted_at,use_case_file_id FROM skill_definitions WHERE slug=$1',[slug]);
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
-        try { await this.activate(type,slug,packageRows); active.add(key); activated++ }
+        try { await this.activate(type,slug,packageRows,undefined,renamed ?? undefined); activated++ }
         catch(error) { failedPackages.push(key); const anchor=type === 'agents' ? SullaUseCaseFiles.rootAgentAnchor(slug, packageRows) : packageRows.find(row=>activePublishedVersion(row)); await this.auditError(anchor,anchor ? String(activePublishedVersion(anchor)) : undefined,`${key}: ${error instanceof Error?error.message:String(error)}`) }
       }
       await this.disableMissing(active);
