@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -217,12 +217,14 @@ describe('durable Git workspace initialization', () => {
     expect(existsSync(local('runtime/conversations/next/workspace/.git'))).toBe(false);
   });
 
-  it.each(['symlinked file', 'symlinked directory', 'oversized file'])('does not adopt a module info/exclude from a %s', async(kind) => {
+  it.each(['symlinked file', 'symlinked directory', 'hard-linked file', 'oversized file'])('does not adopt a module info/exclude from a %s', async(kind) => {
     const source = local('worktrees/repo');
     const checkout = addInitializedModule(source);
     const exclude = git(checkout, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude');
     writeFileSync(exclude, '/build-output\n' + (kind === 'oversized file' ? '#'.repeat(64 * 1024) : ''));
-    if (kind !== 'oversized file') {
+    if (kind === 'hard-linked file') {
+      linkSync(exclude, local('synthetic-exclude-second-name'));
+    } else if (kind !== 'oversized file') {
       const original = kind === 'symlinked file' ? exclude : path.dirname(exclude);
       const elsewhere = local('synthetic-exclude-target');
       renameSync(original, elsewhere);
