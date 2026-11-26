@@ -144,6 +144,25 @@ describe('durable Git workspace initialization', () => {
     expect(() => git(workspace, 'cat-file', '-e', unrelated)).toThrow();
   });
 
+  it('seeds a clean opaque gitlink without fetching its contents', async() => {
+    const source = local('worktrees/repo');
+    const workspace = local('runtime/conversations/task/workspace');
+    const absent = '1'.repeat(40);
+    writeFileSync(path.join(source, '.gitmodules'),
+      '[submodule "dep"]\n\tpath = dep\n\turl = https://example.invalid/absent.git\n');
+    mkdirSync(path.join(source, 'dep'));
+    git(source, 'add', '.gitmodules');
+    git(source, 'update-index', '--add', '--cacheinfo', `160000,${ absent },dep`);
+    git(source, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'gitlink');
+    expect(git(source, 'status', '--porcelain')).toBe('');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+    expect(git(workspace, 'rev-parse', 'HEAD')).toBe(git(source, 'rev-parse', 'HEAD'));
+    expect(git(workspace, 'ls-tree', 'HEAD', 'dep')).toBe(`160000 commit ${ absent }\tdep`);
+    expect(git(workspace, 'submodule', 'status')).toMatch(/^-/);
+    expect(existsSync(path.join(workspace, '.git/modules'))).toBe(false);
+    expect(() => git(workspace, 'cat-file', '-e', absent)).toThrow();
+  });
+
   it('seeds the approved HEAD without interpreting checkout-local Git configuration', async() => {
     const repo = local('worktrees/repo');
     const head = git(repo, 'rev-parse', 'HEAD');

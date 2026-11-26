@@ -32,14 +32,13 @@ class StableSeedPublisher:
         block = max(4096, space.f_frsize)
         for line in listing.splitlines():
             _, kind, _, size = line.split(b'\t', 1)[0].split()
-            if kind == b'commit':
-                raise ValueError('submodule seed unsupported')
-            available -= block + (0 if kind == b'tree' else (int(size) + block - 1) // block * block)
+            # A gitlink checks out as an empty directory; its objects are never fetched.
+            available -= block + (0 if kind in (b'tree', b'commit') else (int(size) + block - 1) // block * block)
             if available < 0:
                 sys.exit(79)  # Broker maps reserve exhaustion without forwarding worker stderr.
-        self.git.run('checkout', '--detach', head)
+        self.git.run('checkout', '--no-recurse-submodules', '--detach', head)
         if ref != 'HEAD':
-            self.git.run('checkout', '-B', ref[11:], head)
+            self.git.run('checkout', '--no-recurse-submodules', '-B', ref[11:], head)
         if self.git.run('rev-parse', 'HEAD').stdout != (head + '\n').encode():
             raise ValueError('published HEAD mismatch')
         if remote:
