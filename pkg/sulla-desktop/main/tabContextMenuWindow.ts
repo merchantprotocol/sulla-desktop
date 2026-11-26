@@ -18,6 +18,7 @@ import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 interface MenuRequest {
   opener:  BrowserWindow;
   payload: TabContextMenuRequest;
+  editor:  Electron.WebContents;
 }
 
 class TabContextMenuWindow {
@@ -27,11 +28,11 @@ class TabContextMenuWindow {
   private rendered?:     MenuRequest;
   private detachOpener?: () => void;
 
-  async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
+  async show(opener: BrowserWindow, editor: Electron.WebContents, payload: TabContextMenuRequest): Promise<void> {
     if (!this.liveContents(opener)) return;
     if (typeof payload.requestId !== 'string' || !payload.requestId || !Array.isArray(payload.items) || !payload.items.length) return;
     if (payload.update && (!payload.attention || this.pending?.opener !== opener || this.pending.payload.requestId !== payload.requestId)) return;
-    const request = { opener, payload };
+    const request = { opener, editor, payload };
 
     const previous = this.pending;
 
@@ -109,7 +110,15 @@ class TabContextMenuWindow {
     if (this.popup && !this.popup.isDestroyed()) this.popup.hide();
     if (!closed || !notify) return;
     if (action === undefined) this.notifyClosed(closed);
-    else this.liveContents(closed.opener)?.send('tab-context-menu:selected', closed.payload.requestId, action);
+    else if (action === 'rename') {
+      // Native tab views can take focus when the popup hides. Restore the
+      // initiating renderer before asking it to start inline editing.
+      const { opener, editor } = closed;
+      if (!this.liveContents(opener) || editor.isDestroyed() || editor.isCrashed() || agentWindowFromSender(editor) !== opener) return;
+      opener.focus();
+      editor.focus();
+      editor.send('tab-context-menu:selected', closed.payload.requestId, action);
+    } else this.liveContents(closed.opener)?.send('tab-context-menu:selected', closed.payload.requestId, action);
   }
 
   private notifyClosed(closed: MenuRequest): void {
@@ -217,7 +226,7 @@ export function registerTabContextMenuIpc(): void {
   ipcMain.on('tab-context-menu:show', (event, payload: TabContextMenuRequest) => {
     const opener = agentWindowFromSender(event.sender);
 
-    if (opener && payload) menu.show(opener, payload).catch(logPopupError);
+    if (opener && payload) menu.show(opener, event.sender, payload).catch(logPopupError);
   });
   ipcMain.on('tab-context-menu:hide', (event, id: string) => {
     const opener = agentWindowFromSender(event.sender);

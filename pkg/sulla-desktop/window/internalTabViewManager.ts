@@ -135,6 +135,10 @@ export class InternalTabViewManager {
     const owner = this.resolveOwner(sender);
     if (!owner || sender.isDestroyed() || !input || typeof input !== 'object') throw new Error('Invalid workspace tab request');
     const request = input as WorkspaceTabRequest;
+    if (request.mode === 'files' && request.filesNavigation === undefined && typeof request.title === 'string') {
+      owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'files', title: request.title });
+      return;
+    }
     const file = request.mode === 'paper' ? request.documentFile : request.mode === 'files' ? request.filesNavigation : null;
     if (file && typeof file.fileId === 'string' && file.fileId && typeof file.path === 'string' && file.path) {
       const { fileId, path, collectionId } = file;
@@ -143,7 +147,7 @@ export class InternalTabViewManager {
         owner.webContents.send('internal-tab-view:open-workspace-tab', { mode: 'paper', documentFile: identity });
         return;
       }
-      if (request.mode === 'files' && typeof request.title === 'string') {
+      if (request.mode === 'files' && request.filesNavigation && typeof request.title === 'string') {
         const { section, versionId } = request.filesNavigation;
         if (!DURABLE_FILE_ID_PATTERN.test(fileId)
             || !['detail', 'versions', 'share-review'].includes(section)
@@ -385,5 +389,5 @@ export class InternalTabViewManager {
 }
 
 function sameActivity(left?: ChatTabActivitySnapshot, right?: ChatTabActivitySnapshot): boolean {
-  return left?.state === right?.state && left?.detail === right?.detail;
+  return left?.state === right?.state && left?.detail === right?.detail && left?.active === right?.active;
 }

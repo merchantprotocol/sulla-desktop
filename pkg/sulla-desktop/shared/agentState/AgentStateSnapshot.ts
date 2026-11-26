@@ -44,6 +44,8 @@ export interface AgentStateRow extends ResultTracking {
  /** Product Owner stage recorded when this task was delegated. */
  workflowStep?: import('../productOwnerWorkflow').DelegatedWorkflowStep;
  responseModels?: AgentModelStatusValue[];
+ /** Recovery attempts recorded for this job, shared by its tasks. */
+ jobRestartResumeCount?: number;
  /** Explicit existing Projects task assignment. */
  taskId?:            string;
  modelStatus?:       AgentModelStatusValue;
