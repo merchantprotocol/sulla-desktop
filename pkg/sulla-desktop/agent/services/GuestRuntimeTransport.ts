@@ -8,9 +8,9 @@ import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import seedBroker from '@pkg/assets/scripts/stable-seed-broker.py?raw';
-import seedPublisher from '@pkg/assets/scripts/stable-seed-publisher.py?raw';
-import seedReader from '@pkg/assets/scripts/stable-seed-reader.py?raw';
+import seedBroker from '@pkg/assets/scripts/stable-seed-broker.py';
+import seedPublisher from '@pkg/assets/scripts/stable-seed-publisher.py';
+import seedReader from '@pkg/assets/scripts/stable-seed-reader.py';
 import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
