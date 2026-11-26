@@ -12,8 +12,15 @@ export interface ToolResult {
   error?:  { code: string; message: string; details?: unknown };
 }
 
+export interface DesktopExecutionOptions {
+  deadlineMs: number;
+  operationTypes?: readonly string[];
+  /** Live agent proof for the private Clerk hop only. Never serialize with the tool arguments. */
+  clerkToolSession?: string;
+}
+
 export interface DesktopExecutor {
-  execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number; operationTypes?: readonly string[] }): Promise<ToolResult>;
+  execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: DesktopExecutionOptions): Promise<ToolResult>;
 }
 
 export class HttpDesktopExecutor implements DesktopExecutor {
@@ -21,7 +28,7 @@ export class HttpDesktopExecutor implements DesktopExecutor {
 
   constructor(private readonly endpoint: string, private readonly bearerToken: string) {}
 
-  async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number; operationTypes?: readonly string[] }): Promise<ToolResult> {
+  async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: DesktopExecutionOptions): Promise<ToolResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), opts.deadlineMs);
     try {
@@ -31,7 +38,9 @@ export class HttpDesktopExecutor implements DesktopExecutor {
           'Content-Type':       'application/json',
           Authorization:        `Bearer ${ this.bearerToken }`,
           'X-Sulla-Request-Id': ctx.request_id,
+          ...(category === 'clerk' && opts.clerkToolSession ? { 'X-Sulla-Tool-Session': opts.clerkToolSession } : {}),
         },
+        ...(category === 'clerk' ? { redirect: 'error' as const } : {}),
         body:   JSON.stringify({ ctx, args, deadlineMs: opts.deadlineMs }),
         signal: controller.signal,
       });

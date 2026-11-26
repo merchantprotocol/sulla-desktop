@@ -10,6 +10,7 @@ import { sessionAllowsTool } from './toolSessionPolicy';
 import type { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
+import type { ClerkWorker } from '@pkg/agent/tools/clerk/ClerkWorker';
 import type { ToolSession } from './mcpToolSessions';
 
 interface ToolSessionLookup {
@@ -56,16 +57,33 @@ export class ClerkToolSessionResolver {
     return this.resolveSession(bearer, name, signal);
   }
 
+  /** The installation bearer authenticates only the service. Never install its serialized context on a Clerk worker. */
+  async bindForwarded(worker: ClerkWorker, name: string, sessionId: unknown, forwarded: ToolExecutionContext | undefined, signal: AbortSignal): Promise<void> {
+    if (typeof sessionId !== 'string' || !sessionId || sessionId === this.installationToken() ||
+        worker.name !== name || typeof worker.bindClerkCaller !== 'function') {
+      throw new ClerkError(403, 'Clerk requires a verified agent tool session.');
+    }
+    const { state, ...caller } = await this.resolveBearer(sessionId, name, signal);
+    const fields = ['sub', 'org_id', 'agent_id', 'pod_id', 'thread_id', 'job_id', 'device_id', 'workflow_execution_id', 'task_index'] as const;
+    const scope = forwarded?.credential_scope;
+    if (!forwarded || fields.some(field => forwarded[field] !== caller.execution[field]) ||
+        (scope && (scope.integration_id !== 'clerk' || scope.account_id !== CLERK_ACCOUNT || scope.item_id || scope.repository))) {
+      throw new ClerkError(403, 'The forwarded Clerk identity does not match its agent session.');
+    }
+    worker.setState(state);
+    worker.bindClerkCaller(caller);
+  }
+
   /** Resolve the already-authenticated MCP session captured by its handler. */
   resolveSession(sessionId: string, name: string, signal: AbortSignal): Promise<ClerkCaller> {
     const installationToken = this.installationToken();
     if (!sessionId || (installationToken && sessionId === installationToken)) {
       throw new ClerkError(403, 'Clerk requires a verified agent tool session.');
     }
-    return this.resolveBearer(sessionId, name, signal);
+    return this.resolveBearer(sessionId, name, signal).then(({ state: _state, ...caller }) => caller);
   }
 
-  private async resolveBearer(bearer: string, name: string, signal: AbortSignal): Promise<ClerkCaller> {
+  private async resolveBearer(bearer: string, name: string, signal: AbortSignal) {
     const startedAt = this.now();
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(CLERK_DEADLINE_MS)]);
 
@@ -95,7 +113,7 @@ export class ClerkToolSessionResolver {
           signal: requestSignal,
         });
       }
-      return { execution, metadata };
+      return { execution, metadata, state: session.state };
     };
 
     const resolved = await resolveSession();
@@ -103,6 +121,7 @@ export class ClerkToolSessionResolver {
     const deadlineAt = Math.min(startedAt + CLERK_DEADLINE_MS, resolved.execution.exp * 1_000);
     const boundedSignal = AbortSignal.any([requestSignal, AbortSignal.timeout(Math.max(1, deadlineAt - this.now()))]);
     return {
+      state: resolved.state,
       execution: resolved.execution,
       conversationId: String(resolved.metadata?.threadId ?? resolved.execution.thread_id ?? ''),
       channel: typeof channel === 'string' ? channel : undefined,

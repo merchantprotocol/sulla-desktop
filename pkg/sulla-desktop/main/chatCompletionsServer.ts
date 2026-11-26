@@ -470,21 +470,26 @@ export class ChatCompletionsServer {
           : requestedDeadlineMs);
         deadlineMs = Math.max(1, executionDeadlineAt - Date.now());
         worker.deadlineAt = executionDeadlineAt;
-        worker.executionContext = ctx;
-        if (typeof ctx?.thread_id === 'string') {
-          const graph = GraphRegistry.get(ctx.thread_id);
-          if (graph?.state && !this.agentAwarenessPolicy.allowsTool(graph.state.metadata, toolName)) {
-            return res.status(403).json({ success: false, error: { code: 'tool_not_available', message: 'not available to this agent' } });
-          }
-          if (graph?.state) worker.setState?.(graph.state);
-        }
         const deadline = AbortSignal.timeout(deadlineMs);
         if (category === 'clerk') {
           const disconnected = new AbortController();
           res.once('close', () => { if (!res.writableEnded) disconnected.abort(); });
           if (res.destroyed) disconnected.abort();
-          worker.approvalSignal = AbortSignal.any([deadline, disconnected.signal]);
+          try {
+            await this.clerkSessionResolver().bindForwarded(worker, toolName, req.headers['x-sulla-tool-session'], ctx,
+              AbortSignal.any([deadline, disconnected.signal]));
+          } catch {
+            return res.status(403).json({ success: false, error: { code: 'clerk_session_forbidden', message: 'An authorized Clerk agent session is required.' } });
+          }
         } else {
+          worker.executionContext = ctx;
+          if (typeof ctx?.thread_id === 'string') {
+            const graph = GraphRegistry.get(ctx.thread_id);
+            if (graph?.state && !this.agentAwarenessPolicy.allowsTool(graph.state.metadata, toolName)) {
+              return res.status(403).json({ success: false, error: { code: 'tool_not_available', message: 'not available to this agent' } });
+            }
+            if (graph?.state) worker.setState?.(graph.state);
+          }
           worker.approvalSignal = deadline;
         }
         const result = await Promise.race([
@@ -1273,10 +1278,14 @@ export class ChatCompletionsServer {
     }
   }
 
-  private clerkRoute(): ClerkApiRoute {
-    const callerResolver = new ClerkToolSessionResolver(
+  private clerkSessionResolver(): ClerkToolSessionResolver {
+    return new ClerkToolSessionResolver(
       getMCPServerHost(), configuredVaultBrokerProvider, () => this.apiToken, this.agentAwarenessPolicy,
     );
+  }
+
+  private clerkRoute(): ClerkApiRoute {
+    const callerResolver = this.clerkSessionResolver();
     return new ClerkApiRoute(createDesktopClerkClient, (request, name, signal) => callerResolver.resolve(request, name, signal));
   }
 
