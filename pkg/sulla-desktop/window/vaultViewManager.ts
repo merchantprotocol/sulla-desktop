@@ -3,25 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { randomUUID } from 'node:crypto';
 import Logging from '@pkg/utils/logging';
-import Electron, { WebContentsView } from 'electron';
+import type { WebContentsView } from 'electron';
 
-import { VaultPermissionPolicy } from './vaultPermissionPolicy';
+import { VaultRendererFactory, type CreatedVaultView } from './VaultRendererFactory';
 
-import { configureVaultPinnedSession, VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
+import { VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
 import { vaultThemeCss } from '@pkg/shared/vaultTheme';
 
 const console = Logging.sulla;
 export const VAULT_VIEW_KEEP_ALIVE_MS = 5 * 60_000;
 
 const VAULT_ORIGIN = VAULT_HTTPS_ORIGIN;
-// The vault page's "Integrations" side-menu link; intercepted here, never loaded.
-const DESKTOP_INTEGRATIONS_PATH = '/vault/desktop/integrations';
-// The guided connect screen navigates here after saving a new integration account.
-const DESKTOP_CONNECTED_PATH = '/vault/desktop/connected';
-const SAFE_ID = /^[A-Za-z0-9._-]{1,128}$/;
-const permissionPolicy = new VaultPermissionPolicy(VAULT_ORIGIN);
 
 export interface VaultViewReservation {
   ownerId:    string;
@@ -29,11 +22,18 @@ export interface VaultViewReservation {
   generation: number;
 }
 
+interface VaultTabHost {
+  observeLayout(listener: (bounds: Electron.Rectangle | null, raised: boolean) => void): () => void;
+  onDisposed(listener: () => void): (() => void) | null;
+}
+
 interface VaultWindowState {
   view: WebContentsView | null;
-  parentView: Electron.View | null;
+  bounds: Electron.Rectangle | null;
+  hostBounds: Electron.Rectangle | null | undefined;
   hostCleanup: (() => void) | null;
   attached: boolean;
+  ready: boolean;
   isolatedSession: Electron.Session | null;
   ownerId: string | null;
   attachedOwnerId: string | null;
@@ -46,11 +46,6 @@ interface VaultWindowState {
   sessionExpiresAt: number | null;
   targetUrl: string | null;
   window: Electron.BrowserWindow;
-}
-
-interface CreatedVaultView {
-  view:    WebContentsView;
-  session: Electron.Session;
 }
 
 interface VaultOpenTimings {
@@ -68,7 +63,12 @@ export class VaultViewManager {
   private stateFor(window: Electron.BrowserWindow): VaultWindowState {
     let state = this.windows.get(window.id);
     if (!state) {
-      state = { view: null, parentView: null, hostCleanup: null, attached: false, isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '', themeKey: null, themeUpdate: Promise.resolve(), keepAliveTimer: null, expiryTimer: null, sessionExpiresAt: null, targetUrl: null };
+      state = {
+        view: null, bounds: null, hostBounds: undefined, hostCleanup: null, attached: false, ready: false,
+        isolatedSession: null, ownerId: null, attachedOwnerId: null, generation: 0, window, themeCss: '',
+        themeKey: null, themeUpdate: Promise.resolve(), keepAliveTimer: null, expiryTimer: null,
+        sessionExpiresAt: null, targetUrl: null,
+      };
       this.windows.set(window.id, state);
       window.once('closed', () => { this.destroyWindow(window.id) });
     }
@@ -85,14 +85,18 @@ export class VaultViewManager {
       if (state.expiryTimer) clearTimeout(state.expiryTimer);
       state.expiryTimer = null;
     }
-    if (state.attached) this.detachView(state);
-    state.attachedOwnerId = null;
+    this.clearPlacement(state);
     return { ownerId, windowId: window.id, generation: state.generation };
   }
 
   isCurrent(reservation: VaultViewReservation): boolean {
     const state = this.windows.get(reservation.windowId);
     return !!state && state.ownerId === reservation.ownerId && state.generation === reservation.generation;
+  }
+
+  hasOwnerView(window: Electron.BrowserWindow, ownerId: string): boolean {
+    const state = this.windows.get(window.id);
+    return !!state && state.attachedOwnerId === ownerId && !!state.view && !state.view.webContents.isDestroyed();
   }
 
   hasActiveOwner(): boolean {
@@ -104,63 +108,87 @@ export class VaultViewManager {
     window: Electron.BrowserWindow,
     url: string,
     bounds: Electron.Rectangle,
-    parentView?: Electron.View,
-    onParentDisposed?: (listener: () => void) => (() => void) | null,
+    host?: VaultTabHost,
     theme?: unknown,
     preparedView?: CreatedVaultView | null,
     timings?: VaultOpenTimings,
   ): Promise<boolean> {
     if (!this.isCurrent(reservation)) { this.discardPreparedView(preparedView ?? null); return false; }
-    const target = this.validateUrl(url);
+    let target: URL;
+    let placement: Electron.Rectangle;
     const state = this.windows.get(reservation.windowId);
-    if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
+    try {
+      target = this.validateUrl(url);
+      placement = this.validateBounds(bounds);
+      if (!state || state.window !== window || window.isDestroyed()) throw new Error('Vault parent window is unavailable');
+    } catch (error) {
+      // The prepared renderer and its session are not adopted yet; nothing else would close them.
+      this.discardPreparedView(preparedView ?? null);
+      throw error;
+    }
     state.themeCss = this.themeCssOrUnthemed(theme, 'open');
     const startedAt = performance.now();
-    let created: CreatedVaultView | null = preparedView ?? null;
     if (!state.view || state.view.webContents.isDestroyed() || !state.isolatedSession) {
-      created ??= await this.createView(window);
+      const created = preparedView ?? await this.createView(window);
       if (!this.isCurrent(reservation)) { this.discardCreatedView(created); return false; }
       state.view = created.view;
       state.isolatedSession = created.session;
-      state.view.webContents.on('dom-ready', () => { void this.applyTheme(state, state.view!).catch(error => console.warn('Vault theme update failed', error)) });
+      state.targetUrl = null;
+      const { view } = created;
+      view.webContents.on('dom-ready', () => {
+        if (state.view !== view) return;
+        state.themeKey = null;
+        void this.paintTheme(state, view);
+      });
+    } else {
+      this.discardPreparedView(preparedView ?? null);
     }
+
     const view = state.view;
-    if (!view) return false;
     const oldTarget = state.targetUrl ? new URL(state.targetUrl) : null;
     const sessionExpired = state.sessionExpiresAt !== null && state.sessionExpiresAt <= Date.now();
     const targetChanged = sessionExpired || !oldTarget || !this.samePageTarget(oldTarget, target);
-    if (targetChanged && !oldTarget) state.themeKey = null;
-    const hostCleanup = parentView && onParentDisposed
-      ? onParentDisposed(() => this.destroyOwner(reservation.ownerId, window))
-      : null;
-    if (parentView && !hostCleanup) {
+    const dispose = host?.onDisposed(() => this.destroyOwner(reservation.ownerId, window));
+    if (host && !dispose) {
       this.destroyOwner(reservation.ownerId, window);
       return false;
     }
+
     state.attachedOwnerId = reservation.ownerId;
-    state.parentView = parentView ?? null;
-    state.hostCleanup = hostCleanup;
-    view.setBounds(this.validateBounds(bounds));
-    (parentView ?? window.contentView).addChildView(view);
-    state.attached = true;
-    // Defense in depth for ordinary OS capture paths. The stronger guarantee
-    // is that this view is absent from every browser/agent automation registry.
-    window.setContentProtection(true);
+    state.bounds = placement;
+    if (host) {
+      const unsubscribe = host.observeLayout((hostBounds, raised) => {
+        if (!this.isCurrent(reservation)) return;
+        state.hostBounds = hostBounds;
+        this.placeView(state, raised);
+      });
+      state.hostCleanup = () => { unsubscribe(); dispose?.() };
+    }
+
     const loadStartedAt = performance.now();
     try {
+      const previousPaint = state.themeUpdate;
       if (targetChanged) await view.webContents.loadURL(target.toString());
       if (!this.isCurrent(reservation)) return false;
       state.targetUrl = target.toString();
-      await this.applyTheme(state, view);
+      await (state.themeUpdate === previousPaint ? this.paintTheme(state, view) : state.themeUpdate);
     } catch (error) {
       if (!this.isCurrent(reservation)) return false;
       this.destroyOwner(reservation.ownerId, window);
       throw error;
     }
+
+    if (!this.isCurrent(reservation)) return false;
+    state.ready = true;
+    this.placeView(state);
     const loadURLMs = Math.round(performance.now() - loadStartedAt);
     timings?.onLoadURLComplete?.(loadURLMs);
     console.info(`[VaultView] open timing waitUntilStarted=${timings?.waitUntilStartedMs ?? 0}ms createHumanSession=${timings?.createHumanSessionMs ?? 0}ms createView=${timings?.createViewMs ?? Math.round(loadStartedAt - startedAt)}ms loadURL=${loadURLMs}ms total=${Math.round(performance.now() - (timings?.requestedAt ?? startedAt))}ms`);
-    return this.isCurrent(reservation);
+    return true;
+  }
+
+  private paintTheme(state: VaultWindowState, view: WebContentsView): Promise<void> {
+    return this.applyTheme(state, view).catch(error => console.warn('Vault theme update failed', error));
   }
 
   /** Prepare the expensive isolated renderer while the IPC layer creates its human session. */
@@ -221,7 +249,8 @@ export class VaultViewManager {
   setBounds(ownerId: string, bounds: Electron.Rectangle, window: Electron.BrowserWindow): void {
     const state = this.windows.get(window.id);
     if (state?.attachedOwnerId !== ownerId) return;
-    state.view?.setBounds(this.validateBounds(bounds));
+    state.bounds = this.validateBounds(bounds);
+    this.placeView(state);
   }
 
   hide(ownerId: string, window: Electron.BrowserWindow): boolean {
@@ -234,7 +263,7 @@ export class VaultViewManager {
       released = true;
     }
     if (state.attachedOwnerId === ownerId) {
-      this.detachView(state);
+      this.clearPlacement(state);
       this.clearKeepAlive(state);
       state.keepAliveTimer = setTimeout(() => this.releaseAttachedView(state), VAULT_VIEW_KEEP_ALIVE_MS);
       released = true;
@@ -251,13 +280,43 @@ export class VaultViewManager {
     return true;
   }
 
+  private placeView(state: VaultWindowState, raised = false): void {
+    const { window, view, bounds, hostBounds } = state;
+    if (!state.ready || !view || !bounds || window.isDestroyed()) return;
+
+    // A nested WebContentsView can load yet remain behind its host on macOS.
+    // Place the isolated view in the window and clip it to its owner's tab.
+    const x = hostBounds ? Math.max(0, bounds.x) : bounds.x;
+    const y = hostBounds ? Math.max(0, bounds.y) : bounds.y;
+    const width = hostBounds ? Math.min(hostBounds.width, bounds.x + bounds.width) - x : bounds.width;
+    const height = hostBounds ? Math.min(hostBounds.height, bounds.y + bounds.height) - y : bounds.height;
+    if (hostBounds === null || width < 1 || height < 1) {
+      this.detachView(state);
+      return;
+    }
+    view.setBounds({ x: x + (hostBounds?.x ?? 0), y: y + (hostBounds?.y ?? 0), width, height });
+    if (!state.attached || raised) {
+      if (!state.attached) window.setContentProtection(true);
+      window.contentView.addChildView(view);
+      state.attached = true;
+    }
+  }
+
   private detachView(state: VaultWindowState): void {
+    if (state.attached && state.view && !state.window.isDestroyed()) {
+      state.window.contentView.removeChildView(state.view);
+      state.window.setContentProtection(false);
+    }
+    state.attached = false;
+  }
+
+  private clearPlacement(state: VaultWindowState): void {
     state.hostCleanup?.();
     state.hostCleanup = null;
-    if (!state.window.isDestroyed() && state.view && state.attached) (state.parentView ?? state.window.contentView).removeChildView(state.view);
-    state.parentView = null;
-    state.attached = false;
-    if (!state.window.isDestroyed()) state.window.setContentProtection(false);
+    this.detachView(state);
+    state.ready = false;
+    state.bounds = null;
+    state.hostBounds = undefined;
     state.attachedOwnerId = null;
   }
 
@@ -270,7 +329,7 @@ export class VaultViewManager {
     this.clearKeepAlive(state);
     if (state.expiryTimer) clearTimeout(state.expiryTimer);
     state.expiryTimer = null;
-    this.detachView(state);
+    this.clearPlacement(state);
     if (state.view && !state.view.webContents.isDestroyed()) state.view.webContents.close();
     state.view = null;
     state.themeKey = null;
@@ -311,61 +370,8 @@ export class VaultViewManager {
 
   owns(webContents: Electron.WebContents): boolean { return [...this.windows.values()].some(state => state.view?.webContents === webContents) }
 
-  private async createView(window: Electron.BrowserWindow): Promise<CreatedVaultView> {
-    // Never reuse a partition: hide() clears the old one asynchronously, and a
-    // rapid reopen must not let that cleanup erase the new human session.
-    const isolatedSession = Electron.session.fromPartition(`sulla-vault-human-${ process.pid }-${ randomUUID() }`, { cache: false });
-    await configureVaultPinnedSession(isolatedSession);
-    // Deny everything except the clipboard write the vault's Copy buttons need.
-    isolatedSession.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permissionPolicy.allows(permission, requestingOrigin));
-    isolatedSession.setPermissionRequestHandler((_contents, permission, callback, details) => callback(permissionPolicy.allows(permission, details?.requestingUrl)));
-    isolatedSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, callback) => {
-      try {
-        callback({ cancel: new URL(details.url).origin !== VAULT_ORIGIN });
-      } catch {
-        callback({ cancel: true });
-      }
-    });
-    isolatedSession.webRequest.onHeadersReceived({ urls: [`${ VAULT_ORIGIN }/*`] }, (details, callback) => {
-      const headers = { ...details.responseHeaders };
-      headers['Content-Security-Policy'] = [
-        "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
-        "script-src 'self'; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
-      ];
-      callback({ responseHeaders: headers });
-    });
-    const view = new WebContentsView({
-      webPreferences: {
-        session: isolatedSession,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        webSecurity: true,
-        devTools: false,
-        spellcheck: false,
-      },
-    });
-    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    view.webContents.on('will-navigate', (event, url) => {
-      try {
-        const target = new URL(url);
-        if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_INTEGRATIONS_PATH) {
-          event.preventDefault();
-          if (!window.isDestroyed()) window.webContents.send('agent-command', { command: 'open-tab', mode: 'integrations' });
-        } else if (target.origin === VAULT_ORIGIN && target.pathname === DESKTOP_CONNECTED_PATH) {
-          event.preventDefault();
-          const integrationId = target.searchParams.get('integration') ?? '';
-          const accountId = target.searchParams.get('account') ?? '';
-          if (SAFE_ID.test(integrationId) && SAFE_ID.test(accountId)) {
-            if (!window.isDestroyed()) window.webContents.send('agent-command', { command: 'vault-integration-saved', integrationId, accountId });
-          }
-        } else if (target.origin !== VAULT_ORIGIN) {
-          event.preventDefault();
-        }
-      } catch { event.preventDefault() }
-    });
-    view.webContents.on('will-attach-webview', event => event.preventDefault());
-    return { view, session: isolatedSession };
+  private createView(window: Electron.BrowserWindow): Promise<CreatedVaultView> {
+    return VaultRendererFactory.create(window);
   }
 
   private discardCreatedView(created: CreatedVaultView): void {
