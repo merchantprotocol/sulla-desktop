@@ -16,7 +16,7 @@ vi.mock('node:child_process', async(importActual) => {
     },
   };
 });
-import { createAgentContainer, removeAgentContainer, retireLegacyConversationContainer } from '../../../services/AgentContainerLauncher';
+import { createAgentContainer, prepareDelegatedContainerWorkspace, removeAgentContainer, retireLegacyConversationContainer } from '../../../services/AgentContainerLauncher';
 
 const spec = { name: 'sulla-agent-chat-test-0', image: 'agent-image' } as any;
 const oldId = 'a'.repeat(64);
@@ -144,5 +144,80 @@ describe('retireLegacyConversationContainer', () => {
     } finally {
       await removeAgentContainer(runtime as any, 'live-id', name, 'test', 'test');
     }
+  });
+});
+
+describe('prepareDelegatedContainerWorkspace', () => {
+  const identity = {
+    jobId:     'job-1',
+    taskIndex: 3,
+    threadId:  'worker-thread',
+    subject:   'subject',
+    deviceId:  'device',
+    agentId:   'builder',
+    orgId:     'org',
+  };
+
+  it('retires legacy and job-scoped survivors before reopening the durable workspace', async() => {
+    const events: string[] = [];
+    const runtime = {
+      inspect: vi.fn((name: string) => {
+        events.push(`inspect:${ name }`);
+        const jobId = name === 'sulla-agent-chat-worker-thread-0' ? 'chat-worker-thread' : 'job-1';
+        const taskIndex = name.endsWith('-0') ? '0' : '3';
+        return {
+          Id:     `${ taskIndex }`.repeat(64),
+          Name:   `/${ name }`,
+          Config: {
+            Labels: {
+              'com.sulla.workload':   'agent',
+              'com.sulla.job-id':     jobId,
+              'com.sulla.task-index': taskIndex,
+              'com.sulla.thread-id':  'worker-thread',
+              'com.sulla.subject':    'subject',
+              'com.sulla.device-id':  'device',
+              'com.sulla.agent-id':   'builder',
+              'com.sulla.org-id':     'org',
+            },
+          },
+        };
+      }),
+      remove: vi.fn((id: string) => { events.push(`remove:${ id[0] }`) }),
+    } as any;
+
+    await expect(prepareDelegatedContainerWorkspace(runtime, identity, 'chat-worker-thread', () => {
+      events.push('prepare');
+      return Promise.resolve('/durable/workspace');
+    })).resolves.toBe('/durable/workspace');
+
+    expect(events).toEqual([
+      'inspect:sulla-agent-chat-worker-thread-0', 'remove:0',
+      'inspect:sulla-agent-job-1-3', 'remove:3',
+      'prepare',
+    ]);
+    expect(guestCommands).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves the workspace untouched when a stale container identity does not match', async() => {
+    const prepare = vi.fn();
+    const runtime = {
+      inspect: vi.fn((name: string) => ({
+        Id:     oldId,
+        Name:   `/${ name }`,
+        Config: {
+          Labels: {
+            'com.sulla.workload':   'agent',
+            'com.sulla.job-id':     'another-job',
+            'com.sulla.task-index': '3',
+          },
+        },
+      })),
+      remove: vi.fn(),
+    } as any;
+
+    await expect(prepareDelegatedContainerWorkspace(runtime, identity, undefined, prepare))
+      .rejects.toMatchObject({ name: 'AgentLaunchError', retryable: false });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(runtime.remove).not.toHaveBeenCalled();
   });
 });
