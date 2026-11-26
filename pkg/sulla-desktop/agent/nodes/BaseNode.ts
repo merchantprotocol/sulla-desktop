@@ -1708,13 +1708,32 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let suppressedDeltaCount = 0;
     let wsStreamingSendCount = 0;
     let lastWsStreamingSendAt = 0;
-    const replyStreamId = randomUUID();
+    let replyStreamId = randomUUID();
+    const replyStreamIds = new Set<string>();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
+      replyStreamIds.add(replyStreamId);
       this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
       streamingOpen = true;
+    };
+    const flushStreamingSegment = (startNextSegment: boolean): void => {
+      if (isVoiceMode) return;
+      if (contentBuffer.trim()) {
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
+        if (stripped.trim()) {
+          sendStreamingUpdate(stripped);
+          streamingWsSent = true;
+        }
+      }
+      if (streamingOpen) {
+        this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
+      }
+      streamingOpen = false;
+      contentBuffer = '';
+      displayBuffer = '';
+      if (startNextSegment) replyStreamId = randomUUID();
     };
 
     const onToken = (token: string): void => {
@@ -1780,17 +1799,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       RunActivity.touch(state.metadata);
 
       const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
-      if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(displayBuffer);
-        if (stripped.trim()) {
-          sendStreamingUpdate(stripped);
-          streamingWsSent = true;
-        }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
-        streamingOpen = false;
-        contentBuffer = '';
-        displayBuffer = '';
-      }
+      flushStreamingSegment(true);
 
       const parentWsCh = (state.metadata as any).parentWsChannel;
       const willForward = !!(parentWsCh && (state.metadata as any).isSubAgent);
@@ -1820,17 +1829,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       new TurnOutputCounter(state.metadata as any).record();
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
-      if (!isVoiceMode && contentBuffer.trim()) {
-        const stripped = stripProtocolTagsStreaming(displayBuffer);
-        if (stripped.trim()) {
-          sendStreamingUpdate(stripped);
-          streamingWsSent = true;
-        }
-        if (streamingOpen) this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId });
-        streamingOpen = false;
-        contentBuffer = '';
-        displayBuffer = '';
-      }
+      flushStreamingSegment(true);
       this.wsChatMessage(state, '', 'assistant', 'file_patch', { filePatch: info });
     };
 
@@ -1899,7 +1898,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
-      reply = await provider.chatStream(messages, { onToken, onActivity, onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness }, { ...options, state, executionContext });
+      reply = await provider.chatStream(messages, {
+        onToken, onActivity, onMessageBoundary: () => flushStreamingSegment(true),
+        onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness,
+      }, { ...options, state, executionContext });
       TurnHopTiming.mark(state, 'provider.chatStream.end');
     } catch (error) {
       // Once a provider-owned tool began, replaying this call could repeat a side effect,
@@ -1929,11 +1931,19 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
           displayBuffer = '';
         }
         const reportedModel = this.recordedReplyAttribution(state, reply?.metadata.model).model;
-        if (streamingOpen || (streamingWsSent && reportedModel && reportedModel !== replyAttribution.model)) {
+        if (streamingOpen) {
           this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
             replyStreamId, reportedModel,
-            agentReporting: streamingOpen && reply ? this.replyReporting(reply.content) : undefined,
+            agentReporting: reply ? this.replyReporting(reply.content) : undefined,
           });
+        }
+        // Provider-selected model attribution is known only after completion.
+        // Update every segment emitted by this call, not just the final segment.
+        if (reportedModel && reportedModel !== replyAttribution.model) {
+          for (const segmentId of replyStreamIds) {
+            if (streamingOpen && segmentId === replyStreamId) continue;
+            this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId: segmentId, reportedModel });
+          }
         }
         if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }

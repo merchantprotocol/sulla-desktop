@@ -48,6 +48,48 @@ const log = Logging.background;
 const failureDiagnostics = new CodexFailureDiagnostics(line => log.warn(line));
 const perf = Logging.perf;
 
+/** Bridges Codex's deltas and completed agent_message items into reply segments. */
+export class CodexAssistantMessageStream {
+  private collectedText = '';
+  private awaitingCompletedMessage = false;
+
+  constructor(private readonly callbacks: Partial<StreamCallbacks>) {}
+
+  get text(): string { return this.collectedText; }
+
+  appendDelta(delta: string): void {
+    if (!delta) return;
+    this.awaitingCompletedMessage = true;
+    this.collectedText += delta;
+    try { this.callbacks.onToken?.(delta) } catch { /* observer callback */ }
+  }
+
+  completeAgentMessage(text: string, markFirstText: () => void): void {
+    if (!text && !this.awaitingCompletedMessage) return;
+    if (text) markFirstText();
+    if (this.awaitingCompletedMessage) {
+      this.awaitingCompletedMessage = false;
+      this.finishBoundary();
+      return;
+    }
+
+    const separator = this.collectedText.trim() ? '\n\n' : '';
+    this.collectedText += separator + text;
+    try { this.callbacks.onToken?.(text) } catch { /* observer callback */ }
+    this.finishBoundary();
+  }
+
+  finishPendingMessage(): void {
+    if (!this.awaitingCompletedMessage) return;
+    this.awaitingCompletedMessage = false;
+    this.finishBoundary();
+  }
+
+  private finishBoundary(): void {
+    try { this.callbacks.onMessageBoundary?.() } catch { /* observer callback */ }
+  }
+}
+
 /** stderr prefix carrying the in-VM PID of the codex process (see buildSpawnArgs). */
 const CODEX_PID_MARKER = 'SULLA_CODEX_PID=';
 
@@ -373,7 +415,10 @@ export class CodexService extends BaseLanguageModel {
         canRetry: () => !toolStarted,
         onRetry:  (error, attempt) => failureDiagnostics.retry(error, attempt, options.conversationId ?? '__default__', runOptions.diagnosticRunId),
       });
-      if (streamedText) result.text = streamedText;
+      // runCodex retains provider message separators in its final transcript.
+      // Use the callback transcript only as a fallback when a CLI emitted live
+      // text but failed to return it in the terminal result.
+      if (streamedText && !result.text) result.text = streamedText;
       const response: NormalizedResponse = {
         content:  result.text,
         metadata: {
@@ -849,8 +894,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
 
       let stdoutBuffer = '';
       let stderrBuffer = '';
-      let textCollected = '';
-      let sawDelta = false;
+      const assistantMessages = new CodexAssistantMessageStream(callbacks);
       let capturedSessionId: string | undefined = existingSession;
       let codexPid: number | undefined;
       const outcome = new CodexTurnOutcome();
@@ -1058,20 +1102,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         else options.signal.addEventListener('abort', onAbort);
       }
 
-      /** Append a complete agent message, skipping it when deltas already
-       *  streamed its content into textCollected. */
-      const appendAgentMessage = (text: string) => {
-        if (!text) return;
+      /** Append a complete agent message, skipping its duplicate streamed deltas. */
+      const appendAgentMessage = (text: string) => assistantMessages.completeAgentMessage(text, () => {
         if (!firstTextAt) { firstTextAt = Date.now(); logRunPhase() }
-        if (sawDelta) {
-          // Deltas already delivered this content; reset for the next message.
-          sawDelta = false;
-          return;
-        }
-        const sep = textCollected.trim() ? '\n\n' : '';
-        textCollected += sep + text;
-        try { callbacks.onToken?.(sep + text) } catch { /* ignore */ }
-      };
+      });
 
       /** Activity line for a thread-event item (command_execution, etc.). */
       const activityForItem = (item: any) => {
@@ -1155,6 +1189,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             return;
           }
           if (parsed.type === 'turn.completed') {
+            assistantMessages.finishPendingMessage();
             sawTerminalResult = true;
             outcome.recordCompletion();
             // Recorded once on close — codex can emit several usage events
@@ -1192,9 +1227,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           if (typeof msg.delta === 'string') {
             if (!firstContentAt) firstContentAt = Date.now();
             if (!firstTextAt) { firstTextAt = Date.now(); logRunPhase() }
-            sawDelta = true;
-            textCollected += msg.delta;
-            try { callbacks.onToken?.(msg.delta) } catch { /* ignore */ }
+            assistantMessages.appendDelta(msg.delta);
           }
           break;
         case 'agent_message':
@@ -1212,9 +1245,10 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         case 'task_complete':
           sawTerminalResult = true;
           outcome.recordCompletion();
-          if (typeof msg.last_agent_message === 'string' && !textCollected.trim()) {
+          if (typeof msg.last_agent_message === 'string' && !assistantMessages.text.trim()) {
             appendAgentMessage(msg.last_agent_message);
           }
+          assistantMessages.finishPendingMessage();
           break;
         case 'error':
           if (outcome.recordErrorEvent(msg.message) === 'notice') {
@@ -1280,6 +1314,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           processLine(stdoutBuffer);
           stdoutBuffer = '';
         }
+        assistantMessages.finishPendingMessage();
         const awaitingForcedSettlement = !!terminationPromise && (options.signal?.aborted || stalled);
         stopStallWatchdog();
         options.signal?.removeEventListener('abort', onAbort);
@@ -1305,7 +1340,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           this.setSession(convId, capturedSessionId).catch(() => {});
           this.lastStableContextHash.set(convId, stableHash);
           if (lastUsage) recordUsage(lastUsage, this.getModel()).catch(() => { /* ignore */ });
-          const lead = textCollected.trim() ? `${ textCollected }\n\n` : '';
+          const lead = assistantMessages.text.trim() ? `${ assistantMessages.text }\n\n` : '';
           if (lead) {
             try { callbacks.onToken?.('\n\n') } catch { /* ignore */ }
           }
@@ -1416,7 +1451,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           return;
         }
 
-        if (!textCollected.trim()) {
+        if (!assistantMessages.text.trim()) {
           const stderrTail = stderrBuffer.trim().slice(-200);
           const typedFailure = legacyProviderFailure('codex', stderrTail || 'Codex returned no output', { exitCode: code });
           if (signal) Object.assign(typedFailure, { signal });
@@ -1436,8 +1471,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           recordUsage(lastUsage, this.getModel()).catch(() => { /* ignore */ });
         }
 
-        log.log(`[CodexService] runCodex ok: ${ textCollected.length } chars, session=${ capturedSessionId ?? '(none)' }`);
-        resolve({ text: textCollected, usage: lastUsage });
+        log.log(`[CodexService] runCodex ok: ${ assistantMessages.text.length } chars, session=${ capturedSessionId ?? '(none)' }`);
+        resolve({ text: assistantMessages.text, usage: lastUsage });
       });
     });
   }

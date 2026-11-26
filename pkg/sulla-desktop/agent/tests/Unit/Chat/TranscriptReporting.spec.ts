@@ -224,7 +224,7 @@ it.each(['Yes', 'No'])('attributes only the explicit %s answer reply live and af
   onTestFinished(() => clock.mockRestore());
   clock.mockReturnValue(Date.parse('2026-10-14T12:00:00Z'));
   const live = new ReportingFixture();
-  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply', replyStreamId: 'reply-ordinary' });
   const question = {
     id: asMessageId('question-line'), createdAt: Date.now(), kind: 'tool_question', status: 'pending',
     questionId: 'question-1', questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }, { label: 'No' }] }],
@@ -233,10 +233,10 @@ it.each(['Yes', 'No'])('attributes only the explicit %s answer reply live and af
   live.chat.updateMessage(question.id, {
     status: 'answered', answers: [{ question: 'Proceed?', selected: [answer] }],
   });
-  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply, updated' });
-  live.emit('assistant_message', { kind: 'streaming_complete' });
-  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up', decisionFollowUpId: 'question-1' });
-  live.emit('assistant_message', { kind: 'streaming_complete', decisionFollowUpId: 'question-1' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Earlier unrelated reply, updated', replyStreamId: 'reply-ordinary' });
+  live.emit('assistant_message', { kind: 'streaming_complete', replyStreamId: 'reply-ordinary' });
+  live.emit('assistant_message', { kind: 'streaming', content: 'Decision follow-up', decisionFollowUpId: 'question-1', replyStreamId: 'reply-decision' });
+  live.emit('assistant_message', { kind: 'streaming_complete', decisionFollowUpId: 'question-1', replyStreamId: 'reply-decision' });
   live.emit('assistant_message', { kind: 'text', content: 'Decision follow-up', decisionFollowUpId: 'question-1' });
   live.emit('assistant_message', { kind: 'text', content: 'Separate neighboring reply' });
   live.ctx.graphRunning.value = false;
