@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import seedBroker from '@pkg/assets/scripts/stable-seed-broker.py';
+import seedGitlinks from '@pkg/assets/scripts/stable-seed-gitlinks.py';
 import seedPublisher from '@pkg/assets/scripts/stable-seed-publisher.py';
 import seedReader from '@pkg/assets/scripts/stable-seed-reader.py';
 import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
@@ -239,7 +240,7 @@ export async function seedGitWorktreeIntoStableGuest(source: string, target: str
   const boundedTarget = assertGuestPath(target, [GUEST_CONVERSATIONS_ROOT]);
   if (existingJobKey && !/^[a-zA-Z0-9_.-]+$/.test(existingJobKey)) throw new Error('Invalid existing worktree job key');
   const workspace = await runGuest([
-    '/usr/bin/python3', '-IS', '-c', seedBroker, normalizedSource, boundedTarget, GUEST_CONVERSATIONS_ROOT,
+    '/usr/bin/python3', '-IS', '-c', seedGitlinks + '\n' + seedBroker, normalizedSource, boundedTarget, GUEST_CONVERSATIONS_ROOT,
     GUEST_AGENT_WORKSPACES_ROOT, '/mnt/data/.sulla-stable-seed', String(identity.uid), String(identity.gid),
     runtime.image, String(WORKSPACE_DISK_RESERVE_KIB), existingJobKey ?? '', seedReader + '\n' + seedPublisher,
   ], undefined, TRANSFER_TIMEOUT_MS);

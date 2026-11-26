@@ -165,6 +165,32 @@ describe('durable Git workspace initialization', () => {
     expect(() => git(workspace, 'cat-file', '-e', absent)).toThrow();
   });
 
+  it.each(['changed HEAD', 'edited file', 'staged edit', 'untracked file'])('seeds an initialized submodule when clean but refuses its %s', async(state) => {
+    const source = local('worktrees/repo');
+    const dep = path.join(source, 'deps/dep');
+    const commit = (dir: string, ...args: string[]) =>
+      git(dir, '-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-m', 'fixture', ...args);
+    git(source, '-c', 'protocol.file.allow=always', 'submodule', 'add', '--name', 'lib', source, 'deps/dep');
+    if (state === 'staged edit' || state === 'untracked file') git(source, 'config', '-f', '.gitmodules', 'submodule.lib.ignore', 'all');
+    git(source, 'add', '.gitmodules');
+    commit(source);
+    expect(readFileSync(path.join(dep, '.git'), 'utf8')).toContain('.git/modules/lib');
+    expect(git(source, 'status', '--porcelain', '--ignore-submodules=none')).toBe('');
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', target)).resolves.toBe(target);
+    const workspace = local('runtime/conversations/task/workspace');
+    expect(git(workspace, 'rev-parse', 'HEAD')).toBe(git(source, 'rev-parse', 'HEAD'));
+    expect(existsSync(path.join(workspace, 'deps/dep/.git'))).toBe(false);
+
+    if (state === 'changed HEAD') commit(dep, '--allow-empty');
+    if (state === 'edited file' || state === 'staged edit') writeFileSync(path.join(dep, 'marker'), 'changed');
+    if (state === 'staged edit') git(dep, 'add', 'marker');
+    if (state === 'untracked file') writeFileSync(path.join(dep, 'untracked'), 'changed');
+    expect(git(source, 'status', '--porcelain', '--ignore-submodules=none')).not.toBe('');
+    mkdirSync(local('runtime/conversations/next/workspace'), { recursive: true });
+    await expect(seedGitWorktreeIntoStableGuest('/mnt/worktrees/repo', `${ GUEST_CONVERSATIONS_ROOT }/next/workspace`)).rejects.toThrow();
+    expect(existsSync(local('runtime/conversations/next/workspace/.git'))).toBe(false);
+  });
+
   it('seeds the approved HEAD without interpreting checkout-local Git configuration', async() => {
     const repo = local('worktrees/repo');
     const head = git(repo, 'rev-parse', 'HEAD');

@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Injected at the broker's bind/umount syscall boundary in unprivileged CI.
 class FixturePins(MountPins):
+    def view(self, fd):
+        return fd  # Synthetic source trees contain no subordinate mounts.
+
     def bind(self, fd):
         return self.handles.proc(fd)
 

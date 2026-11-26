@@ -56,7 +56,7 @@ def origin_url(value):
 
 
 class SeedSourceRepository:
-    def __init__(self, git, paths, ref):
+    def __init__(self, git, paths, ref, read_origin=True):
         self.git, self.paths, self.ref = git, paths, ref
         self.git.run('init', '--quiet', '--template=')
         gitdir = Path(git.directory, '.git')
@@ -97,6 +97,9 @@ class SeedSourceRepository:
                                   '--get-regexp', r'^extensions\.', check=False)
         if extensions.returncode not in (0, 1) or set(extensions.stdout.splitlines()) - {b'extensions.worktreeconfig'}:
             raise ValueError('unsupported source repository format')
+        self.origin = ''
+        if not read_origin:  # Module origins are neither used nor published.
+            return
         result = self.git.run('config', '--no-includes', '--file', paths['config'], '--get-all',
                               'remote.origin.url', check=False)
         if result.returncode not in (0, 1):
@@ -106,7 +109,17 @@ class SeedSourceRepository:
     def metadata(self):
         return [self.ref, self.head, self.origin, self.remote_head]
 
-    def bundle(self):
+    def gitlinks(self):
+        # Names are NUL-delimited data, not pathspecs. Bind them to this commit, not a mutable index.
+        tree = self.git.run('ls-tree', '-rz', '--full-tree', self.head).stdout
+        links = []
+        for record in tree.split(b'\0'):
+            if record.startswith(b'160000 commit '):
+                entry, name = record.split(b'\t', 1)
+                links.append((os.fsdecode(name), oid(entry.split()[2].decode())))
+        return links
+
+    def check_clean(self):
         # Do not trust the worker's cached stat/assume-valid/skip-worktree flags.
         # A fresh index also avoids executing split-index and fsmonitor extensions.
         index = Path(self.git.env['GIT_DIR'], 'index')
@@ -115,9 +128,8 @@ class SeedSourceRepository:
             raise ValueError('container workspacePath must be clean before guest transport')
         index.unlink()
         self.git.run('read-tree', self.head)
-        if self.git.run('status', '--porcelain=v1', '--untracked-files=normal').stdout:
+        if self.git.run('status', '--porcelain=v1', '--ignore-submodules=all', '--untracked-files=normal').stdout:
             raise ValueError('container workspacePath must be clean before guest transport')
-        self.git.run('bundle', 'create', '-', self.ref, stdout=sys.stdout.buffer)
 
     def probe(self, operation, expected):
         if operation == 'legacy':
@@ -127,13 +139,21 @@ class SeedSourceRepository:
 
 def read_seed(operation, paths, ref, expected):
     with tempfile.TemporaryDirectory() as scratch:
-        if operation != 'bundle':
+        if operation not in ('bundle', 'clean'):
             paths['checkout'] = scratch
-        repo = SeedSourceRepository(SeedGit(scratch), paths, ref)
+        repo = SeedSourceRepository(SeedGit(scratch), paths, ref, read_origin=operation != 'clean')
         if operation == 'bundle':
             if repo.metadata() != json.loads(expected):
                 raise ValueError('approved Git ref moved during transport')
-            repo.bundle()
+            repo.check_clean()
+            repo.git.run('bundle', 'create', '-', repo.ref, stdout=sys.stdout.buffer)
+        elif operation == 'clean':
+            if repo.head != oid(expected):
+                raise ValueError('initialized submodule HEAD differs from recorded gitlink')
+            repo.check_clean()
+            print(json.dumps(repo.gitlinks()))
+        elif operation == 'inspect':
+            print(json.dumps([repo.metadata(), repo.gitlinks()]))
         else:
             repo.probe(operation, expected)
 

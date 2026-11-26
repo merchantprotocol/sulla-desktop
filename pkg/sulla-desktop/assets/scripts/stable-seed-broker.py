@@ -62,6 +62,9 @@ class MountPins:
     def __init__(self, private, handles):
         self.private, self.handles = private, handles
 
+    def view(self, fd):
+        return self.handles.pin(self.bind(fd))  # pinned, nonrecursive mount under the private run directory
+
     def bind(self, fd):
         is_dir = stat.S_ISDIR(os.fstat(fd).st_mode)
         if is_dir:
@@ -201,12 +204,14 @@ class ContainerRunner:
 
 
 class Checkout:
-    def __init__(self, path, directory, handles, pins, private, allow_link):
-        self.h, self.pins, self.private = handles, pins, private
-        h = handles
+    def __init__(self, path, directory, h, pins, private, allow_link, module=None):
+        self.pins, self.private = pins, private
         dot = h.pin('.git', directory, lambda m: stat.S_ISDIR(m) or stat.S_ISREG(m))
         self.linked = stat.S_ISREG(os.fstat(dot).st_mode)
-        if self.linked:
+        if self.linked and module:
+            admin_path, admin = module.pin_admin(path, h.text(dot))
+            common = admin
+        elif self.linked:
             require(allow_link, 'linked recovery target refused')
             pointer = h.text(dot)
             require(pointer.startswith('gitdir: '), 'invalid worktree pointer')
@@ -223,7 +228,7 @@ class Checkout:
         else:
             common = admin = dot
             self.name = path.name
-        self.directory, self.common = directory, common
+        self.directory, self.common, self.admin = directory, common, (admin_path if self.linked else path / '.git', admin)
         head = h.pin('HEAD', admin, stat.S_ISREG)
         tip = h.text(head)
         self.ref = tip[5:] if tip.startswith('ref: ') else 'HEAD'
@@ -248,7 +253,7 @@ class Checkout:
 
     def read(self, runner, op, expected='', **kwargs):
         mounts = list(self.mounts)
-        if op in ('bundle', 'size'):
+        if op in ('bundle', 'size', 'clean'):
             mask = self.mask
             if self.linked:
                 mask = Path(self.private, 'mask-file')
@@ -260,8 +265,7 @@ class Checkout:
 
 class StableSeed:
     def __init__(self, runner, handles, private, reserve, mounts):
-        self.runner, self.h, self.private, self.reserve = runner, handles, private, reserve
-        self.pins = mounts
+        self.runner, self.h, self.private, self.reserve, self.pins = runner, handles, private, reserve, mounts
 
     def checkout(self, path, directory, allow_link=False):
         return Checkout(path, directory, self.h, self.pins, self.private, allow_link)
@@ -335,10 +339,11 @@ class StableSeed:
             require(os.path.samestat(os.fstat(directory), os.fstat(h.pin(target))), 'reopen target changed')
             return target
         repo = self.checkout(source, h.pin(source), allow_link=True)
-        metadata = json.loads(repo.read(self.runner, 'inspect'))
+        metadata, links = json.loads(repo.read(self.runner, 'inspect'))
         previous = self.retained(repo, metadata, key, legacy)
         if previous:
             return previous
+        GitlinkProbe(self).check(repo, source, links)
         usage = int(repo.read(self.runner, 'size'))
         budget = min(8 * 1024**3, (self.free() - self.reserve - usage) * 512)
         require(budget > 0, 'no space left on device for workspace and VM reserve')
