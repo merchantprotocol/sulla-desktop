@@ -854,14 +854,30 @@ export class BackendGraphWebSocketService {
     await recoverPendingAgentCompletions();
     await this.agentInbox.replayPending();
     await this.retryDecisionAnswers();
-    const eligibleTask = async(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): Promise<boolean> => {
+    type Job = import('../tools/agents/jobRegistry').AgentJob;
+    const keyOf = (task: Job['tasks'][number], index: number) => JSON.stringify([index, task.threadId, task.generation ?? 1]);
+    const runningKeys = (job: Job) => new Set(job.tasks.flatMap((task, index) =>
+      task.status === 'running' && task.threadId && !task.returnedAt ? [keyOf(task, index)] : []));
+    // Undefined until the durable job claim succeeds. A claim consumes one restart
+    // attempt for the whole job, not one per sibling or decision recheck.
+    const pending = new Map<string, Set<string> | undefined>((await agentJobProvider.jobs.jobsForList(1, false))
+      .filter(job => job.createdAt <= this.recoveryCutoff && job.status === 'running' && job.visibility !== 'tab')
+      .map(job => [job.jobId, undefined]));
+    const eligibleTask = async(job: Job, taskIndex: number): Promise<boolean> => {
       const task = job.tasks[taskIndex];
       if (!task || task.status !== 'running' || !task.threadId || task.returnedAt || this.recoveryAbort.signal.aborted) return false;
-      if (this.decisionThreadOwned(job.parentChannel ?? 'sulla-desktop', task.threadId) || this.deliveringDecisionThreads.has(task.threadId) ||
-        probeAgentContainerRuntime(undefined, task.threadId, 'desktop') !== false) return false;
+      const remaining = pending.get(job.jobId);
+      const key = keyOf(task, taskIndex);
+      if (remaining && !remaining.has(key)) return false;
+      const runtime = probeAgentContainerRuntime(undefined, task.threadId, 'desktop');
+      if (runtime === true || this.decisionThreadOwned(job.parentChannel ?? 'sulla-desktop', task.threadId)) {
+        remaining?.delete(key); // A live owner has taken responsibility for this task.
+        return false;
+      }
+      if (runtime === undefined || this.deliveringDecisionThreads.has(task.threadId)) return false;
       return !await this.hasPendingDecision(task.threadId);
     };
-    const eligible = async(job: import('../tools/agents/jobRegistry').AgentJob): Promise<boolean> => {
+    const eligible = async(job: Job): Promise<boolean> => {
       const exhausted = (job.restartResumeCount ?? 0) >= 2;
       let canResume = false;
       for (let taskIndex = 0; taskIndex < job.tasks.length; taskIndex++) {
@@ -876,29 +892,35 @@ export class BackendGraphWebSocketService {
       }
       return canResume;
     };
-    // Only startup's interrupted working set is eligible. Normal work created
-    // later must never be restarted by this reconciliation loop.
-    const pending = new Set((await agentJobProvider.jobs.jobsForList(1, false))
-      .filter(job => job.createdAt <= this.recoveryCutoff && job.status === 'running' && job.visibility !== 'tab')
-      .map(job => job.jobId));
     const recovery = new InterruptedAgentRecoveryService({
       claimInterruptedJobs: max => agentJobProvider.states.claimInterruptedJobs(max, eligible),
       recoveryCandidates:   async() => {
         const candidates = (await agentJobProvider.jobs.jobsForList(1, false))
           .filter(job => pending.has(job.jobId) && job.status === 'running');
         const active = new Set(candidates.map(job => job.jobId));
-        for (const id of pending) if (!active.has(id)) pending.delete(id);
+        for (const id of pending.keys()) if (!active.has(id)) pending.delete(id);
         return candidates;
       },
       claimInterruptedJob: async(id, max) => {
+        const remaining = pending.get(id);
+        if (remaining) {
+          // List rows omit thread/generation. Recheck the full durable row but
+          // never charge the job again or adopt a newer task generation.
+          const job = await agentJobProvider.jobs.job(id);
+          const active = job?.status === 'running' && job.visibility !== 'tab' ? runningKeys(job) : new Set<string>();
+          for (const key of remaining) if (!active.has(key)) remaining.delete(key);
+          return { resumable: job && remaining.size ? [job] : [], exhausted: [] };
+        }
         const claimed = await agentJobProvider.states.claimInterruptedJob(id, max, eligible);
-        if (claimed.resumable.length || claimed.exhausted.length) pending.delete(id);
+        for (const job of claimed.resumable) pending.set(id, runningKeys(job));
+        if (claimed.exhausted.length) pending.delete(id);
         return claimed;
       },
     }, (job, taskIndex) => {
       // Dispatch owns/records the running turn. Do not wait for a possibly
       // hours-long worker before admitting its siblings or the next job.
       this.resumeInterruptedTask(job, taskIndex);
+      pending.get(job.jobId)?.delete(keyOf(job.tasks[taskIndex], taskIndex));
       return Promise.resolve();
     }, (job, reason) => {
       if (job.parentChannel && job.parentThreadId) enqueueAgentCompletion(job.parentChannel, job.parentThreadId, { jobId: job.jobId, taskIndex: -1, results: [], failureReason: reason });
@@ -911,7 +933,13 @@ export class BackendGraphWebSocketService {
     }
     while (pending.size && !this.recoveryAbort.signal.aborted) {
       await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
-      await recovery.recover();
+      try {
+        await recovery.recover();
+      } catch (error) {
+        if (this.recoveryAbort.signal.aborted) return;
+        console.warn('[BackendGraphWS] Retaining pending recovery tasks while services reconnect:', error);
+      }
+      for (const [id, remaining] of pending) if (remaining?.size === 0) pending.delete(id);
       if (pending.size) await this.waitForRecoveryRecheck();
     }
   }
