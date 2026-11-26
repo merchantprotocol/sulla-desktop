@@ -147,6 +147,7 @@ function reconcileStreamSegments(segments: string[], final: string, oneStream: b
     // for this extension check; the replacement is always the verbatim final.
     const prefix = last.trim();
     const incoming = final.trim();
+    if (incoming === prefix) return final; // same reply, only edge blank lines differ
     if (incoming.length > prefix.length && prefix.length >= incoming.length * 0.6 && incoming.startsWith(prefix)) return final;
   }
   let rest = final;
