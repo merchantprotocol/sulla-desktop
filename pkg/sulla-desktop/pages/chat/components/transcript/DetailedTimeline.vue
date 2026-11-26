@@ -119,10 +119,10 @@ function registerLine(id: string, element: unknown): void { props.registerElemen
 .dtr-message[data-kind="user"] :deep(.chat-turn.you) { box-sizing: border-box; width: fit-content; max-width: min(620px, 86%); padding: 9px 14px; border-radius: 16px 16px 4px 16px; background: var(--accent); box-shadow: 0 1px 2px rgb(20 40 60 / 12%); text-align: left; }
 .dtr-message[data-kind="user"] :deep(.chat-turn.you .chat-body) { color: var(--text-on-accent, #fff); font-family: var(--font-body); font-size: 14px; font-style: normal; line-height: 1.5; }
 .dtr-message[data-kind="user"] :deep(.chat-turn.you .noir-time) { display: none; }
-.dtr-message[data-kind="sulla"] { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 10px; margin-top: 10px; }
-.dtr-message[data-kind="sulla"]::before { content: ''; grid-column: 1; grid-row: 1; z-index: 1; width: 24px; height: 24px; margin: 0 auto; border-radius: 50%; background: var(--bg-page); }
-.dtr-message[data-kind="sulla"]::after { content: ''; grid-column: 1; grid-row: 1; z-index: 2; width: 9px; height: 9px; margin: 7.5px auto; border-radius: 50%; background: var(--accent); }
-.dtr-message[data-kind="sulla"] .dtr-message-content { grid-column: 2; margin-left: 0; max-width: 720px; color: var(--text-primary); font-size: 15px; line-height: 1.6; }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"]) { display: grid; grid-template-columns: 24px minmax(0, 1fr); column-gap: 10px; margin-top: 10px; }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"])::before { content: ''; grid-column: 1; grid-row: 1; z-index: 1; width: 24px; height: 24px; margin: 0 auto; border-radius: 50%; background: var(--bg-page); }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"])::after { content: ''; grid-column: 1; grid-row: 1; z-index: 2; width: 9px; height: 9px; margin: 7.5px auto; border-radius: 50%; background: var(--accent); }
+.dtr-message:is([data-kind="sulla"], [data-kind="streaming"], [data-kind="html"], [data-kind="proactive"]) .dtr-message-content { grid-column: 2; margin-left: 0; max-width: 720px; padding-top: 1px; color: var(--text-primary); font-size: 15px; line-height: 1.6; }
 .dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla) { margin: 0; max-width: none; gap: 0; }
 .dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla .chat-body) { color: var(--text-primary); font-family: var(--font-body); font-size: 15px; line-height: 1.6; letter-spacing: 0; }
 .dtr-message[data-kind="sulla"] :deep(.chat-turn.sulla .chat-body p) { margin: 0 0 8px; }
