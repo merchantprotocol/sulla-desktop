@@ -27,7 +27,7 @@ import { FilesPublishDecisionApplier } from './FilesPublishDecisionApplier';
 import { ApprovalService, type UserQuestionAnswerItem } from '@pkg/agent/services/ApprovalService';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import Logging from '@pkg/utils/logging';
-import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
+import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
 
 const console = Logging.background;
 const ipcMainProxy = getIpcMainProxy(console);
@@ -40,7 +40,7 @@ export function initSullaApprovalEvents(): void {
       const url = contents.getURL();
       const appWindow = windows.has(contents) && /^(file:|app:)/.test(url);
       // Chat tabs can be native views, which are absent from BrowserWindow.getAllWindows().
-      const chatView = url.startsWith('app://./agent.html?') && isAgentWindowSender(contents);
+      const chatView = !appWindow && url.startsWith('app://./agent.html?') && InternalTabViewManager.getInstance().resolveOwner(contents);
       if (!appWindow && !chatView) continue;
       try {
         contents.send('decisions:changed', record);
