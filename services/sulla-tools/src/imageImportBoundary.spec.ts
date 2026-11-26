@@ -23,6 +23,16 @@ describe('sulla-tools image import boundary', () => {
     });
     expect(boundary.violations()).toEqual([]);
   });
+
+  it('ships the shared model catalog dependency used by the image import check', () => {
+    const boundary = new ToolsImageImportBoundary({
+      root:        repoRoot,
+      dockerfile:  readFileSync(path.join(repoRoot, 'services/sulla-tools/Dockerfile'), 'utf8'),
+      entrypoints: ['pkg/sulla-desktop/agent/languagemodels/sharedModelCatalog.ts'],
+    });
+
+    expect(boundary.violations()).toEqual([]);
+  });
 });
 
 describe('ToolsImageImportBoundary against a fixture image', () => {
