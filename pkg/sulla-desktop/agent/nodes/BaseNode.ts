@@ -1709,14 +1709,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let wsStreamingSendCount = 0;
     let lastWsStreamingSendAt = 0;
     const replyStreamId = randomUUID();
-    let lastSegmentId: string | undefined;
-    const replyStreamIds = new Set<string>();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
     const sendStreamingUpdate = (content: string): void => {
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
-      replyStreamIds.add(replyStreamId);
-      lastSegmentId = replyStreamId;
       this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
       streamingOpen = true;
     };
@@ -1933,34 +1929,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
         }
         const reportedModel = this.recordedReplyAttribution(state, reply?.metadata.model).model;
         const agentReporting = reply ? this.replyReporting(reply.content) : undefined;
-        const reportedEverySegment = !!(reply && streamingWsSent && lastSegmentId);
-        if (reportedEverySegment) {
-          // Segments are a rendering detail of one provider reply. Classify all
-          // of them with its final intent, matching the pre-segmentation view.
-          for (const segmentId of replyStreamIds) {
-            if (segmentId === lastSegmentId) continue;
-            this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
-              replyStreamId: segmentId, reportedModel, agentReporting,
-            });
-          }
-          this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
-            replyStreamId: lastSegmentId, reportedModel, agentReporting,
-          });
-          streamingOpen = false;
-        } else if (streamingOpen) {
+        // Always send the final metadata for a streamed provider call, even
+        // when its last segment was already closed at a message/tool boundary.
+        // MessageDispatcher applies intent only to the last same-ID bubble and
+        // propagates model attribution/completion across every segment.
+        if ((reply && streamingWsSent) || streamingOpen) {
           this.wsChatMessage(state, '', 'assistant', 'streaming_complete', {
             replyStreamId, reportedModel, agentReporting,
           });
           streamingOpen = false;
-        }
-        // Provider-selected model attribution is known only after completion.
-        // If there was no completed streamed reply above, still update every
-        // earlier segment emitted by this call with its selected model.
-        if (!reportedEverySegment && reportedModel && reportedModel !== replyAttribution.model) {
-          for (const segmentId of replyStreamIds) {
-            if (streamingOpen && segmentId === replyStreamId) continue;
-            this.wsChatMessage(state, '', 'assistant', 'streaming_complete', { replyStreamId: segmentId, reportedModel });
-          }
         }
         if (thinkingOpen) this.wsChatMessage(state, '', 'assistant', 'thinking_complete');
       }

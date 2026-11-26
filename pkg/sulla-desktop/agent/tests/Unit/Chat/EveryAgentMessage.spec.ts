@@ -265,6 +265,32 @@ it('classifies only the last CONTINUE segment as Standard', async() => {
   expect(detailed).toEqual([first, last]);
 });
 
+// risk: reporting accuracy — narration before tools stays visible in Brief while final CONTINUE text does not.
+it('keeps pre-tool CONTINUE narration in Brief and hides only the last segment', async() => {
+  const fixture = new TranscriptFixture();
+  const narration = 'I checked the repository structure.';
+  const finalSegment = 'Next I will continue with implementation.';
+  await fixture.replayAgentProvider({
+    getModel: () => 'fixture-model',
+    async chatStream(_messages, callbacks) {
+      callbacks.onToken(narration);
+      callbacks.onActivity('Running a tool', 'tool');
+      callbacks.onToken(finalSegment);
+      return { content: `${ narration } ${ finalSegment }`, metadata: { model: 'fixture-model' } };
+    },
+  }, 'continue');
+
+  const segments = fixture.context.messages.filter(message => message.kind === 'streaming');
+  expect(segments.map(message => message.agentReporting)).toEqual([undefined, 'standard']);
+  expect(new Set(segments.map(message => message.replyStreamId)).size).toBe(1);
+  const repliesAt = (level: 'fatal' | 'info' | 'debug') => fixture.reporting.entries(fixture.chat.messages.value, level)
+    .filter(entry => entry.kind === 'card' && entry.message.kind === 'sulla')
+    .map(entry => entry.message.text);
+  expect(repliesAt('fatal')).toEqual([narration]);
+  expect(repliesAt('info')).toEqual([narration, finalSegment]);
+  expect(repliesAt('debug')).toEqual([narration, finalSegment]);
+});
+
 // risk: data accuracy — provider tool/activity boundaries must not merge the text replies around them.
 it('keeps every assistant segment around interleaved tool activity as a separate Standard and Detailed reply', async() => {
   const fixture = new TranscriptFixture();
