@@ -69,8 +69,16 @@ const publishedAgentId = (slug:string, fileId:string):string => `agent-${ crypto
 /** A lost pending registration whose exact mapping removal failed; its durable marker keeps it retryable. */
 class MappingCleanupPending extends Error {}
 
+class RenamedRootMismatch extends Error {
+  constructor(readonly selected: FilesRow) {
+    super('The selected manifest differs from the root checked for ownership; both definitions were preserved.');
+  }
+}
+
 /** Files is authoritative; this class only maintains the disposable Postgres runtime index. */
 export class SullaUseCaseFiles {
+  // A scanner can be recreated in the same app run; audit each deferred selection only once.
+  private static readonly reportedRootMismatches = new Set<string>();
   private timer?:NodeJS.Timeout;
   private running = false;
   private lastSignature = '';
@@ -248,7 +256,7 @@ export class SullaUseCaseFiles {
    * `pending` is the pre-migration phase: register one brand-new agent from its exact, human-approved
    * root anchor. It never updates an existing row; a concurrent registration wins and is preserved.
    */
-  private async activate(type:UseCaseType, packageSlug:string, packageRows:FilesRow[], pending?:{ anchor:FilesRow }, renamed?:PublishedAgentRow & { slug:string }):Promise<void> {
+  private async activate(type:UseCaseType, packageSlug:string, packageRows:FilesRow[], pending?:{ anchor:FilesRow }, renamed?:PublishedAgentRow & { slug:string; checkedRootId: string }):Promise<void> {
     if (kindFor(type) === 'agent' && isRetiredCodingManagerSlug(packageSlug)) throw new Error(`agents/${ packageSlug } is retired and cannot be activated`);
     const published = packageRows.filter(row => activePublishedVersion(row));
     if (!published.length) return;
@@ -262,6 +270,7 @@ export class SullaUseCaseFiles {
     const anchorName = kind === 'agent' ? readAgentPackage(Object.fromEntries(Object.entries(files).map(([name, file]) => [name, text(file)])), packageSlug).anchor : kind === 'skill' ? 'SKILL.md' : kind === 'routine' ? (files['routine.yaml'] ? 'routine.yaml' : 'workflow.yaml') : kind === 'function' ? 'function.yaml' : (files['installation.yaml'] ? 'installation.yaml' : 'manifest.yaml');
     const anchor = pending ? (pending.anchor.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }` ? pending.anchor : undefined) : published.find(row => row.path === `${ ROOT }/${ type }/${ packageSlug }/${ anchorName }`);
     if (!anchor) throw new Error(`${ type }/${ packageSlug } is missing ${ anchorName }`);
+    if (renamed && anchor.id !== renamed.checkedRootId) throw new RenamedRootMismatch(anchor);
     const slug = renamed?.slug ?? packageSlug;
     const versionId = String(activePublishedVersion(anchor));
     const manifest = artifact.manifest as any;
@@ -510,10 +519,22 @@ export class SullaUseCaseFiles {
           if (existing?.use_case_file_id && (!existing.enabled || existing.deleted_at)) continue;
         }
         try {
-          await this.activate(type, slug, packageRows, undefined, renamed ?? undefined);
+          await this.activate(type, slug, packageRows, undefined, renamed ? { ...renamed, checkedRootId: roots[0].id } : undefined);
           activated++;
         } catch (error) {
           failedPackages.push(key);
+          if (error instanceof RenamedRootMismatch) {
+            active.add(key); // The canonical key is already active; keep the folder row too.
+            const version = String(activePublishedVersion(error.selected));
+            const auditKey = `${ key }\0${ error.selected.id }\0${ version }`;
+            if (!SullaUseCaseFiles.reportedRootMismatches.has(auditKey)) {
+              SullaUseCaseFiles.reportedRootMismatches.add(auditKey);
+              const message = `${ key }: ${ error.message }`;
+              console.warn(message);
+              await this.auditError(error.selected, version, message);
+            }
+            continue;
+          }
           const anchor = type === 'agents' ? roots[0] : packageRows.find(row => activePublishedVersion(row));
           await this.auditError(anchor, anchor ? String(activePublishedVersion(anchor)) : undefined, `${ key }: ${ error instanceof Error ? error.message : String(error) }`);
         }
