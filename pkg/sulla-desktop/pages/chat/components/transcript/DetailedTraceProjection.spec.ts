@@ -91,6 +91,19 @@ describe('DetailedTraceProjection', () => {
     expect(after).toEqual(before);
   });
 
+  it('keeps a denied approval in the warning state instead of reporting a tool failure', () => {
+    // risk: a user denial is mislabeled as an execution failure in Detailed.
+    const denied = {
+      id: asMessageId('denied-approval'), kind: 'tool_approval', createdAt: 3,
+      reason: 'Requires review', command: 'run check', decision: 'denied',
+    } satisfies Message;
+
+    const rows = new DetailedTraceProjection().projectRows([denied], []);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ kind: 'approval', status: 'denied' });
+  });
+
   it('projects ordered rows anchored to an existing standard entry without mutating frozen messages', () => {
     // risk: shared transcript mutation and incorrect insertion order.
     const messages = Object.freeze([

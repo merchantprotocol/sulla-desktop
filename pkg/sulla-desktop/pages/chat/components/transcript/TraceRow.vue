@@ -224,7 +224,7 @@ code.dtr-tg { padding: 1px 5px; border-radius: 5px; background: var(--bg-surface
 .dtr-dur { width: 54px; text-align: right; color: var(--text-muted); }
 .dtr-st { width: 60px; color: var(--text-muted); }
 .dtr-st[data-s="failed"] { color: var(--status-error); font-weight: 500; }
-.dtr-st[data-s="waiting"], .dtr-st[data-s="blocked"], .dtr-st[data-s="quiet"] { color: var(--status-warning); font-weight: 500; }
+.dtr-st[data-s="waiting"], .dtr-st[data-s="denied"], .dtr-st[data-s="blocked"], .dtr-st[data-s="quiet"] { color: var(--status-warning); font-weight: 500; }
 .dtr-st[data-s="returned"], .dtr-st[data-s="approved"] { color: var(--status-success); font-weight: 500; }
 .dtr-st[data-s="working"] { color: var(--primary-color-text-override, var(--accent)); font-weight: 500; }
 .dtr-st[data-s="working"]::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: currentColor; vertical-align: middle; animation: dtr-breath 1.9s cubic-bezier(.45, 0, .55, 1) infinite; }

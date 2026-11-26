@@ -32,7 +32,7 @@ export interface SubAgentTraceDetails {
   followUpOf?: { jobId: string; taskIndex: number };
 }
 
-export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'running';
+export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'denied' | 'running';
 
 export interface TraceRow {
   id: string;
