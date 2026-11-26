@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { createHash } from 'node:crypto';
+import { ClerkApprovalFingerprint } from './ClerkApprovalFingerprint';
 
 import { CLERK_ACCOUNT, CLERK_APPROVAL_MS, CLERK_DEADLINE_MS, CLERK_OPERATION, clerkEndpoints, type ClerkEnvironment } from './ClerkEndpoints';
 import { ClerkApprovalCoordinator, type ClerkApprovalBinding } from './ClerkApprovalCoordinator';
@@ -71,30 +71,6 @@ export function clerkSettings(data: BrokerIntegrationMetadataResponse): ClerkSet
 
 function object(input: unknown): Record<string, unknown> | undefined {
   return input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : undefined;
-}
-
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${ value.map(canonical).join(',') }]`;
-  return `{${ Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, child]) => `${ JSON.stringify(key) }:${ canonical(child) }`).join(',') }}`;
-}
-
-function requestHash(input: { method: string; url: URL; body: unknown; environment: ClerkEnvironment; confirm: boolean }): string {
-  return createHash('sha256').update(canonical({
-    method: input.method, url: input.url.toString(), body: input.body ?? null,
-    environment: input.environment, confirm: input.confirm,
-  })).digest('base64url');
-}
-
-function identityHash(context: ToolExecutionContext): string {
-  return createHash('sha256').update(canonical({
-    sub: context.sub, agentId: context.agent_id, podId: context.pod_id,
-    orgId: context.org_id ?? null, threadId: context.thread_id ?? null, jobId: context.job_id ?? null,
-    workflowExecutionId: context.workflow_execution_id ?? null, deviceId: context.device_id ?? null,
-    groupIds: [...(context.group_ids ?? [])].sort(), scopes: [...(context.scopes ?? [])].sort(),
-    credentialScope: context.credential_scope ?? null,
-  })).digest('base64url');
 }
 
 function safeRetryAfter(value: unknown): string | undefined {
@@ -313,8 +289,8 @@ export class ClerkClient {
     if (Date.now() >= deadlineAt) throw new ClerkError(504, 'Clerk request deadline expired. Nothing further was sent.');
     if (caller.signal?.aborted) throw new ClerkError(400, 'Clerk request cancelled. Nothing was sent.');
     const binding: ClerkApprovalBinding = {
-      identityHash: identityHash(context),
-      requestHash: requestHash({ method, url, body, environment, confirm: input.confirm === true }),
+      identityHash: ClerkApprovalFingerprint.identity(context),
+      requestHash: ClerkApprovalFingerprint.request({ method, url, body, environment, confirm: input.confirm === true }),
       conversationId: caller.conversationId ?? context.thread_id ?? '',
       channel: caller.channel || 'sulla-desktop',
       title: '',
@@ -378,7 +354,7 @@ export class ClerkClient {
   }
 
   private assertSameExecution(left: ToolExecutionContext, right: ToolExecutionContext): void {
-    if (identityHash(left) !== identityHash(right)) {
+    if (ClerkApprovalFingerprint.identity(left) !== ClerkApprovalFingerprint.identity(right)) {
       throw new ClerkError(403, 'Clerk authorization changed while approval was pending.');
     }
   }
@@ -399,7 +375,7 @@ export function createDesktopClerkClient(): ClerkClient {
       let execution = caller.execution;
       if (caller.revalidate) {
         const refreshed = await caller.revalidate();
-        if (execution && identityHash(execution) !== identityHash(refreshed)) {
+        if (execution && ClerkApprovalFingerprint.identity(execution) !== ClerkApprovalFingerprint.identity(refreshed)) {
           throw new ClerkError(403, 'This Clerk tool session no longer matches its active graph.');
         }
         execution = refreshed;
