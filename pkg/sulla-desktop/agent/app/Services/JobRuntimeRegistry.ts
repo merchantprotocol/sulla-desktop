@@ -15,6 +15,16 @@ export class JobRuntimeRegistry extends Service {
   reset(): void { this.jobs.clear(); this.abortScopes.clear(); this.watchers.clear(); }
   isStarted(): boolean { return this.started; }
 
+  /** Recovery reuses the same stop path as a newly spawned job. */
+  ensureAbortScope(jobId: string): JobAbortScope {
+    let scope = this.abortScopes.get(jobId);
+    if (!scope) {
+      scope = new JobAbortScope();
+      this.abortScopes.set(jobId, scope);
+    }
+    return scope;
+  }
+
   /** Bounds only settled cache entries; durable rows remain available for rehydration. */
   evictSettledTerminalJobs(limit = JobRuntimeRegistry.DEFAULT_TERMINAL_CACHE_LIMIT): string[] {
     const candidates = Array.from(this.jobs.values())

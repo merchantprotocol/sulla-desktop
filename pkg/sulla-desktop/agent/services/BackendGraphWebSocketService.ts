@@ -53,6 +53,7 @@ import { DecisionAnswerDelivery, type DecisionAnswerDeliveryInput } from './Deci
 import { workerModelRouting, installWorkerRoute, detachTerminalWorkerChat, isWorkerMappingHumanTurn } from './WorkerModelRouting';
 import { ConversationThreadStore } from '../database/models/ConversationThreadStore';
 import { AgentTurnStopper } from './AgentTurnStopper';
+import { AbortSignalBridge, RecoveredAgentTaskDispatcher } from './RecoveredAgentTaskDispatcher';
 import { AgentOrchestratorMessageFormatter } from './AgentOrchestratorMessageFormatter';
 import { AgentRunLocationResolver } from './AgentRunLocationResolver';
 import { DesktopOrgCloudSession } from './CloudOrgMessagingTransport';
@@ -878,14 +879,13 @@ export class BackendGraphWebSocketService {
   }
 
   private resumeInterruptedTask(job: import('../tools/agents/jobRegistry').AgentJob, taskIndex: number): void {
-    const run = (async() => {
-      await waitForAutomaticAgentExecution(this.recoveryAbort.signal);
-      const task = job.tasks[taskIndex];
-      const channel = job.parentChannel || 'sulla-desktop';
-      await this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
+    const dispatcher = new RecoveredAgentTaskDispatcher(agentJobProvider.service, (current, index, controller) => {
+      const task = current.tasks[index], channel = current.parentChannel || 'sulla-desktop';
+      return this.dispatchToAgent(channel, channel === HEARTBEAT_CHANNEL_ID ? 'heartbeat' : 'sulla-desktop',
         `[Runtime restart recovery]\nThe previous runtime stopped while this delegated task was running. Continue from the durable thread state, preserve the original contract, and call return_result exactly once when finished.`,
-        task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: job.jobId });
-    })();
+        task.threadId, undefined, task.agentId, 'system', { source: 'runtime_restart_recovery', delegatedJobId: current.jobId, delegatedTaskIndex: index }, undefined, controller);
+    });
+    const run = dispatcher.dispatchIfRunning(job, taskIndex, () => waitForAutomaticAgentExecution(this.recoveryAbort.signal));
     this.dispatchedRuns.add(run);
     run.catch(error => {
       if (error?.name !== 'AbortError') console.error('[BackendGraphWS] Interrupted worker dispatch failed:', error);
@@ -1323,7 +1323,7 @@ export class BackendGraphWebSocketService {
     let state: AgentGraphState | undefined;
     let turnConsumedInput = false;
     const abortKey = this.abortKey(channelId, threadId);
-    let runAbort: AbortService | undefined;
+    let runAbort: AbortService | undefined, relayAbortBridge: AbortSignalBridge | undefined;
     // Set only for a dormant parked job (no live in-process waiter) this turn
     // is waking. Re-parked in the finally block if the turn ends without the
     // job completing, so job/task status stays truthful for the turn's whole
@@ -1466,7 +1466,7 @@ export class BackendGraphWebSocketService {
       // Create abort service for this run.
       // Set state first so stop_run can't race between activeAborts and state.
       const abort = runAbort ?? new AbortService();
-      runAbort = abort;
+      runAbort = abort; if (relaySignal) relayAbortBridge = new AbortSignalBridge(relaySignal, abort);
       state.metadata.options.abort = abort;
       delete state.metadata.reportingDecisionFollowUp;
       this.activeAborts.set(abortKey, abort);
@@ -1639,8 +1639,7 @@ export class BackendGraphWebSocketService {
           runEnded:  true,
         });
       }
-    } finally {
-      if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
+    } finally { relayAbortBridge?.dispose(); if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
       }
