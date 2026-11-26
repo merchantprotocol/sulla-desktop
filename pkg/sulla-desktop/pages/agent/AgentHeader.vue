@@ -1168,11 +1168,13 @@ const allTabsById = computed(() => {
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
 
 watch(
-  () => orderedTabs.value.find(tab => tab.isActive && !tab.pinned)?.id,
-  (activeId) => {
-    const active = orderedTabs.value.find(tab => tab.id === activeId);
+  () => {
+    const active = orderedTabs.value.find(tab => tab.isActive && !tab.pinned);
 
-    if (active) windowTabStrip.setActiveGroup(tabGroupModel.groupForMode(active.mode));
+    return active ? tabGroupModel.groupForMode(active.mode) : undefined;
+  },
+  (group) => {
+    if (group) windowTabStrip.setActiveGroup(group);
   },
   { immediate: true, flush: 'sync' },
 );
