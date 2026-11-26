@@ -216,6 +216,23 @@ describe('Product Owner chat routing', () => {
     expect((await productOwnerWorkflow.getProductOwnerWorkflow(root)).steps.implementation?.allowedAgents).toEqual(['worker-b']);
   });
 
+  it('authorizes a legacy allowlist by the same definition in the picker and the actual handoff', async() => {
+    const lead = { root, caller:'account-manager', lead:true };
+    f.definitions[0].can_call = ['mockup-designer'];
+    f.definitions.push(definition('designer', [], { is_builtin:true }));
+    const offered = async() => (await productOwnerWorkflow.getProductOwnerWorkflow(root, false)).steps.mockup?.allowedAgents;
+    expect(await offered()).toEqual(['designer']);
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, 'mockup-designer', 'mockup')).resolves.toMatchObject({ slug:'designer' });
+
+    f.definitions.push(definition('mockup-designer')); // Exact custom identity wins over the historical alias.
+    expect(await offered()).toEqual(['mockup-designer']);
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, 'designer', 'mockup')).rejects.toThrow('outside');
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, 'mockup-designer', 'mockup')).resolves.toMatchObject({ step:'mockup' });
+    f.definitions.at(-1).enabled = false;
+    expect(await offered()).toEqual([]);
+    await expect(productOwnerWorkflow.productOwnerDelegation(lead, 'designer', 'mockup')).rejects.toThrow('outside');
+  });
+
   it('fills a tagged lead handoff without requiring a legacy agent name', async() => {
     const lead = { root, caller: 'account-manager', lead: true };
     await expect(productOwnerWorkflow.productOwnerDelegation(lead, undefined, 'build'))
