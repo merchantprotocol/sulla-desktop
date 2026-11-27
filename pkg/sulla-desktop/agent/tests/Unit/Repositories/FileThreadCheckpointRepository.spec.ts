@@ -166,6 +166,51 @@ describe('large thread checkpoints', () => {
     expect(redis['memoryHeads'].size).toBe(0);
   });
 
+  it('returns the RAM copy a live pointer named even if another thread evicts it during the read', async() => {
+    const client = redisClient();
+    const file = path.join(directory, 'not-a-directory');
+    await fs.promises.writeFile(file, '');
+    let clock = 0;
+    const redis = new RedisThreadStateRepository(
+      { getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => file), logger, () => clock,
+    );
+    await redis.save(state('reader', 'r' + big));
+    let reply!: () => void;
+    client.get.mockImplementationOnce((key: string) => {
+      const pointer = client.values.get(key) ?? null;
+      return new Promise(resolve => { reply = () => resolve(pointer) });
+    });
+    const reading = redis.load('reader');
+    await new Promise(resolve => setImmediate(resolve));
+    // Redis expires the pointer and another thread's save sweeps the copy before the GET reply is read.
+    clock = 3600 * 1000;
+    client.values.clear();
+    await redis.save(state('other', 'inline'));
+    expect(redis['memoryHeads'].has('reader')).toBe(false);
+    reply();
+    expect((await reading)?.messages[0].content === 'r' + big).toBe(true);
+  });
+
+  it('keeps a RAM copy past its local deadline while Redis still holds its pointer', async() => {
+    const client = redisClient();
+    const file = path.join(directory, 'not-a-directory');
+    await fs.promises.writeFile(file, '');
+    let clock = 0;
+    const redis = new RedisThreadStateRepository(
+      { getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => file), logger, () => clock,
+    );
+    await redis.save(state('stepped', 's' + big));
+    // Redis's wall clock stepped back, so its pointer outlives the local monotonic deadline.
+    clock = 3601 * 1000;
+    await redis.save(state('other', 'inline'));
+    expect((await redis.load('stepped'))?.messages[0].content === 's' + big).toBe(true);
+    // Once Redis drops the pointer, the next check evicts the copy.
+    client.values.delete('sulla:threadstate:stepped');
+    clock = 7200 * 1000;
+    await redis.save(state('other', 'inline'));
+    expect(redis['memoryHeads'].size).toBe(0);
+  });
+
   it('falls through to real transcript recovery for an unreadable pointer without logging its payload', async() => {
     const client = redisClient();
     const badId = await files().write('thread', 'private-body: not JSON');

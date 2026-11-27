@@ -74,7 +74,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async save(state: BaseThreadState): Promise<void> {
-    this.evictExpiredMemoryHeads();
+    await this.evictExpiredMemoryHeads();
     const thread = state.metadata.threadId;
     const json = JSON.stringify(state);
     let id: string | undefined;
@@ -100,15 +100,13 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async load(threadId: string): Promise<BaseThreadState | null> {
-    this.evictExpiredMemoryHeads();
+    await this.evictExpiredMemoryHeads();
+    // Captured before the GET: another thread's save may evict the copy while the reply is in flight.
+    const head = this.memoryHeads.get(threadId);
     const json = await this.clientSource.getClient().get(this.key(threadId));
     const value = json ? JSON.parse(json) : null;
     const kind = this.pointerKind(value);
-    if (kind === 'memory') {
-      const head = this.memoryHeads.get(threadId);
-
-      if (head && head.id === value.id) return structuredClone(head.state);
-    }
+    if (kind === 'memory' && head && head.id === value.id) return structuredClone(head.state);
     this.memoryHeads.delete(threadId);
     if (kind === 'memory') return null;
     if (kind !== 'file') return value;
@@ -121,10 +119,25 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
     this.memoryHeads.delete(threadId);
   }
 
-  // Idle threads are never loaded again, so expired copies are dropped on any thread's save or load.
-  private evictExpiredMemoryHeads(): void {
+  // Idle threads are never loaded again, so any thread's save or load checks expired copies. Redis expiry is
+  // wall-clock, so the local deadline only says when to ask: a copy goes only once its pointer is gone or replaced.
+  private async evictExpiredMemoryHeads(): Promise<void> {
     const now = this.now();
-    for (const [thread, head] of this.memoryHeads) if (head.expiresAt <= now) this.memoryHeads.delete(thread);
+    await Promise.all([...this.memoryHeads].filter(([, head]) => head.expiresAt <= now).map(async([thread, head]) => {
+      const json = await this.clientSource.getClient().get(this.key(thread)).catch(() => undefined);
+      if (json === undefined || this.memoryHeads.get(thread) !== head) return; // Best-effort: checked again later.
+      if (this.isMemoryPointer(json, head.id)) head.expiresAt = this.now() + Math.min(this.ttlSeconds, 60) * 1000;
+      else this.memoryHeads.delete(thread);
+    }));
+  }
+
+  private isMemoryPointer(json: string | null, id: string): boolean {
+    try {
+      const value = json ? JSON.parse(json) : null;
+      return this.pointerKind(value) === 'memory' && value.id === id;
+    } catch {
+      return false;
+    }
   }
 
   private pointerKind(value: Record<string, unknown> | null): 'file' | 'memory' | undefined {
