@@ -4,30 +4,28 @@
   SPDX-License-Identifier: GPL-2.0-or-later
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
-<!-- Presentational status roll-up; the chat presenter owns the scoped source data. -->
+<!-- A live-only status line; the chat presenter owns scoped source data and subscription freshness. -->
 <template>
   <div
-    ref="rootElement"
-    v-if="displayItem || trailItems.length || (pinned && historyItems.length)"
+    v-if="displayItem || ghosts.length || (pinned && historyItems.length)"
     class="status-rollup"
-    :class="{ 'is-pinned': pinned, 'is-reduced-motion': reducedMotion, 'is-document-hidden': !documentVisible }"
-    @mouseenter="hovered = true"
-    @mouseleave="hovered = false"
+    :class="{ 'is-pinned': pinned, 'is-reduced-motion': reducedMotion }"
   >
-    <TransitionGroup v-if="trailItems.length" name="rollup-trail" tag="div" class="status-rollup__trail" aria-hidden="true">
+    <div v-if="ghosts.length" class="status-rollup__ghost-layer" aria-hidden="true">
       <div
-        v-for="(item, index) in trailItems"
-        :key="item.key"
-        class="status-rollup__trail-item"
-        :class="index === 0 ? 'is-older' : 'is-newer'" :style="{ '--rollup-exit-stagger': `${ Math.max(0, trailItems.length - index - 1) * 24 }ms`, '--rollup-exit-drift': `${ index % 2 ? 3 : -3 }px` }"
+        v-for="ghost in ghosts"
+        :key="ghost.id"
+        class="status-rollup__ghost"
+        :style="{ '--rollup-dx': `${ ghost.dx }px`, '--rollup-dy': `${ ghost.dy }px`, '--rollup-duration': `${ ghost.durationMs }ms` }"
+        @animationend="removeGhost(ghost.id)"
       >
-        <span class="status-rollup__dot" :data-role="item.role" />
-        <span class="status-rollup__who">{{ item.agentName }}</span>
-        <span class="status-rollup__kind">{{ item.kind || 'agent' }}</span>
+        <span class="status-rollup__dot" :data-role="ghost.item.role" />
+        <span class="status-rollup__who">{{ ghost.item.agentName }}</span>
+        <span class="status-rollup__kind">{{ ghost.item.kind || 'agent' }}</span>
         <span class="status-rollup__separator">·</span>
-        <span class="status-rollup__text">{{ item.text }}</span>
+        <span class="status-rollup__text">{{ ghost.item.text }}</span>
       </div>
-    </TransitionGroup>
+    </div>
 
     <button
       v-if="displayItem"
@@ -49,7 +47,7 @@
       <span class="status-rollup__who">{{ displayItem.agentName }}</span>
       <span class="status-rollup__kind">{{ displayItem.kind || 'agent' }}</span>
       <span class="status-rollup__separator" aria-hidden="true">·</span>
-      <span class="status-rollup__text" aria-live="polite">{{ typedText }}</span>
+      <span class="status-rollup__text" aria-live="polite">{{ displayItem.text }}</span>
       <span
         v-if="displayItem.urgency === 'needs-you' || displayItem.urgency === 'failed'"
         class="status-rollup__urgency"
@@ -91,12 +89,20 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { StatusRollupQueue, type StatusRollupItem, type StatusRollupShownEvent } from './StatusRollupQueue';
 
+interface StatusRollupGhost {
+  readonly id: number;
+  readonly item: StatusRollupItem;
+  readonly dx: number;
+  readonly dy: number;
+  readonly durationMs: number;
+}
+
 const props = defineProps<{
   /** Active chat-thread identifier; records for any other thread are ignored. */
   threadId: string;
   /** Check-ins already scoped by the presenter to this root and its descendants. */
   checkIns: readonly StatusRollupItem[];
-  /** Current root-agent status shown when no queued check-in is visible. */
+  /** Retained for composer compatibility; idle fallback state is intentionally not rendered. */
   rootFallback?: StatusRollupItem | null;
 }>();
 
@@ -108,28 +114,22 @@ const emit = defineEmits<{
 }>();
 
 const queue = new StatusRollupQueue();
-const rootElement = ref<HTMLElement | null>(null);
 const currentItem = ref<StatusRollupItem | null>(null);
-const trailItems = ref<StatusRollupItem[]>([]);
+const ghosts = ref<StatusRollupGhost[]>([]);
 const historyItems = ref<readonly StatusRollupItem[]>([]);
-const hovered = ref(false);
 const pinned = ref(false);
-const documentVisible = ref(true);
 const reducedMotion = ref(false);
 const mounted = ref(false);
-const typedText = ref('');
 const dotPopping = ref(false);
 let activeThreadId = '';
-let timer: number | undefined;
-let typingTimer: number | undefined;
+let subscribedAt: number | null = null;
+let dwellTimer: number | undefined;
 let dotTimer: number | undefined;
+let nextGhostId = 0;
+const ghostTimers = new Map<number, number>();
 let motionQuery: MediaQueryList | undefined;
 
-const isPaused = computed(() => hovered.value || pinned.value || !documentVisible.value);
-const fallbackItem = computed(() => props.rootFallback
-  ? queue.present({ ...props.rootFallback, role: 'root' }, props.threadId, Date.now())
-  : null);
-const displayItem = computed(() => currentItem.value ?? fallbackItem.value);
+const displayItem = computed(() => currentItem.value);
 
 const emitShown = (item: StatusRollupItem): void => {
   emit('shown', {
@@ -143,59 +143,62 @@ const emitShown = (item: StatusRollupItem): void => {
   });
 };
 
-const typeText = (item: StatusRollupItem, animate: boolean): void => {
-  if (typingTimer !== undefined) window.clearTimeout(typingTimer);
-  typingTimer = undefined;
-  if (!animate || reducedMotion.value || !documentVisible.value) {
-    typedText.value = item.text;
-    return;
-  }
-  typedText.value = '';
-  const characters = Array.from(item.text);
-  let count = 0;
-  const typeNext = (): void => {
-    count = Math.min(characters.length, count + 1);
-    typedText.value = characters.slice(0, count).join('');
-    if (count < characters.length) typingTimer = window.setTimeout(typeNext, 13);
-    else typingTimer = undefined;
-  };
-  typeNext();
+const clearDwellTimer = (): void => {
+  if (dwellTimer !== undefined) window.clearTimeout(dwellTimer);
+  dwellTimer = undefined;
 };
 
-const showItem = (item: StatusRollupItem | null, fromQueue = false, animateText = fromQueue): void => {
+const removeGhost = (id: number): void => {
+  const timer = ghostTimers.get(id);
+  if (timer !== undefined) window.clearTimeout(timer);
+  ghostTimers.delete(id);
+  ghosts.value = ghosts.value.filter(ghost => ghost.id !== id);
+};
+
+const createGhost = (item: StatusRollupItem): void => {
+  const id = ++nextGhostId;
+  const ghost: StatusRollupGhost = reducedMotion.value
+    ? { id, item, dx: 0, dy: 0, durationMs: 260 }
+    : {
+      id,
+      item,
+      dx: (Math.random() * 2 - 1) * 18,
+      dy: 22 + Math.random() * 30,
+      durationMs: Math.round(1_500 + Math.random() * 1_100),
+    };
+  ghosts.value = [...ghosts.value, ghost];
+  ghostTimers.set(id, window.setTimeout(() => removeGhost(id), ghost.durationMs));
+};
+
+const clearGhosts = (): void => {
+  for (const timer of ghostTimers.values()) window.clearTimeout(timer);
+  ghostTimers.clear();
+  ghosts.value = [];
+};
+
+const showItem = (item: StatusRollupItem): void => {
   const previous = currentItem.value;
-  if (previous?.key === item?.key) {
-    if (item && previous.text !== item.text) { currentItem.value = item; typeText(item, animateText); }
+  if (previous?.key === item.key) {
+    if (previous.text !== item.text) currentItem.value = item;
     return;
   }
-  if (previous && item) {
-    const newestFirst = [previous, ...trailItems.value.slice().reverse()].slice(0, 2);
-    trailItems.value = newestFirst.reverse();
-  }
+  if (previous) createGhost(previous);
+  clearDwellTimer();
   currentItem.value = item;
-  if (item) {
-    typeText(item, animateText);
-    if (dotTimer !== undefined && typeof window !== 'undefined') window.clearTimeout(dotTimer);
-    dotPopping.value = fromQueue && !reducedMotion.value;
-    if (fromQueue && typeof window !== 'undefined') {
-      dotTimer = window.setTimeout(() => { dotPopping.value = false; dotTimer = undefined; }, 160);
-    } else {
-      dotTimer = undefined;
-    }
-    if (fromQueue) emitShown(item);
-  } else {
-    typedText.value = '';
-    dotPopping.value = false;
-  }
-};
-
-const refresh = (): void => {
-  const now = Date.now();
-  const shownItems = queue.pumpDue(now, isPaused.value);
-  const animateText = queue.shouldAnimateTypewriter(shownItems.length);
-  if (shownItems.length) shownItems.forEach(item => showItem(item, true, animateText));
-  else showItem(queue.current ?? fallbackItem.value);
-  historyItems.value = queue.history;
+  queue.markShown(item);
+  if (dotTimer !== undefined) window.clearTimeout(dotTimer);
+  dotPopping.value = !reducedMotion.value;
+  dotTimer = window.setTimeout(() => { dotPopping.value = false; dotTimer = undefined; }, 160);
+  emitShown(item);
+  const shownKey = item.key;
+  dwellTimer = window.setTimeout(() => {
+    dwellTimer = undefined;
+    const shown = currentItem.value;
+    if (!shown || shown.key !== shownKey) return;
+    currentItem.value = null;
+    queue.clearCurrent(shown.key);
+    createGhost(shown);
+  }, 2_000);
 };
 
 const syncInput = (): void => {
@@ -204,78 +207,67 @@ const syncInput = (): void => {
   if (threadChanged) {
     activeThreadId = props.threadId;
     queue.reset(activeThreadId);
-    showItem(null);
-    trailItems.value = [];
+    clearDwellTimer();
+    currentItem.value = null;
+    dotPopping.value = false;
+    clearGhosts();
     historyItems.value = [];
     pinned.value = false;
-    hovered.value = false;
+    subscribedAt = mounted.value ? now : null;
   }
 
-  const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
-  queue.observe(props.checkIns, props.threadId, now, visible);
-  if (props.checkIns.length) emit('consumed');
-  if (threadChanged && !mounted.value) {
-    const seeded = queue.seed(props.checkIns, props.threadId, now);
-    if (seeded) showItem(seeded);
+  if (!mounted.value) {
+    queue.prime(props.checkIns, props.threadId);
+    return;
   }
+
+  const item = queue.observe(props.checkIns, props.threadId, now, subscribedAt ?? now);
+  if (props.checkIns.length) emit('consumed');
+  if (item) showItem(item);
   historyItems.value = queue.history;
-  if (mounted.value) refresh();
 };
 
 const togglePinned = (): void => {
   pinned.value = !pinned.value;
-  refresh();
-};
-
-const syncVisibility = (): void => {
-  documentVisible.value = !document.hidden;
-  const root = rootElement.value;
-  const animations = root && typeof root.getAnimations === 'function' ? root.getAnimations({ subtree: true }) : [];
-  for (const animation of animations) {
-    if (documentVisible.value) animation.play();
-    else animation.pause();
-  }
-  refresh();
 };
 
 const syncReducedMotion = (event?: MediaQueryListEvent): void => {
   reducedMotion.value = event?.matches ?? motionQuery?.matches ?? false;
-  if (reducedMotion.value && currentItem.value) {
-    if (typingTimer !== undefined) window.clearTimeout(typingTimer);
-    typingTimer = undefined;
-    typedText.value = currentItem.value.text;
+  if (reducedMotion.value) {
     dotPopping.value = false;
+    ghosts.value = ghosts.value.map(ghost => {
+      const timer = ghostTimers.get(ghost.id);
+      if (timer !== undefined) window.clearTimeout(timer);
+      const reducedGhost = { ...ghost, dx: 0, dy: 0, durationMs: 260 };
+      ghostTimers.set(ghost.id, window.setTimeout(() => removeGhost(ghost.id), reducedGhost.durationMs));
+      return reducedGhost;
+    });
   }
 };
 
 watch(
-  () => [props.threadId, props.checkIns, props.rootFallback] as const,
+  () => [props.threadId, props.checkIns] as const,
   syncInput,
   { deep: true, immediate: true },
 );
 
 onMounted(() => {
-  emit('consumer-attached');
   mounted.value = true;
-  documentVisible.value = !document.hidden;
-  document.addEventListener('visibilitychange', syncVisibility);
+  subscribedAt = Date.now();
+  emit('consumer-attached');
   if (typeof window.matchMedia === 'function') {
     motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     syncReducedMotion();
     motionQuery.addEventListener('change', syncReducedMotion);
   }
-  refresh();
-  timer = window.setInterval(refresh, 100);
 });
 
 onBeforeUnmount(() => {
   emit('consumer-detached');
   mounted.value = false;
-  hovered.value = false;
-  if (timer !== undefined) window.clearInterval(timer);
-  if (typingTimer !== undefined) window.clearTimeout(typingTimer);
+  clearDwellTimer();
   if (dotTimer !== undefined) window.clearTimeout(dotTimer);
-  document.removeEventListener('visibilitychange', syncVisibility);
+  clearGhosts();
   motionQuery?.removeEventListener('change', syncReducedMotion);
 });
 </script>
@@ -413,34 +405,45 @@ onBeforeUnmount(() => {
   color: var(--status-error);
 }
 
-.status-rollup__trail {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+.status-rollup__ghost-layer {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: min(470px, 100%);
-  height: 44px;
-  overflow: hidden;
+  pointer-events: none;
 }
 
-.status-rollup__trail-item {
+.status-rollup__ghost {
+  position: absolute;
+  top: 3px;
+  left: 6px;
   display: flex;
   align-items: center;
-  flex: none;
   gap: 7px;
+  width: calc(100% - 12px);
   height: 22px;
   min-width: 0;
+  overflow: hidden;
   line-height: 22px;
-  font-size: 12.5px;
+  font-size: 12px;
   white-space: nowrap;
+  animation: status-rollup-ghost var(--rollup-duration) cubic-bezier(.3, .2, .2, 1) forwards;
 }
 
-.status-rollup__trail-item.is-older { opacity: .3; }
-.status-rollup__trail-item.is-newer { opacity: .6; }
-.status-rollup__trail-item .status-rollup__who { max-width: 105px; font-size: 12.5px; }
-.status-rollup__trail-item .status-rollup__kind,
-.status-rollup__trail-item .status-rollup__separator { font-size: 11px; }
-.status-rollup__trail-item .status-rollup__text { font-size: 12.5px; }
+.status-rollup__ghost .status-rollup__who { max-width: 105px; }
+
+@keyframes status-rollup-ghost {
+  0% { opacity: .7; transform: translate(0, 0) scale(1); }
+  16% { opacity: .5; transform: translate(calc(var(--rollup-dx) * .12), -27px) scale(.99); }
+  100% { opacity: 0; transform: translate(var(--rollup-dx), calc(-27px - var(--rollup-dy))) scale(.96); }
+}
+
+@keyframes status-rollup-ghost-reduced {
+  from { opacity: .55; transform: none; }
+  to { opacity: 0; transform: none; }
+}
 
 .status-rollup__urgency {
   margin-left: auto;
@@ -507,19 +510,6 @@ onBeforeUnmount(() => {
 .status-rollup__history-text { flex: 1; min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .status-rollup__history time { flex: none; padding-left: 4px; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 
-.rollup-trail-move {
-  transition: transform 420ms cubic-bezier(.22, 1, .36, 1), opacity 700ms cubic-bezier(.22, 1, .36, 1);
-}
-
-.rollup-trail-enter-active,
-.rollup-trail-leave-active {
-  transition: transform 420ms cubic-bezier(.22, 1, .36, 1), opacity 700ms cubic-bezier(.22, 1, .36, 1);
-}
-
-.rollup-trail-enter-from { opacity: 0; transform: translateY(22px); }
-.rollup-trail-leave-to { opacity: 0; transform: translateY(-22px) translateX(var(--rollup-exit-drift, 0px)); }
-.rollup-trail-leave-active { position: absolute; left: 0; right: 0; transition-delay: var(--rollup-exit-stagger, 0ms), 0ms; }
-
 .rollup-history-enter-active,
 .rollup-history-leave-active {
   transition: opacity 160ms ease, transform 160ms ease;
@@ -531,37 +521,27 @@ onBeforeUnmount(() => {
   transform: translateY(5px);
 }
 
-.is-document-hidden .rollup-trail-move,
-.is-document-hidden .rollup-trail-enter-active,
-.is-document-hidden .rollup-trail-leave-active,
-.is-document-hidden .rollup-history-enter-active,
-.is-document-hidden .rollup-history-leave-active {
-  transition: none;
+.is-reduced-motion .status-rollup__ghost {
+  animation-name: status-rollup-ghost-reduced;
 }
 
-.is-reduced-motion .rollup-trail-move,
-.is-reduced-motion .rollup-trail-enter-active,
-.is-reduced-motion .rollup-trail-leave-active,
 .is-reduced-motion .rollup-history-enter-active,
 .is-reduced-motion .rollup-history-leave-active {
   transition: opacity 160ms ease;
 }
 
-.is-reduced-motion .rollup-trail-enter-from,
-.is-reduced-motion .rollup-trail-leave-to,
 .is-reduced-motion .rollup-history-enter-from,
 .is-reduced-motion .rollup-history-leave-to {
   transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rollup-trail-move,
-  .rollup-trail-enter-active,
-  .rollup-trail-leave-active,
+  .status-rollup__ghost {
+    animation-name: status-rollup-ghost-reduced;
+    animation-duration: 260ms !important;
+  }
   .rollup-history-enter-active,
   .rollup-history-leave-active { transition: opacity 160ms ease; }
-  .rollup-trail-enter-from,
-  .rollup-trail-leave-to,
   .rollup-history-enter-from,
   .rollup-history-leave-to { transform: none; }
 }

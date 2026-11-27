@@ -12,59 +12,83 @@ import StatusRollup from '@pkg/pages/chat/components/composer/StatusRollup.vue';
 import type { StatusRollupItem } from '@pkg/pages/chat/components/composer/StatusRollupQueue';
 
 let wrapper: VueWrapper | undefined;
-const originalHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
 
 afterEach(() => {
   wrapper?.unmount();
   wrapper = undefined;
-  if (originalHidden) Object.defineProperty(document, 'hidden', originalHidden);
-  else Reflect.deleteProperty(document, 'hidden');
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
-describe('StatusRollup trail exit', () => {
-  // risk: missed/lingering activity — a displaced item must enter its leave animation and be removed when it ends.
-  it('floats and fades displaced items with independent stagger/drift, then removes them', async() => {
+const event = (key: string): StatusRollupItem => ({
+  key,
+  threadId: 'thread-1',
+  agentId: `agent-${key}`,
+  agentName: `Worker ${key}`,
+  text: `Action ${key}`,
+  observedAt: Date.now() + 1,
+});
+
+describe('StatusRollup ghost exit', () => {
+  // risk: independent status exit — every displaced event must float/fade and be removed on its own duration.
+  it('removes two ghosts independently at their individual durations', async() => {
     vi.useFakeTimers();
-    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
-    vi.spyOn(window, 'getComputedStyle').mockReturnValue({
-      transform: 'matrix(1, 0, 0, 1, 0, 0)',
-      transitionProperty: 'transform, opacity',
-      transitionDuration: '0.42s, 0.7s',
-      transitionDelay: '0.024s, 0s',
-      getPropertyValue: () => '',
-    } as CSSStyleDeclaration);
-    const items: StatusRollupItem[] = Array.from({ length: 4 }, (_, index) => ({
-      key: `item-${ index }`, threadId: 'thread-1', agentId: `agent-${ index }`, agentName: `Worker ${ index }`,
-      text: `Work ${ index }`, observedAt: Date.now() + index,
-    }));
+    vi.spyOn(Math, 'random')
+      .mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(0)
+      .mockReturnValueOnce(.999999).mockReturnValueOnce(.999999).mockReturnValueOnce(.999999);
+    wrapper = mount(StatusRollup, { props: { threadId: 'thread-1', checkIns: [] } });
+    const first = event('one');
+    const second = event('two');
+    const third = event('three');
 
-    wrapper = mount(StatusRollup, {
-      attachTo: document.body,
-      props: { threadId: 'thread-1', checkIns: [items[0]!] },
-      global: { stubs: { TransitionGroup: false } },
-    });
+    await wrapper.setProps({ checkIns: [first] });
+    await wrapper.setProps({ checkIns: [first, second] });
+    await wrapper.setProps({ checkIns: [first, second, third] });
     await nextTick();
-    for (let count = 2; count <= items.length; count += 1) {
-      await wrapper.setProps({ checkIns: items.slice(0, count) });
-      await vi.advanceTimersByTimeAsync(1_300);
-      await nextTick();
-      if (count === 3) {
-        const staged = Array.from(wrapper.element.querySelectorAll<HTMLElement>('.status-rollup__trail-item'));
-        expect(staged.map(item => [item.style.getPropertyValue('--rollup-exit-stagger'), item.style.getPropertyValue('--rollup-exit-drift')]))
-          .toEqual([['24ms', '-3px'], ['0ms', '3px']]);
-      }
-    }
 
-    const leaving = wrapper.element.querySelector<HTMLElement>('.rollup-trail-leave-active');
-    expect(leaving?.classList.contains('rollup-trail-leave-to')).toBe(true);
-    expect(leaving?.textContent).toContain(items[0]!.text);
-    expect(leaving?.style.getPropertyValue('--rollup-exit-stagger')).toBe('24ms');
-    expect(leaving?.style.getPropertyValue('--rollup-exit-drift')).toBe('-3px');
+    const initial = Array.from(wrapper.element.querySelectorAll<HTMLElement>('.status-rollup__ghost'));
+    expect(initial.map(ghost => ghost.textContent)).toEqual([
+      expect.stringContaining(first.text), expect.stringContaining(second.text),
+    ]);
+    expect(initial[0]?.style.getPropertyValue('--rollup-dx')).toBe('-18px');
+    expect(initial[0]?.style.getPropertyValue('--rollup-dy')).toBe('22px');
+    expect(initial[0]?.style.getPropertyValue('--rollup-duration')).toBe('1500ms');
+    expect(initial[1]?.style.getPropertyValue('--rollup-duration')).toBe('2600ms');
 
-    await vi.advanceTimersByTimeAsync(701);
+    await vi.advanceTimersByTimeAsync(1_500);
     await nextTick();
-    expect(wrapper.element.textContent).not.toContain(items[0]!.text);
+    expect(wrapper.text()).not.toContain(first.text);
+    expect(wrapper.text()).toContain(second.text);
+
+    await vi.advanceTimersByTimeAsync(1_099);
+    await nextTick();
+    expect(wrapper.text()).toContain(second.text);
+    await vi.advanceTimersByTimeAsync(1);
+    await nextTick();
+    expect(wrapper.text()).not.toContain(second.text);
+    expect(wrapper.text()).toContain(third.text);
+  });
+
+  // risk: reduced-motion accessibility — reduced motion ghosts fade quickly without spatial drift.
+  it('uses a short stationary ghost when reduced motion is preferred', async() => {
+    vi.useFakeTimers();
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }) as unknown as typeof window.matchMedia;
+    wrapper = mount(StatusRollup, { props: { threadId: 'thread-1', checkIns: [] } });
+    const first = event('one');
+    const second = event('two');
+    await wrapper.setProps({ checkIns: [first] });
+    await wrapper.setProps({ checkIns: [first, second] });
+    await nextTick();
+
+    const ghost = wrapper.find('.status-rollup__ghost');
+    expect(ghost.attributes('style')).toContain('--rollup-dx: 0px');
+    expect(ghost.attributes('style')).toContain('--rollup-dy: 0px');
+    expect(ghost.attributes('style')).toContain('--rollup-duration: 260ms');
+    await vi.advanceTimersByTimeAsync(260);
+    await nextTick();
+    expect(wrapper.text()).not.toContain(first.text);
+
+    window.matchMedia = originalMatchMedia;
   });
 });
