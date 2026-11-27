@@ -6,11 +6,25 @@
 -->
 <template>
   <div class="document-editor-shell" @keydown.esc="closeMenus" @keydown.meta.s.prevent="saveNow" @keydown.ctrl.s.prevent="saveNow" @contextmenu.prevent="openEditorContextMenu">
-    <header v-if="editorType.id!=='html'" class="editor-bar">
+    <header v-if="editorType.id!=='html' || loadError" class="editor-bar">
       <button class="back" type="button" @click="emit('back')"><span v-html="icons.arrowLeft" /> Files</button>
       <div class="bar-spacer" />
       <span class="save-chip" :class="saveState"><i />{{ saveLabel }}</span>
       <div class="presence" aria-label="Present collaborators"><span v-for="peer in peers" :key="peer.id" :title="peer.name">{{ peer.kind==='user'?ownerInitial:peer.name.slice(0,1).toUpperCase() }}</span></div>
+      <span
+        v-if="downloadAction.state.error"
+        class="download-error"
+        role="alert"
+      >{{ downloadAction.state.error }}</span>
+      <button
+        class="icon-button"
+        type="button"
+        title="Download"
+        :aria-label="'Download ' + fileName"
+        :disabled="downloadAction.state.busy || loading"
+        @click="download"
+        v-html="downloadIcon"
+      />
       <button class="icon-button" type="button" title="History" :aria-pressed="drawer==='history'" @click="toggleDrawer('history')" v-html="icons.history" />
       <button class="icon-button" type="button" title="Share" @click="openShare" v-html="icons.share" />
       <div ref="moreMenu" class="more-wrap"><button class="icon-button" type="button" title="More" :aria-expanded="moreOpen" @click="moreOpen=!moreOpen" v-html="icons.more" /><div v-if="moreOpen" class="more-menu"><button type="button" @click="moreOpen=false;toggleDrawer('links')">Links</button></div></div>
@@ -32,7 +46,26 @@
             <span v-if="readOnly" class="property readonly">Read only</span>
           </div>
         </template>
-        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :saved-source="editorType.id==='html'?savedContent:undefined" :preview-url="editorType.id==='html'?previewUrl:undefined" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" :on-create-bookmark="createFileBookmark" :on-navigate="requestFileNavigation" :on-open-external="openExternal" :can-back="props.canBack" :can-forward="props.canForward" :on-navigate-history="navigateHistory" @update:model-value="queueSave" @insert-menu="openInsertMenu" />
+        <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :saved-source="editorType.id==='html'?savedContent:undefined" :preview-url="editorType.id==='html'?previewUrl:undefined" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" :on-create-bookmark="createFileBookmark" :on-navigate="requestFileNavigation" :on-open-external="openExternal" :can-back="props.canBack" :can-forward="props.canForward" :on-navigate-history="navigateHistory" @update:model-value="queueSave" @insert-menu="openInsertMenu">
+          <template
+            #download
+          >
+            <span
+              v-if="downloadAction.state.error"
+              class="download-error"
+              role="alert"
+            >{{ downloadAction.state.error }}</span>
+            <button
+              class="shb-wb-ib"
+              type="button"
+              title="Download"
+              :aria-label="'Download ' + fileName"
+              :disabled="downloadAction.state.busy"
+              @click="download"
+              v-html="downloadIcon"
+            />
+          </template>
+        </component>
         <div v-if="slashOpen" ref="insertMenu" class="slash-menu" role="menu" tabindex="-1" aria-label="Insert block" @keydown="navigateMenu" :style="{left:`${menuPoint.x}px`,top:`${menuPoint.y}px`}">
           <section v-for="section in menuSections" :key="section.label"><h2>{{ section.label }}</h2><button v-for="entry in section.entries" :key="entry.label" type="button" role="menuitem" :disabled="entry.disabled" @click="insertMarkdown(entry.text)"><span v-html="entry.icon" /><div><b>{{ entry.label }}</b><small>{{ entry.description }}</small></div></button></section>
         </div>
@@ -60,6 +93,7 @@
 import { computed, nextTick, markRaw, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import type { EditorCollaboration } from './codeMirror';
 import { LiveDocument } from './liveDocument';
+import { FileDownloadAction } from '../FileDownloadAction';
 import ShareSheet from '../ShareSheet.vue';
 import { editorTypeForPath } from './registry';
 import type { FilesDataSource, FilesDetail, FilesItem, FilesSnapshot, FilesVersion } from '../types';
@@ -110,6 +144,16 @@ const extension=computed(()=>/\.sulla\.md$|\.(?:sulla|md|txt|html|htm)$/i.exec(f
 const editorType=computed(()=>editorTypeForPath(props.item.path)!); const fileName=computed(()=>props.item.path.split('/').at(-1)??props.item.path); const title=computed(()=>fileName.value.slice(0,fileName.value.length-extension.value.length)); const properties=computed(()=>editorType.value.parse(content.value).properties); const readOnly=computed(()=>(detail.value?.capabilities??props.item.capabilities)?.canEdit===false); const ownerInitial=computed(()=>(props.item.ownerDisplayName||'J').trim()[0]?.toUpperCase()||'J'); const links=computed(()=>detail.value?.links??[]);
 const htmlPeers=computed(()=>peers.value.map(peer=>({id:peer.id,name:peer.name,kind:peer.kind==='user'?'user' as const:'agent' as const})));
 const saveLabel=computed(()=>liveState.value?(liveState.value==='live'?'Live':liveState.value==='syncing'?'Syncing…':'Offline'):saveState.value==='saving'?'Saving…':saveState.value==='merged'?`Merged · ${shortVersion(baseVersionId.value)}`:saveState.value==='conflict'?'Conflict':saveState.value==='error'?'Not saved':`Saved · ${shortVersion(baseVersionId.value)}`);
+// The history drawer lists versions but never switches to one. Live sessions follow
+// the service head; ordinary editors have an exact last-loaded/saved version.
+const downloadAction = computed(() => {
+  const fileId = props.item.id;
+  return new FileDownloadAction((name, versionId) => props.dataSource.downloadFile(fileId, name, versionId));
+});
+function download() {
+  return downloadAction.value.download(fileName.value, liveBinding.value || loadError.value ? undefined : baseVersionId.value || undefined);
+}
+const downloadIcon = '<svg viewBox="0 0 24 24"><path d="M12 5v11M7 11l5 5 5-5M4 19h16"/></svg>';
 const icons={share:'<svg viewBox="0 0 24 24"><path d="M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg>',arrowLeft:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',history:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',link:'<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/></svg>',more:'<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',heading:'<svg viewBox="0 0 24 24"><path d="M5 4v16M19 4v16M5 12h14"/></svg>',list:'<svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',check:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 12 3 3 7-7"/></svg>',table:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>',toggle:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>'};
 const menuSections=[
  {label:'Components',entries:[{label:'Chart',description:'Bar, line or pie — data kept in the file',icon:icons.table,text:'',disabled:true},{label:'Checklist',description:'Tasks with owners',icon:icons.check,text:'- [ ] Task\n',disabled:false},{label:'Table',description:'Rows and columns',icon:icons.table,text:'| Column | Column |\n| --- | --- |\n|  |  |\n',disabled:false}]},
@@ -152,6 +196,7 @@ async function toggleDrawer(value:'history'|'links'){drawer.value=drawer.value==
 watch(()=>props.item.id,()=>{cancelTitle();closeMenus();renameError.value='';shareError.value='';shareTarget.value=null;drawer.value=null;void load();void loadCollection().catch(()=>{})});onMounted(()=>{void load();void loadCollection().catch(()=>{});document.addEventListener('pointerdown',outsideClick)});onBeforeUnmount(()=>{document.removeEventListener('pointerdown',outsideClick);++loadGeneration;liveBinding.value=null;void live?.close();if(previewToken)void props.dataSource.revokeHtmlPreview?.(previewToken);previewToken='';clearTimeout(bookmarkNoticeTimer);clearTimeout(timer);if(saveState.value==='saving'&&!readOnly.value)void saveNow()});
 </script>
 <style scoped>
+.download-error{color:var(--editor-text);font-size:12px;max-width:24em;overflow-wrap:anywhere}
 .document-editor-shell{--editor-paper:var(--bg-page);--editor-card:var(--bg-surface);--editor-text:var(--text-primary);--editor-muted:var(--text-secondary);--editor-dim:var(--text-muted);--editor-line:var(--border-default);--editor-line2:var(--border-subtle);--editor-accent:var(--accent-primary);--editor-accent-soft:var(--bg-info);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;position:relative;height:100%;overflow:auto;background:var(--editor-paper);color:var(--editor-text)}
 .editor-bar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:12px;padding:12px 22px;background:color-mix(in srgb,var(--editor-paper) 85%,transparent);backdrop-filter:blur(10px)}button{font:inherit}.back{display:flex;align-items:center;gap:4px;border:0;background:transparent;color:var(--editor-muted);font-size:13px;cursor:pointer}.back span{width:16px}.back :deep(svg),.icon-button :deep(svg),.slash-menu :deep(svg){fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;width:16px;height:16px}.file-switcher{display:flex;gap:2px;padding:3px;border:1px solid var(--editor-line);border-radius:10px;background:var(--editor-card);max-width:min(42vw,520px);overflow:auto}.file-switcher button{display:flex;gap:6px;align-items:center;padding:5px 12px;border:0;border-radius:7px;background:transparent;color:var(--editor-muted);white-space:nowrap;font-size:12px;cursor:pointer}.file-switcher button.active{background:var(--editor-text);color:var(--editor-card)}.type-mark{font-size:10px;font-weight:700}.bar-spacer{flex:1}.save-chip{display:flex;align-items:center;gap:6px;color:var(--editor-muted);font-size:12px;white-space:nowrap}.save-chip i{width:7px;height:7px;border-radius:50%;background:#2f8f5b}.save-chip.saving i{background:#b98225}.save-chip.conflict i,.save-chip.error i{background:#b84949}.presence{display:flex}.presence span{display:grid;place-items:center;width:26px;height:26px;border:2px solid var(--editor-paper);border-radius:50%;background:var(--editor-accent);color:white;font-size:11px;font-weight:700}.presence span+span{margin-left:-8px;background:var(--editor-muted)}.icon-button{display:grid;place-items:center;width:32px;height:32px;padding:0;border:1px solid var(--editor-line);border-radius:9px;background:var(--editor-card);color:var(--editor-muted);cursor:pointer}.icon-button[aria-pressed=true]{color:var(--editor-accent);background:var(--editor-accent-soft)}.paper-sheet{position:relative;box-sizing:border-box;max-width:820px;width:100%;min-height:80vh;margin:18px auto 120px;padding:64px 96px 96px;border-radius:16px;background:var(--editor-card);box-shadow:0 1px 2px color-mix(in srgb,var(--editor-text) 4%,transparent),0 12px 40px color-mix(in srgb,var(--editor-text) 8%,transparent)}.cover{width:64px;height:6px;margin-bottom:28px;border-radius:3px;background:linear-gradient(90deg,var(--editor-accent),#8cc0d6)}.paper-sheet>h1{margin:0 0 6px;font-family:var(--font-display);font-size:40px;font-weight:700;line-height:1.2;letter-spacing:-.01em}.properties{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 30px}.property{padding:3px 10px;border:1px solid var(--editor-line);border-radius:999px;color:var(--editor-muted);font-size:12px;background:transparent}button.property{cursor:pointer}button.property:disabled{cursor:default}.property b{color:var(--editor-text);font-weight:600}.property.readonly{color:#9a6817}.slash-menu{position:fixed;z-index:30;width:320px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:6px;border:1px solid var(--editor-line);border-radius:12px;background:var(--editor-card);box-shadow:0 16px 40px color-mix(in srgb,var(--editor-text) 14%,transparent)}.slash-menu h2{margin:8px 10px 4px;color:var(--editor-dim);font-family:inherit;font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}.slash-menu button{display:flex;align-items:center;gap:12px;width:100%;padding:7px 10px;border:0;border-radius:8px;background:transparent;color:var(--editor-text);text-align:left;cursor:pointer}.slash-menu button:hover:not(:disabled){background:var(--editor-accent-soft)}.slash-menu button:disabled{opacity:.48;cursor:default}.slash-menu button span{flex:none;background:var(--editor-card);display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--editor-line);border-radius:7px;color:var(--editor-accent)}.slash-menu b{display:block;font-size:13.5px;font-weight:600}.slash-menu small{font-size:11.5px;color:var(--editor-dim)}.slash-menu button:focus-visible{outline:none;background:var(--editor-accent-soft)}.drawer{position:fixed;z-index:12;top:70px;right:22px;width:260px;box-sizing:border-box;font-size:12.5px;max-width:calc(100vw - 32px);max-height:calc(100vh - 90px);overflow:auto;padding:14px 16px;border:1px solid var(--editor-line);border-radius:14px;background:var(--editor-card);box-shadow:0 12px 40px color-mix(in srgb,var(--editor-text) 10%,transparent)}.drawer-heading{display:flex;align-items:center;justify-content:space-between}.drawer h2{margin:0 0 10px;color:var(--editor-dim);font-family:inherit;font-weight:600;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}.drawer-heading button{border:0;background:transparent;color:var(--editor-muted);font-size:16px;cursor:pointer;align-self:flex-start;opacity:.7}.drawer article{display:grid;grid-template-columns:auto 1fr;gap:3px 8px;padding:7px 0;border-bottom:1px solid var(--editor-line2);font-size:12.5px}.drawer article:last-child{border-bottom:0}.drawer article span{color:var(--editor-text)}.drawer article small{grid-column:1/-1;color:var(--editor-dim)}.conflict-banner{position:fixed;z-index:20;right:24px;bottom:24px;display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid color-mix(in srgb,#b98225 40%,var(--editor-line));border-radius:10px;background:var(--editor-card);box-shadow:0 10px 30px color-mix(in srgb,var(--editor-text) 14%,transparent);font-size:12px}.conflict-banner span{color:var(--editor-muted)}.conflict-banner button{padding:5px 9px;border:1px solid var(--editor-line);border-radius:7px;background:var(--editor-card);cursor:pointer}.conflict-banner button.primary{border-color:var(--editor-accent);background:var(--editor-accent);color:white}.conflict-banner.error{border-color:color-mix(in srgb,#b84949 40%,var(--editor-line))}.editor-state{display:grid;place-items:center;height:70%;color:var(--editor-muted)}.editor-state.error{color:#b84949}
 .title-button,.title-input{display:block;box-sizing:border-box;width:100%;margin:0;padding:0;border:0;border-radius:0;outline:none;background:transparent;color:var(--editor-text);font:inherit;letter-spacing:inherit;text-align:left}.title-button{cursor:text;overflow-wrap:anywhere}.title-button:not(:disabled):hover{color:var(--editor-accent)}.title-button:disabled{cursor:default;opacity:1}.title-input{box-shadow:0 1px var(--editor-accent);caret-color:var(--editor-accent)}.rename-error{font-size:12px;color:#b84949}.more-wrap{position:relative}.more-menu{position:absolute;right:0;top:38px;min-width:130px;padding:6px;border:1px solid var(--editor-line);border-radius:10px;background:var(--editor-card);box-shadow:0 12px 32px var(--border-default)}.more-menu button{width:100%;padding:7px 10px;border:0;border-radius:6px;background:transparent;color:var(--editor-text);text-align:left;font-size:13px;cursor:pointer}.more-menu button:hover{background:var(--editor-accent-soft)}

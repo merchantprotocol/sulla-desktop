@@ -163,6 +163,27 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     return rows[0] ? this.map(rows[0]) : undefined;
   }
 
+  async findInlineReview(parentThreadId: string, task: AgentJobTask): Promise<AgentJob | undefined> {
+    const ref = task.followUpOf;
+    const route = task.workerModelRoute;
+    if (!ref || !route || !task.inlineReviewDigest) return undefined;
+    const rows = await this.connection.select(`SELECT * FROM agent_jobs
+      WHERE parent_thread_id = $1 AND dismissed_at IS NULL
+        AND status IN ('running', 'parked', 'completed') AND jsonb_array_length(tasks) = 1
+        AND tasks -> 0 ->> 'status' IN ('queued', 'running', 'parked', 'completed')
+        AND tasks -> 0 ->> 'agentId' = $2
+        AND tasks #>> '{0,followUpOf,jobId}' = $3 AND tasks #>> '{0,followUpOf,taskIndex}' = $4
+        AND tasks #>> '{0,workerModelRoute,agentId}' = $5 AND tasks #>> '{0,workerModelRoute,revision}' = $6
+        AND tasks -> 0 ->> 'inlineReviewDigest' = $7
+        AND COALESCE(tasks #>> '{0,workerModelRoute,editToken}', '') = $8
+      ORDER BY created_at DESC LIMIT 1`, [
+      parentThreadId, task.agentId, ref.jobId, String(ref.taskIndex), route.agentId, String(route.revision), task.inlineReviewDigest,
+      // Every saved selection has a fresh token; the numeric revision alone repeats across saves.
+      route.editToken ?? '',
+    ]);
+    return rows[0] ? this.map(rows[0]) : undefined;
+  }
+
   async jobsForParentThread(parentThreadId: string): Promise<AgentJob[]> {
     const rows = await this.connection.select(`SELECT * FROM agent_jobs WHERE parent_thread_id = $1 AND dismissed_at IS NULL ORDER BY created_at ASC`, [parentThreadId]);
     return rows.map(row => this.map(row));
@@ -186,12 +207,14 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   /** Direct children and descendant jobs for one conversation; uses the indexed parent_thread_id path. */
-  async lineageForParentThread(parentThreadId: string, limit = 100): Promise<AgentJob[]> {
+  async lineageForParentThread(parentThreadId: string, limit = 100, includeReports = false): Promise<AgentJob[]> {
     // Walk UP from the small live/recent set instead of DOWN through the thread's whole history:
     // cost is bounded by running/parked + last-24h jobs (retention keeps that set small), not by how
     // many jobs a busy thread ever launched. Ancestors are walked regardless of age, so a running
     // grandchild of a long-finished parent still reaches the root thread. Every job on the path must
     // be undismissed, matching the old downward walk. Depth guard stops malformed cycles.
+    // An empty saved task slot is returned in place: removing a key from a JSON null is an error
+    // that would otherwise fail the whole chat's read.
     const rows = await this.connection.select(`WITH RECURSIVE up AS (
       SELECT c.job_id AS candidate_id, c.created_at, c.parent_thread_id AS thread, 1 AS depth
       FROM agent_jobs c
@@ -206,13 +229,16 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
     ), selected AS (
       SELECT candidate_id AS job_id, created_at, MIN(depth) AS lineage_depth FROM up WHERE thread = $1
       GROUP BY candidate_id, created_at ORDER BY created_at DESC LIMIT $2
-    ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,'[]'::jsonb AS results,
-      (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+    ) SELECT j.job_id,j.status,j.created_at,j.finished_at,j.task_count,
+      CASE WHEN $3::boolean THEN j.results ELSE '[]'::jsonb END AS results,
+      (SELECT COALESCE(jsonb_agg(CASE WHEN jsonb_typeof(task.value) <> 'object' THEN task.value
+        WHEN $3::boolean THEN task.value - 'result' ELSE task.value - 'result' - 'completion' END
+        ORDER BY task.ordinality), '[]'::jsonb)
         FROM jsonb_array_elements(j.tasks) WITH ORDINALITY task(value, ordinality)) AS tasks,
       j.error,j.parent_channel,j.parent_thread_id,j.parent_agent_id,j.visibility,j.parent_job_id,j.parent_task_index,j.project_task_ids,
       j.completion_delivered_at,j.waiting_on_children,j.restart_resume_count,j.dismissed_at,j.stopped_by,j.stop_reason,j.orphaned_child_notices
       FROM selected JOIN agent_jobs j ON j.job_id = selected.job_id
-      ORDER BY j.created_at ASC, selected.lineage_depth ASC, j.job_id ASC`, [parentThreadId, Math.min(100, Math.max(1, limit))]);
+      ORDER BY j.created_at ASC, selected.lineage_depth ASC, j.job_id ASC`, [parentThreadId, Math.min(100, Math.max(1, limit)), includeReports]);
     return rows.map(row => this.map(row));
   }
 
@@ -289,6 +315,9 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
         'agentId', t.agent_id, 'label', t.label, 'status', t.task_status,
         'taskId', j.tasks -> t.task_index -> 'taskId',
         'followUpOf', j.tasks -> t.task_index -> 'followUpOf',
+        'workflowStep', j.tasks -> t.task_index -> 'workflowStep',
+        'decisionIds', j.tasks -> t.task_index -> 'decisionIds',
+        'responseModels', j.tasks -> t.task_index -> 'responseModels',
         'model', j.tasks -> t.task_index -> 'model', 'provider', j.tasks -> t.task_index -> 'provider',
         'effort', j.tasks -> t.task_index -> 'effort',
         'modelDecision', j.tasks -> t.task_index -> 'modelDecision',
@@ -306,18 +335,22 @@ export class AgentJobRepository extends Repository<AgentJobModel> {
   }
 
   async jobsForList(limit: number, includeFinished: boolean): Promise<AgentJob[]> {
+    // An empty saved task slot passes through the trim (removing a key from a JSON null is an error).
+    // The compact projection below then yields a field-less entry at the same index.
     const rows = await this.connection.select(`WITH selected AS (
       SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
         parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at,
         dismissed_at, waiting_on_children, orphaned_child_notices, stopped_by, stop_reason,
-        (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+        (SELECT COALESCE(jsonb_agg(CASE WHEN jsonb_typeof(task.value) <> 'object' THEN task.value
+          ELSE task.value - 'result' - 'completion' END ORDER BY task.ordinality), '[]'::jsonb)
           FROM jsonb_array_elements(tasks) WITH ORDINALITY task(value, ordinality)) AS tasks
       FROM agent_jobs WHERE status IN ('running', 'parked') AND dismissed_at IS NULL
       UNION ALL
       (SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,
         parent_agent_id, parent_job_id, parent_task_index, visibility, project_task_ids, completion_delivered_at,
         dismissed_at, waiting_on_children, orphaned_child_notices, stopped_by, stop_reason,
-        (SELECT COALESCE(jsonb_agg(task.value - 'result' - 'completion' ORDER BY task.ordinality), '[]'::jsonb)
+        (SELECT COALESCE(jsonb_agg(CASE WHEN jsonb_typeof(task.value) <> 'object' THEN task.value
+          ELSE task.value - 'result' - 'completion' END ORDER BY task.ordinality), '[]'::jsonb)
           FROM jsonb_array_elements(tasks) WITH ORDINALITY task(value, ordinality)) AS tasks
        FROM agent_jobs WHERE status NOT IN ('running', 'parked') AND dismissed_at IS NULL AND $2::boolean ORDER BY created_at DESC LIMIT $1)
     ) SELECT job_id, status, created_at, finished_at, task_count, error, parent_channel, parent_thread_id,

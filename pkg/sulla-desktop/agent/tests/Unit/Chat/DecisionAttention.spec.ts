@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DecisionAttention } from '@pkg/shared/decisionAttention';
 const question: any = { kind: 'question', status: 'expired', attention: 'active', expiresAt: 1 };
-describe('For You attention lifetime', () => {
+describe('Decide attention lifetime', () => {
   it('keeps a question active after its waiter deadline until answered or dismissed', () => {
     expect(DecisionAttention.active(question, 1000)).toBe(true); expect(DecisionAttention.label(question, 1000)).toBe('Needs your answer');
     for (const attention of ['dismissed', 'answered']) expect(DecisionAttention.active({ ...question, attention }, 1000)).toBe(false);

@@ -42,7 +42,10 @@ export interface ConversationHistoryRecord {
   hidden:         boolean;
 }
 
+export interface GraphHistoryOrigin { delegated:boolean; builtin?:boolean }
+
 export interface RecordConversationInput {
+  graphOrigin?: GraphHistoryOrigin;
   id:            string;
   type:          ConversationHistoryType;
   thread_id?:    string;
@@ -66,10 +69,11 @@ export interface RecordConversationInput {
  * Internal machinery channels that must never surface in user-facing
  * history: the `subconscious:<agent>` namespace (memory-recall, observation
  * writer/recall, summarizer, dreaming loops) plus the named worker/dispatch
- * channels agents are spawned on. Mirrors migration 0058's backfill
- * predicate — keep the two in sync if this set changes.
+ * channels agents are spawned on. Migration 0058 backfilled the rows that
+ * existed under the names of its time. `advisor` is the current name of
+ * `opus-worker` (migration 0167); new rows use it, old rows keep the alias.
  */
-const HIDDEN_WORKER_CHANNELS = new Set(['codex-test', 'thinker-worker', 'opus-worker', 'fable-planner']);
+const HIDDEN_WORKER_CHANNELS = new Set(['codex-test', 'thinker-worker', 'opus-worker', 'advisor', 'fable-planner']);
 
 function isHiddenChannel(channelId?: string | null): boolean {
   if (!channelId) return false;
@@ -152,12 +156,24 @@ export class ConversationHistoryModel {
   // Core CRUD
   // ──────────────────────────────────────────────
 
+  private static async hiddenAtStart(meta: RecordConversationInput): Promise<boolean> {
+    if (meta.hidden !== undefined) return meta.hidden;
+    const slug = meta.channel_id;
+    if (meta.type !== 'graph' || (slug !== 'advisor' && slug !== 'opus-worker')) return isHiddenChannel(slug);
+    if (slug === 'advisor' && !meta.graphOrigin?.delegated) return false;
+    // Prefer the definition captured by this graph. Old checkpoints predate that metadata:
+    // consult the exact row, never an alias that might now point at a custom agent.
+    const builtin = meta.graphOrigin?.builtin ?? (await postgresClient.queryOne<{ is_builtin:boolean }>(
+      'SELECT is_builtin FROM agent_definitions WHERE slug=$1', [slug]))?.is_builtin;
+    return builtin ?? (slug === 'opus-worker');
+  }
+
   /**
    * Insert or upsert a conversation record.
    */
   static async recordConversation(meta: RecordConversationInput): Promise<void> {
     try {
-      const hidden = meta.hidden ?? isHiddenChannel(meta.channel_id);
+      const hidden = await this.hiddenAtStart(meta);
       await postgresClient.query(`
         INSERT INTO ${ ConversationHistoryModel.TABLE }
           (id, thread_id, session_id, type, title, summary, url, favicon,

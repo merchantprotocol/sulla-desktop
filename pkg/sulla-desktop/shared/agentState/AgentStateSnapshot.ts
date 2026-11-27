@@ -41,6 +41,11 @@ export interface AgentStateRow extends ResultTracking {
  agentId: string | null;
  /** True when this agent definition's live can_call policy permits delegation. */
  canLaunchAgents?: boolean;
+ /** Product Owner stage recorded when this task was delegated. */
+ workflowStep?: import('../productOwnerWorkflow').DelegatedWorkflowStep;
+ responseModels?: AgentModelStatusValue[];
+ /** Recovery attempts recorded for this job, shared by its tasks. */
+ jobRestartResumeCount?: number;
  /** Explicit existing Projects task assignment. */
  taskId?:            string;
  modelStatus?:       AgentModelStatusValue;

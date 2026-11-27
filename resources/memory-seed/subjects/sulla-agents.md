@@ -24,7 +24,7 @@ Sulla launches bounded agent jobs with `meta/spawn_agent`. The live directory de
 - Monitor: use delivered progress check-ins and completion wake-ups rather than busy-polling; report meaningful progress to the human, and recover or finish work yourself if a job dies or stops early.
 - Review: inspect the worker's diff and evidence yourself, then run the required tests and build at the integration stage; the parent remains accountable for what ships.
 - Clean up: after confirming the pushed remote head equals the local head, remove the worktree, prune it, delete the local branch, and remove scratch, briefs, logs, and build artifacts; recreate from the remote branch if later changes are needed.
-- Worker selection follows the task: use `codex-sol-worker` or `codex-luna-worker` for code, `opus-worker` for video, creative, and visual work, and `haiku-worker` for light mechanical work. Confirm the live directory before launch because available definitions can change.
+- Worker selection follows the task: use `builder` or `quick-fixer` for code, `advisor` for video, creative, and visual work, and `lookup` for light mechanical work. Confirm the live directory before launch because available definitions can change.
 - Container jobs use isolated guest workspaces. Cleanup removes safe workspaces and reports a recovery path when a workspace must be retained.
 - Completed jobs are kept for a limited history period; `check_agent_jobs` reports when a requested job has expired.
 

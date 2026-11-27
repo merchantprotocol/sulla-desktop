@@ -5,24 +5,33 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <button
-    class="chat-attachment"
-    type="button"
-    :disabled="!attachment.fileRef"
-    @click="open"
-  >
-    <FileGlyph
+  <div class="attachment-actions">
+    <button
+      class="chat-attachment"
+      type="button"
+      :disabled="!attachment.fileRef"
+      @click="open"
+    >
+      <FileGlyph
+        :name="attachment.name"
+        :mime="attachment.fileRef?.mime"
+      />
+      <span class="details"><b>{{ attachment.name }}</b><small>{{ subtitle }}</small></span>
+      <FileStatusIcon v-if="attachment.fileRef" />
+    </button>
+    <ChatFileDownload
+      v-if="attachment.fileRef"
+      :file-id="attachment.fileRef.fileId"
       :name="attachment.name"
-      :mime="attachment.fileRef?.mime"
+      :version-id="attachment.fileRef.versionId"
     />
-    <span class="details"><b>{{ attachment.name }}</b><small>{{ subtitle }}</small></span>
-    <FileStatusIcon v-if="attachment.fileRef" />
-  </button>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import ChatFileDownload from './ChatFileDownload.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 
@@ -50,6 +59,7 @@ async function open():Promise<void> {
 </script>
 
 <style scoped>
+.attachment-actions { display:inline-flex;align-items:center;gap:4px;max-width:100% }
 .chat-attachment { display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 10px 6px 6px;border:1px solid var(--border-subtle);border-radius:9px;background:var(--bg-surface);color:var(--text-primary);text-align:left }
 .chat-attachment:not(:disabled):hover { border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,var(--bg-surface)) }
 .chat-attachment:disabled { cursor:default }

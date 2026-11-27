@@ -56,6 +56,16 @@ export class TabTransferService {
       const state = this.drags.get(event.sender.id);
       if (state && state.tabId === payload.tabId) { this.destroyGhost(); void this.finish(state, payload.screenX, payload.screenY, payload.transient); }
     });
+    this.ipc.on('tabs:drag-cancel', (event, payload: { tabId: string }) => {
+      const state = this.drags.get(event.sender.id);
+      if (state?.tabId !== payload.tabId) return;
+      this.drags.delete(event.sender.id);
+      this.destroyGhost();
+      if (this.drags.size === 0 && this.polling) {
+        clearInterval(this.polling);
+        this.polling = null;
+      }
+    });
     this.ipc.on('tabs:move-to-new-window', (event, payload: TransferPayload) => {
       const source = this.agentWindowFor(event.sender);
       if (source) {

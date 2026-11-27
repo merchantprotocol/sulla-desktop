@@ -9,10 +9,11 @@
  * Preferences → AI models. Approved mockup: Projects/sulla-desktop/mockups/model-routing.
  * Defaults → Models for each role (ledger) → Agents → More routing settings (Subconscious agents, routing, request settings).
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import PrefMore from '../PrefMore.vue';
 import PrefRow from '../PrefRow.vue';
+import ConfigurationLoadState from '../ConfigurationLoadState.vue';
 import DefaultsCard from './modelRouting/DefaultsCard.vue';
 import RoleLedger from './modelRouting/RoleLedger.vue';
 import RouteTrace from './modelRouting/RouteTrace.vue';
@@ -21,12 +22,12 @@ import RoutingList from './modelRouting/RoutingList.vue';
 import { applyFollowOrder, sameModels } from './modelRouting/routingLogic';
 import { MODEL_CLASSES, MODEL_ROUTING_IPC, type ModelClass, type ModelRoutingState, type RoutingProviderInfo, type RoutingRow } from '@pkg/agent/languagemodels/modelRoutingTypes';
 import { useSullaSetting } from '@pkg/composables/preferences/useSullaSetting';
+import { useConfigurationLoad } from '@pkg/composables/useConfigurationLoad';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 type Patch = Partial<Pick<ModelRoutingState, 'agentsList' | 'subconsciousList' | 'classes' | 'followProviderOrder' | 'neverUse' | 'workerBindings'>>;
 
 const state = ref<ModelRoutingState | null>(null);
-const unavailable = ref(false);
 const error = ref('');
 const errorTitle = ref('Couldn’t save model routing');
 const errorRecovery = ref('Your last saved settings are back on screen.');
@@ -55,14 +56,15 @@ function showError(message: string, title = 'Couldn’t save model routing', rec
 }
 function clearError() { error.value = ''; }
 
-async function load() {
-  try {
-    state.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get);
-    snapshot = JSON.stringify(state.value);
-  } catch {
-    unavailable.value = true;
-  }
-}
+const { loading, error: loadError, start: load } = useConfigurationLoad(async() => {
+  state.value = await ipcRenderer.invoke(MODEL_ROUTING_IPC.get);
+  snapshot = JSON.stringify(state.value);
+});
+watch(state, (next, previous) => {
+  if (!next || previous) return;
+  watchConnections();
+  void checkCliVersions().catch(() => undefined);
+});
 
 /** Changes apply instantly on screen; saves are batched (300 ms) and rolled back if the main process rejects them. */
 function save(patch: Patch) {
@@ -176,7 +178,7 @@ function watchConnections() {
 }
 
 onMounted(() => {
-  load().then(async() => { watchConnections(); await checkCliVersions() }).catch(() => undefined);
+  void load();
   ipcRenderer.on(MODEL_ROUTING_IPC.status, onStatus);
   clock = setInterval(() => { now.value = Date.now() }, 30_000);
 });
@@ -220,21 +222,12 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div
-      v-if="unavailable"
-      class="alert info"
-    >
-      <RoutingIcon name="info" />
-      <div class="x">
-        <b>Update Sulla to manage model routing.</b>
-      </div>
-    </div>
-    <div
-      v-else-if="!state"
-      class="loading"
-    >
-      Loading models…
-    </div>
+    <ConfigurationLoadState
+      v-if="!state || loading || loadError"
+      label="Loading saved model settings…"
+      :error="loadError ? 'Couldn’t load AI models.' : ''"
+      @retry="load"
+    />
     <template v-else>
       <DefaultsCard
         :state="state"

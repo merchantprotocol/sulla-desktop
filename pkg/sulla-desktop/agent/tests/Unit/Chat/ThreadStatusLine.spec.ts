@@ -9,10 +9,11 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computed, nextTick, ref } from 'vue';
 
+import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import ThreadStatusLine from '@pkg/pages/chat/components/composer/ThreadStatusLine.vue';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
-import { chatActivityByTab } from '@pkg/pages/chat/messages/chatActivityStore';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((): Promise<any> => Promise.resolve({ ok: true })) }));
 vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke, send: vi.fn(), on: vi.fn(), removeListener: vi.fn() } }));
@@ -44,7 +45,7 @@ const row = (state: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | null } = {}) {
+function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | null; tabStrip?: WindowTabStripState } = {}) {
   const controller = {
     isRunning: computed(() => !!opts.running),
     messages:  computed(() => []),
@@ -57,13 +58,14 @@ function mountLine(rows: any[], opts: { running?: boolean; heartbeat?: number | 
       provide: {
         [ChatControllerKey as symbol]:      controller,
         [AGENT_STATE_CLIENT_KEY as symbol]: client,
+        [windowTabStripKey as symbol]:      opts.tabStrip ?? new WindowTabStripState(window, ipcRenderer),
         'chat:activity-context':            { tabId: 'tab-1', backendThreadId: ref('thread-1') },
       },
     },
   });
 }
 
-afterEach(() => { document.body.innerHTML = ''; invoke.mockClear(); chatActivityByTab.clear() });
+afterEach(() => { document.body.innerHTML = ''; invoke.mockClear() });
 
 describe('the activity line above the message box', () => {
   // risk: the main thread showed nothing while agents worked or sat silent
@@ -81,23 +83,79 @@ describe('the activity line above the message box', () => {
   });
 
   it('says Idle when nothing is running and nothing can be opened', () => {
-    const w = mountLine([]);
+    const tabStrip = new WindowTabStripState(window, ipcRenderer);
+    const w = mountLine([], { tabStrip });
+
     expect(w.find('.ta-line').text()).toContain('Idle');
     expect(w.find('.ta-line').attributes('disabled')).toBeDefined();
-    expect(chatActivityByTab.get('tab-1')).toBe('idle');
+    expect(tabStrip.readActivity('tab-1').snapshot?.state).toBe('idle');
     w.unmount();
   });
 
   it('flags a silent agent and tells the tab strip', () => {
-    const w = mountLine([row('quiet')]);
+    const tabStrip = new WindowTabStripState(window, ipcRenderer);
+    const w = mountLine([row('quiet', { runtimeAlive: false })], { tabStrip });
+
     expect(w.find('.ta-line').text()).toContain('No progress');
-    expect(chatActivityByTab.get('tab-1')).toBe('stalled');
+    expect(tabStrip.readActivity('tab-1').snapshot?.state).toBe('stalled');
+    expect(tabStrip.readActivity('tab-1').snapshot?.detail).toContain('stopped responding');
     w.unmount();
-    expect(chatActivityByTab.has('tab-1')).toBe(false);
+    expect(tabStrip.readActivity('tab-1').snapshot).toBeUndefined();
+  });
+
+  it('keeps header attention states independent of the working meter', () => {
+    const events = new EventTarget();
+    const strip = new WindowTabStripState(events, ipcRenderer);
+    const tab = { id: 'tab-1', mode: 'chat' };
+    const setRunning = (running: boolean) => events.dispatchEvent(new CustomEvent('sulla:chat-running', {
+      detail: { tabId: tab.id, running },
+    }));
+
+    strip.connect();
+    try {
+      for (const state of ['you', 'stalled', 'waiting'] as const) {
+        strip.setSnapshot(tab.id, { state });
+        for (const working of [true, false]) {
+          setRunning(working);
+          expect(strip.readHeaderActivity(tab)).toMatchObject({ working, activity: state });
+        }
+      }
+      strip.setSnapshot(tab.id, { state: 'stalled', active: true });
+      expect(strip.readHeaderActivity(tab)).toMatchObject({ working: true, activity: 'stalled' });
+      strip.setSnapshot(tab.id, { state: 'idle', active: false });
+      setRunning(true);
+      expect(strip.readHeaderActivity(tab)).toMatchObject({ working: true, activity: 'working' });
+      strip.clearSnapshot(tab.id);
+      expect(strip.readHeaderActivity(tab)).toMatchObject({ working: true, activity: 'working' });
+      expect(strip.readHeaderActivity({ ...tab, mode: 'browser' })).toMatchObject({ working: false, activity: undefined });
+    } finally {
+      strip.dispose();
+    }
+  });
+
+  it('reports active workers to the shell even while a different worker has stalled', async() => {
+    const report = vi.fn();
+    window.addEventListener('sulla:chat-activity', report);
+    const manager = row('parked', { jobId: 'manager', key: 'manager:0', waitingOnChildren: 1 });
+    const child = row('working', { jobId: 'child', key: 'child:0', parentJobId: 'manager', parentTaskIndex: 0 });
+    const stalled = row('quiet', { jobId: 'stalled', key: 'stalled:0', runtimeAlive: false });
+    const w = mountLine([manager, child, stalled]);
+    try {
+      expect(w.get('.ta-lead').text()).toBe('No progress');
+      expect(report.mock.lastCall?.[0].detail).toMatchObject({ tabId: 'tab-1', state: 'stalled', active: true });
+      const client = w.vm.$.appContext.provides[AGENT_STATE_CLIENT_KEY as symbol];
+      client.snapshot.value = { version: 2, rows: [stalled] };
+      await nextTick();
+      expect(report.mock.lastCall?.[0].detail).toMatchObject({ tabId: 'tab-1', state: 'stalled', active: false });
+    } finally {
+      w.unmount();
+      window.removeEventListener('sulla:chat-activity', report);
+    }
+    expect(report.mock.lastCall?.[0].detail).toMatchObject({ tabId: 'tab-1', state: 'idle' });
   });
 
   it('nudges a silent agent from its row with one click', async() => {
-    const w = mountLine([row('quiet')]);
+    const w = mountLine([row('quiet', { runtimeAlive: false })]);
     await w.find('.ta-line').trigger('click');
     const nudge = w.findAll('.ta-btn').find(b => b.attributes('aria-label')?.startsWith('Nudge'))!;
     await nudge.trigger('click');
