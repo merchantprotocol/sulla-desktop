@@ -44,7 +44,7 @@ import type { BrokerRelayService } from './localAuthority/BrokerRelayService.js'
 import type { BrokerExecutionService } from './localAuthority/BrokerExecutionService.js';
 import type { ServiceIdentityGuard } from './localAuthority/ServiceIdentityGuard.js';
 import type { CacheUpdateStager } from './localAuthority/CacheUpdateStager.js';
-import { LocalAuthorityCollaborators } from './localAuthority/LocalAuthorityCollaborators.js';
+import { LocalAuthorityCollaborators, type UpstreamHttpClientFactory } from './localAuthority/LocalAuthorityCollaborators.js';
 import type { LocalAuthorityHost, LocalAuthoritySeam, LocalAuthorityVaultSecrets } from './localAuthority/LocalAuthorityHost.js';
 import type { VaultKeyActivation } from './localAuthority/VaultKeyActivation.js';
 import { BrokerAddressPolicy } from './localAuthority/BrokerAddressPolicy.js';
@@ -155,6 +155,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     readonly keyEnvelopeReaderProvider: StoredKeyEnvelopeReaderProvider = new StoredKeyEnvelopeReaderProvider(),
     readonly localCryptoProvider: LocalVaultCryptoProvider = new LocalVaultCryptoProvider(),
     readonly bitwardenImporter: BitwardenExportImporter = new BitwardenExportImporter(),
+    private readonly upstreamHttpClientFactory?: UpstreamHttpClientFactory,
   ) {
     this.repositories = repositories;
     const profileId = repositories.session.context.profileId;
@@ -234,7 +235,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   emitFilesAudit(event: Parameters<FilesAuditEmitter['emit']>[0]): void { this.filesAudit.emit(event); }
 
   get parts(): LocalAuthorityCollaborators {
-    this.collaborators ??= new LocalAuthorityCollaborators(this.collaboratorHost());
+    this.collaborators ??= new LocalAuthorityCollaborators(this.collaboratorHost(), this.upstreamHttpClientFactory);
     return this.collaborators;
   }
 
