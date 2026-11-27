@@ -4,7 +4,6 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import fs from 'node:fs/promises';
-import net from 'node:net';
 import path from 'node:path';
 import tls from 'node:tls';
 
@@ -15,6 +14,7 @@ import Electron from 'electron';
 import { loopbackOrigin } from '@pkg/utils/instance';
 import paths from '@pkg/utils/paths';
 
+import { PinnedNodeAgentFactory } from './PinnedNodeAgentFactory';
 import type { VaultBrokerFetch, VaultBrokerServiceIdentity } from './index';
 
 const BROKER_TOKEN_FILE = 'vault-broker-token.enc';
@@ -94,6 +94,7 @@ export class DesktopVaultTransport {
   private loggedStreamTransport = false;
   private readonly nodeFetch: typeof undiciFetch;
   private readonly dispatcherFactory: VaultNodeAgentFactory;
+  private readonly nodeAgents: PinnedNodeAgentFactory;
 
   constructor(
     private readonly identities: DesktopVaultIdentityRepository = new DesktopVaultIdentityRepository(),
@@ -111,6 +112,7 @@ export class DesktopVaultTransport {
   ) {
     this.nodeFetch = nodeFetch;
     this.dispatcherFactory = dispatcherFactory ?? (options => new Agent(options));
+    this.nodeAgents = new PinnedNodeAgentFactory(this.dispatcherFactory, this.tlsConnect);
   }
 
   readonly fetch: VaultBrokerFetch = async(input, init) => {
@@ -152,50 +154,11 @@ export class DesktopVaultTransport {
   };
 
   private createNodeDispatcher(connections: number): Agent {
-    return this.dispatcherFactory({
+    return this.nodeAgents.create(
       connections,
-      connect: (options, callback) => {
-        const hostname = typeof options.hostname === 'string' ? options.hostname : '';
-        // Explicit mapping instead of spreading undici's connector options (port is a string there, and it carries undici-only fields).
-        // Mirrors undici's buildConnector: SNI only for non-IP hostnames. The vault is loopback-only,
-        // so localAddress and connect timeouts are not needed (neither is typed on these options).
-        const socket = this.tlsConnect({
-          host: hostname,
-          port: Number(options.port) || 443,
-          servername: options.servername ?? (net.isIP(hostname) ? undefined : hostname),
-          rejectUnauthorized: false,
-        });
-        let settled = false;
-        const fail = (error: Error) => {
-          if (settled) return;
-          settled = true;
-          callback(error, null);
-        };
-        const succeed = (connected: tls.TLSSocket) => {
-          if (settled) return;
-          settled = true;
-          callback(null, connected);
-        };
-        socket.once('error', error => fail(error));
-        socket.once('secureConnect', () => {
-          void (async() => {
-            const certificate = socket.getPeerCertificate(true);
-            const raw = certificate.raw;
-            const pem = raw ? `-----BEGIN CERTIFICATE-----\n${raw.toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----` : '';
-            if (!pem || !await this.verifyPeer(hostname, pem)) {
-              socket.destroy();
-              fail(new Error('Vault TLS certificate pin verification failed'));
-              return;
-            }
-            succeed(socket);
-          })().catch((error) => {
-            socket.destroy();
-            fail(error as Error);
-          });
-        });
-        return socket;
-      },
-    });
+      (hostname, certificatePem) => this.verifyPeer(hostname, certificatePem),
+      'Vault TLS certificate pin verification failed',
+    );
   }
 
   private assertVaultOrigin(input: string, transport: 'control' | 'stream'): void {
