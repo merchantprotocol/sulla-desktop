@@ -90,6 +90,7 @@ describe('runner-owned graphs', () => {
       cache.set('manager', entry);
       now = 16 * minute;
       await cache.evictIdle();
+      expect(save).toHaveBeenCalledTimes(1);
       expect(cache.has('manager')).toBe(true); // get() would refresh lastAccessAt
       now += minute;
       await cache.evictIdle();

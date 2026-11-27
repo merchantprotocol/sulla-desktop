@@ -100,7 +100,7 @@ export class ThreadGraphCache {
   }
 
   private hasLiveRunner(state: BaseThreadState): boolean {
-    const metadata = state.metadata as { runtimeRunnerActive?: boolean; delegatedRunActive?: boolean };
+    const metadata = state.metadata as typeof state.metadata & { runtimeRunnerActive?: boolean; delegatedRunActive?: boolean };
     return metadata?.runtimeRunnerActive === true || metadata?.delegatedRunActive === true;
   }
 
