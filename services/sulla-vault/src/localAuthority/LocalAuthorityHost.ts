@@ -17,6 +17,7 @@ import type { SyncBundle, SyncHead } from '../browserEnvelope/envelope.js';
 import type { StoredKeyEnvelopeReaderProvider } from '../browserEnvelope/StoredKeyEnvelopeReaderProvider.js';
 import type { VaultConfig } from '../config.js';
 import type {
+  BrokerClaims,
   BrokerIntegrationMetadataResponse,
   LocalVaultState,
 } from '../contracts.js';
@@ -51,7 +52,8 @@ export interface LocalAuthorityVaultSecrets {
   readonly challengeRate:   Map<string, { count: number; resetAt: number }>;
   readonly humanSessions:   Map<string, HumanSession>;
   readonly pendingApprovals: Map<string, number>;
-  readonly approvals:        Map<string, { digest: string; expiresAt: number }>;
+  readonly pendingClerkApprovals: Map<string, { digest: string; expiresAt: number }>;
+  readonly approvals:        Map<string, { digest: string; expiresAt: number; clerkOperationId?: string }>;
   readonly relaySessions:    Map<string, { generation: number; controller: AbortController }>;
   readonly pendingVaultEnrollments: Map<string, {
     expiresAt: number; bundle: SyncBundle; head: SyncHead; userKey: Uint8Array; privateKey: Uint8Array; masterKey: Uint8Array; cloudUserId: string;
@@ -121,6 +123,7 @@ export interface LocalAuthoritySeam {
   requireDesktopIdentity(callerId: string, token: string | undefined): void;
   requireBrokerIdentity(callerId: string, token: string | undefined): void;
   integrationMetadata(callerId: string, token: string | undefined, integrationId: string, accountFilter?: string): Promise<BrokerIntegrationMetadataResponse>;
+  integrationMetadataForAgent(callerId: string, token: string | undefined, claims: BrokerClaims, integrationId: string, accountId: string): Promise<BrokerIntegrationMetadataResponse>;
   isSetupRequired(): Promise<boolean>;
   validateHumanSession(sessionId: string | undefined, csrf?: string): HumanSession;
   unlockWithPassword(password: string): Promise<{ state: LocalVaultState; cacheUpdateRequired: boolean }>;

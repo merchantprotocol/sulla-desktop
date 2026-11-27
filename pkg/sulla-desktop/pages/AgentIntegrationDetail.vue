@@ -303,9 +303,14 @@
                 </div>
               </div> -->
 
+              <ClerkIntegrationSettings
+                v-if="integration.id === 'clerk'"
+                @changed="clerkConnectionChanged"
+              />
+
               <!-- Connect Card — always shows as a fresh create form -->
               <div
-                v-if="showConnectionForm"
+                v-else-if="showConnectionForm"
                 class="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6  "
               >
                 <div class="flex items-center justify-between mb-4">
@@ -643,7 +648,7 @@
 
               <!-- Existing accounts: pick the active one, or edit/remove it in the vault. -->
               <div
-                v-if="accounts.length || accountError"
+                v-if="integration.id !== 'clerk' && (accounts.length || accountError)"
                 class="mt-6 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6"
               >
                 <h3 class="mb-4 text-lg font-semibold text-[var(--text-primary)]">
@@ -1008,6 +1013,7 @@ import { onBeforeUnmount, onMounted, ref, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import AgentHeader from './agent/AgentHeader.vue';
+import ClerkIntegrationSettings from './integrations/ClerkIntegrationSettings.vue';
 
 import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
 
@@ -1602,6 +1608,12 @@ const handleConnect = async() => {
   }
 };
 
+function clerkConnectionChanged(connected: boolean) {
+  if (integration.value?.id !== 'clerk') return;
+  integration.value.connected = connected;
+  mergedIntegrations.value.clerk.connected = connected;
+}
+
 function onReconnectRequired(_event: unknown, payload: ClaudeReconnectRequiredEvent) {
   if (payload?.providerId !== 'claude-code' || integration.value?.id !== 'claude-code') return;
   integration.value.connected = false;
@@ -1660,14 +1672,16 @@ const { loading: configurationLoading, error: configurationError, start: loadCon
     return;
   }
 
-  try {
-    await refreshAccounts(true);
-    integration.value.connected = accounts.value.some(account => account.connected);
-    vaultLocked.value = false;
-  } catch (cause) {
-    if (!loadPolicy.isVaultLocked(cause)) throw cause;
-    vaultLocked.value = true;
-    accountError.value = 'Unlock Password Vault to see saved accounts.';
+  if (integration.value.id !== 'clerk') {
+    try {
+      await refreshAccounts(true);
+      integration.value.connected = accounts.value.some(account => account.connected);
+      vaultLocked.value = false;
+    } catch (cause) {
+      if (!loadPolicy.isVaultLocked(cause)) throw cause;
+      vaultLocked.value = true;
+      accountError.value = 'Unlock Password Vault to see saved accounts.';
+    }
   }
 
   // Start with a blank form for new account creation

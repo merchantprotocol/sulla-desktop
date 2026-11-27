@@ -790,6 +790,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
         log.log(`[CodexService] MCP session setup failed, continuing without sulla-native tools: ${ (err as Error)?.message ?? err }`);
       }
     }
+    if (mcpSession?.prepareCliLease) {
+      try { await mcpSession.prepareCliLease(); } catch (error) { mcpSession.revoke(); throw error; }
+    }
     const transportContext = mcpSession
       ? await transport.context({
         provider:          'codex',

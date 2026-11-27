@@ -19,12 +19,13 @@
  * YAML/OAuth-manifest provider.
  */
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 
 import { alibabaBaseUrl, kimiBaseUrl } from '@pkg/agent/languagemodels/providerEndpoints';
 import { getIntegrationService } from '@pkg/agent/services/IntegrationService';
 import { getOAuthService } from '@pkg/agent/services/OAuthService';
 import { integrations } from '@pkg/agent/integrations/catalog';
+import { createClerkSettingsService } from '@pkg/main/ClerkSettingsService';
 import { flushPendingCredentials, pendingIntegrationIds, queuePendingCredential } from '@pkg/main/firstRun/pendingCredentials';
 import { firstRunTrace } from '@pkg/main/firstRun/firstRunTrace';
 import { FirstRunAiConnectionStatusCache } from '@pkg/main/FirstRunAiConnectionStatusCache';
@@ -440,12 +441,34 @@ export function initIntegrationOAuthEvents(): void {
   });
 
 
-  ipcMainProxy.handle('integration:connect-form', async(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): Promise<{ success: boolean; error?: string }> => {
+  const clerkSettings = createClerkSettingsService();
+  const assertClerkSettingsSender = (event: Electron.IpcMainInvokeEvent) => {
+    assertFirstRunOrMainSender(event);
+    if (event.senderFrame !== event.sender.mainFrame || !/^(app:|file:)/.test(event.senderFrame?.url ?? '')) {
+      throw new Error('Clerk settings are only available in the Desktop application.');
+    }
+  };
+  ipcMainProxy.handle('clerk:settings:load', (event) => {
+    assertClerkSettingsSender(event);
+    return clerkSettings.load();
+  });
+  // The generic IPC proxy serializes arguments into its debug log.
+  ipcMain.handle('clerk:settings:save', (event, values: unknown) => {
+    assertClerkSettingsSender(event);
+    return clerkSettings.save(values);
+  });
+  ipcMainProxy.handle('clerk:settings:disconnect', (event) => {
+    assertClerkSettingsSender(event);
+    return clerkSettings.save({}, true);
+  });
+
+  ipcMainProxy.handleSensitive('integration:connect-form', async(event: Electron.IpcMainInvokeEvent, ...args: unknown[]): Promise<{ success: boolean; error?: string }> => {
     assertFirstRunOrMainSender(event);
     const payload = (args[0] ?? {}) as { integrationId?: unknown; accountId?: unknown; label?: unknown; values?: unknown };
     const integrationId = typeof payload.integrationId === 'string' ? payload.integrationId.trim() : '';
     const accountId = typeof payload.accountId === 'string' ? payload.accountId.trim() : '';
     const label = typeof payload.label === 'string' ? payload.label.trim() : '';
+    if (integrationId === 'clerk') return { success: false, error: 'Use the Clerk settings to connect Staging and Production.' };
     const integration = integrations[integrationId];
     if (!integration || !/^[a-z0-9][a-z0-9_-]*$/i.test(accountId) || !label) {
       return { success: false, error: 'Enter an account label and try again.' };

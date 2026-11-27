@@ -16,11 +16,22 @@ describe('GuestAgentContainerRuntimeSupervisor', () => {
   it('rehydrates current and upgrade-era labels through durable task identity', async() => {
     // risk: upgrade restart falsely marks a live container task lost
     const current = new GuestAgentContainerRuntimeSupervisor(runtime(async() => ({ Name: '/pod-1', State: { Running: true }, Config: { WorkingDir: '/work', Labels: { 'com.sulla.job-id': 'job-1', 'com.sulla.task-index': '0', 'com.sulla.subject': 'subject-1', 'com.sulla.device-id': 'device-1' } } })));
-    expect(await current.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', subject: 'subject-1', deviceId: 'device-1' })]);
+    expect(await current.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', taskIndex: 0, subject: 'subject-1', deviceId: 'device-1' })]);
     const legacy = new GuestAgentContainerRuntimeSupervisor(runtime(async() => ({ Name: '/pod-1', State: { Status: 'running' }, Config: { WorkingDir: '/work', Labels: { 'com.sulla.workload': 'agent', 'com.sulla.job-id': 'job-1', 'com.sulla.task-index': '0', 'com.sulla.agent-id': 'worker' } } })), {
       resolve: async(jobId, taskIndex) => jobId === 'job-1' && taskIndex === 0 ? { subject: 'legacy-subject', deviceId: 'legacy-device', threadId: 'thread-1' } : undefined,
     });
-    expect(await legacy.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', subject: 'legacy-subject', threadId: 'thread-1' })]);
+    expect(await legacy.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', taskIndex: 0, subject: 'legacy-subject', threadId: 'thread-1' })]);
+  });
+
+  it.each([undefined, '', '  ', '-1', '1.5', '0x10', '9007199254740992'])('keeps liveness but never invents an index for %s', async label => {
+    const labels = { 'com.sulla.job-id': 'job-1', 'com.sulla.subject': 'owner', 'com.sulla.device-id': 'device',
+      ...(label === undefined ? {} : { 'com.sulla.task-index': label }) };
+    const supervisor = new GuestAgentContainerRuntimeSupervisor(runtime(async() => ({
+      Name: '/pod-1', State: { Running: true }, Config: { Labels: labels },
+    })));
+    const [live] = await supervisor.liveBindings();
+    expect(live.jobId).toBe('job-1');
+    expect(live.taskIndex).toBeUndefined();
   });
 
   it('fails closed on inventory rejection and timeout', async() => {

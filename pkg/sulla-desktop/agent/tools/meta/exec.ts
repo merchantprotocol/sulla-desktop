@@ -52,6 +52,7 @@ export class ExecWorker extends BaseTool {
         if (host.running) {
           const session = host.registerSession(this.state, timeoutMs + 60_000);
           revoke = session.revoke;
+          await session.prepareCliLease?.();
           const quoted = "'" + session.id.replace(/'/g, "'\\''") + "'";
           finalCommand = `export SULLA_TOOL_SESSION=${ quoted }; ${ finalCommand }`;
         }

@@ -60,6 +60,11 @@ if [ -z "$SULLA_TOOL_SESSION" ] && [ -r "/proc/$$/status" ]; then
   done
   unset _p _n _s
 fi
+if [ "${SULLA_CONTAINER_CLI:-}" = 1 ]; then
+  . /usr/local/libexec/sulla-secret-env.sh || exit 77
+  load_sulla_tool_session /run/secrets/sulla-agent &&
+    load_sulla_api_token /run/secrets/sulla-agent || { echo "No current lease for this tool session" >&2; exit 77; }
+fi
 SULLA_HOST="${SULLA_HOST:-host.sulla.internal}"
 SULLA_TOOL_API_URL="${SULLA_TOOL_API_URL%/}"
 FIRST="$1"

@@ -5,7 +5,7 @@
 
 import jwt from 'jsonwebtoken';
 
-import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { containerRuntimeForForwardedExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { toolRegistry } from '@pkg/agent/tools';
 import { ToolInputValidationError } from '@pkg/agent/tools/base';
@@ -32,6 +32,11 @@ async function executeThroughRegistry(
   if (!resolvedName) {
     return { success: false, error: { code: 'tool_not_found', message: `Tool ${ category }/${ toolName } not registered` } };
   }
+  // Neither relay tunnel carries the live session required by Clerk.
+  if (category === 'clerk') {
+    return { success: false, error: { code: 'clerk_relay_forbidden',
+      message: 'Clerk tools are not available over the relay transport; use the direct Desktop executor.' } };
+  }
   // Tool instances carry mutable state, approval signals, and verified caller
   // identity. A cached singleton lets concurrent calls overwrite each other.
   const tool = await toolRegistry.createTool(resolvedName);
@@ -53,7 +58,7 @@ async function executeThroughRegistry(
       },
     },
   };
-  const containerRuntime = containerRuntimeForExecution(ctx, executionTarget);
+  const containerRuntime = containerRuntimeForForwardedExecution(ctx, executionTarget);
   const state = containerRuntime ? isolatedState : (registered ?? isolatedState);
   try {
     const result = containerRuntime

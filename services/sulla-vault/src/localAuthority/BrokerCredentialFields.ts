@@ -48,7 +48,9 @@ export class BrokerCredentialFields {
       .map(([, value]) => value as string);
     const output: Record<string, string> = {};
     for (const [name, value] of Object.entries(source)) {
-      if (!BrokerCredentialFields.SAFE_INTEGRATION_METADATA_FIELDS.has(name) || typeof value !== 'string') continue;
+      const clerkMetadata = integrationId === 'clerk' && /^(staging|production)_(publishable_key|instance_id|warning)$/.test(name);
+      if ((!clerkMetadata && !BrokerCredentialFields.SAFE_INTEGRATION_METADATA_FIELDS.has(name)) || typeof value !== 'string') continue;
+      if (clerkMetadata && name.endsWith('_publishable_key') && !/^pk_(?:test|live)_[A-Za-z0-9+/_=-]+$/.test(value)) continue;
       if (name === 'base_url' || name === 'server_url' || name === 'gateway_url' || name === 'resource_url') {
         try {
           const parsed = new URL(value);
@@ -59,7 +61,7 @@ export class BrokerCredentialFields {
           }
         } catch { continue; }
       }
-      output[name] = BrokerCredentialFields.redact(value, secrets);
+      output[name] = BrokerCredentialFields.redact(value, clerkMetadata && name.endsWith('_publishable_key') ? secrets.filter(secret => secret !== value || secret.startsWith('sk_')) : secrets);
     }
     return output;
   }
@@ -100,11 +102,52 @@ export class BrokerCredentialFields {
     if (accountId) properties.chatgpt_account_id = accountId;
   }
 
+  /** Clerk keys may be embedded in otherwise ordinary labels or returned text. */
+  static redactClerkKeys(value: string, secrets: string[]): string {
+    const masked = value.replace(/(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9+/_=-]+/gi, '[REDACTED]');
+    return BrokerCredentialFields.redact(masked, secrets);
+  }
+
   static redact(value: string, secrets: string[]): string {
     let next = value;
     for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
       next = next.split(secret).join('[REDACTED]');
     }
     return next;
+  }
+
+  /** Defense in depth for Clerk responses: redact credential-like fields without hiding ordinary metadata. */
+  static redactSensitiveResponse(value: unknown, secrets: string[]): unknown {
+    if (typeof value === 'string') {
+      return BrokerCredentialFields.redactClerkKeys(value, secrets)
+        .replace(/Bearer\s+[^\s"',;]+/gi, 'Bearer [REDACTED]')
+        .replace(/eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[REDACTED]');
+    }
+    if (Array.isArray(value)) return value.map(child => BrokerCredentialFields.redactSensitiveResponse(child, secrets));
+    if (!value || typeof value !== 'object') return value;
+
+    const entries: [string, unknown][] = [];
+    const outputKeys = new Set<string>();
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      const safeKey = BrokerCredentialFields.redactSensitiveResponse(key, secrets) as string;
+      const outputKey = outputKeys.has(safeKey) ? `${ safeKey }#${ outputKeys.size }` : safeKey;
+      outputKeys.add(outputKey);
+      entries.push([outputKey, BrokerCredentialFields.isCredentialResponseField(key)
+        ? '[REDACTED]'
+        : BrokerCredentialFields.redactSensitiveResponse(child, secrets)]);
+    }
+    return Object.fromEntries(entries);
+  }
+
+  private static isCredentialResponseField(name: string): boolean {
+    const normalized = name
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/-/g, '_')
+      .toLowerCase();
+    return [
+      'secret', 'secret_key', 'client_secret', 'machine_secret_key', 'token', 'access_token', 'refresh_token',
+      'id_token', 'session_token', 'oauth_access_token', 'oauth_refresh_token', 'm2m_token', 'machine_token',
+      'api_key', 'private_key', 'jwt', 'password', 'bearer_token',
+    ].includes(normalized);
   }
 }

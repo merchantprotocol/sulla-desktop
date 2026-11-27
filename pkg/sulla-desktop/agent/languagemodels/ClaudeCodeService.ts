@@ -980,6 +980,9 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       }
     }
 
+    if (mcpSession?.prepareCliLease) {
+      try { await mcpSession.prepareCliLease(); } catch (error) { mcpSession.revoke(); throw error; }
+    }
     const transportContext = mcpSession
       ? await transport.context({
         provider:          'claude-code',

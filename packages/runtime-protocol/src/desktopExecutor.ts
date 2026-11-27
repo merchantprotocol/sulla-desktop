@@ -12,8 +12,15 @@ export interface ToolResult {
   error?:  { code: string; message: string; details?: unknown };
 }
 
+export interface DesktopExecutionOptions {
+  deadlineMs: number;
+  operationTypes?: readonly string[];
+  /** Live agent proof for the private Clerk hop only. Never serialize with the tool arguments. */
+  clerkToolSession?: string;
+}
+
 export interface DesktopExecutor {
-  execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number; operationTypes?: readonly string[] }): Promise<ToolResult>;
+  execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: DesktopExecutionOptions): Promise<ToolResult>;
 }
 
 export function toolRequestRejectionStatus(code: string | undefined): 400 | 409 | undefined {
@@ -24,19 +31,22 @@ export function toolRequestRejectionStatus(code: string | undefined): 400 | 409 
 export class HttpDesktopExecutor implements DesktopExecutor {
   private readonly deadlinePolicy = new ToolDeadlinePolicy();
 
-  constructor(private readonly endpoint: string, private readonly bearerToken: string) {}
+  constructor(private readonly endpoint: string, private readonly bearerToken: string,
+    private readonly transport: typeof fetch = fetch) {}
 
-  async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: { deadlineMs: number; operationTypes?: readonly string[] }): Promise<ToolResult> {
+  async execute(ctx: ToolExecutionContext, category: string, tool: string, args: unknown, opts: DesktopExecutionOptions): Promise<ToolResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), opts.deadlineMs);
     try {
-      const response = await fetch(`${ this.endpoint.replace(/\/$/, '') }/internal/desktop-executor/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`, {
+      const response = await this.transport(`${ this.endpoint.replace(/\/$/, '') }/internal/desktop-executor/${ encodeURIComponent(category) }/${ encodeURIComponent(tool) }`, {
         method:  'POST',
         headers: {
           'Content-Type':       'application/json',
           Authorization:        `Bearer ${ this.bearerToken }`,
           'X-Sulla-Request-Id': ctx.request_id,
+          ...(category === 'clerk' && opts.clerkToolSession ? { 'X-Sulla-Tool-Session': opts.clerkToolSession } : {}),
         },
+        ...(category === 'clerk' ? { redirect: 'error' as const } : {}),
         body:   JSON.stringify({ ctx, args, deadlineMs: opts.deadlineMs }),
         signal: controller.signal,
       });

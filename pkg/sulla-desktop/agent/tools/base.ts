@@ -7,6 +7,8 @@
 import { ToolResult } from '../types';
 import { toolRequiresHostAccess } from './util/hostAccessPolicy';
 import { requiresApproval as requiresToolApproval, type ToolSideEffect } from './toolPlacement';
+import { toolSessionOrigin } from '../services/ToolSessionOrigin';
+import { ToolApprovalGate } from './ToolApprovalGate';
 import { toolDecisionPort } from './toolDecisionPort';
 import { DecisionAnswererLabel } from '../services/DecisionAnswererLabel';
 
@@ -47,6 +49,8 @@ export interface ToolResponse {
   errorCode?:     ToolResult['errorCode'];
   /** Optional structured payload; BaseTool exposes it without double encoding. */
   result?: unknown;
+  status?: number;
+  retryAfter?: string;
 }
 
 export interface ToolRegistration {
@@ -76,6 +80,8 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
   metadata:          ToolMetadata = { category: 'general' };
   /** Verified caller identity for containerized or relayed execution. */
   executionContext?: ToolExecutionContext;
+  /** Absolute wall-clock deadline shared by transports and broker retries. */
+  deadlineAt?: number;
 
   // ─────────────────────────────────────────────────────────────
   // Runtime validation + JSON schema generation
@@ -283,26 +289,21 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
         }
       }
 
-      const decisions = toolDecisionPort.resolve();
       const operations = this.metadata.operationTypes ?? [];
       const sideEffect = (metadata?.sideEffect as ToolSideEffect | undefined) ?? (operations.length && operations.every(operation => operation === 'read') ? 'read' : undefined);
       const relayedWrite = metadata?.relayed === true && requiresToolApproval(sideEffect, { relayed: true });
-      if (this.name !== 'ask_user_question' && (relayedWrite || await decisions.requiresApproval(this.name))) {
-        const initialSteerRevision = metadata?.reportingSteerRevision;
-        const { record, result } = await decisions.request({
-          kind:           'approval',
-          title:          `Allow ${ this.metadata.category } / ${ this.name }?`,
-          toolName:       this.name,
-          conversationId: metadata?.threadId || '',
-          channel:        metadata?.wsChannel || '',
-        }, undefined, signal);
-        // Arguments stay in this invocation, never serialized into a cloud decision.
-        try {
+      const initialSteerRevision = metadata?.reportingSteerRevision;
+      const decision = await new ToolApprovalGate(toolDecisionPort.resolve()).check({
+        name: this.name, category: this.metadata.category, conversationId: metadata?.threadId, channel: metadata?.wsChannel,
+        signal, requiredByRelay: relayedWrite,
+        onPending: async(record) => {
           await emit?.('Review the tool call in this conversation before approving.', 'tool_approval', {
             toolApproval: { approvalId: record.id, toolName: this.name, reason: record.title, command: this.name },
           });
-        } catch { /* The durable Decide inbox remains available. */ }
-        const answer = await result;
+        },
+      });
+      if (decision) {
+        const { record, answer } = decision;
         // The result belongs to this invocation's live graph, not to the
         // next text that happened to arrive after a card changed state.
         if (metadata?.threadId && !signal?.aborted && metadata.reportingSteerRevision === initialSteerRevision &&
@@ -314,7 +315,7 @@ export abstract class BaseTool<TState extends ChatToolReportingState = any> {
         if (answerer) decisionAttribution = `Approved by ${ answerer }.`;
       }
       if (signal?.aborted) throw new Error('Action cancelled; nothing was executed.');
-      const response = await this._validatedCall(validated);
+      const response = await toolSessionOrigin.withinTool(() => this._validatedCall(validated));
       const { successBoolean, responseString, ...extra } = response as any;
       return {
         toolName: this.name,

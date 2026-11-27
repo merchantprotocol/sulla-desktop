@@ -72,6 +72,15 @@ export interface BrokerExecuteRequest {
   bodyEncoding?: 'base64';
   injections:    BrokerInjection[];
   approvalId?:   string;
+  /** Dedicated Clerk guard metadata, never forwarded to Clerk. */
+  clerk?:        {
+    environment?: unknown;
+    confirm?: unknown;
+    operationId?: string;
+    deadlineAt?: number;
+    action?: string;
+    binding?: { taskIndex: number; generation: string };
+  };
   /** 'base64': raw upstream bytes returned base64-encoded in body (Files sync chunk reads only). */
   responseType?: 'json' | 'text' | 'stream' | 'binary-stream' | 'base64';
 }
@@ -99,7 +108,15 @@ export interface BrokerIntegrationMetadataResponse {
     active:     boolean;
     revision:   number;
     properties: Record<string, string>;
+    /** Non-secret Clerk policy metadata; an empty list means every agent is allowed. */
+    allowedAgentIds?: string[];
   }>;
+}
+
+/** Agent-mode, caller-bound metadata read; Desktop supplies claims only after session verification. */
+export interface BrokerAgentIntegrationMetadataRequest {
+  claims: BrokerClaims;
+  accountId: string;
 }
 
 export interface BrokerVaultItemWriteRequest {
@@ -139,6 +156,8 @@ export interface BrokerIntegrationAccountImportRequest {
   values: Record<string, string>;
   active?: boolean;
   connected?: boolean;
+  /** Clerk-only allow list update. An empty list means every agent is allowed. */
+  allowedAgentIds?: string[];
 }
 
 /** Trusted Desktop-only handoff after a fixed-host Sulla Cloud auth flow. */

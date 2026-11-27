@@ -7,15 +7,17 @@ import { randomBytes } from 'node:crypto';
 
 import { validateVaultItemProxy, type VaultItemPlaintext } from '@sulla/vault-crypto';
 
-import type { BrokerCredentialRef, BrokerExecuteRequest, BrokerExecuteResponse, BrokerItemListResponse } from '../contracts.js';
 import { brokerTransferLimits, FILES_SYNC_OPERATION } from '../operationPolicy.js';
-import { AgentMailboxCloudLane } from '../sullaCloudSession/AgentMailboxCloudLane.js';
-import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
-import { APPROVAL_TTL_MS, BROKER_IDENTIFIER_PATTERN, UUID_PATTERN } from './LocalAuthorityLimits.js';
-import type { BrokerStreamSink, ItemRow } from './LocalAuthorityTypes.js';
-import { LocalVaultError } from './LocalVaultError.js';
-import { LocalAuthorityCrypto } from './LocalAuthorityCrypto.js';
 import { AgentPolicyGate } from './AgentPolicyGate.js';
+import { ClerkAuthority } from './ClerkAuthority.js';
+import { LocalAuthorityCrypto } from './LocalAuthorityCrypto.js';
+import { APPROVAL_TTL_MS, BROKER_IDENTIFIER_PATTERN, UUID_PATTERN } from './LocalAuthorityLimits.js';
+import { LocalVaultError } from './LocalVaultError.js';
+import { AgentMailboxCloudLane } from '../sullaCloudSession/AgentMailboxCloudLane.js';
+
+import type { BrokerCredentialRef, BrokerExecuteRequest, BrokerExecuteResponse, BrokerItemListResponse } from '../contracts.js';
+import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
+import type { BrokerStreamSink, ItemRow } from './LocalAuthorityTypes.js';
 
 /**
  * The broker's HTTP entry points: one-shot and streamed execution, OAuth token mutations
@@ -24,24 +26,35 @@ import { AgentPolicyGate } from './AgentPolicyGate.js';
  */
 export class BrokerExecutionService {
   private readonly staleRefreshWarnings = new Set<string>();
-  constructor(private readonly host: LocalAuthorityHost) {}
+  constructor(private readonly host: LocalAuthorityHost, private readonly now: () => number = Date.now) {}
 
   approve(callerId: string, token: string | undefined, operationId: string): { approvalId: string; expiresAt: number } {
     if (callerId !== this.host.config.approvalServiceId || !LocalAuthorityCrypto.constantEqual(token, this.host.config.approvalServiceToken)) {
       throw new LocalVaultError('invalid_service_identity', 401, 'Approval service identity is invalid');
     }
+    const clerkPending = this.host.pendingClerkApprovals.get(operationId);
+    if (clerkPending) {
+      this.host.pendingClerkApprovals.delete(operationId);
+      if (clerkPending.expiresAt <= this.now()) throw new LocalVaultError('approval_not_pending', 404, 'Approval request is not pending');
+      const approvalId = randomBytes(32).toString('base64url');
+      // The grant inherits the pending attempt's expiry: approving never extends the original window.
+      const expiresAt = clerkPending.expiresAt;
+      this.host.approvals.set(approvalId, { digest: clerkPending.digest, clerkOperationId: operationId, expiresAt });
+      return { approvalId, expiresAt };
+    }
     const pendingExpiry = this.host.pendingApprovals.get(operationId);
     this.host.pendingApprovals.delete(operationId);
-    if (!pendingExpiry || pendingExpiry <= Date.now()) throw new LocalVaultError('approval_not_pending', 404, 'Approval request is not pending');
+    if (!pendingExpiry || pendingExpiry <= this.now()) throw new LocalVaultError('approval_not_pending', 404, 'Approval request is not pending');
     const approvalId = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + APPROVAL_TTL_MS;
+    const expiresAt = this.now() + APPROVAL_TTL_MS;
     this.host.approvals.set(approvalId, { digest: operationId, expiresAt });
     return { approvalId, expiresAt };
   }
 
-  async execute(input: BrokerExecuteRequest, serviceId: string, token: string | undefined): Promise<BrokerExecuteResponse> {
+  async execute(input: BrokerExecuteRequest, serviceId: string, token: string | undefined, signal?: AbortSignal): Promise<BrokerExecuteResponse> {
     this.host.parts.brokerRequests.validateBrokerRequestIdentity(input, serviceId, token);
     try {
+      if (input.operation === 'clerk.backend') return await new ClerkAuthority(this.host).execute(input, signal);
       if (input.responseType === 'stream' || input.responseType === 'binary-stream') {
         throw new LocalVaultError('invalid_operation', 400, 'Use execute-stream for streaming operations');
       }

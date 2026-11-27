@@ -206,12 +206,18 @@ function liveLegacyComparablePolicies(): typeof live.BROKER_OPERATION_POLICIES {
   };
 }
 
+function liveLegacyComparableTrustedOrigins(): typeof live.TRUSTED_INTEGRATION_ORIGINS {
+  return Object.fromEntries(Object.entries(live.TRUSTED_INTEGRATION_ORIGINS)
+    .filter(([integration]) => integration !== 'clerk'));
+}
+
 describe('E9 policies: operationPolicy decision tables (legacy == live)', () => {
   it('keeps the broker operation policy table identical, in the same key order', () => {
     expect(Object.keys(live.BROKER_OPERATION_POLICIES)).toEqual(Object.keys(legacy.BROKER_OPERATION_POLICIES));
     expect(liveLegacyComparablePolicies()).toEqual(legacy.BROKER_OPERATION_POLICIES);
-    expect(live.TRUSTED_INTEGRATION_ORIGINS).toEqual(legacy.TRUSTED_INTEGRATION_ORIGINS);
-    expect(Object.keys(live.TRUSTED_INTEGRATION_ORIGINS)).toEqual(Object.keys(legacy.TRUSTED_INTEGRATION_ORIGINS));
+    const trustedOrigins = liveLegacyComparableTrustedOrigins();
+    expect(trustedOrigins).toEqual(legacy.TRUSTED_INTEGRATION_ORIGINS);
+    expect(Object.keys(trustedOrigins)).toEqual(Object.keys(legacy.TRUSTED_INTEGRATION_ORIGINS));
     expect(live.FILES_SYNC_OPERATION).toBe(legacy.FILES_SYNC_OPERATION);
     expect(live.FILES_SYNC_OPERATION).toBe('sulla-cloud.files-sync');
   });
@@ -236,6 +242,11 @@ describe('E9 policies: operationPolicy decision tables (legacy == live)', () => 
       ]],
       pathPattern: /^\/backend-api\/codex\/models$/,
     }]);
+  });
+
+  it('trusts only the Clerk Backend API host as a new integration origin', () => {
+    expect(live.TRUSTED_INTEGRATION_ORIGINS.clerk).toEqual(['api.clerk.com']);
+    expect(new live.TrustedIntegrationOrigins().originsFor('clerk')).toEqual(['api.clerk.com']);
   });
 
   for (const operation of [...Object.keys(legacy.BROKER_OPERATION_POLICIES), ...universe.specialOperations]) {

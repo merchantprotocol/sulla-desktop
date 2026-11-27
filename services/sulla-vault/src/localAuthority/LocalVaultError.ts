@@ -11,6 +11,22 @@ export class LocalVaultError extends Error {
     message: string,
     /** Non-secret diagnostic reason (e.g. `connect_ECONNREFUSED`) surfaced to broker callers. */
     public readonly reason?: string,
+    /** Safe, operation-specific approval display data. Never contains credentials or request bodies. */
+    public readonly approvalContext?: {
+      selectedEnvironment: 'staging' | 'production';
+      effectiveEnvironment: 'staging' | 'production';
+      instanceId: string;
+      method: string;
+      path: string;
+      query: string;
+      options: Record<string, string | boolean>;
+      requesterAgentId: string;
+      jobId: string | null;
+      threadId: string | null;
+      action: string;
+      changes: Record<string, string>;
+    },
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'LocalVaultError';

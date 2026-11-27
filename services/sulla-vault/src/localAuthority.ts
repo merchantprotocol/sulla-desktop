@@ -94,6 +94,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   private readonly cacheChallenges!: LocalAuthorityVaultSecrets['cacheChallenges'];
   private readonly challengeRate!: LocalAuthorityVaultSecrets['challengeRate'];
   private readonly pendingApprovals!: LocalAuthorityVaultSecrets['pendingApprovals'];
+  private readonly pendingClerkApprovals!: LocalAuthorityVaultSecrets['pendingClerkApprovals'];
   private readonly pendingVaultEnrollments!: LocalAuthorityVaultSecrets['pendingVaultEnrollments'];
   private readonly approvals!: LocalAuthorityVaultSecrets['approvals'];
   private readonly humanSessions!: LocalAuthorityVaultSecrets['humanSessions'];
@@ -162,6 +163,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.cacheChallenges = new ProfileScopedMap(profileId);
     this.challengeRate = new ProfileScopedMap(profileId);
     this.pendingApprovals = new ProfileScopedMap(profileId);
+    this.pendingClerkApprovals = new ProfileScopedMap(profileId);
     this.pendingVaultEnrollments = new ProfileScopedMap(profileId);
     this.approvals = new ProfileScopedMap(profileId);
     this.humanSessions = new ProfileScopedMap(profileId);
@@ -214,6 +216,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
     this.cacheChallenges.clear();
     this.challengeRate.clear();
     this.pendingApprovals.clear();
+    this.pendingClerkApprovals.clear();
     this.approvals.clear();
     this.humanSessions.clear();
     this.oauthRefreshQueues.clear();
@@ -302,6 +305,7 @@ export class LocalVaultAuthority implements FilesAuthorityIdentityLease, LocalAu
   setAgentIntegrationCredential(...args: Parameters<AgentItemWriter['setAgentIntegrationCredential']>) { return this.parts.agentItems.setAgentIntegrationCredential(...args) }
   backupCredentials(...args: Parameters<IntegrationAccountService['backupCredentials']>) { return this.parts.integrations.backupCredentials(...args) }
   integrationMetadata(...args: Parameters<IntegrationAccountService['integrationMetadata']>) { return this.parts.integrations.integrationMetadata(...args) }
+  integrationMetadataForAgent(...args: Parameters<IntegrationAccountService['integrationMetadataForAgent']>) { return this.parts.integrations.integrationMetadataForAgent(...args) }
   setActiveIntegrationAccount(...args: Parameters<IntegrationAccountService['setActiveIntegrationAccount']>) { return this.parts.integrations.setActiveIntegrationAccount(...args) }
   ensureOAuthAccount(...args: Parameters<IntegrationAccountService['ensureOAuthAccount']>) { return this.parts.integrations.ensureOAuthAccount(...args) }
   importDesktopIntegrationAccount(...args: Parameters<IntegrationAccountService['importDesktopIntegrationAccount']>) { return this.parts.integrations.importDesktopIntegrationAccount(...args) }

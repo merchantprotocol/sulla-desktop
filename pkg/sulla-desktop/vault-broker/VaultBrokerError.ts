@@ -12,6 +12,8 @@ export class VaultBrokerError extends Error {
     public readonly reason?: string,
     /** The vault marked this as a transient egress failure worth retrying after a pause. */
     public readonly retryable = false,
+    /** Sanitized numeric Retry-After value from the local Vault boundary. */
+    public readonly retryAfter?: string,
   ) {
     super(message);
     this.name = 'VaultBrokerError';

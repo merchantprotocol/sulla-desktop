@@ -7,6 +7,7 @@ import { OPENAI_COMPATIBLE_PROVIDER_BINDINGS } from './BrokerOperationPolicy.js'
 
 export const TRUSTED_INTEGRATION_ORIGINS: Readonly<Record<string, string[]>> = {
   github:    ['api.github.com', 'github.com'],
+  clerk:         ['api.clerk.com'],
   slack:     ['slack.com'],
   discord:   ['discord.com', 'discordapp.com'],
   openai:    ['api.openai.com'],
