@@ -39,42 +39,37 @@
     </header>
 
     <div class="drawer-scroll">
-      <section v-if="attached.length">
-        <h3>Attached</h3>
-        <button
-          v-for="file in attached"
+      <section
+        v-for="group in groups"
+        :key="group.title"
+      >
+        <h3>{{ group.title }}</h3>
+        <div
+          v-for="file in group.files"
           :key="`${file.fileId}:${file.versionId}`"
-          class="file-row row-main"
-          type="button"
-          @click="openFile(file)"
-          @contextmenu.stop.prevent="openMenu?.show($event, file)"
+          class="file-row"
         >
-          <FileGlyph
+          <button
+            class="row-main"
+            type="button"
+            @click="openFile(file)"
+            @contextmenu.stop.prevent="openMenu?.show($event, file)"
+          >
+            <FileGlyph
+              :name="file.name"
+              :mime="file.mime"
+            />
+            <span class="file-meta"><b>{{ file.name }}</b><small>{{ file.subtitle }}</small></span>
+            <FileStatusIcon />
+          </button>
+          <ChatFileDownload
+            v-if="file.mime !== 'inode/directory'"
+            :file-id="file.fileId"
             :name="file.name"
-            :mime="file.mime"
+            :version-id="file.versionId"
+            icon-only
           />
-          <span class="file-meta"><b>{{ file.name }}</b><small>{{ file.subtitle }}</small></span>
-          <FileStatusIcon />
-        </button>
-      </section>
-
-      <section v-if="madeHere.length">
-        <h3>Made here</h3>
-        <button
-          v-for="file in madeHere"
-          :key="`${file.fileId}:${file.versionId}`"
-          class="file-row row-main"
-          type="button"
-          @click="openFile(file)"
-          @contextmenu.stop.prevent="openMenu?.show($event, file)"
-        >
-          <FileGlyph
-            :name="file.name"
-            :mime="file.mime"
-          />
-          <span class="file-meta"><b>{{ file.name }}</b><small>{{ file.subtitle }}</small></span>
-          <FileStatusIcon />
-        </button>
+        </div>
       </section>
 
       <section v-if="scratch.length">
@@ -96,6 +91,13 @@
             />
             <span class="file-meta"><b>{{ file.name }}</b><small>{{ file.subtitle }}</small></span>
           </button>
+          <ChatFileDownload
+            v-if="file.mime !== 'inode/directory'"
+            :file-id="file.fileId"
+            :name="file.name"
+            :version-id="file.versionId"
+            icon-only
+          />
           <button
             class="keep"
             type="button"
@@ -134,6 +136,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import ChatFileDownload from './ChatFileDownload.vue';
 import ChatFileOpenMenu from './ChatFileOpenMenu.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
@@ -230,6 +233,11 @@ const madeHere = computed(() => {
 const scratch = computed(() => inventory.value.filter(file => file.collectionKind === 'scratch' && runIds.value.has(file.agentRunId || file.createdById || ''))
   .map(file => ({ ...file, subtitle: 'Agent run scratch' })));
 
+const groups = computed(() => [
+  { title: 'Attached', files: attached.value },
+  { title: 'Made here', files: madeHere.value },
+].filter(group => group.files.length));
+
 async function refresh():Promise<void> {
   const generation = ++refreshGeneration;
   if (!props.open) return;
@@ -312,7 +320,7 @@ section { margin-bottom:4px }
 h3 { margin:8px 6px 4px;color:var(--text-dim);font:600 10.5px var(--font-body);letter-spacing:.08em;text-transform:uppercase }
 .file-row { width:100%;display:flex;align-items:center;gap:9px;padding:7px 8px;border:0;border-radius:8px;background:transparent;color:var(--text-primary);text-align:left }
 .file-row:hover { background:color-mix(in srgb,var(--accent) 8%,transparent) }
-.row-main { min-width:0;flex:1 }
+.row-main { display:flex;align-items:center;gap:9px;min-width:0;flex:1;padding:0;border:0;background:transparent;color:inherit;text-align:left }
 .file-row :deep(.file-glyph) { width:24px;height:24px;border-radius:6px }
 .file-row :deep(.file-glyph svg) { width:13px;height:13px }
 .file-meta { min-width:0;flex:1 }
