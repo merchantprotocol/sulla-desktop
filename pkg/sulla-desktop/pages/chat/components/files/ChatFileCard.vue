@@ -16,6 +16,7 @@
       <FileStatusIcon />
     </button>
     <div class="actions">
+      <ChatFileDownload :file-id="reference.fileId" :name="reference.name" :version-id="reference.versionId" />
       <button type="button" @click.stop="navigate('detail')">
         <svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5" /></svg><span>Open</span>
       </button><button
@@ -42,6 +43,7 @@
     </div>
     <span v-if="navigationError" class="navigation-error" role="alert" @click.stop>{{ navigationError }}</span>
     <div v-if="editing" class="inline-editor" @click.stop>
+      <ChatFileDownload v-if="editorVersionId !== reference.versionId" :file-id="reference.fileId" :name="reference.name" :version-id="editorVersionId" />
       <textarea v-model="draft" :disabled="saving" aria-label="Edit project file markdown" />
       <div><span v-if="error" role="alert">{{ error }}</span><button type="button" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save new version' }}</button><button type="button" @click="editing = false">Cancel</button></div>
     </div>
@@ -50,6 +52,7 @@
 </template>
 
 <script setup lang="ts">
+import ChatFileDownload from './ChatFileDownload.vue';
 import { computed, ref } from 'vue';
 
 import ChatFileOpenMenu from './ChatFileOpenMenu.vue';
@@ -66,6 +69,7 @@ import { DURABLE_FILE_ID_PATTERN } from '@pkg/shared/filesReferences';
 import type { WorkspaceFilesSection } from '@pkg/shared/workspaceTabRequest';
 
 const openMenu = ref<InstanceType<typeof ChatFileOpenMenu>>();
+const editorVersionId = ref<string>();
 const navigationError = ref('');
 const controller = useChatController();
 const editing = ref(false); const saving = ref(false); const draft = ref(''); const artifactId = ref(''); const artifactVersion = ref(0); const error = ref('');
@@ -74,6 +78,7 @@ async function toggleEditor() {
   if (editing.value) { editing.value = false; return; }
   error.value = '';
   const result = await ipcRenderer.invoke('chat-artifacts:open-file', { threadId: controller.thread.value.id, fileId: props.reference.fileId });
+  editorVersionId.value = result.artifact.filesVersionId ?? undefined;
   artifactId.value = result.artifact.id; artifactVersion.value = result.artifact.version; draft.value = result.artifact.content; editing.value = true;
 }
 async function save() {
