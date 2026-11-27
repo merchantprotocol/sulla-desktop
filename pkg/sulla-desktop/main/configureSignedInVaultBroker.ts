@@ -8,18 +8,18 @@ import { getFirstRunState } from '@pkg/main/firstRun/firstRunState';
 import { SilentVaultRestoreTransport } from '@pkg/main/silentVaultRestoreTransport';
 import { VAULT_HTTPS_ORIGIN } from '@pkg/main/vaultTls';
 import { LocalVaultBrokerClient, configuredVaultBrokerProvider } from '@pkg/vault-broker';
-import { desktopVaultFetch, loadDesktopBrokerIdentity } from '@pkg/vault-broker/desktopTransport';
+import { desktopVaultFetch, desktopVaultTransport, loadDesktopBrokerIdentity } from '@pkg/vault-broker/desktopTransport';
 
 /** Installs the Desktop-only broker transport before any feature can use it. */
 export class SignedInVaultBrokerConfigurator {
   configure(): void {
-    const transport = new SilentVaultRestoreTransport(desktopVaultFetch, () => this.restoreVaultSession()).fetch;
+    const restoreTransport = new SilentVaultRestoreTransport(desktopVaultFetch, () => this.restoreVaultSession());
 
     configuredVaultBrokerProvider.configureCredentialBroker(new LocalVaultBrokerClient(VAULT_HTTPS_ORIGIN, async() => {
       const identity = await loadDesktopBrokerIdentity();
 
       return { serviceId: identity.serviceId, serviceToken: identity.serviceToken };
-    }, transport));
+    }, restoreTransport.fetch, restoreTransport.wrap(desktopVaultTransport.fetchStream)));
   }
 
   /** First run never attempts a vault restore. VaultKeyService delegates the safeStorage unwrap to the isolated bootstrap helper after setup. */

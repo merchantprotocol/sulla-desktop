@@ -17,16 +17,21 @@ export class SilentVaultRestoreTransport {
     private readonly restore: () => Promise<boolean>,
   ) {}
 
-  readonly fetch: VaultBrokerFetch = async(input, init) => {
-    const response = await this.fetcher(input, init);
+  readonly fetch: VaultBrokerFetch = this.wrap(this.fetcher);
 
-    if (response.status !== 423) return response;
-    this.restoring ??= this.restore().finally(() => { this.restoring = undefined });
-    if (!await this.restoring) return response;
-    await response.body?.cancel();
+  /** Wrap another transport while sharing this instance's restore coalescer. */
+  wrap(fetcher: VaultBrokerFetch): VaultBrokerFetch {
+    return async(input, init) => {
+      const response = await fetcher(input, init);
 
-    return this.fetcher(input, init);
-  };
+      if (response.status !== 423) return response;
+      this.restoring ??= this.restore().finally(() => { this.restoring = undefined });
+      if (!await this.restoring) return response;
+      await response.body?.cancel();
+
+      return fetcher(input, init);
+    };
+  }
 }
 
 /** Compatibility seam for existing callers; prefer constructing a `SilentVaultRestoreTransport`. */
