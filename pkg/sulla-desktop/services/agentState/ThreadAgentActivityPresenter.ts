@@ -7,6 +7,7 @@ export type ThreadAgentUrgency = 'normal' | 'needs-you' | 'failed';
 export type ThreadAgentScope = 'root' | 'child' | 'empty';
 
 export interface ObservedAgentCheckin { at: string; summary: string }
+export interface ObservedAgentActivity { at: number; count: number }
 export interface PresentedThreadAgent {
   row: AgentStateRow;
   agentId: string | null;
@@ -15,7 +16,7 @@ export interface PresentedThreadAgent {
   state: AgentRowState;
   urgency: ThreadAgentUrgency;
   checkins: readonly ObservedAgentCheckin[];
-  activity: readonly string[];
+  activity: readonly ObservedAgentActivity[];
 }
 export interface ThreadAgentActivityNode { agent: PresentedThreadAgent; depth: number; children: ThreadAgentActivityNode[] }
 export interface ThreadAgentActivityProjection {
@@ -44,7 +45,8 @@ export class ThreadAgentActivityPresenter {
   private activeThreadId?: string;
   private initialized = false;
   private checkins = new Map<string, ObservedAgentCheckin[]>();
-  private activity = new Map<string, string[]>();
+  private activity = new Map<string, ObservedAgentActivity[]>();
+  private actionCounts = new Map<string, number>();
   private current: ThreadAgentActivityProjection = { scope: 'empty', decisionIds: [], pendingDecisionIds: [], roots: [], agents: [] };
 
   project(snapshot: AgentStateSnapshot, threadId: string | undefined, now = Date.now(), decisions: readonly DecisionRecord[] = []): ThreadAgentActivityProjection {
@@ -54,6 +56,7 @@ export class ThreadAgentActivityPresenter {
       this.activeThreadId = threadId;
       this.checkins.clear();
       this.activity.clear();
+      this.actionCounts.clear();
       this.current = { threadId, scope: 'empty', decisionIds: [], pendingDecisionIds: [], roots: [], agents: [] };
     }
     if (!snapshot || snapshot.version < this.acceptedVersion ||
@@ -124,13 +127,14 @@ export class ThreadAgentActivityPresenter {
         this.checkins.set(row.key, history.slice(-ThreadAgentActivityPresenter.maxCheckinsPerAgent));
       }
     }
-    const activityAt = row.lastActivityAt;
-    if (activityAt && this.isRecent(activityAt, now, ThreadAgentActivityPresenter.activityWindowMs)) {
+    const count = Number.isFinite(row.actionCount) ? Math.max(0, row.actionCount ?? 0) : 0;
+    const previous = this.actionCounts.get(row.key);
+    this.actionCounts.set(row.key, count);
+    const delta = previous !== undefined && count >= previous ? count - previous : 0;
+    if (delta > 0) {
       const history = this.activity.get(row.key) ?? [];
-      if (!history.includes(activityAt)) {
-        history.push(activityAt);
-        this.activity.set(row.key, history.slice(-ThreadAgentActivityPresenter.maxActivityPerAgent));
-      }
+      history.push({ at: now, count: delta });
+      this.activity.set(row.key, history.slice(-ThreadAgentActivityPresenter.maxActivityPerAgent));
     }
   }
 
@@ -140,9 +144,10 @@ export class ThreadAgentActivityPresenter {
       if (retained.length) this.checkins.set(key, retained); else this.checkins.delete(key);
     }
     for (const [key, entries] of this.activity) {
-      const retained = scopedKeys.has(key) ? entries.filter(at => this.isRecent(at, now, ThreadAgentActivityPresenter.activityWindowMs)).slice(-ThreadAgentActivityPresenter.maxActivityPerAgent) : [];
+      const retained = scopedKeys.has(key) ? entries.filter(sample => now >= sample.at && now - sample.at <= ThreadAgentActivityPresenter.activityWindowMs).slice(-ThreadAgentActivityPresenter.maxActivityPerAgent) : [];
       if (retained.length) this.activity.set(key, retained); else this.activity.delete(key);
     }
+    for (const key of this.actionCounts.keys()) if (!scopedKeys.has(key)) this.actionCounts.delete(key);
   }
 
   private present(row: AgentStateRow, hasPendingDecision: boolean): PresentedThreadAgent {
@@ -162,11 +167,6 @@ export class ThreadAgentActivityPresenter {
 
   private presentTree(node: AgentTreeNode, byKey: ReadonlyMap<string, PresentedThreadAgent>): ThreadAgentActivityNode {
     return { agent: byKey.get(node.row.key)!, depth: node.depth, children: node.children.map(child => this.presentTree(child, byKey)) };
-  }
-
-  private isRecent(value: string, now: number, windowMs: number): boolean {
-    const timestamp = Date.parse(value);
-    return Number.isFinite(timestamp) && timestamp <= now && now - timestamp <= windowMs;
   }
 
   private isValidNonFuture(value: string, now: number): boolean {
