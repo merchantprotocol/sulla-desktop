@@ -229,6 +229,60 @@ describe('large thread checkpoints', () => {
     expect(client.get).toHaveBeenCalledWith('sulla:threadstate:idle');
   });
 
+  it.each(['load', 'inline save', 'memory save'])('issues the foreground %s before a due FIFO probe', async(operation) => {
+    const client = redisClient();
+    const order: string[] = [];
+    let tail: Promise<unknown> = Promise.resolve();
+    const issue = <T>(command: string, run: () => T) => {
+      order.push(command);
+      const reply = tail.then(run);
+
+      tail = reply;
+      return reply;
+    };
+
+    client.get.mockImplementation(key => issue('GET ' + key, () => client.values.get(key) ?? null));
+    client.setex.mockImplementation((key, _ttl, value) => issue('SETEX ' + key, () => {
+      client.values.set(key, value);
+      return 'OK';
+    }));
+    let clock = 0;
+    const redis = new RedisThreadStateRepository({ getClient: () => client }, 1, undefined, logger, () => clock);
+    const active = state('active', 'inline');
+
+    await redis.save(state('idle', big));
+    await redis.save(active);
+    order.length = 0;
+    clock = 1000;
+    if (operation === 'load') expect(await redis.load('active')).toEqual(active);
+    else await redis.save(operation === 'memory save' ? state('active', big) : active);
+    const command = operation === 'load' ? 'GET' : 'SETEX';
+
+    expect(order).toEqual([command + ' sulla:threadstate:active', 'GET sulla:threadstate:idle']);
+  });
+
+  it('retries a rejected probe after backoff even if error logging throws', async() => {
+    const client = redisClient();
+    const probeLogger = { log: vi.fn(), error: vi.fn() };
+    let clock = 0;
+    const redis = new RedisThreadStateRepository({ getClient: () => client }, 1, undefined, probeLogger, () => clock);
+    const active = state('active', 'inline');
+
+    await redis.save(state('idle', big));
+    probeLogger.error.mockImplementationOnce(() => { throw new Error('logger unavailable') });
+    client.get.mockRejectedValueOnce(new Error('probe unavailable'));
+    clock = 1000;
+    await redis.save(active);
+    // Cross an event-loop turn so Vitest also observes any unhandled rejection.
+    await new Promise(resolve => setImmediate(resolve));
+    clock = 1999;
+    await redis.save(active);
+    expect(client.get).toHaveBeenCalledTimes(1);
+    clock = 2000;
+    await redis.save(active);
+    expect(client.get.mock.calls).toEqual([['sulla:threadstate:idle'], ['sulla:threadstate:idle']]);
+  });
+
   it('issues at most one outstanding probe per due head across concurrent saves', async() => {
     const client = redisClient();
     let clock = 0;
@@ -272,7 +326,7 @@ describe('large thread checkpoints', () => {
     await redis.save(active);
     expect(client.get).toHaveBeenCalledTimes(2);
     clock += 60_000;
-    getClient.mockImplementationOnce(() => { throw error });
+    getClient.mockReturnValueOnce(client).mockImplementationOnce(() => { throw error }); // Only the probe fails.
     await redis.save(active);
     expect(await redis.load('active')).toEqual(active);
     expect(logger.error).toHaveBeenCalledTimes(1);

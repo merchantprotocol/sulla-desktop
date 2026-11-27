@@ -75,7 +75,6 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async save(state: BaseThreadState): Promise<void> {
-    this.evictExpiredMemoryHeads();
     const thread = state.metadata.threadId;
     const json = JSON.stringify(state);
     let id: string | undefined;
@@ -87,24 +86,29 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
         this.logger.error('[ThreadStateStore] Payload write failed; using an expiring memory checkpoint');
         const memoryId = randomUUID();
 
-        await this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds, JSON.stringify({ sullaCheckpointMemory: 1, id: memoryId }));
+        const publication = this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds, JSON.stringify({ sullaCheckpointMemory: 1, id: memoryId }));
+        this.evictExpiredMemoryHeads();
+        await publication;
         // Measured after SETEX returns, so the Redis pointer always expires first.
         this.memoryHeads.set(thread, { id: memoryId, state: JSON.parse(json), expiresAt: this.now() + this.ttlSeconds * 1000 });
         return;
       }
     }
     // SETEX is the only publication point. Never discover a head from disk.
-    await this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds,
+    const publication = this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds,
       id ? JSON.stringify({ sullaCheckpointFile: 1, id }) : json);
+    this.evictExpiredMemoryHeads();
+    await publication;
     this.memoryHeads.delete(thread);
     await this.files?.published(thread, id);
   }
 
   async load(threadId: string): Promise<BaseThreadState | null> {
-    this.evictExpiredMemoryHeads();
     // Captured before the GET: another thread's save may evict the copy while the reply is in flight.
     const head = this.memoryHeads.get(threadId);
-    const json = await this.clientSource.getClient().get(this.key(threadId));
+    const reply = this.clientSource.getClient().get(this.key(threadId));
+    this.evictExpiredMemoryHeads();
+    const json = await reply;
     const value = json ? JSON.parse(json) : null;
     const kind = this.pointerKind(value);
     if (kind === 'memory' && head && head.id === value.id) return structuredClone(head.state);
@@ -135,7 +139,9 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
       } catch {
         if (!this.probeFailureLogged) {
           this.probeFailureLogged = true;
-          this.logger.error('[ThreadStateStore] Could not check memory checkpoint expiry');
+          try {
+            this.logger.error('[ThreadStateStore] Could not check memory checkpoint expiry');
+          } catch { /* A logging failure must not strand the probe deadline. */ }
         }
       }
       if (this.memoryHeads.get(thread) !== head) return;
