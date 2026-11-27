@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
 import { AgentStateService, type AgentStateStore } from '../../../app/Services/AgentStateService';
 import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
+import { AgentStateClient } from '../../../../services/agentState/AgentStateClient';
+import type { AgentStateSnapshot } from '../../../../shared/agentState/AgentStateSnapshot';
 
 const { send, handle, removeHandler } = vi.hoisted(() => ({ send: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() }));
 vi.mock('electron', () => ({
@@ -47,6 +49,20 @@ const makeJob = (jobId: string, threadId: string, parentThreadId?: string): Agen
   jobId, status: 'running', createdAt: 1, finishedAt: null, taskCount: 1, results: [], parentThreadId, visibility: 'hidden',
   tasks: [{ agentId: jobId, label: jobId, prompt: 'work', status: 'running', threadId }],
 });
+
+class TestActivitySource {
+  private readonly counts = new Map<string, number>();
+  private readonly listeners = new Set<(keys: readonly string[]) => void>();
+  actionCount(key: string): number { return this.counts.get(key) ?? 0 }
+  onChange(listener: (keys: readonly string[]) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener) };
+  }
+  record(key: string, count = 1): void {
+    this.counts.set(key, (this.counts.get(key) ?? 0) + count);
+    for (const listener of this.listeners) listener([key]);
+  }
+}
 
 describe('AgentStatePublisher', () => {
   afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
@@ -148,6 +164,42 @@ describe('AgentStatePublisher', () => {
     expect(send).toHaveBeenCalledTimes(1);
     const snapshot = send.mock.calls[0][1];
     expect(snapshot.rows.map((row: { state: string }) => row.state)).toEqual(['stopped', 'stopped', 'stopped']);
+    publisher.dispose();
+  });
+
+  it('coalesces activity pushes without losing cumulative action counts and advances the accepted version', async() => {
+    // risk: many discrete actions collapse between snapshots or equal-version pushes are rejected
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const states = new AgentStateService(new PublisherStore([makeJob('worker', 'worker-thread', 'root')]), { jobs: new Map() }, () => Date.now());
+    const projector = new AgentStateProjector(states, { latest: async() => null }, () => Date.now());
+    const activity = new TestActivitySource();
+    const publisher = new AgentStatePublisher(states, projector, 10, activity, 1_000);
+    publisher.register();
+    const client = new AgentStateClient({} as any, {} as any);
+    expect(client.apply({ version: states.version, generatedAt: new Date().toISOString(), rows: [] })).toBe(true);
+    const initialVersion = states.version;
+
+    activity.record('worker#0', 3);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(send).toHaveBeenCalledTimes(1);
+    const first = send.mock.calls[0][1] as AgentStateSnapshot;
+    expect(first.rows[0].actionCount).toBe(3);
+    expect(first.version).toBeGreaterThan(initialVersion);
+    expect(client.apply(first)).toBe(true);
+
+    activity.record('worker#0', 2);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(send).toHaveBeenCalledTimes(1);
+    activity.record('worker#0', 1);
+    await vi.advanceTimersByTimeAsync(510);
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const second = send.mock.calls[1][1] as AgentStateSnapshot;
+    expect(second.rows[0].actionCount).toBe(6);
+    expect(second.version).toBeGreaterThan(first.version);
+    expect(client.apply(second)).toBe(true);
+    expect(client.apply(second)).toBe(false);
     publisher.dispose();
   });
 });
