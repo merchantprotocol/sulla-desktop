@@ -153,10 +153,9 @@ export class DetailedTraceProjection {
 
   private rowsForTool(message: ToolMessage, anchor: string): TraceRow[] {
     const step = this.toolSteps.step(message.meta);
-    const status: TraceRowStatus = step?.endedAt === undefined && step ? 'running'
-      : step?.ok !== undefined ? step.ok ? 'ok' : 'failed'
-        : message.status === 'error' ? 'failed'
-          : message.status === 'running' ? 'running' : 'ok';
+    const status: TraceRowStatus = step?.endedAt === undefined && message.status === 'running' ? 'running'
+      : message.status === 'error' ? 'failed'
+        : message.status === 'running' ? 'running' : 'ok';
     const toolName = message.recordedToolName ?? message.tool;
     const target = this.toolSteps.safeLabel(message.meta, toolName);
     const { input, output, error, desc, meta } = message;
