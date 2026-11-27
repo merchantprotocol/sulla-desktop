@@ -6,6 +6,7 @@
 // BackendGraphWebSocketService.ts
 // Main-process agent dispatcher: routes messages on the sulla-desktop and
 // heartbeat channels to the default agent via GraphRegistry.
+import { randomUUID } from 'node:crypto';
 import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { DeferredStallInput } from '../app/Services/DeferredStallInput';
@@ -64,6 +65,9 @@ import type { MessageEnvelope } from '@sulla/domain';
 import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
+import Logging from '@pkg/utils/logging';
+import { SystemTurnTimingClock, TurnTiming } from './TurnTiming';
+import type { TurnTimingOutcome, TurnTimingProvider } from './TurnTiming';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -1328,6 +1332,8 @@ export class BackendGraphWebSocketService {
 
     let state: AgentGraphState | undefined;
     let turnConsumedInput = false;
+    let turnTiming: TurnTiming | undefined;
+    let turnOutcome: TurnTimingOutcome = 'ok';
     const abortKey = this.abortKey(channelId, threadId);
     let runAbort: AbortService | undefined;
     // Set only for a dormant parked job (no live in-process waiter) this turn
@@ -1586,6 +1592,31 @@ export class BackendGraphWebSocketService {
       const runLocation = this.resolveRunLocation(state, channelId);
       const tracedProvider = String(state.metadata.agent?.provider || '').trim();
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
+      const normalizedProvider = tracedProvider.toLowerCase();
+      const timingProvider: TurnTimingProvider = normalizedProvider === 'codex'
+        ? 'codex'
+        : normalizedProvider.includes('claude')
+          ? 'claude'
+          : ['openai', 'anthropic', 'api'].includes(normalizedProvider) ? 'api' : 'other';
+      const selectedModel = state.metadata.agent?.model;
+      const model = timingProvider === 'codex' || timingProvider === 'claude'
+        ? cliPinnedModelId(normalizedProvider, selectedModel) ?? null
+        : typeof selectedModel === 'string' && selectedModel.trim() ? selectedModel.trim() : null;
+      const runId = randomUUID();
+      turnTiming = new TurnTiming({
+        clock: new SystemTurnTimingClock(),
+        perfLog: Logging.perf,
+        runId,
+        surface: channelId === HEARTBEAT_CHANNEL_ID || triggerType === 'heartbeat' ? 'heartbeat' : 'chat',
+        provider: timingProvider,
+        model,
+        threadId,
+        jobId: typeof (state.metadata as any).delegatedJobId === 'string' ? (state.metadata as any).delegatedJobId : null,
+        taskIndex: Number.isInteger((state.metadata as any).delegatedTaskIndex) ? (state.metadata as any).delegatedTaskIndex : null,
+        startedAtMs: Date.now(),
+      });
+      (state.metadata as any).runId = runId;
+      Object.defineProperty(state, '__turnTiming', { value: turnTiming, configurable: true, enumerable: false });
       // Only the claim-owned late-answer dispatch may attribute its reply.
       // Do not source this from client-provided chat metadata.
       if (decisionTurn && threadId && state.metadata.reportingSteerRevision === initialSteerRevision) {
@@ -1612,6 +1643,7 @@ export class BackendGraphWebSocketService {
       turnConsumedInput = true;
       completionConsumption.confirmSeen();
     } catch (err: any) {
+      turnOutcome = err?.name === 'AbortError' ? 'aborted' : 'error';
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
         // the shared thread state alone so the new run is not poisoned.
@@ -1646,6 +1678,8 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
+      try { turnTiming?.finish(turnOutcome) } catch { /* perf logging must not change turn settlement */ }
+      if (state && (state as any).__turnTiming === turnTiming) delete (state as any).__turnTiming;
       if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
