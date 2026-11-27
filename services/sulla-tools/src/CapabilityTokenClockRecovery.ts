@@ -20,9 +20,15 @@ export interface CapabilityTokenVerificationOptions {
 
 /** Re-syncs the trusted VM clock once for an authenticated token time error. */
 export class CapabilityTokenClockRecovery {
+  private static readonly RESYNC_COOLDOWN_MS = 30_000;
+
+  private lastSuccessfulResyncAt: number | undefined;
+  private inFlightResync: Promise<void> | undefined;
+
   constructor(
     private readonly synchronizeClock: () => Promise<void>,
     private readonly nowSeconds: () => number = () => Math.floor(Date.now() / 1000),
+    private readonly monotonicNow: () => number = () => performance.now(),
   ) {}
 
   async verify(
@@ -35,10 +41,31 @@ export class CapabilityTokenClockRecovery {
     } catch (error) {
       if (!(error instanceof CapabilityTokenError) || !['not_yet_valid', 'expired'].includes(error.code)) throw error;
       // HMAC verification precedes time checks. Sync only for a signed token,
-      // once, then run the full verifier again; failed sync never widens tolerance.
-      try { await this.synchronizeClock() } catch { throw error }
+      // then run the full verifier again; failed sync never widens tolerance.
+      try { await this.synchronizeClockIfNeeded() } catch { throw error }
       return this.verifyAtCurrentTime(token, signingKey, options);
     }
+  }
+
+  private async synchronizeClockIfNeeded(): Promise<void> {
+    if (this.inFlightResync) {
+      await this.inFlightResync;
+      return;
+    }
+
+    if (this.lastSuccessfulResyncAt !== undefined
+      && this.monotonicNow() - this.lastSuccessfulResyncAt < CapabilityTokenClockRecovery.RESYNC_COOLDOWN_MS) {
+      return;
+    }
+
+    const inFlightResync = Promise.resolve()
+      .then(() => this.synchronizeClock())
+      .then(() => { this.lastSuccessfulResyncAt = this.monotonicNow(); })
+      .finally(() => {
+        if (this.inFlightResync === inFlightResync) this.inFlightResync = undefined;
+      });
+    this.inFlightResync = inFlightResync;
+    await inFlightResync;
   }
 
   private verifyAtCurrentTime(
