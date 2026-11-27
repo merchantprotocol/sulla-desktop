@@ -950,7 +950,32 @@ export class ChatController {
     // (heartbeat, sub-agent cards) unable to find their backend thread.
     const backendThreadId = this.thread.value.backendThreadId ?? state.thread.backendThreadId;
     const bounded = new MessageWindow().trim(state.thread.messages);
-    const restored = bounded.length === state.thread.messages.length ? state.thread : { ...state.thread, messages: bounded };
+    const interruptedAt = Date.now();
+    const hydratedMessages = bounded.map(message => {
+      if (message.kind !== 'tool' || message.status !== 'running') return message;
+      const metadata = typeof message.meta === 'object' && message.meta !== null ? message.meta : undefined;
+      const step = metadata?.step;
+      if (!step) return { ...message, status: 'error' as const, error: message.error ?? 'Interrupted after app restart.' };
+      const completedAt = typeof step.endedAt === 'number' && Number.isFinite(step.endedAt) ? step.endedAt : undefined;
+      if (completedAt !== undefined && typeof step.ok === 'boolean') {
+        return {
+          ...message,
+          status: step.ok ? 'ok' as const : 'error' as const,
+          ...(step.ok ? {} : { error: message.error ?? 'Tool step failed.' }),
+        };
+      }
+      const endedAt = completedAt ?? interruptedAt;
+      return {
+        ...message,
+        status: 'error' as const,
+        error: message.error ?? 'Interrupted after app restart.',
+        meta: { ...metadata, step: { ...step, endedAt,
+          durationMs: Number.isFinite(step.startedAt) ? Math.max(0, endedAt - step.startedAt) : 0, ok: false } },
+      };
+    });
+    const messagesChanged = hydratedMessages.length !== state.thread.messages.length ||
+      hydratedMessages.some((message, index) => message !== state.thread.messages[index]);
+    const restored = messagesChanged ? { ...state.thread, messages: hydratedMessages } : state.thread;
     this.thread.value = backendThreadId ? { ...restored, backendThreadId } : restored;
     // Never rehydrate a non-idle runState across a process restart.
     // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
