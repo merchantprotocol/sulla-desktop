@@ -249,7 +249,7 @@ import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
 import { AgentWorkTree } from '../../messages/AgentWorkTree';
 import { LineTimes } from '../../messages/lineTime';
-import { ActivityTrail, activityBins, laneStep, shortenHashes } from '../../messages/sideDock';
+import { ActivityBinProjector, ActivityTrail, laneStep, shortenHashes } from '../../messages/sideDock';
 import { activityAge, agentCountSummary, deriveThreadActivity, waitTarget } from '../../messages/threadActivity';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
@@ -272,6 +272,7 @@ const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activ
 
 const now = ref(Date.now());
 const trail = new ActivityTrail();
+const activityBins = new ActivityBinProjector();
 const messaging = reactive(new Set<string>());
 const drafts = reactive<Record<string, string>>({});
 const notice = reactive<Record<string, string>>({});
@@ -328,7 +329,7 @@ function timeText(row: AgentStateRow): string {
   const lastActive = age(Date.parse(row.lastActivityAt));
   return lastActive ? `last active ${ lastActive } ago` : '';
 }
-function bins(key: string): number[] { return activityBins(trail.times(key), now.value) }
+function bins(key: string): number[] { return activityBins.values(trail.samples(key), now.value) }
 function resultMessageFor(row: AgentStateRow): string | undefined {
   return controller.messages.value.find((msg): msg is ProactiveMessage => msg.kind === 'proactive' &&
     !!msg.result?.items.some(item => item.jobId === row.jobId && item.taskIndex === row.taskIndex))?.id;
