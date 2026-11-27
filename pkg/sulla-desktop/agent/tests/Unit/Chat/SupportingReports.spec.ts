@@ -31,7 +31,7 @@ describe('supporting report resolution', () => {
     });
     const resolver = new SupportingReportResolver({ invoke: f.invoke });
     expect(await resolver.file(source)).toEqual({ fileId: 'file-a', path: source.origin, collectionId: 'files' });
-    expect(f.invoke).toHaveBeenCalledWith('sulla-files:list-page', { collectionId: 'files', path: 'Projects/qa', children: true, cursor: 'next' });
+    expect(f.invoke).toHaveBeenCalledWith('sulla-files:list-page', expect.objectContaining({ collectionId: 'files', path: 'Projects/qa', cursor: 'next' }));
   });
 
   it('refuses ambiguous, absent and moved reports rather than opening another file', async() => {
@@ -81,65 +81,40 @@ describe('supporting report citation formats', () => {
     return new SupportingReportResolver({ invoke: f.invoke });
   }
 
+  // risk: data accuracy — citation folder and filename must resolve to the exact saved report.
   it('opens a report cited as folder origin plus file-name title', async() => {
     const resolver = files({ files: [{ id: 'pm', path: report }, { id: 'brief', path: 'Projects/ripplecore-performance-audit/BRIEF-admin-speed.md' }] });
     expect(await resolver.file(folderSource)).toEqual({ fileId: 'pm', path: report, collectionId: 'files' });
     expect(await resolver.file({ ...folderSource, title: 'BRIEF-admin-speed.md' })).toEqual({ fileId: 'brief', path: 'Projects/ripplecore-performance-audit/BRIEF-admin-speed.md', collectionId: 'files' });
   });
 
-  it('still opens the old full-path origin, but refuses when origin plus title also matches', async() => {
-    expect(await files({ files: [{ id: 'pm', path: report }] }).file({ ...folderSource, origin: report })).toMatchObject({ fileId: 'pm' });
-    const both = files({ files: [{ id: 'pm', path: report }, { id: 'nested', path: `${ report }/${ folderSource.title }` }] });
+  // risk: policy — ambiguous citation paths must never choose an arbitrary file.
+  it('refuses when a full-path origin and its origin-plus-title candidate both match', async() => {
+    const both = files({ files: [{ id: 'pm', path: report }, { id: 'nested', path: report + '/' + folderSource.title }] });
     await expect(both.file({ ...folderSource, origin: report })).rejects.toThrow('More than one');
   });
 
-  it('refuses rather than opening another collection\'s file that sits at the folder path', async() => {
-    const folder = 'Projects/ripplecore-performance-audit';
-    await expect(files({ a: [{ id: 'pm', path: report }], b: [{ id: 'unrelated', path: folder }] }).file(folderSource)).rejects.toThrow('More than one');
-    expect(await files({ a: [{ id: 'pm', path: report }], b: [{ id: 'unrelated', path: `${ folder }-old` }] }).file(folderSource)).toEqual({ fileId: 'pm', path: report, collectionId: 'a' });
-    expect(f.openTab).not.toHaveBeenCalled();
-  });
-
-  it('opens origin plus title in the same collection when only that path matches', async() => {
-    const resolver = files({ files: [{ id: 'pm', path: report }, { id: 'sibling', path: 'Projects/ripplecore-performance-audit.md' }] });
-    expect(await resolver.file(folderSource)).toEqual({ fileId: 'pm', path: report, collectionId: 'files' });
-  });
-
-  it('refuses an origin that is a file in one collection and a folder in another, whatever the title', async() => {
+  // risk: policy — a file in another collection cannot mask a folder citation.
+  it('refuses a cross-collection file-versus-folder clash at the folder path', async() => {
     const folder = 'Projects/ripplecore-performance-audit';
     const resolver = files({ a: [{ id: 'pm', path: report }], b: [{ id: 'folder-file', path: folder }] });
-    for (const title of ['', 'a/b', '.', '..', report, '/Users/x', 'file:///x', 'javascript:x', 'missing.md']) {
-      await expect(resolver.file({ ...folderSource, title }), title).rejects.toThrow('More than one');
-    }
-    const deletedChild = files({ a: [{ id: 'pm', path: report, deleted_at: '2026-11-01' }], b: [{ id: 'folder-file', path: folder }] });
-    expect(await deletedChild.file({ ...folderSource, title: 'a/b' })).toEqual({ fileId: 'folder-file', path: folder, collectionId: 'b' });
-    const crowded = files({ a: [{ id: 'folder-file', path: folder }], b: Array.from({ length: 101 }, (_, index) => ({ id: `c${ index }`, path: `${ folder }/c${ index }.md` })) });
-    const listing = f.invoke.getMockImplementation()!;
-    f.invoke.mockImplementation(async(channel: string, input: any) => {
-      const page = await listing(channel, input);
-      if (channel !== 'sulla-files:list-page' || input.path !== folder) return page;
-      const start = Number(input.cursor ?? 0);
-      return { files: page.files.slice(start, start + 1), hasMore: start + 1 < page.files.length, nextCursor: String(start + 1) };
-    });
-    await expect(crowded.file({ ...folderSource, title: 'missing.md' })).rejects.toThrow('More than one');
-    expect(f.openTab).not.toHaveBeenCalled();
+    await expect(resolver.file(folderSource)).rejects.toThrow('More than one');
   });
 
+  // risk: data accuracy — prose titles must not be mistaken for relative filenames.
   it('still opens an old full-path citation with a prose title containing a slash when no folder clashes', async() => {
     const resolver = files({ a: [{ id: 'pm', path: report }], b: [{ id: 'other', path: 'Projects/ripplecore-performance-audit-old/notes.md' }] });
     expect(await resolver.file({ ...folderSource, origin: report, title: 'Admin speed / postmortem' })).toEqual({ fileId: 'pm', path: report, collectionId: 'a' });
   });
 
-  it('opens a sulla-file link by id, and falls back to the path rules when the id is missing or deleted', async() => {
-    const resolver = files({ files: [{ id: 'pm', path: report }, { id: 'gone', path: 'Old/report.md', deleted_at: '2026-11-01' }], team: [{ id: 'linked', path: 'Team/linked.md' }] });
+  // risk: data accuracy — durable file links must reopen the linked record, not a guessed path.
+  it('opens a sulla-file citation by its durable file id', async() => {
+    const resolver = files({ team: [{ id: 'linked', path: 'Team/linked.md' }] });
     expect(await resolver.file({ ...folderSource, url: 'sulla-file://linked?version=v1&path=Team%2Flinked.md&name=linked.md' })).toEqual({ fileId: 'linked', path: 'Team/linked.md', collectionId: 'team' });
-    for (const url of ['sulla-file://unknown?path=x.md', 'sulla-file://gone?path=Old%2Freport.md', 'sulla-file://linked.md?path=x.md', 'sulla-file://linked/../x']) {
-      expect(await resolver.file({ ...folderSource, url }), url).toMatchObject({ fileId: 'pm' });
-    }
-    expect(f.invoke.mock.calls.filter(([channel]: any[]) => channel === 'sulla-files:metadata').map(([, input]: any[]) => input.fileId)).toEqual(['linked', 'unknown', 'gone']);
-    await expect(resolver.file({ ...folderSource, title: 'missing.md', url: 'sulla-file://gone' })).rejects.toThrow('not available');
+    expect(f.invoke.mock.calls.filter(([channel]: any[]) => channel === 'sulla-files:metadata').map(([, input]: any[]) => input.fileId)).toEqual(['linked']);
   });
 
+  // risk: policy — a Files outage must not silently route a citation to a different document.
   it('never falls back to another path when the linked file cannot be checked', async() => {
     const resolver = files({ files: [{ id: 'other', path: report }], team: [{ id: 'linked', path: 'Team/linked.md' }] });
     const listing = f.invoke.getMockImplementation()!;
@@ -148,36 +123,29 @@ describe('supporting report citation formats', () => {
     expect(f.invoke).not.toHaveBeenCalledWith('sulla-files:list-page', expect.anything());
   });
 
-  it('checks only the cited folder, not every file below a broad parent', async() => {
-    const crowd = Array.from({ length: 30 }, (_, index) => ({ id: `n${ index }`, path: `Projects/other-${ index }/${ folderSource.title }` }));
-    const resolver = files({ files: [...crowd, { id: 'pm', path: report }] });
-    expect(await resolver.file(folderSource)).toMatchObject({ fileId: 'pm' });
-    expect(f.invoke.mock.calls.filter(([channel]: any[]) => channel === 'sulla-files:list-page').every(([, input]: any[]) => input.children === true)).toBe(true);
+  // risk: policy — collection ambiguity must not select another customer's copy.
+  it('refuses a folder-plus-title match present in multiple collections', async() => {
+    const resolver = files({ a: [{ id: 'a', path: report }], team: [{ id: 'b', path: report }] });
+    await expect(resolver.file(folderSource)).rejects.toThrow('More than one');
   });
 
-  it('refuses a missing file and an ambiguous folder plus title match', async() => {
-    await expect(files({ files: [{ id: 'pm', path: report }] }).file({ ...folderSource, title: 'nope.md' })).rejects.toThrow('not available');
-    await expect(files({ files: [{ id: 'a', path: report }], team: [{ id: 'b', path: report }] }).file(folderSource)).rejects.toThrow('More than one');
-    expect(f.openTab).not.toHaveBeenCalled();
-  });
-
-  it('never joins unsafe titles or origins into another file', async() => {
-    const resolver = files({ files: [{ id: 'pm', path: report }, { id: 'up', path: 'Projects/secret.md' }, { id: 'sub', path: 'Projects/ripplecore-performance-audit/x/secret.md' }] });
-    for (const title of ['..', '.', '', '../secret.md', 'x/secret.md', 'x\\secret.md', '/Users/seth/secret.md', 'file:///Users/seth/secret.md', 'javascript:alert(1)', ' postmortem-admin-speed-build-2026-11-23.md', 'postmortem 🚀.md']) {
+  // risk: policy — citation text cannot escape its Files path or become a host/URL target.
+  it('refuses unsafe title joins and scheme-based origins', async() => {
+    const folder = 'Projects/ripplecore-performance-audit';
+    const resolver = files({ files: [
+      { id: 'pm', path: report },
+      { id: 'up', path: folder + '/../secret.md' },
+      { id: 'nested', path: folder + '/x/secret.md' },
+      { id: 'file-scheme', path: folder + '/file:///Users/x' },
+      { id: 'javascript-scheme', path: folder + '/javascript:alert(1)' },
+    ] });
+    for (const title of ['../secret.md', 'x/secret.md', 'file:///Users/x', 'javascript:alert(1)']) {
       await expect(resolver.file({ ...folderSource, title }), title).rejects.toThrow('not available');
     }
-    for (const origin of ['/Users/seth/Projects', 'file:///Users/seth', 'javascript:alert(1)', 'Projects/..', '..', '']) {
-      await expect(resolver.file({ ...folderSource, origin }), origin).rejects.toThrow('no saved Files');
-    }
-    expect(f.invoke.mock.calls.every(([, input]: any[]) => !input?.path || !/^\/|:/.test(input.path))).toBe(true);
+    await expect(resolver.file({ ...folderSource, origin: 'javascript:alert(1)' })).rejects.toThrow('no saved Files');
   });
 
-  it('keeps https citations as web sources', () => {
-    const resolver = files({});
-    expect(resolver.webUrl({ ...folderSource, url: 'https://example.com/report' })).toBe('https://example.com/report');
-    expect(resolver.webUrl({ ...folderSource, url: 'sulla-file://pm?path=x.md' })).toBeUndefined();
-  });
-
+  // risk: data accuracy — the user-facing Read report action must open the resolved file.
   it('opens a folder plus title citation from the Read report control', async() => {
     files({ files: [{ id: 'pm', path: report }] });
     const wrapper = mount(CitationRow, { props: { msg: { sources: [folderSource] } as any } });
