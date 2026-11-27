@@ -54,6 +54,16 @@ describe('DurableAgentInboxReceiverResolver', () => {
     await expect(resolver.resolve('sulla-desktop')).resolves.toMatchObject({ threadId: 'live' });
   });
 
+  it('prefers a job-bound task over a different executing graph chat', async () => { // risk: peer delivery routes to an unrelated running chat
+    const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [{
+      jobId: 'job-bound', createdAt: 1, parentAgentId: 'coding-manager', status: 'running',
+      tasks: [{ agentId: 'sulla-desktop', threadId: 'job-thread', label: 'delegated task', status: 'running' }],
+    }] } as any, () => [
+      { channel: 'sulla-desktop', threadId: 'executing-chat', label: 'chat', executing: true },
+    ]);
+    await expect(resolver.resolve('sulla-desktop')).resolves.toMatchObject({ threadId: 'job-thread', jobId: 'job-bound' });
+  });
+
   it('returns a typed no-match error for an invalid explicit address', async () => { // risk: peer delivery recovery
     const resolver = new DurableAgentInboxReceiverResolver({ allJobs: async () => [] }, () => []);
     await expect(resolver.resolve('coding-manager', 'missing')).rejects.toBeInstanceOf(NoAgentInboxTargetError);
