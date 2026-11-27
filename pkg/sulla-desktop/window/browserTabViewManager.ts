@@ -8,6 +8,7 @@ import path from 'path';
 import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
+import { AgentScreenshotCapture } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import { AgentViewportPolicy, type AgentViewport } from '@pkg/main/browserTabs/AgentViewportPolicy';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
@@ -193,11 +194,16 @@ export class BrowserTabViewManager {
   private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
-  private constructor(readonly agentViewports: AgentViewportPolicy) {}
+  private constructor(readonly agentViewports: AgentViewportPolicy, readonly agentScreenshots: AgentScreenshotCapture) {}
+
+  displayDpr(window: Electron.BrowserWindow | null): number | null {
+    return window && !window.isDestroyed() ? Electron.screen.getDisplayMatching(window.getBounds()).scaleFactor : null;
+  }
 
   static getInstance(): BrowserTabViewManager {
     if (!BrowserTabViewManager.instance) {
-      BrowserTabViewManager.instance = new BrowserTabViewManager(new AgentViewportPolicy());
+      const viewports = new AgentViewportPolicy();
+      BrowserTabViewManager.instance = new BrowserTabViewManager(viewports, new AgentScreenshotCapture(viewports));
     }
 
     return BrowserTabViewManager.instance;

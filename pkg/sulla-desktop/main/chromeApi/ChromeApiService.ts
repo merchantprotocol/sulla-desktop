@@ -28,7 +28,7 @@ import { createChromeBookmarks } from './chromeBookmarks';
 import { ChromeEventImpl } from './chromeEvent';
 
 import type { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
-import { GuestBridge } from '@pkg/main/browserTabs/GuestBridge';
+import type { CaptureOptions } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { getBrowserSession } from '@pkg/main/browserTabs/browserSession';
 import Logging from '@pkg/utils/logging';
@@ -562,7 +562,7 @@ export class ChromeApiService implements ChromeApi {
 
   /** Keep capture and close atomic. Ordinary background browsing needs no
    * reparenting; only a tab opened windowless needs a temporary compositor. */
-  async captureHiddenTabScreenshot(tabId: string): Promise<{ base64: string; mediaType: string } | null> {
+  async captureHiddenTabScreenshot(tabId: string, options?: CaptureOptions) {
     return this.withHiddenTabOperation(tabId, async() => {
       const view = this.hiddenViews.get(tabId);
       if (!view || view.webContents.isDestroyed()) throw new Error('Hidden tab not found');
@@ -576,7 +576,7 @@ export class ChromeApiService implements ChromeApi {
           this.hiddenLayout.prepare(view, window);
         }
         view.webContents.setBackgroundThrottling(false);
-        return await new GuestBridge(view.webContents, tabId).captureScreenshot();
+        return await this.tabViewManager.agentScreenshots.capture(view.webContents, () => this.tabViewManager.displayDpr(window), options);
       } finally {
         if (!view.webContents.isDestroyed()) {
           view.webContents.setBackgroundThrottling(wasThrottled);

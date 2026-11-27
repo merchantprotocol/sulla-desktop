@@ -3,6 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import type { AgentViewport } from '../browserTabs/AgentViewportPolicy';
+import type { CapturedScreenshot, CaptureOptions } from '../browserTabs/AgentScreenshotCapture';
+
 /**
  * TypeScript interfaces for the chrome.* API layer.
  *
@@ -15,8 +18,6 @@
 // ---------------------------------------------------------------------------
 
 export type EventListener<T extends unknown[]> = (...args: T) => void;
-
-import type { AgentViewport } from '../browserTabs/AgentViewportPolicy';
 
 export interface ChromeEvent<T extends unknown[]> {
   addListener(callback: EventListener<T>): void;
@@ -447,7 +448,7 @@ export interface RuntimeMessage {
 
 export interface ChromeApi {
   /** Capture a hidden tab without exposing it through the visible tab registry. */
-  captureHiddenTabScreenshot(tabId: string): Promise<{ base64: string; mediaType: string } | null>;
+  captureHiddenTabScreenshot(tabId: string, options?: CaptureOptions): Promise<CapturedScreenshot | null>;
 
   tabs: {
     get(tabId: string): Promise<ChromeTab | null>;
