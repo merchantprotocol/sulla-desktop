@@ -65,8 +65,12 @@ export class AgentScreenshotCapture {
     return this.serialize(wc, async() => {
       const placement = begin(options.viewport);
       try {
-        return await this.withDebugger(wc, (command, deadline) =>
+        const screenshot = await this.withDebugger(wc, (command, deadline) =>
           this.captureOne(wc, placement, scale, options, command, deadline, overlays));
+        // Cleanup can yield (e.g. removing the grid). Don't return a parked
+        // result if focus won during that final part of the transaction.
+        placement.assertCurrent();
+        return screenshot;
       } finally {
         placement.release();
       }

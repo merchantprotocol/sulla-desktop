@@ -341,6 +341,15 @@ describe('native screenshot transactions', () => {
     expect((await capture()).metadata.liveHumanView).toBe(true);
   });
 
+  it('also rejects a parked result if the tab gains focus during overlay cleanup', async() => {
+    const { capture, focus, edge } = fixture();
+    await expect(capture({ viewport: phone }, {
+      prepare: async() => {},
+      remove: async() => { focus(true) },
+    })).rejects.toThrow('placement changed');
+    expect(edge.rect).toEqual(pane);
+  });
+
   it('does not detach a replacement debugger session', async() => {
     const { edge, capture } = fixture();
     edge.captureFrame.mockImplementationOnce(async() => {

@@ -163,8 +163,9 @@ export class BrowserTabViewManager {
    * of re-bounding and re-ordering every open tab. Keyed by view object so
    * a wedge-recovery replacement view starts with no cached placement.
    */
-  private readonly captureBounds = new WeakMap<WebContentsView, AgentViewport>();
   private appliedPlacement = new WeakMap<WebContentsView, string>();
+  /** Only valid while parked; focus and transfer invalidate a queued capture's lease. */
+  private readonly captureBounds = new WeakMap<WebContentsView, AgentViewport>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
