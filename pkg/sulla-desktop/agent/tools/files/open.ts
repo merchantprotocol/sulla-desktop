@@ -11,6 +11,7 @@ import { FilesTool } from './common';
 import { AgentFileOpenRoutePolicy } from './AgentFileOpenRoutePolicy';
 import { InlineFileReferenceMessageFactory } from './InlineFileReferenceMessage';
 import { recentFileOpenRegistry } from './RecentFileOpenRegistry';
+import { FilesOpenDestinationRouter } from '@pkg/pages/files/FilesOpenDestinationRouter';
 
 import type { RecentFileOpenCoordinator } from './RecentFileOpenRegistry';
 
@@ -53,6 +54,7 @@ export class FilesOpenWorker extends FilesTool {
     private readonly inlineReferenceFactory = new InlineFileReferenceMessageFactory(),
     private readonly pathNormalizer = new FilesOpenPathNormalizer(),
     private readonly recentOpenRegistry:RecentFileOpenCoordinator = recentFileOpenRegistry,
+    private readonly openDestinationRouter = new FilesOpenDestinationRouter(),
   ) {
     super();
   }
@@ -121,7 +123,8 @@ export class FilesOpenWorker extends FilesTool {
       isChatMuted:          !!metadata?._muteWsChat,
       isSubconsciousSilent: !!metadata?.subconsciousSilent,
     };
-    let decision = this.routePolicy.route(input.placement, context);
+    const htmlFile = fileKind === 'file' && this.openDestinationRouter.isHtmlPath(resolvedPath);
+    let decision = this.routePolicy.route(htmlFile ? 'tab' : input.placement, context);
     if (fileKind === 'folder' && input.placement !== 'tab' && decision.kind === 'inline') {
       decision = this.routePolicy.route('tab', context);
     }
@@ -168,7 +171,8 @@ export class FilesOpenWorker extends FilesTool {
         if (reply?.opened !== true) return reject(new Error('Sulla Desktop did not select the requested Files item'));
         resolve(reply);
       });
-      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: fileKind, mode: input.mode ?? 'edit', focus: input.focus !== false });
+      const mode = fileKind === 'file' ? this.openDestinationRouter.resolve(resolvedPath, input.mode ?? 'edit').mode : (input.mode ?? 'edit');
+      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: fileKind, mode, focus: input.focus !== false });
       if (agentWindow.webContents.isLoading()) agentWindow.webContents.once('did-finish-load', dispatch); else dispatch();
     });
     if (input.focus !== false) agentWindow.focus();
