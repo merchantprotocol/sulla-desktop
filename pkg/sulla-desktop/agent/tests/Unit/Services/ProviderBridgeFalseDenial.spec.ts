@@ -88,7 +88,7 @@ async function openBridge(overrides: Partial<ProviderCliBridgeOptions> & { broke
     broker: (overrides.broker ?? new FakeBroker()) as any,
   });
   leases.push(lease);
-  const send = (body = '{"model":"gpt-5"}') => loopback.post(`${ lease.config.baseUrl }/responses`, lease.config.environment.SULLA_PROVIDER_BRIDGE_TOKEN, body);
+  const send = (body = '{"model":"gpt-5"}', path = '/responses') => loopback.post(`${ lease.config.baseUrl }${ path }`, lease.config.environment.SULLA_PROVIDER_BRIDGE_TOKEN, body);
   return { lease, send, timings };
 }
 
@@ -116,7 +116,7 @@ describe('provider bridge never falsely denies a healthy container job', () => {
       expect(response.status).toBe(status);
       expect(timing).toContain(`status=${ status }`);
       expect(timing).toContain('retry_after=9s');
-      expect(timing).not.toContain('path=');
+      expect(timing).toContain('path=/v1/responses');
       expect(timing).not.toContain('openai_reason=');
       expect(timing).not.toContain('rate limit details');
       expect(timing).not.toContain(secret);
@@ -199,7 +199,7 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(secondLines[0]).toContain('thread-second');
   });
 
-  it('forwards the request when the early OAuth refresh fails instead of answering a terminal denial', async() => {
+  it('forwards after a failed early OAuth refresh and logs only its fixed upkeep code', async() => {
     // risk: one failed precautionary Codex token refresh killed the whole worker with 502 provider_bridge_failed
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const broker = new FakeBroker();
@@ -211,7 +211,9 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(await response.text()).toBe('data: ok\n\n');
     expect(broker.calls).toHaveLength(1);
     expect(timings.at(-1)).toContain('status=200');
-    expect(timings.at(-1)).not.toContain('upkeep=');
+    expect(timings.at(-1)).toContain('upkeep=credential_upkeep_failed');
+    expect(timings.at(-1)).not.toContain('OAuth refresh failed');
+    expect(timings.at(-1)).not.toContain('socket hang up');
     expect(timings.at(-1)).not.toContain('provider_bridge_failed');
   });
 
@@ -262,7 +264,9 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(isProviderBridgeDenial(new Error(body.error.message))).toBe(true);
     expect(lease.signal.aborted).toBe(true);
     expect(timings.at(-1)).toContain('status=403');
-    expect(timings.at(-1)).not.toContain('container_not_registered');
+    expect(timings.at(-1)).toContain('failure=provider_bridge_identity_changed');
+    expect(timings.at(-1)).toContain('reason=container_not_registered');
+    expect(timings.at(-1)).toContain('stage=authorize');
   });
 
   it('revokes when authorize throws an untyped error that only claims to be retryable', async() => {
@@ -323,18 +327,36 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(body.error).toMatchObject({ type: 'invalid_provider_request', reason: 'invalid_json' });
   });
 
-  it('keeps unknown failure details out of the safe timing line', async() => {
-    // risk: 42 identical provider_bridge_failed lines a day with no way to split them by cause
+  it('splits failures by safe enum cause without logging free text', async() => {
+    // risk: bridge failures cannot be separated by cause without leaking vault/provider error text
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { send, timings } = await openBridge({ broker: new FakeBroker(async() => { throw new RangeError('boom') }) });
+    const { send, timings } = await openBridge({ broker: new FakeBroker(async() => { throw new RangeError('boom sk-abc123 private detail') }) });
     const response = await send();
     const body = await response.json() as { error: { type: string; reason?: string } };
     expect(response.status).toBe(502);
     expect(body.error).toMatchObject({ type: 'provider_bridge_failed', reason: 'upstream_headers_RangeError' });
     expect(timings.at(-1)).toContain('status=502');
-    expect(timings.at(-1)).not.toContain('upstream_headers_RangeError');
-    expect(timings.at(-1)).not.toContain('reason=');
+    expect(timings.at(-1)).toContain('failure=provider_bridge_failed');
+    expect(timings.at(-1)).toContain('reason=upstream_headers_RangeError');
+    expect(timings.at(-1)).toContain('stage=upstream_headers');
+    expect(timings.at(-1)).not.toContain('boom');
+    expect(timings.at(-1)).not.toContain('sk-abc123');
+    expect(timings.at(-1)).not.toContain('private detail');
+  });
+
+  it('logs a route only when it matches the fixed provider route table', async() => {
+    // risk: client-controlled path strings leak through BridgeTiming
+    const { send, timings } = await openBridge({});
+    const allowed = await send('{"model":"gpt-5"}', '/responses');
+    expect(allowed.status).toBe(200);
+    expect(timings.at(-1)).toContain('path=/v1/responses');
+
+    const clientPath = '/client-supplied-secret-route';
+    const denied = await send('{"model":"gpt-5"}', clientPath);
+    expect(denied.status).toBe(404);
+    expect(timings.at(-1)).not.toContain('path=');
+    expect(timings.at(-1)).not.toContain(clientPath);
   });
 
   it('treats a bare fetch failure reaching the vault as transient', async() => {
