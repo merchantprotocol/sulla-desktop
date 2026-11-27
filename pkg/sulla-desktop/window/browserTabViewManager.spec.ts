@@ -2,6 +2,9 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import { EventEmitter } from 'node:events';
+
+import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => {
@@ -15,6 +18,9 @@ vi.mock('electron', () => {
   };
 });
 
+import { AgentScreenshotCapture } from '../main/browserTabs/AgentScreenshotCapture';
+import { AgentViewportPolicy } from '../main/browserTabs/AgentViewportPolicy';
+import { HiddenTabLayout } from '../main/chromeApi/HiddenTabLayout';
 import { BrowserTabViewManager } from './browserTabViewManager';
 
 const ownerWindow = (id: number) => ({
@@ -26,6 +32,8 @@ const ownerWindow = (id: number) => ({
 
 const managerWith = (tabId: string, view: any, owner: any) => {
   const manager = Object.create(BrowserTabViewManager.prototype) as any;
+  manager.agentViewports = new AgentViewportPolicy();
+  manager.sleepingTabs = new Set();
   manager.views = new Map([[tabId, view]]);
   manager.owners = new Map([[tabId, owner]]);
   manager.focusedTabIds = new Map([[owner.id, tabId]]);
@@ -51,15 +59,16 @@ describe('BrowserTabViewManager window ownership', () => {
     const view = { webContents, setBounds: vi.fn() };
     const manager = managerWith('tab-a', view, source);
 
+    manager.agentViewports.set(webContents, { width: 1280, height: 800 });
     expect(manager.moveViewToWindow('tab-a', target, { focus: true })).toBe(true);
 
     expect(source.contentView.removeChildView).toHaveBeenCalledWith(view);
-    expect(target.contentView.addChildView).toHaveBeenCalledWith(view);
+    expect(target.contentView.addChildView).toHaveBeenCalledWith(view, 0);
     expect(manager.getWebContents('tab-a')).toBe(webContents);
     expect(manager.getOwnerWindow('tab-a')).toBe(target);
     expect(manager.getFocusedTab(source)).toBeNull();
     expect(manager.getFocusedTab(target)).toBe('tab-a');
-    expect(view.setBounds).toHaveBeenCalledWith({ x: -740, y: 24, width: 640, height: 480 });
+    expect(view.setBounds).toHaveBeenCalledWith({ x: -1380, y: 0, width: 1280, height: 800 });
     expect(webContents.loadURL).not.toHaveBeenCalled();
     expect(webContents.reload).not.toHaveBeenCalled();
   });
@@ -138,5 +147,142 @@ describe('BrowserTabViewManager window ownership', () => {
     expect(manager.destroyView).toHaveBeenCalledWith('owned');
     expect(manager.destroyView).not.toHaveBeenCalledWith('handoff');
     expect(manager.focusedTabIds.has(owner.id)).toBe(false);
+  });
+});
+
+describe('agent viewport lifecycle', () => {
+  it('never intersects the window, or leaks an override to a different tab', () => {
+    const policy = new AgentViewportPolicy();
+    const first = {} as Electron.WebContents, other = {} as Electron.WebContents;
+    const original = policy.resolve(other);
+    fc.assert(fc.property(fc.integer({ min: 320, max: 3840 }), fc.integer({ min: 320, max: 2160 }), (width, height) => {
+      policy.set(first, { width, height });
+      const rect = policy.parked(first);
+      expect(rect.x + rect.width).toBeLessThan(0);
+      expect([rect.width, rect.height]).toEqual([width, height]);
+      expect(policy.resolve(other)).toEqual(original);
+    }));
+    const valid = policy.resolve(first);
+    for (const bad of [{ width: 12.5, height: 900 }, { width: 800, height: Infinity }, { width: 99999, height: 844 }]) {
+      expect(() => policy.set(first, bad)).toThrow();
+    }
+    expect(policy.resolve(first)).toEqual(valid);
+  });
+
+  it('restores the latest human pane on focus, even after changing the agent viewport', () => {
+    const owner = ownerWindow(10);
+    const view = { setBounds: vi.fn(), setVisible: vi.fn(), webContents: { setBackgroundThrottling: vi.fn() } };
+    const manager = managerWith('tab', view, owner);
+    delete manager.reconcileVisibility;
+    const pane = { x: 37, y: 19, width: 157, height: 3982 };
+    manager.setBounds('tab', pane, owner);
+    manager.setAgentViewport('tab', { width: 390, height: 844 });
+    expect(view.setBounds).toHaveBeenLastCalledWith(pane);
+    manager.setFocusedTab(null, undefined, undefined, owner);
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: -490, y: 0, width: 390, height: 844 });
+    const newPane = { ...pane, width: 682 };
+    manager.setBounds('tab', newPane, owner);
+    manager.setFocusedTab('tab', undefined, undefined, owner);
+    expect(view.setBounds).toHaveBeenLastCalledWith(newPane);
+  });
+
+  it('parks the hidden surface before attaching it and releases it from that same owner on close', () => {
+    const layout = new HiddenTabLayout(new AgentViewportPolicy());
+    const window = ownerWindow(1);
+    const view = { webContents: {}, setBounds: vi.fn() };
+    layout.prepare(view as any, window as any, { width: 1280, height: 800 });
+    expect(view.setBounds).toHaveBeenCalledWith({ x: -1380, y: 0, width: 1280, height: 800 });
+    expect(view.setBounds.mock.invocationCallOrder[0]).toBeLessThan(window.contentView.addChildView.mock.invocationCallOrder[0]);
+    expect(layout.owner(view as any)).toBe(window);
+    expect(window.contentView.removeChildView).not.toHaveBeenCalled();
+    layout.detach(view as any);
+    expect(window.contentView.removeChildView).toHaveBeenCalledWith(view);
+    expect(layout.owner(view as any)).toBeNull();
+  });
+});
+
+class CdpEdge extends EventEmitter {
+  attached = false;
+  emulated: { width: number; height: number; mobile: boolean; deviceScaleFactor: number } | null = null;
+  contentHeight = 1;
+  captureFrame = vi.fn(async() => ({ data: 'encoded' }));
+  isAttached = () => this.attached;
+  attach = () => { this.attached = true };
+  detach = vi.fn(() => { this.attached = false; this.emit('detach') });
+  sendCommand = vi.fn(async(name: string, params?: any) => {
+    switch (name) {
+    case 'Emulation.setDeviceMetricsOverride': this.emulated = params; return {};
+    case 'Emulation.clearDeviceMetricsOverride': this.emulated = null; return {};
+    case 'Page.getLayoutMetrics': return {
+      cssContentSize: { width: 1, height: this.contentHeight },
+      cssLayoutViewport: { clientWidth: this.emulated!.mobile ? 980 : this.emulated!.width },
+      cssVisualViewport: { pageX: 0, pageY: 123, scale: 1 },
+    };
+    case 'Page.captureScreenshot': return this.captureFrame();
+    default: throw new Error('Unexpected command');
+    }
+  });
+  contents = { debugger: this, isDestroyed: () => false } as unknown as Electron.WebContents;
+}
+
+describe('agent capture transaction', () => {
+  it('clips the visible viewport at its current scroll position rather than a one-pixel document extent', async() => {
+    const policy = new AgentViewportPolicy(), cdp = new CdpEdge();
+    const service = new AgentScreenshotCapture(policy);
+    policy.set(cdp.contents, { width: 1280, height: 800 });
+    const result = await service.capture(cdp.contents, () => 2, { viewport: { width: 390, height: 844 } });
+    expect(cdp.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
+      clip: { x: 0, y: 123, width: 390, height: 844, scale: 1 }, fromSurface: true,
+    }));
+    expect(cdp.sendCommand).toHaveBeenCalledWith('Emulation.setDeviceMetricsOverride', {
+      width: 390, height: 844, deviceScaleFactor: 1, mobile: false,
+    });
+    expect(result.metadata).toMatchObject({ displayDpr: 2, devicePixelRatio: 1, capped: false, viewport: { width: 390, height: 844 } });
+    expect(cdp.emulated).toBeNull();
+    expect(policy.resolve(cdp.contents)).toEqual({ width: 1280, height: 800 });
+  });
+
+  it('captures normal scroll height and bounds decoded pixels at high DPR', async() => {
+    const service = new AgentScreenshotCapture(new AgentViewportPolicy()), cdp = new CdpEdge();
+    for (const height of [4900, 10 ** 8]) {
+      cdp.contentHeight = height;
+      const { metadata } = await service.capture(cdp.contents, () => 1, { fullPage: true, scale: 2 });
+      expect(metadata.cssHeight * metadata.viewport.width * 4).toBeLessThanOrEqual(32 * 1024 * 1024);
+      expect(metadata.capped).toBe(height > metadata.cssHeight);
+      if (height === 4900) expect(metadata.cssHeight).toBe(height);
+      expect(cdp.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
+        clip: { x: 0, y: 0, width: 1440, height: metadata.cssHeight, scale: 1 },
+      }));
+    }
+  });
+
+  it.each([false, true])('clears overrides and overlays on failure, preserving debugger ownership (already attached: %s)', async(attached) => {
+    const cdp = new CdpEdge(), service = new AgentScreenshotCapture(new AgentViewportPolicy());
+    cdp.attached = attached;
+    cdp.captureFrame.mockRejectedValueOnce(new Error('compositor failure'));
+    const overlays = { prepare: vi.fn(async() => {}), remove: vi.fn(async() => {}) };
+    await expect(service.capture(cdp.contents, () => 2, {}, overlays)).rejects.toThrow('compositor failure');
+    expect(overlays.remove).toHaveBeenCalledOnce();
+    expect(cdp.emulated).toBeNull();
+    expect(cdp.detach).toHaveBeenCalledTimes(attached ? 0 : 1);
+    expect(cdp.isAttached()).toBe(attached);
+  });
+
+  it('does not overlap two captures of one WebContents or serialize unrelated tabs', async() => {
+    const service = new AgentScreenshotCapture(new AgentViewportPolicy()), first = new CdpEdge(), other = new CdpEdge();
+    let unblock!: () => void, started!: () => void;
+    const pending = new Promise<void>(resolve => { unblock = resolve });
+    const active = new Promise<void>(resolve => { started = resolve });
+    first.captureFrame.mockImplementationOnce(async() => { started(); await pending; return { data: 'encoded' } });
+    const one = service.capture(first.contents, () => 1, { viewport: { width: 1280, height: 800 } });
+    await active;
+    const two = service.capture(first.contents, () => 1, { viewport: { width: 390, height: 844 } });
+    const independent = await service.capture(other.contents, () => 2);
+    expect(independent.metadata.viewport.width).toBe(1440);
+    expect(first.emulated?.width).toBe(1280);
+    unblock();
+    expect((await one).metadata.viewport.width).toBe(1280);
+    expect((await two).metadata.viewport.width).toBe(390);
+    expect(first.emulated).toBeNull();
   });
 });
