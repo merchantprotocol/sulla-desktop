@@ -20,7 +20,7 @@ describe('ThreadAgentActivityMapper tool steps', () => {
 
     const [item] = mapper.primaryTrace([tool], 'thread-1', 'Sulla', 10_000);
 
-    expect(item).toMatchObject({ text: 'git', observedAt: 1_000, phase: 'start', correlationId: 'primary:thread-1:tool-step' });
+    expect(item).toMatchObject({ text: 'git', observedAt: 1_000, startedAt: 1_000, phase: 'start', correlationId: 'primary:thread-1:tool-step' });
     expect(JSON.stringify(item)).not.toContain(rawCommand);
   });
 });
