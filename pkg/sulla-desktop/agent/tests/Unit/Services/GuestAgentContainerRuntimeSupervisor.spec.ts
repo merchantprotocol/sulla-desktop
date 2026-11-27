@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ default: { app: { getVersion: () => 'test' } } }));
 import type { ContainerRuntimeDriver } from '@pkg/runtime/containerRuntime';
 import { GuestAgentContainerRuntimeSupervisor } from '../../../services/AgentContainerLauncher';
+import { AgentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
 
 const runtime = (inspect: ContainerRuntimeDriver['inspect']): ContainerRuntimeDriver => ({
   list: vi.fn(async() => [{ ID: 'pod-1', Names: 'pod-1' }]), inspect,
@@ -15,11 +16,22 @@ describe('GuestAgentContainerRuntimeSupervisor', () => {
   it('rehydrates current and upgrade-era labels through durable task identity', async() => {
     // risk: upgrade restart falsely marks a live container task lost
     const current = new GuestAgentContainerRuntimeSupervisor(runtime(async() => ({ Name: '/pod-1', State: { Running: true }, Config: { WorkingDir: '/work', Labels: { 'com.sulla.job-id': 'job-1', 'com.sulla.task-index': '0', 'com.sulla.subject': 'subject-1', 'com.sulla.device-id': 'device-1' } } })));
-    expect(await current.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', subject: 'subject-1', deviceId: 'device-1' })]);
+    expect(await current.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', taskIndex: 0, subject: 'subject-1', deviceId: 'device-1' })]);
     const legacy = new GuestAgentContainerRuntimeSupervisor(runtime(async() => ({ Name: '/pod-1', State: { Status: 'running' }, Config: { WorkingDir: '/work', Labels: { 'com.sulla.workload': 'agent', 'com.sulla.job-id': 'job-1', 'com.sulla.task-index': '0', 'com.sulla.agent-id': 'worker' } } })), {
       resolve: async(jobId, taskIndex) => jobId === 'job-1' && taskIndex === 0 ? { subject: 'legacy-subject', deviceId: 'legacy-device', threadId: 'thread-1' } : undefined,
     });
-    expect(await legacy.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', subject: 'legacy-subject', threadId: 'thread-1' })]);
+    expect(await legacy.liveBindings()).toEqual([expect.objectContaining({ jobId: 'job-1', taskIndex: 0, subject: 'legacy-subject', threadId: 'thread-1' })]);
+  });
+
+  it.each([undefined, '', '  ', '-1', '1.5', '0x10', '9007199254740992'])('keeps liveness but never invents an index for %s', async label => {
+    const labels = { 'com.sulla.job-id': 'job-1', 'com.sulla.subject': 'owner', 'com.sulla.device-id': 'device',
+      ...(label === undefined ? {} : { 'com.sulla.task-index': label }) };
+    const supervisor = new GuestAgentContainerRuntimeSupervisor(runtime(async() => ({
+      Name: '/pod-1', State: { Running: true }, Config: { Labels: labels },
+    })));
+    const [live] = await supervisor.liveBindings();
+    expect(live.jobId).toBe('job-1');
+    expect(live.taskIndex).toBeUndefined();
   });
 
   it('fails closed on inventory rejection and timeout', async() => {
@@ -27,6 +39,34 @@ describe('GuestAgentContainerRuntimeSupervisor', () => {
     await expect(new GuestAgentContainerRuntimeSupervisor(runtime(async() => { throw new Error('docker unavailable') })).liveBindings()).rejects.toThrow('docker unavailable');
     const hanging = new GuestAgentContainerRuntimeSupervisor(runtime(() => new Promise(() => undefined)), undefined, 5);
     await expect(hanging.liveBindings()).rejects.toThrow('timed out');
+  });
+});
+
+describe('AgentContainerRuntimeRegistry restart ownership', () => {
+  const binding = {
+    podId: 'pod-1', subject: 'subject-1', jobId: 'job-1', taskIndex: 0,
+    threadId: 'thread-1', deviceId: 'device-1', workspacePath: '/work',
+  } as any;
+
+  it('retains Docker inventory for cleanup without treating its dead Desktop bridge as live', async() => {
+    // risk: a container survives a force-quit, suppresses restart recovery, and keeps running
+    // without the MCP session, provider bridge, or capability-renewal owner that authorized it.
+    const registry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [{ ...binding, origin: 'inventory' }] });
+    await registry.rehydrate();
+
+    expect(registry.probe('job-1', 'thread-1')).toBe(true);
+    expect(registry.probe('job-1', 'thread-1', 'desktop')).toBe(false);
+    expect(registry.snapshot()).toMatchObject({ ready: true, bindings: [expect.objectContaining({ origin: 'inventory' })] });
+  });
+
+  it('becomes live only after the current Desktop process owns the runtime binding', async() => {
+    const registry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [{ ...binding, origin: 'inventory' }] });
+    await registry.rehydrate();
+    const unregister = registry.register(binding);
+
+    expect(registry.probe('job-1', 'thread-1', 'desktop')).toBe(true);
+    unregister();
+    expect(registry.probe('job-1', 'thread-1', 'desktop')).toBe(false);
   });
 });
 

@@ -144,6 +144,7 @@ export class ConfigApiClient {
     params: Record<string, any> = {},
     options: CallOptions = {},
   ): Promise<PaginatedResult<T> | T> {
+    if (this.slug === 'clerk') throw new Error('Use the native guarded Clerk integration.');
     const epConfig = this.integration.endpoints.get(endpointName);
     if (!epConfig) {
       const available = this.endpointNames.join(', ');

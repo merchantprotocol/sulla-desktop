@@ -45,7 +45,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { toolRegistry } from '@pkg/agent/tools/registry';
-import { ContainerExecutionContextFactory, type AgentContainerRuntimeBinding } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { agentContainerRuntimeRegistry, ContainerExecutionContextFactory, currentAgentContainerRuntime, type AgentContainerRuntimeBinding } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { activateWorkflowOnState } from '@pkg/agent/tools/workflow/execute_workflow';
 import { registerGraphBrowserControllerMcp } from '@pkg/agent/utils/graphBrowserControllerMcp';
 import {
@@ -54,6 +54,8 @@ import {
   normalizeQuestions,
   QuestionReceiptPolicy,
 } from '@pkg/agent/tools/meta/askUserQuestionShared';
+import { configuredVaultBrokerProvider } from '@pkg/vault-broker';
+import { ClerkToolSessionResolver } from './ClerkToolSessionResolver';
 import { buildGraphToolHandler, resolveGraphToolSurface } from './graphToolSurface';
 import { AgentAwarenessPolicy } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { firstRunTracePath } from './firstRun/firstRunTraceFile';
@@ -84,6 +86,7 @@ export interface RegisteredSession {
   /** Authorization header value Claude Code should include: `Bearer <id>`. */
   header: string;
   revoke: () => void;
+  prepareCliLease?: () => Promise<void>;
 }
 let hostInstance: MCPServerHost | null = null;
 
@@ -92,7 +95,12 @@ export function getMCPServerHost(): MCPServerHost {
   return hostInstance;
 }
 export class MCPServerHost {
-  constructor(agentAwarenessPolicy = new AgentAwarenessPolicy()) { this.agentAwarenessPolicy = agentAwarenessPolicy }
+  private readonly clerkSessions: ClerkToolSessionResolver;
+
+  constructor(private readonly agentAwarenessPolicy = new AgentAwarenessPolicy()) {
+    // This listener authenticates exclusively against its own live MCP session registry, never an installation key.
+    this.clerkSessions = new ClerkToolSessionResolver(this, configuredVaultBrokerProvider, () => null, agentAwarenessPolicy);
+  }
 
   private httpServer: HttpServer | null = null;
   private port = 0;
@@ -100,7 +108,6 @@ export class MCPServerHost {
 
   private readonly sessions = new ToolSessionRegistry();
   private readonly executionContexts = new ContainerExecutionContextFactory();
-  private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   get running(): boolean {
@@ -130,16 +137,32 @@ export class MCPServerHost {
    * Revoke as soon as the invocation finishes (finally block) to avoid
    * leaking references to a graph state that's no longer active.
    */
-  registerSession(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS, binding?: AgentContainerRuntimeBinding): RegisteredSession {
+  registerSession(
+    state: BaseThreadState,
+    ttlMs: number = DEFAULT_SESSION_TTL_MS,
+    binding?: AgentContainerRuntimeBinding,
+    transportVersion?: '1' | '2',
+  ): RegisteredSession {
     if (!this.port) throw new Error(`${ LOG } cannot register session: server not started`);
-    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs, binding));
+    const runtime = binding ?? currentAgentContainerRuntime();
+    const leases = runtime && agentContainerRuntimeRegistry.sessionLeases(runtime);
+    const id = this.sessions.register(state, ttlMs, this.containerExecutionContext(state, ttlMs, runtime), transportVersion ?? leases?.transportVersion);
 
     return {
       id,
       url:    this.getVmReachableUrl(),
       header: `Bearer ${ id }`,
-      revoke: () => this.revokeSession(id),
+      prepareCliLease: leases ? () => leases.prepare(id) : undefined,
+      revoke: () => {
+        this.revokeSession(id);
+        // Revocation takes effect synchronously, even if guest file cleanup must retry on renewal.
+        if (leases) void leases.retire(id).catch(() => {});
+      },
     };
+  }
+
+  ownLauncherSession(id: string): () => boolean {
+    return this.sessions.ownLauncher(id);
   }
 
   revokeSession(id: string): void {
@@ -160,7 +183,11 @@ export class MCPServerHost {
    */
   rebindSession(id: string, state: BaseThreadState, ttlMs?: number, binding?: AgentContainerRuntimeBinding): boolean {
     const effectiveTtl = ttlMs ?? DEFAULT_SESSION_TTL_MS;
-    return this.sessions.rebind(id, state, ttlMs, this.containerExecutionContext(state, effectiveTtl, binding));
+    const runtime = binding ?? currentAgentContainerRuntime();
+    const version = runtime && (this.sessions.hasLauncherOwner(id)
+      ? agentContainerRuntimeRegistry.launcherTransportVersion(runtime, id)
+      : agentContainerRuntimeRegistry.sessionLeases(runtime)?.transportVersion);
+    return this.sessions.rebind(id, state, ttlMs, this.containerExecutionContext(state, effectiveTtl, runtime), version);
   }
 
   /** Bind CLI calls to the same live graph as their provider MCP session. */
@@ -171,6 +198,14 @@ export class MCPServerHost {
   /** Resolve the complete verified session, including its execution identity. */
   getToolSession(id: string): ToolSession | null {
     return this.sessions.get(id);
+  }
+
+  peekToolSession(id: string): ToolSession | null {
+    return this.sessions.peek(id);
+  }
+
+  watchToolSessionInvalidation(id: string, generation: string, listener: () => void): () => void {
+    return this.sessions.watchInvalidation(id, generation, listener);
   }
 
   private resolveSession(req: Request): ToolSession | null {
@@ -494,8 +529,21 @@ export class MCPServerHost {
     // in-process to the same ToolRegistry worker the graph loop would use,
     // enforcing exactly the graph's allowlist. Unrestricted sessions (no
     // allowedToolNames) keep the full CLI catalog and get no projection.
-    const graphToolSurface = resolveGraphToolSurface(session.state.metadata, this.agentAwarenessPolicy);
+    const projectionState = session.state;
+    const graphToolSurface = resolveGraphToolSurface(projectionState.metadata, this.agentAwarenessPolicy);
     if (graphToolSurface) {
+      const containerProjection = !!session.executionContext;
+      const dispatch = buildGraphToolHandler(
+        graphToolSurface,
+        name => toolRegistry.createTool(name),
+        {
+          state:              projectionState,
+          executionContext:   session.executionContext,
+          resolveClerkCaller: (name, signal) => this.clerkSessions.resolveSession(session.id, name, signal, projectionState),
+          executionTarget:    name => toolRegistry.getExecutionTarget(name),
+        },
+        this.agentAwarenessPolicy,
+      );
       server.registerTool(
         'sulla_tool',
         {
@@ -514,16 +562,13 @@ export class MCPServerHost {
             args: z.record(z.any()).optional().describe('JSON arguments for the tool, exactly as documented by browse_tools.'),
           },
         },
-        buildGraphToolHandler(
-          graphToolSurface,
-          name => toolRegistry.createTool(name),
-          {
-            state:            session.state,
-            executionContext: session.executionContext,
-            executionTarget:  name => toolRegistry.getExecutionTarget(name),
-          },
-          this.agentAwarenessPolicy,
-        ),
+        (input, extra) => {
+          // A projected call has no catalog-verified lease. Refuse before loading the Clerk worker.
+          if (containerProjection && toolRegistry.getToolNamesForCategory('clerk').includes(input.tool)) {
+            return { isError: true, content: [{ type: 'text', text: "Clerk isn't available to restricted-tool agents in containers; use the main chat or an agent with normal tools" }] };
+          }
+          return dispatch(input, extra);
+        },
       );
     }
 

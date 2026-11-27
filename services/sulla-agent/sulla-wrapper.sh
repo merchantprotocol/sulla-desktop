@@ -6,12 +6,6 @@
 
 set -eu
 
-# The launcher rotates the shared API capability while a long-running worker
-# is alive. Refresh it for each call, but preserve the process-bound graph
-# session so this CLI cannot borrow another chat’s identity.
-secret_dir=/run/secrets/sulla-agent
-. /usr/local/libexec/sulla-secret-env.sh
-load_sulla_api_token "$secret_dir"
-load_sulla_tool_session "$secret_dir"
-
-exec /usr/local/libexec/sulla-remote "$@"
+# Let the CLI recover the nearest process session (including scrubbed Codex
+# shells) before it selects a lease. Never load the launcher session first.
+SULLA_CONTAINER_CLI=1 exec /usr/local/libexec/sulla-remote "$@"

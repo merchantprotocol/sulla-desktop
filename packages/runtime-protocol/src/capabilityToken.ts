@@ -16,6 +16,7 @@ export interface CapabilityTokenClaims {
   pod_id?:                string;
   thread_id?:             string;
   job_id?:                string;
+  tool_session_generation?: string;
   task_index?:            number;
   workflow_execution_id?: string;
   device_id?:             string;

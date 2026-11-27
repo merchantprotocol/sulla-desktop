@@ -26,6 +26,8 @@ export class IntegrationConfigLoader {
     this.integrations.clear();
     this.clients.clear();
     for (const row of await IntegrationDefinitionModel.list()) {
+      // Clerk is a native, vault-guarded integration, not an editable REST definition.
+      if (row.slug === 'clerk') continue;
       try {
         const loaded = this.loadIntegration(row.slug, row.files);
         if (!loaded) continue;

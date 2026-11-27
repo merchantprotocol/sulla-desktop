@@ -12,6 +12,7 @@
  */
 
 import { randomBytes } from 'crypto';
+import { toolSessionOrigin } from '@pkg/agent/services/ToolSessionOrigin';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import type { ToolExecutionContext } from '@pkg/agent/tools/executionContext';
@@ -26,8 +27,16 @@ export const DEFAULT_SESSION_TTL_MS = 10 * 60 * 1000;
  * read/mutate the calling graph's metadata directly, which is the whole
  * point of the in-process bridge.
  */
+export type ClerkSessionAuthority = 'ordinary' | 'local';
+
 export interface ToolSession {
+  /** Never projected into tokens, graph metadata, or caller-supplied execution contexts. */
+  clerk:             ClerkSessionAuthority;
   id:                string;
+  /** Opaque Desktop-owned issuance/rebind generation used to fence Clerk approvals. */
+  clerkGeneration:   string;
+  /** Lease transport protocol attached by the Desktop launcher; absent means unverified. */
+  transportVersion?: '1' | '2';
   state:             BaseThreadState;
   createdAt:         number;
   lastUsedAt:        number;
@@ -40,16 +49,53 @@ export interface ToolSession {
 
 export class ToolSessionRegistry {
   private readonly sessions = new Map<string, ToolSession>();
+  private readonly invalidationListeners = new Map<string, Set<() => void>>();
 
-  register(state: BaseThreadState, ttlMs: number = DEFAULT_SESSION_TTL_MS, executionContext?: ToolExecutionContext): string {
+  // Only launcher defaults outlive idle eviction. Revocation/stop invalidates the
+  // captured owner marker even when the session record has already been swept.
+  private readonly launcherOwners = new Map<string, symbol>();
+
+  hasLauncherOwner(id: string): boolean {
+    return this.launcherOwners.has(id);
+  }
+
+  ownLauncher(id: string): () => boolean {
+    const session = this.peek(id);
+    if (!session || this.launcherOwners.has(id)) throw new Error('Launcher session unavailable or already owned');
+    const owner = Symbol();
+    this.launcherOwners.set(id, owner);
+    return () => this.launcherOwners.get(id) === owner;
+  }
+
+  register(
+    state: BaseThreadState,
+    ttlMs: number = DEFAULT_SESSION_TTL_MS,
+    executionContext?: ToolExecutionContext,
+    transportVersion?: '1' | '2',
+  ): string {
     const id = randomBytes(24).toString('base64url');
 
-    this.put(id, state, ttlMs, executionContext);
+    this.put(id, state, ttlMs, executionContext, false, transportVersion);
     return id;
   }
 
   revoke(id: string): void {
+    this.invalidate(id);
+    this.launcherOwners.delete(id);
     this.sessions.delete(id);
+  }
+
+  /** A caller bound to this issuance must be cancelled before the token is reused or removed. */
+  watchInvalidation(id: string, generation: string, listener: () => void): () => void {
+    const session = this.peek(id);
+    if (session?.clerkGeneration !== generation) { listener(); return () => {} }
+    const listeners = this.invalidationListeners.get(id) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.invalidationListeners.set(id, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (!listeners.size) this.invalidationListeners.delete(id);
+    };
   }
 
   /**
@@ -59,31 +105,44 @@ export class ToolSessionRegistry {
    * every CLI/MCP call in the turn on "Expired tool session". Keeps the
    * session's own TTL unless one is passed.
    */
-  rebind(id: string, state: BaseThreadState, ttlMs?: number, executionContext?: ToolExecutionContext): boolean {
+  rebind(id: string, state: BaseThreadState, ttlMs?: number, executionContext?: ToolExecutionContext, transportVersion?: '1' | '2'): boolean {
     if (!id) return false;
-    const session = this.sessions.get(id);
+    const session = this.peek(id);
     if (!session) {
-      this.put(id, state, ttlMs ?? DEFAULT_SESSION_TTL_MS, executionContext);
+      // A revived token cannot prove it was originally a host-local root.
+      this.put(id, state, ttlMs ?? DEFAULT_SESSION_TTL_MS, executionContext, true, transportVersion);
       return true;
     }
     const now = Date.now();
+    this.invalidate(id);
     if (ttlMs !== undefined) session.ttlMs = ttlMs;
+    // Losing a container binding must never turn its process into a trusted desktop root.
+    session.clerk = this.initialAuthority(executionContext, session.clerk !== 'local' || !!session.executionContext);
     session.state = state;
     session.executionContext = executionContext;
+    session.clerkGeneration = randomBytes(24).toString('hex');
+    session.transportVersion = transportVersion;
     session.lastUsedAt = now;
     session.expiresAt = now + session.ttlMs;
     return true;
   }
 
-  /** Live session for a token, sliding its expiry; null if unknown or expired. */
-  get(id: string): ToolSession | null {
+  /** Maintenance lookup must not keep an idle provider session alive. */
+  peek(id: string, now = Date.now()): ToolSession | null {
     const session = this.sessions.get(id);
     if (!session) return null;
-    const now = Date.now();
     if (session.expiresAt <= now) {
+      this.invalidate(id);
       this.sessions.delete(id);
       return null;
     }
+    return session;
+  }
+
+  get(id: string): ToolSession | null {
+    const now = Date.now();
+    const session = this.peek(id, now);
+    if (!session) return null;
     // Sliding expiry: a session in active use never times out mid-turn.
     session.lastUsedAt = now;
     session.expiresAt = Math.max(session.expiresAt, now + session.ttlMs);
@@ -93,7 +152,10 @@ export class ToolSessionRegistry {
   sweepExpired(): void {
     const now = Date.now();
     for (const [id, session] of this.sessions) {
-      if (session.expiresAt <= now) this.sessions.delete(id);
+      if (session.expiresAt <= now) {
+        this.invalidate(id);
+        this.sessions.delete(id);
+      }
     }
   }
 
@@ -102,12 +164,45 @@ export class ToolSessionRegistry {
   }
 
   clear(): void {
+    for (const id of this.sessions.keys()) this.invalidate(id);
+    this.launcherOwners.clear();
     this.sessions.clear();
   }
 
-  private put(id: string, state: BaseThreadState, ttlMs: number, executionContext?: ToolExecutionContext): void {
+  private invalidate(id: string): void {
+    const listeners = this.invalidationListeners.get(id);
+    if (!listeners) return;
+    this.invalidationListeners.delete(id);
+    for (const listener of listeners) {
+      try { listener() } catch { /* A faulty observer cannot block session revocation. */ }
+    }
+  }
+
+  private initialAuthority(context: ToolExecutionContext | undefined, ordinaryOnly = false): ClerkSessionAuthority {
+    return context || ordinaryOnly || toolSessionOrigin.ordinaryOnly ? 'ordinary' : 'local';
+  }
+
+  private put(
+    id: string,
+    state: BaseThreadState,
+    ttlMs: number,
+    executionContext?: ToolExecutionContext,
+    ordinaryOnly = false,
+    transportVersion?: '1' | '2',
+  ): void {
     const now = Date.now();
 
-    this.sessions.set(id, { id, state, createdAt: now, lastUsedAt: now, expiresAt: now + ttlMs, ttlMs, executionContext });
+    this.sessions.set(id, {
+      id,
+      state,
+      clerk:           this.initialAuthority(executionContext, ordinaryOnly),
+      clerkGeneration: randomBytes(24).toString('hex'),
+      transportVersion,
+      createdAt:       now,
+      lastUsedAt:      now,
+      expiresAt:       now + ttlMs,
+      ttlMs,
+      executionContext,
+    });
   }
 }

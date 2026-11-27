@@ -21,6 +21,8 @@ export interface ToolDecisionPort {
   requiresApproval(toolName: string): Promise<boolean>;
   request(input: ToolDecisionRequest, timeoutMs?: number, signal?: AbortSignal): Promise<ToolDecisionHandle>;
   answerAsAgent?: AgentDecisionAnswerPort['answerAsAgent'];
+  /** Look up a scoped existing decision by opaque local payload; never used to dispatch on its own. */
+  findApprovalForPayload?(key: string, value: string): Promise<DecisionRecord | undefined>;
 }
 
 /**
@@ -38,6 +40,10 @@ export class UnavailableToolDecisionPort implements ToolDecisionPort {
 
   async answerAsAgent(): Promise<{ settled: boolean; reason: string }> {
     return { settled: false, reason: 'Decision answering is unavailable in this runtime.' };
+  }
+
+  async findApprovalForPayload(): Promise<undefined> {
+    return undefined;
   }
 }
 

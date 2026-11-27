@@ -5,6 +5,7 @@
 
 import type express from 'express';
 
+import type { BrokerClaims } from '../contracts.js';
 import type { LocalVaultAuthority } from '../localAuthority.js';
 import type { VaultRequestInput } from './VaultRequestInput.js';
 
@@ -17,7 +18,7 @@ export class BrokerItemRoutes {
 
   register(app: express.Express): void {
     const { localAuthority } = this;
-    const { requiredString, serviceIdentity } = this.input;
+    const { requiredObject, requiredString, serviceIdentity } = this.input;
 
     app.post('/v1/broker/approve', (request, response) => {
       const identity = serviceIdentity(request);
@@ -48,6 +49,17 @@ export class BrokerItemRoutes {
       response.json(await localAuthority.integrationMetadata(
         identity.serviceId, identity.token, requiredString(request.params.integrationId, 'integrationId'),
         typeof request.query.accountId === 'string' ? request.query.accountId : undefined,
+      ));
+    });
+    app.post('/v1/broker/integrations/:integrationId/agent-metadata', async(request, response) => {
+      const identity = serviceIdentity(request);
+      const body = requiredObject(request.body, 'body');
+      response.json(await localAuthority.integrationMetadataForAgent(
+        identity.serviceId,
+        identity.token,
+        requiredObject(body.claims, 'claims') as unknown as BrokerClaims,
+        requiredString(request.params.integrationId, 'integrationId'),
+        requiredString(body.accountId, 'accountId'),
       ));
     });
     app.put('/v1/broker/integrations/:integrationId/active-account', async(request, response) => {

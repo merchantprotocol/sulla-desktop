@@ -119,6 +119,11 @@ export class PostgresVaultItemRepository {
            WHERE id=$3 AND revision=$4 AND deleted_at IS NULL`, values);
   }
 
+  updateIntegrationCiphertextAndPolicyIfRevision<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
+    return client.query<T>(`UPDATE items SET ciphertext=$1,encrypted_item_key=$2,agent_policy=$3,revision=revision+1,updated_at=now()
+           WHERE id=$4 AND revision=$5 AND deleted_at IS NULL`, values);
+  }
+
   insertIntegrationAccount<T extends QueryResultRow = QueryResultRow>(values: unknown[], client: Queryable = this.db): Promise<QueryResult<T>> {
     return client.query<T>(`INSERT INTO items(id,owner_user_id,item_type,ciphertext,encrypted_item_key,agent_policy,integration_ref)
            VALUES ($1,$2,'apiKey',$3,$4,$5,$6)`, values);

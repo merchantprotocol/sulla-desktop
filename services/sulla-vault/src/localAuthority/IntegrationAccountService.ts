@@ -7,7 +7,6 @@ import { randomUUID } from 'node:crypto';
 
 import type { VaultItemPlaintext } from '@sulla/vault-crypto';
 
-import type { BrokerIntegrationAccountImportRequest, BrokerOAuthAccountRequest } from '../contracts.js';
 import { isNativeOAuthIntegration } from '../oauthPolicy.js';
 import { trustedOriginsForIntegration } from '../operationPolicy.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
@@ -15,6 +14,9 @@ import { CREDENTIAL_PROPERTY_PATTERN } from './LocalAuthorityLimits.js';
 import type { ItemRow } from './LocalAuthorityTypes.js';
 import { LocalVaultError } from './LocalVaultError.js';
 import { BrokerCredentialFields } from './BrokerCredentialFields.js';
+import { ClerkAuthority, ClerkSavedPairRejectedError } from './ClerkAuthority.js';
+
+import type { BrokerClaims, BrokerIntegrationAccountImportRequest, BrokerOAuthAccountRequest } from '../contracts.js';
 
 /**
  * Integration accounts: safe metadata reads, the active-account choice, Desktop-imported and
@@ -49,8 +51,30 @@ export class IntegrationAccountService {
     return this.readIntegrationMetadata(integrationId, accountFilter);
   }
 
+  /** Agent-only Clerk metadata read bound to the verified Desktop context and persisted allow list. */
+  async integrationMetadataForAgent(
+    callerId: string,
+    token: string | undefined,
+    claims: BrokerClaims,
+    integrationId: string,
+    accountId: string,
+  ): Promise<import('../contracts.js').BrokerIntegrationMetadataResponse> {
+    this.host.requireBrokerIdentity(callerId, token);
+    if (integrationId !== 'clerk' || accountId !== 'default') {
+      throw new LocalVaultError('invalid_operation', 400, 'Agent metadata is available only for the Clerk default account.');
+    }
+    const keys = this.host.requireKeys();
+    const generation = this.host.generation;
+    if (claims?.sub !== keys.userId || typeof claims?.agent_id !== 'string' ||
+        !/^[A-Za-z0-9_.:-]{1,80}$/.test(claims.agent_id) || typeof claims.pod_id !== 'string' || !claims.pod_id) {
+      throw new LocalVaultError('invalid_caller_identity', 403, 'Clerk metadata requires verified agent claims for the unlocked principal.');
+    }
+    this.host.requireGeneration(generation);
+    return this.readIntegrationMetadata(integrationId, accountId, claims.agent_id);
+  }
+
   private async readIntegrationMetadata(
-    integrationId: string, accountFilter?: string,
+    integrationId: string, accountFilter?: string, requestingAgentId?: string,
   ): Promise<import('../contracts.js').BrokerIntegrationMetadataResponse> {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId)) {
       throw new LocalVaultError('invalid_operation', 400, 'Integration identifier is invalid');
@@ -73,6 +97,14 @@ export class IntegrationAccountService {
         { itemId: item.id, ownerId: keys.userId },
       )) as VaultItemPlaintext;
       this.host.requireGeneration(generation);
+      const agentPolicy = item.agent_policy ?? plaintext.agentPolicy;
+      if (integrationId === 'clerk' && requestingAgentId && Array.isArray(agentPolicy?.agents) &&
+          agentPolicy.agents.length > 0 && !agentPolicy.agents.includes(requestingAgentId)) {
+        throw new LocalVaultError(
+          'clerk_agent_not_allowed', 403,
+          `agent ${ requestingAgentId } is not allowed to use Clerk; SmokeJockey can allow it in Settings → Clerk`,
+        );
+      }
       const sourceProperties = plaintext.integration?.properties ?? {};
       const properties = BrokerCredentialFields.safeIntegrationMetadata(sourceProperties, integrationId);
       const accountId = item.integration_ref.slice(integrationId.length + 1);
@@ -88,6 +120,13 @@ export class IntegrationAccountService {
         active: accountId === activeAccountId,
         revision: item.revision,
         properties,
+        ...(integrationId === 'clerk' && !requestingAgentId
+          ? {
+          allowedAgentIds: Array.isArray(item.agent_policy?.agents)
+            ? item.agent_policy.agents.filter((agentId): agentId is string => typeof agentId === 'string')
+            : [],
+          }
+          : {}),
       };
     }));
     this.host.requireGeneration(generation);
@@ -162,6 +201,14 @@ export class IntegrationAccountService {
   ): Promise<import('../contracts.js').BrokerIntegrationMetadataResponse> {
     this.host.requireDesktopIdentity(callerId, token);
     const accountId = String(input?.accountId ?? '').trim();
+    const clerk = integrationId === 'clerk';
+    const allowedAgentIds = input?.allowedAgentIds;
+    if (allowedAgentIds !== undefined && (!clerk || !Array.isArray(allowedAgentIds) || allowedAgentIds.length > 500 ||
+        allowedAgentIds.some(agentId => typeof agentId !== 'string' || !/^[A-Za-z0-9_.:-]{1,80}$/.test(agentId)) ||
+        new Set(allowedAgentIds).size !== allowedAgentIds.length)) {
+      throw new LocalVaultError('invalid_operation', 400, 'The Clerk agent allow list is invalid.');
+    }
+    if (clerk && accountId !== 'default') throw new LocalVaultError('invalid_operation', 400, 'Clerk has one integration account.');
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(integrationId) || !/^[A-Za-z0-9._-]{1,128}$/.test(accountId)) {
       throw new LocalVaultError('invalid_operation', 400, 'Integration account identifier is invalid');
     }
@@ -178,8 +225,10 @@ export class IntegrationAccountService {
     const label = typeof input.label === 'string' && input.label.trim()
       ? input.label.trim().slice(0, 120)
       : (values.account_label || accountId);
-    values.account_label = label;
-    if (input.connected !== undefined) values.connection_status = input.connected ? 'connected' : 'disconnected';
+    if (!clerk) {
+      values.account_label = label;
+      if (input.connected !== undefined) values.connection_status = input.connected ? 'connected' : 'disconnected';
+    }
 
     const keys = this.host.requireKeys();
     const generation = this.host.generation;
@@ -188,6 +237,7 @@ export class IntegrationAccountService {
     this.host.requireGeneration(generation);
     const itemId = existing.rows[0]?.id ?? randomUUID();
     let plaintext: VaultItemPlaintext;
+    let previousClerkValues: Record<string, string> = {};
     if (existing.rowCount) {
       const row = existing.rows[0];
       plaintext = JSON.parse(await this.host.openItemText(
@@ -195,7 +245,8 @@ export class IntegrationAccountService {
         keys.userKey, { itemId, ownerId: keys.userId },
       )) as VaultItemPlaintext;
       plaintext.integration ??= { integrationId, accountId, properties: {} };
-      plaintext.integration.properties = { ...plaintext.integration.properties, ...values };
+      if (clerk) previousClerkValues = plaintext.integration.properties;
+      else plaintext.integration.properties = { ...plaintext.integration.properties, ...values };
       plaintext.name = label;
     } else {
       const sites = trustedOriginsForIntegration(integrationId);
@@ -220,21 +271,78 @@ export class IntegrationAccountService {
         integration: { integrationId, accountId, properties: values },
       };
     }
-    const encrypted = await this.host.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
-    await this.host.runSecurityOperation(() => this.host.runTransaction(async client => {
-      this.host.requireGeneration(generation);
-      if (existing.rowCount) {
-        const row = existing.rows[0];
-        const updated = await this.host.itemRepository.updateIntegrationCiphertextIfRevision([encrypted.ciphertext, encrypted.encryptedItemKey, itemId, row.revision], client);
-        if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
-      } else {
-        await this.host.itemRepository.insertIntegrationAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef], client);
+    if (clerk && allowedAgentIds !== undefined) {
+      const policy = (existing.rows[0]?.agent_policy ?? plaintext.agentPolicy) ?? {
+        mode: 'agents' as const,
+        level: 'autofill' as const,
+        agents: [],
+        sites: [],
+        expiresAt: null,
+        askFirst: false,
+        allowServerAgents: false,
+      };
+      plaintext.agentPolicy = { ...policy, agents: [...allowedAgentIds] };
+    }
+    const persist = async() => {
+      const encrypted = await this.host.sealItem(JSON.stringify(plaintext), keys.userKey, { itemId, ownerId: keys.userId });
+      await this.host.runSecurityOperation(() => this.host.runTransaction(async client => {
+        this.host.requireGeneration(generation);
+        if (existing.rowCount) {
+          const row = existing.rows[0];
+          const updated = allowedAgentIds !== undefined
+            ? await this.host.itemRepository.updateIntegrationCiphertextAndPolicyIfRevision([
+              encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, itemId, row.revision,
+            ], client)
+            : await this.host.itemRepository.updateIntegrationCiphertextIfRevision([
+              encrypted.ciphertext, encrypted.encryptedItemKey, itemId, row.revision,
+            ], client);
+          if (!updated.rowCount) throw new LocalVaultError('invalid_operation', 409, 'Vault item changed; retry');
+        } else {
+          await this.host.itemRepository.insertIntegrationAccount([itemId, keys.userId, encrypted.ciphertext, encrypted.encryptedItemKey, plaintext.agentPolicy, integrationRef], client);
+        }
+        if (input.active !== false) {
+          await this.host.integrationStateRepository.upsertImported(keys.userId, integrationId, accountId, client);
+        }
+        await this.host.auditHumanAction(client, keys.userId, existing.rowCount ? 'integration_account_updated' : 'integration_account_created', itemId, label);
+      }));
+    };
+
+    if (clerk) {
+      const authority = new ClerkAuthority(this.host);
+      try {
+        const verified = await authority.verifySettings(values, previousClerkValues, generation, input.connected === false);
+        plaintext.integration = {
+          integrationId,
+          accountId,
+          properties: {
+            ...verified,
+            account_label:     'Clerk',
+            connection_status: verified.staging_instance_id || verified.production_instance_id ? 'connected' : 'disconnected',
+          },
+        };
+      } catch (error) {
+        if (!(error instanceof ClerkSavedPairRejectedError) || !existing.rowCount) throw error;
+        const properties = { ...previousClerkValues };
+        delete properties[`${ error.environment }_secret_key`];
+        delete properties[`${ error.environment }_instance_id`];
+        delete properties[`${ error.environment }_warning`];
+        const connected = ['staging', 'production'].some(environment =>
+          properties[`${ environment }_publishable_key`] && properties[`${ environment }_secret_key`] && properties[`${ environment }_instance_id`],
+        );
+        plaintext.integration = {
+          integrationId,
+          accountId,
+          properties: {
+            ...properties,
+            account_label: 'Clerk',
+            connection_status: connected ? 'connected' : 'disconnected',
+          },
+        };
+        await persist();
+        throw error;
       }
-      if (input.active !== false) {
-        await this.host.integrationStateRepository.upsertImported(keys.userId, integrationId, accountId, client);
-      }
-      await this.host.auditHumanAction(client, keys.userId, existing.rowCount ? 'integration_account_updated' : 'integration_account_created', itemId, label);
-    }));
+    }
+    await persist();
     this.host.requireGeneration(generation);
     return this.readIntegrationMetadata(integrationId, accountId);
   }

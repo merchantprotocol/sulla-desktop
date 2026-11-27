@@ -9,6 +9,7 @@ export { VaultBrokerError } from './VaultBrokerError';
 
 import type {
   BrokerApprovalResponse,
+  BrokerAgentIntegrationMetadataRequest,
   BrokerClaims,
   BrokerExecuteRequest,
   BrokerExecuteResponse,
@@ -93,8 +94,14 @@ function safeReason(value: unknown): string | undefined {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(value) ? value : undefined;
 }
 
-function brokerError(body: LocalVaultErrorResponse, status: number): VaultBrokerError {
-  return new VaultBrokerError(body.error, body.message, status, safeReason(body.reason), body.retryable === true);
+function safeRetryAfter(value: string | null): string | undefined {
+  if (!value || !/^\d{1,15}$/.test(value)) return undefined;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? String(seconds) : undefined;
+}
+
+function brokerError(body: LocalVaultErrorResponse, status: number, retryAfter: string | null = null): VaultBrokerError {
+  return new VaultBrokerError(body.error, body.message, status, safeReason(body.reason), body.retryable === true, safeRetryAfter(retryAfter));
 }
 
 export class VaultApprovalRequiredError extends VaultBrokerError {
@@ -102,6 +109,7 @@ export class VaultApprovalRequiredError extends VaultBrokerError {
     public readonly operationId: string,
     public readonly request: Readonly<BrokerExecuteRequest>,
     message = 'Vault approval is required for this operation',
+    public readonly approvalContext?: LocalVaultErrorResponse['approvalContext'],
   ) {
     super('approval_required', message, 428);
     this.name = 'VaultApprovalRequiredError';
@@ -158,7 +166,10 @@ export class LocalVaultBrokerClient {
   }
 
   requestFor(ctx: ToolExecutionContext, request: Omit<BrokerExecuteRequest, 'claims'>): BrokerExecuteRequest {
-    try { return { ...request, claims: claimsFromContext(ctx) }; }
+    try {
+      const claims = claimsFromContext(ctx);
+      return { ...request, claims };
+    }
     catch (error) { this.observeError(error); throw error; }
   }
 
@@ -205,6 +216,23 @@ export class LocalVaultBrokerClient {
     const url = new URL(`${ this.endpoint }/v1/broker/integrations/${ encodeURIComponent(integrationId) }/metadata`);
     if (accountId) url.searchParams.set('accountId', accountId);
     const response = await this.request(`${ url.pathname }${ url.search }`, 'GET', undefined, signal);
+    return response.json() as Promise<BrokerIntegrationMetadataResponse>;
+  }
+
+  async integrationMetadataForAgent(
+    ctx: ToolExecutionContext,
+    integrationId: string,
+    accountId: string,
+    signal?: AbortSignal,
+  ): Promise<BrokerIntegrationMetadataResponse> {
+    if (integrationId !== 'clerk' || accountId !== 'default') {
+      throw new VaultBrokerError('invalid_operation', 'Agent metadata reference is invalid', 400);
+    }
+    const input: BrokerAgentIntegrationMetadataRequest = { claims: claimsFromContext(ctx), accountId };
+    const response = await this.request(
+      `/v1/broker/integrations/${ encodeURIComponent(integrationId) }/agent-metadata`,
+      'POST', input, signal,
+    );
     return response.json() as Promise<BrokerIntegrationMetadataResponse>;
   }
 
@@ -374,9 +402,9 @@ export class LocalVaultBrokerClient {
   private async throwResponse(response: Response, request: BrokerExecuteRequest): Promise<never> {
     const body = await errorBody(response);
     if (response.status === 428 && body.error === 'approval_required' && body.operationId) {
-      throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message);
+      throw new VaultApprovalRequiredError(body.operationId, Object.freeze(structuredClone(request)), body.message, body.approvalContext);
     }
-    const error = brokerError(body, response.status);
+    const error = brokerError(body, response.status, response.headers.get('retry-after'));
     this.observeError(error);
     throw error;
   }
