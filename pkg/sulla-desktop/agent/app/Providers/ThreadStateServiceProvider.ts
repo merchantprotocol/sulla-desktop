@@ -23,7 +23,7 @@ export class ThreadStateServiceProvider {
   );
 
   constructor() {
-    void this.files.sweep(THREAD_STATE_TTL_SECONDS);
+    this.files.sweep(THREAD_STATE_TTL_SECONDS);
   }
 }
 export const threadStateProvider = new ThreadStateServiceProvider();

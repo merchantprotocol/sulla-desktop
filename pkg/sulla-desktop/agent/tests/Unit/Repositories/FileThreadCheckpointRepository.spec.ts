@@ -136,7 +136,7 @@ describe('large thread checkpoints', () => {
     const log = path.join(directory, 'recovery.jsonl');
     await fs.promises.writeFile(log, JSON.stringify({ type: 'message', role: 'user', content: 'from log' }));
     const recovery = new LogRecoveryThreadStateRepository({
-      getByThread: async() => ({ id: 'tab', log_file: log } as ConversationHistoryRecord),
+      getByThread: () => Promise.resolve({ id: 'tab', log_file: log } as ConversationHistoryRecord),
     });
     const repo = new FallbackThreadStateRepository(
       new RedisThreadStateRepository({ getClient: () => client }, 3600, files()),

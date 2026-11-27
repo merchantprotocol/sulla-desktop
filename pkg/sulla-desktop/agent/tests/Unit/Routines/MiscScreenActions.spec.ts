@@ -12,8 +12,8 @@ import {
   FallbackThreadStateRepository, FileThreadCheckpointRepository, MemoryThreadStateRepository,
   RedisThreadStateRepository,
 } from '../../../app/Repositories/ThreadStateRepository';
-
 import { ConversationHistoryModel } from '../../../database/models/ConversationHistoryModel';
+
 import type { BaseThreadState } from '../../../nodes/Graph';
 
 const pg = vi.hoisted(() => ({ query: vi.fn(), transaction: vi.fn() }));
@@ -139,15 +139,15 @@ describe('history IPC acknowledgements', () => {
     const handlers = new Map<string, (...args: any[]) => any>();
     const emit = vi.fn();
     const modules: Record<string, any> = {
-      electron: { ipcMain: { on: vi.fn(), handle: (name: string, fn: any) => handlers.set(name, fn) } },
-      'node:fs': { promises: { unlink } },
+      electron:                                              { ipcMain: { on: vi.fn(), handle: (name: string, fn: any) => handlers.set(name, fn) } },
+      'node:fs':                                             { promises: { unlink } },
       '@pkg/agent/app/Providers/ThreadStateServiceProvider': { threadStateProvider: { repository } },
-      '@pkg/agent/database/PostgresClient': { postgresClient: {} },
+      '@pkg/agent/database/PostgresClient':                  { postgresClient: {} },
       '@pkg/agent/database/models/ConversationHistoryModel': { ConversationHistoryModel: { clearHistory } },
-      '@pkg/main/DatabaseReadGuard': { getDatabaseReadGuard: () => ({ run: vi.fn().mockRejectedValue(new Error('invalid query')) }) },
-      '@pkg/main/mainEvents': { emit, on: vi.fn() },
-      '@pkg/main/sync/syncQueue': { enqueueSyncOp: vi.fn() },
-      '@pkg/utils/logging': { background: { log: vi.fn(), error: vi.fn() } },
+      '@pkg/main/DatabaseReadGuard':                         { getDatabaseReadGuard: () => ({ run: vi.fn().mockRejectedValue(new Error('invalid query')) }) },
+      '@pkg/main/mainEvents':                                { emit, on: vi.fn() },
+      '@pkg/main/sync/syncQueue':                            { enqueueSyncOp: vi.fn() },
+      '@pkg/utils/logging':                                  { background: { log: vi.fn(), error: vi.fn() } },
     };
     const source = fs.readFileSync(path.join(root, 'pkg/sulla-desktop/main/conversationHistoryIpc.ts'), 'utf8');
     const code = transformSync(source, { loader: 'ts', format: 'cjs' }).code;
@@ -172,17 +172,17 @@ describe('history IPC acknowledgements', () => {
     const keys = new Map<string, { json: string; expires: number }>();
     const client = {
       status: 'ready',
-      ping: async() => 'PONG',
-      get: async(key: string) => {
+      ping:   () => Promise.resolve('PONG'),
+      get:    (key: string) => {
         const entry = keys.get(key);
-        return entry && entry.expires > now ? entry.json : null;
+        return Promise.resolve(entry && entry.expires > now ? entry.json : null);
       },
       setex: async(key: string, ttl: number, json: string) => {
         await boundary('before SETEX');
         keys.set(key, { json, expires: now + ttl * 1000 });
         await boundary('after SETEX');
       },
-      del: async(key: string) => keys.delete(key),
+      del: (key: string) => Promise.resolve(keys.delete(key)),
     };
     const boot = () => new FallbackThreadStateRepository(
       new RedisThreadStateRepository({ getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => store)),
@@ -208,12 +208,12 @@ describe('history IPC acknowledgements', () => {
       boundary = async() => {};
       keys.clear();
       const execute = (pending: typeof rows, sql: string, args: unknown[]) => {
-        if (/DELETE FROM/.test(sql)) {
+        if (sql.includes('DELETE FROM')) {
           const deleted = pending.filter(row => !args.length || row.id !== 'retained');
           pending.splice(0, pending.length, ...pending.filter(row => !deleted.includes(row)));
           return deleted;
         }
-        if (/SELECT DISTINCT/.test(sql)) return pending.map(row => ({ thread: row.thread_id }));
+        if (sql.includes('SELECT DISTINCT')) return pending.map(row => ({ thread: row.thread_id }));
         throw new Error('Unexpected statement');
       };
       const commit = async(pending: typeof rows) => {
@@ -231,7 +231,7 @@ describe('history IPC acknowledgements', () => {
       });
       pg.transaction.mockImplementation(async(body) => {
         const pending = [...rows];
-        const result = await body({ query: async(sql: string, args: unknown[] = []) => ({ rows: execute(pending, sql, args) }) });
+        const result = await body({ query: (sql: string, args: unknown[] = []) => Promise.resolve({ rows: execute(pending, sql, args) }) });
         await commit(pending);
         return result;
       });
@@ -251,7 +251,7 @@ describe('history IPC acknowledgements', () => {
       await seed('a');
       await seed('b');
       rejectCommit = true;
-      await clear().catch(() => {});
+      await expect(clear()).resolves.toEqual({ success: true });
       expect(rows.map(row => row.id)).toEqual(['a', 'b']);
       for (const row of rows) {
         expect(fs.existsSync(row.log_file)).toBe(true);
@@ -291,7 +291,6 @@ describe('history IPC acknowledgements', () => {
       now += 3_601_000;
       expect(await boot().load('thread')).toBeNull();
       expect(await repo.load('thread')).toBeNull();
-
     });
 
     it.each(['ping', 'del'] as const)('R4: a ready Redis with stuck %s cannot stall acknowledgement', async(method) => {
@@ -318,8 +317,7 @@ describe('history IPC acknowledgements', () => {
         // unwinding or running subsequent cleanup on the abandoned instance.
         await new Promise<never>(() => {});
       };
-      void clear();
-      await stopped;
+      await Promise.race([stopped, clear().then(() => { throw new Error('clear boundary not reached') })]);
       expect(rows).toEqual([]);
       expect(fs.existsSync(path.join(dir, 'gone.jsonl'))).toBe(step === 'commit');
       expect((await boot().load('gone'))?.messages[0].content === big).toBe(true);
@@ -358,7 +356,6 @@ describe('history IPC acknowledgements', () => {
         hook.mockRestore();
       }
     });
-
   });
 
   it('acknowledges clear only when storage succeeds', async() => {
