@@ -5,6 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
+import { performance } from 'node:perf_hooks';
 
 import { prepareProviderMessages } from './contextBudget';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
@@ -53,6 +54,7 @@ import { turnProviderResolver } from './TurnProviderResolver';
 import { TurnOutputCounter } from '../services/TurnOutputCounter';
 import { turnProviderMemo } from './turnProviderMemo';
 import { templateSnapshotCache } from './TemplateSnapshotCache';
+import { LoopProviderResolution } from './LoopProviderResolution';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -511,7 +513,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   protected parallelToolCalls = false;
   private routingCandidates: ModelCandidate[] = [];
 
-  constructor(id: string, name: string, private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy()) {
+  constructor(
+    id: string,
+    name: string,
+    private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy(),
+    private readonly loopProviderResolution: LoopProviderResolution = new LoopProviderResolution(),
+  ) {
     this.id = id;
     this.name = name;
   }
@@ -519,20 +526,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   /** Resolve the provider that owns this graph turn. */
   protected async resolveLoopProvider(state: BaseThreadState): Promise<BaseLanguageModel> {
     const workerRoute = !(state.metadata as any).workerModelChatOverride && (state.metadata as any).workerModelRoute;
-    if (workerRoute) {
-      // Same handle contract as throwIfAborted: an AbortService or a raw AbortSignal.
-      const runAbort = state.metadata?.options?.abort as any;
-      this.routingCandidates = await workerModelRouting.resolveRoute(workerRoute, isAbortSignal(runAbort) ? runAbort : runAbort?.signal);
-      const selected = this.routingCandidates[0];
-      await workerModelRouting.persistSelection(state, selected);
-      const service = await getServiceByProvider(selected.provider, selected.model, selected.effort);
-      await this.persistModelDecision(state, service);
-      return service;
-    }
-    const resolved = await turnProviderResolver.resolve(state);
-    this.routingCandidates = resolved.candidates;
-    await this.persistModelDecision(state, resolved.provider);
-    return resolved.provider;
+    const runAbort = state.metadata?.options?.abort as any;
+    const runSignal = isAbortSignal(runAbort) ? runAbort : runAbort?.signal;
+    return this.loopProviderResolution.run(async({ stage, signal }) => {
+      if (workerRoute) {
+        this.routingCandidates = await stage('workerModelRouting.resolveRoute', () => workerModelRouting.resolveRoute(workerRoute, signal));
+        const selected = this.routingCandidates[0];
+        await stage('workerModelRouting.persistSelection', () => workerModelRouting.persistSelection(state, selected));
+        const service = await stage('providerRegistry.getServiceByProvider', () => getServiceByProvider(selected.provider, selected.model, selected.effort));
+        await stage('modelDecision.persist', () => this.persistModelDecision(state, service));
+        return service;
+      }
+      const resolved = await stage('turnProviderResolver.resolve', () => turnProviderResolver.resolve(state));
+      this.routingCandidates = resolved.candidates;
+      await stage('modelDecision.persist', () => this.persistModelDecision(state, resolved.provider));
+      return resolved.provider;
+    }, runSignal);
   }
 
   private recordModelStatus(state: BaseThreadState, service: BaseLanguageModel): void {
@@ -664,9 +673,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const agentId = resolveAgentIdentity(state.metadata);
     const agentMeta = (state.metadata as any).agent as AgentConfig | undefined;
     const timing: Record<string, number> = {};
+    const wallTiming: Record<string, number> = {};
     const measured = async <T>(key: string, work: Promise<T>): Promise<T> => {
-      const started = Date.now();
-      try { return await work; } finally { timing[key] = Date.now() - started; }
+      const monotonicStarted = performance.now();
+      const wallStarted = Date.now();
+      try { return await work; } finally {
+        timing[key] = performance.now() - monotonicStarted;
+        wallTiming[key] = Date.now() - wallStarted;
+      }
     };
     const templateVarsPromise = measured('templateVars', getTemplateVariables(String(state.metadata.threadId || 'unknown')));
     const definitionPromise = agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID ? turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId)) : undefined;
@@ -801,7 +815,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Build the prompt using the section-based builder
     const built = await measured('SystemPromptBuilder.build', SystemPromptBuilder.build(buildCtx));
-    perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).map(([key, ms]) => `${ key }=${ ms }ms`).join(' ') }`);
+    perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).flatMap(([key, ms]) => [
+      `${ key }=${ Math.round(ms) }ms`,
+      `${ key }Wall=${ Math.round(wallTiming[key] ?? ms) }ms`,
+    ]).join(' ') }`);
     (state.metadata as any).__promptSectionTimings = built.sectionTimings || [];
 
     // The human's Personality notes are contextual, not system instructions.

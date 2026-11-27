@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 import { ProviderCliBridgeFailurePolicy } from '../../vault-broker/providerCliBridge';
 import { VaultBrokerError } from '../../vault-broker/VaultBrokerError';
@@ -27,6 +28,7 @@ function reusableForPublication(existing: { pendingPublication?: { fileId: strin
 }
 const STALE_PUBLICATION_MAPPING = 'An unsettled package model mapping from another publication exists; it was preserved for the owner to resolve in AI Models.';
 const DEFAULT_CATALOG_WAIT: WorkerCatalogWait = { budgetMs: 5 * 60_000, pollMs: 15_000 };
+const DEFAULT_RESOLVE_ROUTE_ONCE_TIMEOUT_MS = 30_000;
 
 /** Same shape as throwIfAborted, so each caller's existing clean-Stop handling applies. */
 function stopped(): DOMException { return new DOMException('Worker model route wait stopped', 'AbortError') }
@@ -43,6 +45,15 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
 
 /** The account authority could not be read right now; the approved account is unknown, not changed. */
 class AccountAuthorityUnavailable extends InfrastructureFailure {}
+
+class WorkerModelRoutingTimeoutError extends Error {
+  readonly timedOut = true;
+
+  constructor(readonly stage: string, readonly timeoutMs: number) {
+    super(`Worker model routing timed out at ${ stage } after ${ timeoutMs } ms.`);
+    this.name = 'WorkerModelRoutingTimeoutError';
+  }
+}
 
 /** IntegrationService.getActiveAccountId removed the active account (container vault metadata). */
 const MISSING_VAULT_ACCOUNT = /^No local vault account is configured for /;
@@ -66,20 +77,59 @@ function confirmedAccountRefusal(error: unknown): boolean {
 }
 
 export class WorkerModelRoutingService {
-  constructor(private readonly catalogWait: WorkerCatalogWait = DEFAULT_CATALOG_WAIT) {}
+  constructor(
+    private readonly catalogWait: WorkerCatalogWait = DEFAULT_CATALOG_WAIT,
+    private readonly resolveRouteOnceTimeoutMs = DEFAULT_RESOLVE_ROUTE_ONCE_TIMEOUT_MS,
+    private readonly monotonicNow: () => number = () => performance.now(),
+  ) {}
 
   /** Existing work waits a bounded time for a transient catalog outage instead of failing or substituting. */
   async resolveRoute(route: WorkerModelRoute, signal?: AbortSignal): Promise<ModelCandidate[]> {
     const deadline = Date.now() + this.catalogWait.budgetMs;
     for (;;) {
       try {
-        return await this.resolveRouteOnce(route);
+        return await this.resolveRouteOnceWithTimeout(route, signal);
       } catch (error) {
         if (!(error instanceof WorkerCatalogUnavailable)) throw error;
         if (signal?.aborted) throw stopped();
         if (Date.now() >= deadline) throw error;
         await pause(Math.min(this.catalogWait.pollMs, Math.max(0, deadline - Date.now())), signal);
       }
+    }
+  }
+
+  /** Bound one provider/settings/account resolution so a hung read cannot hide inside the catalog retry loop. */
+  private async resolveRouteOnceWithTimeout(route: WorkerModelRoute, signal?: AbortSignal): Promise<ModelCandidate[]> {
+    const stage = 'workerModelRouting.resolveRouteOnce';
+    const deadline = this.monotonicNow() + this.resolveRouteOnceTimeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectAbort: ((reason: unknown) => void) | undefined;
+    const abortFailure = new Promise<never>((_resolve, reject) => { rejectAbort = reject });
+    const abort = () => rejectAbort?.(signal?.reason ?? stopped());
+    signal?.addEventListener('abort', abort, { once: true });
+
+    try {
+      if (signal?.aborted) throw signal.reason ?? stopped();
+      if (this.resolveRouteOnceTimeoutMs <= 0) throw new WorkerModelRoutingTimeoutError(stage, this.resolveRouteOnceTimeoutMs);
+
+      return await Promise.race([
+        this.resolveRouteOnce(route),
+        new Promise<never>((_resolve, reject) => {
+          const enforceDeadline = () => {
+            const remaining = deadline - this.monotonicNow();
+            if (remaining > 0) {
+              timer = setTimeout(enforceDeadline, remaining);
+              return;
+            }
+            reject(new WorkerModelRoutingTimeoutError(stage, this.resolveRouteOnceTimeoutMs));
+          };
+          timer = setTimeout(enforceDeadline, this.resolveRouteOnceTimeoutMs);
+        }),
+        abortFailure,
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
     }
   }
 

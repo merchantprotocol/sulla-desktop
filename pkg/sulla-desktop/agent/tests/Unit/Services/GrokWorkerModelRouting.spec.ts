@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+import { performance } from 'node:perf_hooks';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { LoopProviderResolution, LoopProviderResolutionError } from '../../../nodes/LoopProviderResolution';
 
 const f = vi.hoisted(() => ({
   definition: { id: 'grok-agent-id', slug: 'grok-reviewer', source_kind: 'local', enabled: false },
@@ -15,6 +19,7 @@ const f = vi.hoisted(() => ({
   lookupCalls: 0,
   nextLookupErrors: [] as unknown[],
   stickyLookupError: null as unknown,
+  hangProviderInfo: false,
 }));
 
 vi.mock('../../../services/AgentDefinitionService', () => ({ agentDefinitionService: { findBySlug: async() => f.definition } }));
@@ -32,6 +37,7 @@ vi.mock('../../../languagemodels/credentials/ClaudeCredentialResolver', () => ({
 vi.mock('../../../languagemodels/modelRouter', () => ({ modelRouter: {
   providerInfo: async() => {
     f.providerCalls++;
+    if (f.hangProviderInfo) return new Promise(() => {});
     return f.providerCalls <= f.outageCalls ? f.providers.map((row: any) => ({ ...row, models: [] })) : structuredClone(f.providers);
   },
   getEditableState: async() => structuredClone(f.settings),
@@ -77,6 +83,7 @@ beforeEach(() => {
   f.lookupCalls = 0;
   f.nextLookupErrors = [];
   f.stickyLookupError = null;
+  f.hangProviderInfo = false;
 });
 
 describe('Grok subscription model mapping', () => {
@@ -153,6 +160,46 @@ describe('Grok subscription model mapping', () => {
     expect(await routing.resolveRoute(route)).toEqual([grok]);
     expect(f.providerCalls).toBe(3);
     expect(route.selected).toBe(0);
+  });
+
+  it('bounds a never-settling resolveRouteOnce and retries within the provider-resolution budget', async() => {
+    f.hangProviderInfo = true;
+    const route: any = { version: 1, slug: 'grok-reviewer', agentId: 'grok-agent-id', revision: 2, selected: 0,
+      connections: { grok: 'oauth' }, candidates: [grok] };
+    const routing = new WorkerModelRoutingService({ budgetMs: 5 * 60_000, pollMs: 15_000 }, 15);
+    const resolution = new LoopProviderResolution({ timeoutMs: 200, attemptTimeoutMs: 40, maxAttempts: 3, retryBackoffMs: [1, 1] });
+    const startedAt = performance.now();
+    const failure = await resolution.run(({ signal, stage }) =>
+      stage('workerModelRouting.resolveRoute', () => routing.resolveRoute(route, signal)),
+    ).then(() => null, error => error);
+
+    expect(failure).toBeInstanceOf(LoopProviderResolutionError);
+    expect(failure).toMatchObject({ stage: 'workerModelRouting.resolveRouteOnce', attempts: 3, timedOut: true });
+    expect(f.providerCalls).toBe(3);
+    expect(performance.now() - startedAt).toBeLessThan(250);
+  });
+
+  it('re-arms the resolveRouteOnce deadline when a timer fires after suspend', async() => {
+    vi.useFakeTimers();
+    let activeMs = 0;
+    f.hangProviderInfo = true;
+    const route: any = { version: 1, slug: 'grok-reviewer', agentId: 'grok-agent-id', revision: 2, selected: 0,
+      connections: { grok: 'oauth' }, candidates: [grok] };
+    const routing = new WorkerModelRoutingService({ budgetMs: 5 * 60_000, pollMs: 15_000 }, 40, () => activeMs);
+    const pending = routing.resolveRoute(route).then(() => null, error => error);
+    let settled = false;
+    pending.then(() => { settled = true });
+
+    try {
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+
+      activeMs = 40;
+      await vi.advanceTimersByTimeAsync(40);
+      expect(await pending).toMatchObject({ stage: 'workerModelRouting.resolveRouteOnce' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('waits through an unreadable vault account lookup and returns the original approved route', async() => {
