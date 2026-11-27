@@ -95,7 +95,11 @@ describe('runner-owned graphs', () => {
       now += minute;
       await cache.evictIdle();
       expect(save).toHaveBeenCalledTimes(1);
-      expect(save).toHaveBeenCalledWith(entry.state);
+      now += 16 * minute;
+      await cache.evictIdle();
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(save).toHaveBeenNthCalledWith(1, entry.state);
+      expect(save).toHaveBeenNthCalledWith(2, entry.state);
       expect(cache.get('manager')).toBe(entry);
     } finally {
       cache.clear();
