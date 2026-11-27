@@ -37,6 +37,7 @@ export interface ThreadStateLogger {
 }
 
 export const THREAD_STATE_TTL_SECONDS = 3600;
+const CHECKPOINT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_REDIS_CHECKPOINT_BYTES = 1024 * 1024;
 
 export class MemoryThreadStateRepository extends Service implements ThreadStateRepository {
@@ -96,17 +97,16 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
 
   async load(threadId: string): Promise<BaseThreadState | null> {
     const json = await this.clientSource.getClient().get(this.key(threadId));
-    const value = json && JSON.parse(json);
-    if (value?.sullaCheckpointMemory === 1) {
+    const value = json ? JSON.parse(json) : null;
+    const kind = this.pointerKind(value);
+    if (kind === 'memory') {
       const head = this.memoryHeads.get(threadId);
 
       if (head && head.id === value.id) return structuredClone(head.state);
-      this.memoryHeads.delete(threadId);
-      return null;
     }
     this.memoryHeads.delete(threadId);
-    if (!json) return null;
-    if (value?.sullaCheckpointFile !== 1) return value;
+    if (kind === 'memory') return null;
+    if (kind !== 'file') return value;
     if (!this.files) throw new Error('No checkpoint storage configured');
     return this.files.read(threadId, value.id);
   }
@@ -116,12 +116,21 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
     this.memoryHeads.delete(threadId);
   }
 
+  private pointerKind(value: Record<string, unknown> | null): 'file' | 'memory' | undefined {
+    if (!value || typeof value !== 'object' || !Object.hasOwn(value, 'id') ||
+        typeof value.id !== 'string' || !CHECKPOINT_ID.test(value.id)) return;
+    const keys = Object.keys(value);
+
+    if (keys.length !== 2) return;
+    if (keys.includes('sullaCheckpointFile') && value.sullaCheckpointFile === 1) return 'file';
+    if (keys.includes('sullaCheckpointMemory') && value.sullaCheckpointMemory === 1) return 'memory';
+  }
+
   private key(threadId: string): string { return RedisThreadStateRepository.KEY_PREFIX + threadId }
 }
 
 /** Immutable payloads. A pathname is never evidence that a checkpoint is current. */
 export class FileThreadCheckpointRepository {
-  private static readonly ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   constructor(
     private readonly directory: () => string,
     private readonly now: () => number = Date.now,
@@ -148,7 +157,7 @@ export class FileThreadCheckpointRepository {
   }
 
   async read(thread: string, id: unknown): Promise<BaseThreadState> {
-    if (typeof id !== 'string' || !FileThreadCheckpointRepository.ID.test(id)) throw new Error('Invalid checkpoint pointer');
+    if (typeof id !== 'string' || !CHECKPOINT_ID.test(id)) throw new Error('Invalid checkpoint pointer');
     const state = JSON.parse(await fs.promises.readFile(path.join(this.folder(thread), id + '.json'), 'utf8'));
     if (state?.metadata?.threadId !== thread || !Array.isArray(state.messages)) throw new Error('Invalid checkpoint payload');
     return state;
@@ -163,7 +172,7 @@ export class FileThreadCheckpointRepository {
         await fs.promises.utimes(path.join(folder, id + '.json'), time, time);
       }
       for (const name of await fs.promises.readdir(folder)) {
-        if (name !== id + '.json' && name.endsWith('.json') && FileThreadCheckpointRepository.ID.test(name.slice(0, -5))) {
+        if (name !== id + '.json' && name.endsWith('.json') && CHECKPOINT_ID.test(name.slice(0, -5))) {
           await fs.promises.rm(path.join(folder, name), { force: true });
         }
       }
@@ -190,7 +199,7 @@ export class FileThreadCheckpointRepository {
         } else if (entry.isFile()) {
           const owned = root
             ? /^[a-f0-9]{64}\.json(?:\.[a-f0-9-]{36}\.tmp)?$/.test(entry.name)
-            : FileThreadCheckpointRepository.ID.test(entry.name.replace(/\.json(?:\.tmp)?$/, '')) && entry.name.includes('.json');
+            : CHECKPOINT_ID.test(entry.name.replace(/\.json(?:\.tmp)?$/, '')) && entry.name.includes('.json');
           if (owned && (await fs.promises.lstat(file)).mtimeMs < cutoff) await fs.promises.unlink(file);
         }
       } catch (err) { this.logSweepFailure(err) }

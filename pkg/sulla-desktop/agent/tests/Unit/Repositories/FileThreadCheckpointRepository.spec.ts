@@ -78,6 +78,14 @@ describe('large thread checkpoints', () => {
     expect((await boot(client).load('big-thread'))?.messages[0].content === big).toBe(true);
   });
 
+  it.each(['sullaCheckpointFile', 'sullaCheckpointMemory'])('round-trips inline state containing %s', async(tag) => {
+    const client = redisClient();
+    const saved = { ...state('inline', 'conversation'), [tag]: 1, id: 'a6cf68e1-846f-40ad-a212-6396d74b167c' };
+
+    await boot(client).save(saved);
+    expect(await boot(client).load('inline')).toEqual(saved);
+  });
+
   it('replaces old payloads only after successful publication and shrinks back to inline Redis', async() => {
     const client = redisClient();
     const repo = boot(client);
