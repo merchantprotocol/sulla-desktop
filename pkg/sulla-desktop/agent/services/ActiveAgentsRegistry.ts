@@ -222,32 +222,43 @@ export class ActiveAgentsRegistry {
         return `${ a.name || a.agentId }@${ a.channel } (${ a.status }, ${ age }m)${ note }`;
       });
     const seenThreads = new Set<string>();
+    const taskByThread = new Map<string, { task: any; job: any }>();
+    const managerByThread = new Map<string, string>();
+    try {
+      const { getAllJobs } = await import('../tools/agents/jobRegistry');
+      for (const job of await getAllJobs()) {
+        for (const task of job.tasks) if (task.threadId && ['running', 'parked'].includes(task.status)) {
+          const previous = taskByThread.get(task.threadId);
+          if (!previous || Number(job.createdAt) > Number(previous.job.createdAt)) taskByThread.set(task.threadId, { task, job });
+        }
+        if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)
+            && !managerByThread.has(job.parentThreadId)) {
+          managerByThread.set(job.parentThreadId, job.parentAgentId);
+        }
+      }
+    } catch { /* delegated-job ownership unavailable */ }
     try {
       const { GraphRegistry } = await import('./GraphRegistry');
       for (const agent of agents.filter(a => a.type !== 'human')) {
         for (const instance of GraphRegistry.findThreadsByChannel(agent.channel)) {
           if (!seenThreads.has(instance.threadId)) {
             seenThreads.add(instance.threadId);
-            agentParts.push(`${instance.label}@${instance.channel}#${instance.threadId}${instance.jobId ? ` (job ${instance.jobId})` : ''}`);
+            // Graph metadata can be stale or describe a child's parent link. Only the
+            // task row whose threadId matches this instance may supply its job label.
+            const owner = taskByThread.get(instance.threadId);
+            agentParts.push(`${instance.label}@${instance.channel}#${instance.threadId}${owner ? ` (job ${owner.job.jobId})` : ''}`);
           }
         }
       }
     } catch { /* live graph instances unavailable */ }
-    try {
-      const { getAllJobs } = await import('../tools/agents/jobRegistry');
-      const byThread = new Map<string, { task: any; job: any; manager: boolean }>();
-      for (const job of await getAllJobs()) {
-        for (const task of job.tasks) if (task.threadId && ['running', 'parked'].includes(task.status)) {
-          const previous = byThread.get(task.threadId);
-          if (!previous || Number(job.createdAt) > Number(previous.job.createdAt)) byThread.set(task.threadId, { task, job, manager: false });
-        }
-        if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)) {
-          const previous = byThread.get(job.parentThreadId);
-          if (!previous || Number(job.createdAt) > Number(previous.job.createdAt)) byThread.set(job.parentThreadId, { task: { label: `Manager ${job.parentAgentId}`, agentId: job.parentAgentId, status: job.status }, job, manager: true });
-        }
-      }
-      for (const [threadId, item] of byThread) if (!seenThreads.has(threadId)) agentParts.push(`${item.task.label}@${item.task.agentId}#${threadId} (job ${item.job.jobId}, ${item.task.status})`);
-    } catch { /* delegated-job roster unavailable */ }
+    for (const [threadId, item] of taskByThread) if (!seenThreads.has(threadId)) {
+      seenThreads.add(threadId);
+      agentParts.push(`${item.task.label}@${item.task.agentId}#${threadId} (job ${item.job.jobId}, ${item.task.status})`);
+    }
+    for (const [threadId, managerAgentId] of managerByThread) if (!seenThreads.has(threadId)) {
+      // ParentThreadId is a manager relationship, not ownership of this job.
+      agentParts.push(`Manager ${managerAgentId}@${managerAgentId}#${threadId}`);
+    }
     if (agentParts.length > 0) {
       lines.push(`agents: ${ agentParts.join(' | ') }`);
     }

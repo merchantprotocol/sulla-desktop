@@ -48,19 +48,24 @@ export class ListAgentsWorker extends BaseTool {
     try {
       const { getAllJobs } = await import('./jobRegistry');
       const byThread = new Map<string, { row: Record<string, any>; createdAt: number }>();
+      const managerByThread = new Map<string, Record<string, any>>();
       for (const job of await getAllJobs()) {
         for (const task of job.tasks) {
           if (!task.threadId || !['running', 'parked'].includes(task.status)) continue;
           const row = { name: task.label, channel: task.agentId, address: `${task.agentId}#${task.threadId}`, threadId: task.threadId, jobId: job.jobId, label: task.label, status: task.status, uptimeMins: 0, idleMins: 0, description: task.label };
           if (!byThread.has(task.threadId) || Number(job.createdAt) > byThread.get(task.threadId)!.createdAt) byThread.set(task.threadId, { row, createdAt: Number(job.createdAt) || 0 });
         }
-        if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status)) {
-          const row = { name: `Manager ${job.parentAgentId}`, channel: job.parentAgentId, address: `${job.parentAgentId}#${job.parentThreadId}`, threadId: job.parentThreadId, jobId: job.jobId, label: `Manager ${job.parentAgentId}`, status: job.status, uptimeMins: 0, idleMins: 0, description: 'Manager instance' };
-          if (!byThread.has(job.parentThreadId) || Number(job.createdAt) > byThread.get(job.parentThreadId)!.createdAt) byThread.set(job.parentThreadId, { row, createdAt: Number(job.createdAt) || 0 });
+        if (job.parentAgentId && job.parentThreadId && ['running', 'parked'].includes(job.status) && !managerByThread.has(job.parentThreadId)) {
+          // A child job's parentThreadId is a relationship, not ownership of that job.
+          // Keep a manager address only when no task row owns this thread.
+          managerByThread.set(job.parentThreadId, { name: `Manager ${job.parentAgentId}`, channel: job.parentAgentId, address: `${job.parentAgentId}#${job.parentThreadId}`, threadId: job.parentThreadId, label: `Manager ${job.parentAgentId}`, status: job.status, uptimeMins: 0, idleMins: 0, description: 'Manager instance' });
         }
       }
       const listedThreads = new Set(rows.map(row => row.threadId).filter(Boolean));
       for (const [threadId, item] of byThread) if (!listedThreads.has(threadId)) rows.push(item.row);
+      for (const [threadId, manager] of managerByThread) {
+        if (!listedThreads.has(threadId) && !byThread.has(threadId)) rows.push(manager);
+      }
     } catch { /* Job instances may be unavailable in minimal runtimes. */ }
 
     if (rows.length === 0) {
