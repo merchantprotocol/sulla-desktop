@@ -67,30 +67,63 @@ interface ToolStepTiming {
 
 /** Labels a tool with its executable/tool name only; never includes args or paths. */
 export class SafeToolLabel {
+  private static readonly shellWrappers: readonly string[] = Object.freeze([
+    'env', 'sudo', 'time', 'nohup', 'nice', 'command', 'exec', 'xargs', 'timeout', 'doas',
+  ]);
+
   static from(value: unknown): string {
     if (typeof value !== 'string') return 'tool';
-    const tokens = value.trim().split(/\s+/).filter(Boolean);
+    const input = value.trim();
+    const tokens = input.split(/\s+/).filter(Boolean);
     if (tokens.length === 0) return 'tool';
 
-    const program = this.basename(tokens[0]);
-    if (program.toLowerCase() === 'sulla') {
-      const route = this.stripQuotes(tokens[1] || '');
+    const program = tokens[0];
+    // Never try to parse shell syntax into a possibly misleading executable
+    // name. In particular, stripping '=' or punctuation from an assignment
+    // can turn its secret value into a plausible-looking tool label.
+    if (program.includes('=') || /[\\/]/.test(program) || !/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(program)) return 'shell';
+
+    const normalizedProgram = program.toLowerCase();
+    if (this.shellWrappers.includes(normalizedProgram)) return 'shell';
+
+    // Sulla tool calls commonly carry JSON arguments. Their fixed route is
+    // safe to retain; the argument text is never included in the label.
+    if (normalizedProgram === 'sulla') {
+      if (this.hasShellOperators(input)) return 'shell';
+      const route = tokens[1] || '';
       return /^[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+$/.test(route) ? `sulla ${ route }` : 'sulla';
     }
-    return this.safeName(program);
+    if (this.hasShellOperators(input) || /["'`{}]/.test(input)) return 'shell';
+    return program.slice(0, 80);
   }
 
-  private static basename(value: string): string {
-    return this.stripQuotes(value).split(/[\\/]/).pop() || '';
+  private static hasShellOperators(value: string): boolean {
+    return /[|&;<>$`()\r\n]/.test(value);
+  }
+}
+
+/** Metadata used to classify websocket dispatches without trusting tool args. */
+export class TurnTimingDispatchContext {
+  constructor(
+    private readonly metadata: Record<string, any>,
+    private readonly channelId: string,
+    private readonly triggerType: string,
+    private readonly heartbeatChannelId: string,
+  ) {}
+
+  get jobId(): string | null {
+    const value = this.metadata.delegatedJobId ?? this.metadata.workerModelTask?.jobId;
+    return typeof value === 'string' && value.trim() ? value : null;
   }
 
-  private static stripQuotes(value: string): string {
-    return value.replace(/^["'`]+|["'`]+$/g, '');
+  get taskIndex(): number | null {
+    const value = this.metadata.delegatedTaskIndex ?? this.metadata.workerModelTask?.taskIndex;
+    return Number.isInteger(value) ? value : null;
   }
 
-  private static safeName(value: string): string {
-    const name = value.replace(/[^A-Za-z0-9._+-]/g, '').slice(0, 80);
-    return name && name !== '.' && name !== '..' ? name : 'tool';
+  get surface(): TurnTimingSurface {
+    if (this.jobId) return 'delegated';
+    return this.channelId === this.heartbeatChannelId || this.triggerType === 'heartbeat' ? 'heartbeat' : 'chat';
   }
 }
 
@@ -270,5 +303,52 @@ export class TurnTiming implements TurnTimingProviderRequestSink {
 
   private durationOrNull(value: number | null | undefined): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null;
+  }
+}
+
+/** The lifecycle wrapper used by websocket dispatch around the real graph call. */
+export class TurnTimingDispatchLifecycle {
+  private outcome: TurnTimingOutcome = 'ok';
+  private finished = false;
+
+  constructor(private readonly timing: TurnTiming, private readonly state: object) {}
+
+  async executeGraph<T>(dispatch: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    try {
+      const result = await dispatch();
+      if (this.isAborted(signal)) this.outcome = 'aborted';
+      return result;
+    } catch (error) {
+      this.setOutcome((error as { name?: string } | null)?.name === 'AbortError' ? 'aborted' : 'error');
+      throw error;
+    }
+  }
+
+  setOutcome(outcome: TurnTimingOutcome): void {
+    if (!this.finished && this.outcome !== 'aborted') this.outcome = outcome;
+  }
+
+  finish(): void {
+    if (this.finished) return;
+    this.finished = true;
+    if (this.isAborted()) this.outcome = 'aborted';
+    try {
+      this.timing.finish(this.outcome);
+    } finally {
+      const state = this.state as { __turnTiming?: TurnTiming };
+      if (state.__turnTiming === this.timing) delete state.__turnTiming;
+    }
+  }
+
+  private isAborted(signal?: AbortSignal): boolean {
+    const state = this.state as { metadata?: { options?: { abort?: { signal?: AbortSignal } } } };
+    return !!signal?.aborted || !!state.metadata?.options?.abort?.signal?.aborted;
+  }
+}
+
+/** Maps delegated-task settlement states to the stable turn outcome enum. */
+export class TurnTimingOutcomePolicy {
+  static forDelegatedResult(status: string): TurnTimingOutcome {
+    return status === 'error' ? 'error' : status === 'stopped' ? 'aborted' : 'ok';
   }
 }
