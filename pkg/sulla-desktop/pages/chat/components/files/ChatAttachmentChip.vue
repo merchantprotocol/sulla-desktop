@@ -19,14 +19,19 @@
       <span class="details"><b>{{ attachment.name }}</b><small>{{ subtitle }}</small></span>
       <FileStatusIcon v-if="attachment.fileRef" />
     </button>
-    <ChatFileDownload v-if="attachment.fileRef" :file-id="attachment.fileRef.fileId" :name="attachment.name" :version-id="attachment.fileRef.versionId" />
+    <ChatFileDownload
+      v-if="attachment.fileRef"
+      :file-id="attachment.fileRef.fileId"
+      :name="attachment.name"
+      :version-id="attachment.fileRef.versionId"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import ChatFileDownload from './ChatFileDownload.vue';
 import { computed } from 'vue';
 
+import ChatFileDownload from './ChatFileDownload.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
 

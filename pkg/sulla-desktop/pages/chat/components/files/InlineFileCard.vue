@@ -80,7 +80,13 @@
       </div>
     </header>
 
-    <p v-if="downloadError" class="file-status file-error" role="alert">{{ downloadError }}</p>
+    <p
+      v-if="downloadError"
+      class="file-status file-error"
+      role="alert"
+    >
+      {{ downloadError }}
+    </p>
 
     <div v-if="hasPreviewCap && isReady" class="file-cap" role="status">
       <span>{{ capLabel }}</span>
