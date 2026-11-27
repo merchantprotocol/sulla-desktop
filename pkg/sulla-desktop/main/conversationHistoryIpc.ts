@@ -11,7 +11,6 @@ import fs from 'node:fs';
 
 import { ipcMain } from 'electron';
 
-import { threadStateProvider } from '@pkg/agent/app/Providers/ThreadStateServiceProvider';
 import { postgresClient } from '@pkg/agent/database/PostgresClient';
 import { ConversationHistoryModel } from '@pkg/agent/database/models/ConversationHistoryModel';
 import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
@@ -24,19 +23,18 @@ const console = Logging.background;
 
 /**
  * Delete associated files for a set of history records.
- * Missing files are harmless; other cleanup failures abort the clear.
+ * Best-effort — files may already be gone.
  *
  * Deletes each record's log_file (~/sulla/logs/).
  */
-async function cleanupFiles(records: ConversationHistoryRecord[], retained: Set<string>): Promise<void> {
+async function cleanupFiles(records: ConversationHistoryRecord[]): Promise<void> {
   for (const record of records) {
-    const thread = record.thread_id || (record.type === 'chat' && record.id);
-    if (thread && !retained.has(thread)) await threadStateProvider.repository.delete(thread);
+    // Always clean up log files
     if (record.log_file) {
       try {
         await fs.promises.unlink(record.log_file);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      } catch {
+        // File may already be removed — ignore
       }
     }
   }
@@ -78,7 +76,9 @@ export function initConversationHistoryIpc(): void {
   ipcMain.on('conversation-history:clear', async(_event, olderThan?: string) => {
     try {
       const cutoff = olderThan ? new Date(olderThan) : undefined;
-      const deleted = await ConversationHistoryModel.clearHistory(cutoff, cleanupFiles);
+      const deleted = await ConversationHistoryModel.clearHistory(cutoff);
+
+      await cleanupFiles(deleted);
 
       // Notify renderer that history was cleared
       mainEvents.emit('conversation-history:cleared' as any, olderThan);
@@ -96,7 +96,8 @@ export function initConversationHistoryIpc(): void {
   // listener above for existing callers, but never guess completion by timer.
   ipcMain.handle('conversation-history:clear-confirmed', async(_event, olderThan?: string) => {
     const cutoff = olderThan ? new Date(olderThan) : undefined;
-    await ConversationHistoryModel.clearHistory(cutoff, cleanupFiles);
+    const deleted = await ConversationHistoryModel.clearHistory(cutoff);
+    await cleanupFiles(deleted);
     mainEvents.emit('conversation-history:cleared' as any, olderThan);
     mainEvents.emit('conversation-history:changed' as any);
 
@@ -175,7 +176,9 @@ export function initConversationHistoryIpc(): void {
 
     try {
       const cutoff = olderThan ? new Date(olderThan) : undefined;
-      const deleted = await ConversationHistoryModel.clearHistory(cutoff, cleanupFiles);
+      const deleted = await ConversationHistoryModel.clearHistory(cutoff);
+
+      await cleanupFiles(deleted);
 
       // Notify all renderer windows
       const { BrowserWindow } = await import('electron');

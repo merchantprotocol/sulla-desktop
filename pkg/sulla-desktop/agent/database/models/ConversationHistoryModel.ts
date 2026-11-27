@@ -497,23 +497,27 @@ export class ConversationHistoryModel {
   }
 
   /**
-   * Keep the affected rows retryable if checkpoint cleanup fails before commit.
+   * Bulk delete with optional date filter. Returns deleted entries so caller can clean up files.
    */
-  static async clearHistory(olderThan: Date | undefined, cleanup: (rows: ConversationHistoryRecord[], retained: Set<string>) => Promise<void>): Promise<ConversationHistoryRecord[]> {
-    return postgresClient.transaction(async(client) => {
-      const { rows } = await client.query<ConversationHistoryRecord>(`
-        DELETE FROM ${ ConversationHistoryModel.TABLE } ${ olderThan ? 'WHERE created_at >= $1' : '' } RETURNING *
-      `, olderThan ? [olderThan.toISOString()] : []);
-      const retained = olderThan && rows.length
-        ? (await client.query<{ thread: string }>(`
-          SELECT DISTINCT COALESCE(thread_id, id) AS thread FROM ${ ConversationHistoryModel.TABLE }
-          WHERE COALESCE(thread_id, id) = ANY($1::text[])
-        `, [rows.map(row => row.thread_id || row.id)])).rows
-        : [];
-      await cleanup(rows, new Set(retained.map(row => row.thread)));
-
-      return rows;
-    });
+  static async clearHistory(olderThan?: Date): Promise<ConversationHistoryRecord[]> {
+    try {
+      if (olderThan) {
+        const deleted = await postgresClient.query<ConversationHistoryRecord>(`
+          DELETE FROM ${ ConversationHistoryModel.TABLE }
+          WHERE created_at >= $1
+          RETURNING *
+        `, [olderThan.toISOString()]);
+        return deleted;
+      }
+      const deleted = await postgresClient.query<ConversationHistoryRecord>(`
+        DELETE FROM ${ ConversationHistoryModel.TABLE }
+        RETURNING *
+      `);
+      return deleted;
+    } catch (err) {
+      console.error('[ConversationHistoryModel] Failed to clear history:', err);
+      return [];
+    }
   }
 
   /**
