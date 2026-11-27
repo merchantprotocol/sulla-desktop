@@ -14,6 +14,8 @@ import Electron from 'electron';
 import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
+import type { ChatTabActivityArgs } from '@pkg/shared/ChatTabActivity';
+import type { TabContextMenuRequest, TabHoverRequest } from '@pkg/shared/TabStripPopup';
 import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -77,11 +79,23 @@ export interface SullaFileReference {
  * i.e. ipcRenderer.send() -> ipcMain.on().
  */
 export interface IpcMainEvents {
-  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-running': (...args: ChatTabActivityArgs) => void;
   'internal-tab-view:update': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:descriptor': (tabId: string) => void;
-  'tabs:drag-start': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
+  'tabs:drag-start': (payload: {
+    tabId:        string;
+    descriptor:   Record<string, unknown>;
+    transient?:   Record<string, unknown>;
+    tabCount?:    number;
+    title?:       string;
+    favicon?:     string;
+    screenX?:     number;
+    screenY?:     number;
+    grabOffsetX?: number;
+    grabOffsetY?: number;
+  }) => void;
   'tabs:drag-end': (payload: { tabId: string; screenX: number; screenY: number; transient?: Record<string, unknown> }) => void;
+  'tabs:drag-cancel':               (payload: { tabId: string }) => void;
   'tabs:move-to-new-window': (payload: { tabId: string; descriptor: Record<string, unknown>; transient?: Record<string, unknown>; tabCount?: number }) => void;
   'tabs:transfer-released': (transferId: string, tabId: string) => void;
   'tabs:transfer-adopted': (transferId: string, tabId: string) => void;
@@ -235,14 +249,12 @@ export interface IpcMainEvents {
   // #endregion
 
   // #region Tab context menu (popup window)
-  'tab-context-menu:show': (payload: {
-    screenX: number;
-    screenY: number;
-    items:   string[];
-    tabData: Record<string, unknown>;
-  }) => void;
-  'tab-context-menu:action':  (action: string) => void;
-  'tab-context-menu:dismiss': () => void;
+  'tab-context-menu:show':    (payload: TabContextMenuRequest) => void;
+  'tab-context-menu:hide':    (id: string) => void;
+  'tab-hover:show':           (payload: TabHoverRequest) => void;
+  'tab-hover:hide':           (id: string) => void;
+  'tab-context-menu:action':  (requestId: string, action: string) => void;
+  'tab-context-menu:dismiss': (requestId: string) => void;
   // #endregion
 
   // #region More menu (popup window)
@@ -1370,7 +1382,7 @@ export interface IpcRendererEvents {
   'sulla:primary-color-changed': (color: string | null) => void;
   'app:shutting-down': () => void;
   'internal-tab-view:crashed': (tabId: string) => void;
-  'internal-tab-view:chat-running': (tabId: string, running: boolean) => void;
+  'internal-tab-view:chat-running': (...args: ChatTabActivityArgs) => void;
   'internal-tab-view:open-workspace-tab': (request: import('@pkg/shared/workspaceTabRequest').WorkspaceTabRequest) => void;
   'internal-tab-view:updated': (tabId: string, descriptor: unknown) => void;
   'internal-tab-view:loaded': (tabId: string) => void;
@@ -1408,7 +1420,8 @@ export interface IpcRendererEvents {
   'claude-oauth:result':            (result: import('@pkg/utils/claudeOAuthContract').ClaudeOAuthResult) => void;
   'desktop-relay:status-changed':   (status: { pairedUserId: string; connected: boolean; lastError?: string }) => void;
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
-  'tab-context-menu:selected':      (action: string, tabData: Record<string, unknown>) => void;
+  'tab-context-menu:closed':        (requestId: string) => void;
+  'tab-context-menu:selected':      (requestId: string, action: string) => void;
   'more-menu:selected':             (action: string, extra: Record<string, unknown> | null) => void;
   'more-menu:fetch-history':        () => void;
   'browser-context-menu:ai-action': (payload: {
