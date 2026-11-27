@@ -1,3 +1,8 @@
+// Sulla Desktop · https://sulladesktop.com
+// Copyright (c) 2025-2026 Merchant Protocol LLC.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// "Sulla" is a trademark. See TRADEMARK.md.
+
 import { describe, expect, it, vi } from 'vitest';
 import { loopbackOrigin } from '@pkg/utils/instance';
 import { DesktopVaultIdentityRepository, DesktopVaultTransport } from './desktopTransport';
@@ -19,15 +24,18 @@ vi.mock('electron', () => {
 });
 
 describe('DesktopVaultTransport sessions', () => {
-  it('routes control and explicitly streaming requests to separately pinned sessions', async() => {
+  it('keeps separate Electron control and streaming sessions when the Node fallbacks are disabled', async() => {
     // risk: availability — bounded control calls must not queue behind long-lived stream sockets.
     const controlFetch = vi.fn(async() => new Response('{}'));
     const streamFetch = vi.fn(async() => new Response('{}'));
     const sessionFactory = vi.fn((partition: string) => ({ fetch: partition.endsWith('-control') ? controlFetch : streamFetch }) as never);
     const transport = new DesktopVaultTransport({} as never, sessionFactory, async() => {}, async() => new Response('{}') as never, () => ({ close: vi.fn() } as never));
-    await transport.fetch('https://vault.test/status');
+    vi.stubEnv('SULLA_VAULT_CONTROL_TRANSPORT', 'electron');
     vi.stubEnv('SULLA_VAULT_STREAM_TRANSPORT', 'electron');
-    try { await transport.fetchStream('https://vault.test/stream'); } finally { vi.unstubAllEnvs(); }
+    try {
+      await transport.fetch('https://127.0.0.1:30135/status');
+      await transport.fetchStream('https://127.0.0.1:30135/stream');
+    } finally { vi.unstubAllEnvs(); }
     expect(sessionFactory.mock.calls.map(([partition]) => partition)).toEqual(['sulla-vault-broker-control', 'sulla-vault-broker']);
     expect(controlFetch).toHaveBeenCalledTimes(1);
     expect(streamFetch).toHaveBeenCalledTimes(1);
@@ -106,7 +114,8 @@ describe('DesktopVaultTransport sessions', () => {
     const fetch = vi.fn().mockResolvedValueOnce(new Response('', { status: 401 })).mockResolvedValueOnce(new Response(''));
     const transport = new DesktopVaultTransport(identities, () => ({ fetch }) as never, async() => {});
     expect((await transport.loadBrokerIdentity()).serviceToken).toBe('token-1');
-    await transport.fetch('https://vault.test/control');
+    vi.stubEnv('SULLA_VAULT_CONTROL_TRANSPORT', 'electron');
+    try { await transport.fetch('https://127.0.0.1:30135/control'); } finally { vi.unstubAllEnvs(); }
     expect((await transport.loadBrokerIdentity()).serviceToken).toBe('token-2');
   });
 });
