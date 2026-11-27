@@ -5,7 +5,13 @@
 
 import { GRAPH_BROWSER_TOOLS } from '../../utils/graphBrowserController';
 
+import type { FieldSchema } from '../base';
 import type { ToolManifest } from '../registry';
+
+const viewportProperties = {
+  width:  { type: 'number', description: 'Integer CSS pixels, 320..3840.' },
+  height: { type: 'number', description: 'Integer CSS pixels, 320..2160.' },
+} satisfies Record<string, FieldSchema>;
 
 /**
  * Browser tools — web page automation + browser-state APIs, consolidated from
@@ -41,6 +47,7 @@ export const browserToolManifests: ToolManifest[] = [
     description: 'Open, navigate, or close a browser tab. When opening/navigating (action=upsert), the response already includes a dehydrated DOM snapshot of the loaded page — title, URL, interactive elements, and a summary — so you do NOT need to call `browser/snapshot` separately afterwards. Reuse the same assetId to navigate an existing tab to a new URL.',
     category:    'browser',
     schemaDef:   {
+      viewport:  { type: 'object', optional: true, properties: viewportProperties, description: 'Persist this tab’s agent layout in CSS pixels (default 1440x900). Open with active:false to keep this layout off-screen. Never resizes the human pane.' },
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates or navigates a tab; remove closes by assetId.' },
       assetType: { type: 'enum', optional: true, enum: ['browser', 'iframe', 'document'], description: 'Type of tab to open. Defaults to browser.' },
       assetId:   { type: 'string', optional: true, description: 'Stable asset ID. Reuse the same ID to update an existing tab.' },
@@ -99,10 +106,13 @@ export const browserToolManifests: ToolManifest[] = [
   },
   {
     name:        'screenshot',
-    description: 'Capture a visual screenshot of a tab. Image is saved to disk and the response returns a compact `{ screenshot: { assetId, path, width, height, bytes } }` reference — never inline base64. Use Read on the returned path to inspect the image visually. By default includes a coordinate grid so click_at/type_at coordinates are easy to pick. Set annotate=true to draw numbered boxes on interactive elements.',
+    description: 'Capture a visual screenshot of a tab. Image is saved to disk and the response returns a compact `{ screenshot: { assetId, path, width, height, bytes } }` reference — never inline base64. Use Read on the returned path to inspect the image visually. Parked tabs include a coordinate grid by default; set annotate=true for numbered boxes. A selected tab returns liveHumanView:true and its unmodified pane. Use active:false for agent-sized captures.',
     category:    'browser',
     schemaDef:   {
       assetId:  { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
+      viewport: { type: 'object', optional: true, properties: viewportProperties, description: 'One-shot CSS dimensions for a parked tab; otherwise defaults to its persisted agent viewport. For a selected tab, liveHumanView is true: capture its actual pane without grid, annotations or resizing.' },
+      fullPage: { type: 'boolean', optional: true, description: 'Capture from the top through scroll height. The result reports capped when truncated.' },
+      scale:    { type: 'number', optional: true, description: 'Image pixels per CSS pixel: 1 (default) or 2.' },
       grid:     { type: 'boolean', optional: true, description: 'Show coordinate grid overlay (default true)' },
       annotate: { type: 'boolean', optional: true, description: 'Draw numbered boxes on interactive elements (default false)' },
     },
@@ -258,6 +268,9 @@ export const browserToolManifests: ToolManifest[] = [
     description: 'Browse the web in a hidden tab without disrupting the user\'s visible browser. Open pages, read content, capture screenshots, navigate, and close — all in the background. Ideal for research, checking URLs, or scraping data while the user works.',
     category:    'browser',
     schemaDef:   {
+      viewport: { type: 'object', optional: true, properties: viewportProperties, description: 'CSS dimensions. Persistent for open (default 1440x900), one-shot for screenshot.' },
+      fullPage: { type: 'boolean', optional: true, description: 'Screenshot: capture scroll height from the top and report whether capped.' },
+      scale:    { type: 'number', optional: true, description: 'Screenshot: image pixels per CSS pixel, 1 (default) or 2.' },
       action: { type: 'enum', enum: ['open', 'read', 'navigate', 'screenshot', 'close', 'list'], description: 'open: create hidden tab and read content. read: read from existing. navigate: load new URL. screenshot: capture the hidden page. close: destroy. list: show all hidden tabs.' },
       url:    { type: 'string', optional: true, description: 'URL to open or navigate to.' },
       tabId:  { type: 'string', optional: true, description: 'ID of an existing hidden tab. Required for read, navigate, screenshot, close.' },

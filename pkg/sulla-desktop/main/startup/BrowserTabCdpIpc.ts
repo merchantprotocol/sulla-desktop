@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { PaneCaptureOptions } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import { markSyntheticInput } from '@pkg/main/browserTabs/syntheticInput';
 import Logging from '@pkg/utils/logging';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
@@ -115,54 +116,22 @@ export class BrowserTabCdpIpc implements MainProcessIpcStep {
     });
 
     // ── Screenshot capture via CDP ───────────────────────────────────────────
-    ipc.handle('browser-tab:capture-screenshot', async(event: Electron.IpcMainInvokeEvent, options?: {
-      format?:  'jpeg' | 'png';
-      quality?: number;
-      clip?:    { x: number; y: number; width: number; height: number; scale?: number };
-    }, tabId?: string) => {
-      let wc: Electron.WebContents;
-
-      if (tabId) {
-        const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
-        const mgr = BrowserTabViewManager.getInstance();
-        const viewWc = mgr.getWebContents(tabId);
-
-        if (!viewWc) return null;
+    ipc.handle('browser-tab:capture-screenshot', async(event: Electron.IpcMainInvokeEvent, options?: PaneCaptureOptions, tabId?: string) => {
+      const { BrowserTabViewManager } = await import('@pkg/window/browserTabViewManager');
+      const mgr = BrowserTabViewManager.getInstance();
+      const wc = tabId ? mgr.getWebContents(tabId) : event.sender;
+      if (!wc) return null;
+      const authorize = () => {
+        if (!tabId) return;
         const owner = agentWindowFromSender(event.sender);
-        if (!owner || !mgr.ownsTab(tabId, owner)) throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
-        mgr.wakeView(tabId);
-        wc = viewWc;
-      } else {
-        wc = event.sender;
-      }
-
+        if (!owner || !mgr.ownsTab(tabId, owner) || mgr.getWebContents(tabId) !== wc) {
+          throw new Error(`Browser tab "${ tabId }" is not owned by this window`);
+        }
+      };
+      authorize();
+      if (tabId) mgr.wakeView(tabId);
       try {
-        if (!wc.debugger.isAttached()) {
-          wc.debugger.attach('1.3');
-        }
-
-        const cdpParams: Record<string, unknown> = {
-          format:                options?.format ?? 'jpeg',
-          quality:               options?.quality ?? 80,
-          captureBeyondViewport: false,
-        };
-
-        if (options?.clip) {
-          cdpParams.clip = {
-            x:      options.clip.x,
-            y:      options.clip.y,
-            width:  options.clip.width,
-            height: options.clip.height,
-            scale:  options.clip.scale ?? 1,
-          };
-        }
-
-        const result = await wc.debugger.sendCommand('Page.captureScreenshot', cdpParams);
-
-        return {
-          base64:    result.data as string,
-          mediaType: `image/${ cdpParams.format }`,
-        };
+        return await mgr.agentScreenshots.capturePane(wc, authorize, options);
       } catch (err) {
         console.warn('[Sulla] browser-tab:capture-screenshot CDP error:', err);
         return null;

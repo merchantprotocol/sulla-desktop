@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseTool, ToolResponse } from '../base';
-import { saveScreenshot } from './screenshot_store';
+import { LIVE_VIEW_NOTE, saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -58,7 +58,7 @@ export class TypeCoordinatesWorker extends BaseTool {
       const screenshot = await result.bridge.captureScreenshot({
         format:  'jpeg',
         quality: 80,
-      });
+      }).catch(() => null);
 
       const title = await result.bridge.getPageTitle();
       const url = await result.bridge.getPageUrl();
@@ -69,9 +69,10 @@ export class TypeCoordinatesWorker extends BaseTool {
       };
 
       if (screenshot) {
-        const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+        const ref = await saveScreenshot(screenshot);
         responseObj.screenshot = ref;
         responseObj.responseString += ` — screenshot at ${ ref.path } (${ ref.width }×${ ref.height }, ${ ref.bytes } bytes). Use Read on that path to inspect visually.`;
+        if (ref.liveHumanView) responseObj.responseString += ` ${ LIVE_VIEW_NOTE }`;
       }
 
       return responseObj;

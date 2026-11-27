@@ -8,6 +8,9 @@ import path from 'path';
 import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
+import { AgentScreenshotCapture, type CapturePlacement } from '@pkg/main/browserTabs/AgentScreenshotCapture';
+import { AgentViewportPolicy, type AgentViewport } from '@pkg/main/browserTabs/AgentViewportPolicy';
+import { ParkedViewportEmulation } from '@pkg/main/browserTabs/ParkedViewportEmulation';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
 import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
@@ -162,6 +165,8 @@ export class BrowserTabViewManager {
    * a wedge-recovery replacement view starts with no cached placement.
    */
   private appliedPlacement = new WeakMap<WebContentsView, string>();
+  /** Only valid while parked; focus and transfer invalidate a queued capture's lease. */
+  private readonly captureBounds = new WeakMap<WebContentsView, AgentViewport>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
@@ -192,11 +197,17 @@ export class BrowserTabViewManager {
   private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
-  private constructor() {}
+  private constructor(readonly agentViewports: AgentViewportPolicy, readonly agentScreenshots: AgentScreenshotCapture,
+    readonly parkedEmulation: ParkedViewportEmulation) {}
+
+  displayDpr(window: Electron.BrowserWindow | null): number | null {
+    return window && !window.isDestroyed() ? Electron.screen.getDisplayMatching(window.getBounds()).scaleFactor : null;
+  }
 
   static getInstance(): BrowserTabViewManager {
     if (!BrowserTabViewManager.instance) {
-      BrowserTabViewManager.instance = new BrowserTabViewManager();
+      const viewports = new AgentViewportPolicy();
+      BrowserTabViewManager.instance = new BrowserTabViewManager(viewports, new AgentScreenshotCapture(), new ParkedViewportEmulation());
     }
 
     return BrowserTabViewManager.instance;
@@ -346,19 +357,21 @@ export class BrowserTabViewManager {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): void {
+  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow(), viewport?: AgentViewport): void {
     // Idempotent: if the view already exists, just navigate (if URL changed)
     // and cache the new bounds. Actual attach/visibility state is driven
     // exclusively by `focusedTabId` via reconcileVisibility.
+    if (viewport !== undefined) this.agentViewports.validate(viewport);
     const existing = this.views.get(tabId);
     if (existing) {
       if (ownerWindow && this.owners.get(tabId) !== ownerWindow) throw new Error(`Browser tab "${ tabId }" is owned by another window`);
+      if (viewport !== undefined) this.setAgentViewport(tabId, viewport);
       if (existing.webContents.getURL() !== url) {
         existing.webContents.loadURL(url).catch(() => {});
       }
       this.latestBounds.set(tabId, bounds);
       if (this.owners.get(tabId) && this.focusedFor(this.owners.get(tabId)!) === tabId) {
-        existing.setBounds(bounds);
+        this.setBounds(tabId, bounds, ownerWindow ?? undefined);
       }
       return;
     }
@@ -396,13 +409,18 @@ export class BrowserTabViewManager {
       throw new Error('[BrowserTabView] WebContentsView did not adopt the shared browser session');
     }
 
+    this.parkedEmulation.track(view.webContents);
+
     // Disable background throttling so the Chromium renderer stays awake and
     // the compositor keeps producing frames even when the view is parked
     // off-screen. Without this, capturePage returns empty NativeImage on
     // brand-new views that have never been in a visible position.
     view.webContents.setBackgroundThrottling(false);
 
-    view.setBounds(bounds);
+    if (viewport !== undefined) this.agentViewports.set(view.webContents, viewport);
+    const parked = this.agentViewports.parked(view.webContents);
+    view.setBounds(parked);
+    this.parkedEmulation.apply(view.webContents, parked);
     this.views.set(tabId, view);
     this.owners.set(tabId, mainWindow);
     this.latestBounds.set(tabId, bounds);
@@ -499,8 +517,12 @@ export class BrowserTabViewManager {
       if (options.focus) this.setFocusedTab(tabId, undefined, undefined, targetWin);
       return true;
     }
+    this.captureBounds.delete(view);
     try { oldOwner.contentView.removeChildView(view) } catch { /* detached already */ }
-    targetWin.contentView.addChildView(view);
+    const parked = this.agentViewports.parked(view.webContents);
+    view.setBounds(parked);
+    this.parkedEmulation.apply(view.webContents, parked);
+    targetWin.contentView.addChildView(view, 0);
     this.trackOwnerWindow(targetWin);
     this.owners.set(tabId, targetWin);
     this.awaitingOwnerBounds.add(tabId);
@@ -510,9 +532,6 @@ export class BrowserTabViewManager {
       this.focusedTabIds.delete(oldOwner.id);
     }
     if (options.focus) this.focusedTabIds.set(targetWin.id, tabId);
-    const bounds = this.latestBounds.get(tabId);
-    const width = Math.max(bounds?.width ?? 1280, 1);
-    view.setBounds({ x: -(width + 100), y: bounds?.y ?? 0, width, height: Math.max(bounds?.height ?? 800, 1) });
     this.reconcileVisibility(oldOwner);
     this.reconcileVisibility(targetWin);
     return true;
@@ -551,6 +570,81 @@ export class BrowserTabViewManager {
   // ---------------------------------------------------------------------------
   // Layout
   // ---------------------------------------------------------------------------
+
+  /** A selected tab stays live even in a minimized window: restore/show has no
+   * synchronous placement handshake, so parking it could flash an agent layout. */
+  beginTabCapture(tabId: string, wc: Electron.WebContents, once?: AgentViewport): CapturePlacement {
+    const view = this.views.get(tabId);
+    const owner = this.ownerFor(tabId);
+    if (!view || view.webContents !== wc || !owner || this.shuttingDown) throw new Error('Browser tab unavailable');
+    const size = this.agentViewports.resolve(wc, once);
+    const displayDpr = this.displayDpr(owner);
+    if (!displayDpr) throw new Error('Browser display unavailable');
+    const isFocused = () => this.focusedFor(owner) === tabId;
+    const live = isFocused();
+    const assertCurrent = () => {
+      if (this.shuttingDown || this.views.get(tabId) !== view || this.ownerFor(tabId) !== owner || isFocused() !== live ||
+          (!live && this.captureBounds.get(view) !== size)) throw new Error('Browser tab placement changed during capture');
+    };
+    if (live) return { displayDpr, resized: false, assertCurrent, release: () => {} };
+
+    const persisted = this.agentViewports.resolve(wc);
+    const resized = size.width !== persisted.width || size.height !== persisted.height;
+    this.wakeView(tabId);
+    this.captureBounds.set(view, size);
+    const release = () => {
+      if (this.captureBounds.get(view) !== size) return; // focus/transfer already reconciled
+      this.captureBounds.delete(view);
+      if (!this.shuttingDown && this.views.get(tabId) === view && this.ownerFor(tabId) === owner && !isFocused()) {
+        this.reconcileVisibility(owner, tabId, true);
+      }
+    };
+    try {
+      this.reconcileVisibility(owner, tabId);
+      return { displayDpr, parkedViewport: size, resized, assertCurrent, release };
+    } catch (error) {
+      this.appliedPlacement.delete(view);
+      release();
+      throw error;
+    }
+  }
+
+  /** Hidden views never become renderer tabs. ChromeApiService serializes their
+   * attach/close lifecycle; this manager owns their one-shot capture bounds. */
+  beginHiddenCapture(view: WebContentsView, owner: Electron.BrowserWindow, once?: AgentViewport): CapturePlacement {
+    const wc = view.webContents;
+    const displayDpr = this.displayDpr(owner);
+    if (!displayDpr || wc.isDestroyed()) throw new Error('Hidden tab unavailable');
+    const size = this.agentViewports.resolve(wc, once);
+    const persisted = this.agentViewports.resolve(wc);
+    const resized = size.width !== persisted.width || size.height !== persisted.height;
+    const release = () => {
+      if (owner.isDestroyed() || wc.isDestroyed()) return;
+      const parked = this.agentViewports.parked(wc);
+      if (resized) view.setBounds(parked);
+      this.parkedEmulation.apply(wc, parked, true);
+    };
+    try {
+      if (resized) view.setBounds(this.agentViewports.parked(wc, size));
+      this.parkedEmulation.apply(wc, size);
+      return { displayDpr, parkedViewport: size, resized, release, assertCurrent: () => {
+        if (owner.isDestroyed() || wc.isDestroyed()) throw new Error('Hidden tab unavailable');
+      } };
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
+  setAgentViewport(tabId: string, viewport: AgentViewport): void {
+    const view = this.views.get(tabId);
+    if (!view) throw new Error('Cannot set viewport for a missing tab');
+    this.agentViewports.set(view.webContents, viewport);
+    const owner = this.ownerFor(tabId);
+    if (owner && (this.focusedFor(owner) !== tabId || this.awaitingOwnerBounds.has(tabId))) {
+      this.reconcileVisibility(owner, tabId);
+    }
+  }
 
   /**
    * Cache the renderer's latest layout rectangle for a tab. Bounds are
@@ -644,42 +738,31 @@ export class BrowserTabViewManager {
    *     bounds (so it overlays the Vue chat renderer).
    *   - Every other view stays attached but parked off-screen at
    *     negative x-coordinates, with a valid non-zero size so the
-   *     compositor keeps producing frames. This combines with
-   *     `capturePage({stayHidden: true})` in GuestBridge to guarantee
-   *     screenshots work regardless of focus — `stayHidden` forces paint,
-   *     off-screen bounds hide it from the user, and the view never
-   *     leaves the window's view tree (which is what was breaking
-   *     capture for fully-detached views).
+   *     compositor keeps producing frames for CDP screenshots independently
+   *     of the human pane. The capturePage health probe remains separate.
    *
    * This is the ONLY place in the codebase that mutates
    * contentView.addChildView / removeChildView / setBounds for tab views.
    */
-  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow): number {
+  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow, onlyTabId?: string, refreshEmulation = false): number {
     if (this.shuttingDown) return 0;
     const windows = ownerWindow ? [ownerWindow] : [...new Set(this.owners.values())];
     if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
     let totalTouched = 0;
 
-    // Park unfocused views just off-screen to the left: x = -(width + margin)
-    // so the right edge sits PARK_MARGIN pixels past the viewport's left edge.
-    // Must be dynamic — a hardcoded PARK_X (previously -1300) leaves the right
-    // portion of wide views visible on wide displays (e.g. 2958px wide screen,
-    // width≥1400px view → right edge at x ≥ 100, visibly bleeding through).
-    // Margin stays small so the view remains within Chromium's tile-cache
-    // buffer zone; -100_000 kills tile generation and capturePage returns
-    // empty NativeImages indefinitely.
-    const PARK_MARGIN = 100;
     for (const mainWindow of windows) {
     if (mainWindow.isDestroyed()) continue;
     const focusedTabId = this.focusedFor(mainWindow);
     let touched = 0;
 
     for (const [tabId, view] of this.views) {
-      if (this.owners.get(tabId) !== mainWindow) continue;
+      if ((onlyTabId !== undefined && onlyTabId !== tabId) || this.owners.get(tabId) !== mainWindow) continue;
+      if (tabId === focusedTabId) this.captureBounds.delete(view);
       if (tabId === focusedTabId && !this.awaitingOwnerBounds.has(tabId)) {
         // Explicitly clear any native hidden state before attaching/promoting
         // the focused view. Parked views remain drawable off-screen for agent
         // capture, while focused pages report visibilityState=visible.
+        this.parkedEmulation.clear(view.webContents);
         view.setVisible(true);
         view.webContents.setBackgroundThrottling(false);
         this.sleepingTabs.delete(tabId);
@@ -699,22 +782,20 @@ export class BrowserTabViewManager {
         // Park off-screen. Keep the view attached so its compositor stays
         // alive — detached WebContentsViews stop painting in Electron 40
         // even with stayHidden, which breaks capturePage.
-        const last = this.latestBounds.get(tabId);
-        const width = Math.max(last?.width ?? 1280, 1);
-        const parked: Electron.Rectangle = {
-          x:      -(width + PARK_MARGIN),
-          y:      last?.y ?? 0,
-          width,
-          height: Math.max(last?.height ?? 800, 1),
-        };
+        const parked = this.agentViewports.parked(view.webContents, this.captureBounds.get(view));
         // Window id in the key: a recreated main window must re-attach every view.
         const placement = `${ mainWindow.id }:${ parked.x },${ parked.y },${ parked.width },${ parked.height }`;
         // Already parked here — re-bounding and re-ordering it again is pure
         // native churn on every switch.
-        if (this.appliedPlacement.get(view) === placement) continue;
-        this.appliedPlacement.set(view, placement);
+        if (this.appliedPlacement.get(view) === placement) {
+          this.parkedEmulation.apply(view.webContents, parked, refreshEmulation);
+          continue;
+        }
         touched++;
         view.setBounds(parked);
+        if (!this.sleepingTabs.has(tabId)) view.setVisible(true);
+        this.parkedEmulation.apply(view.webContents, parked, refreshEmulation);
+        this.appliedPlacement.set(view, placement);
         try {
           // Ensure still attached (no-op if already attached). Index 0 puts
           // it at the bottom of z-order so focused tab overlays cleanly.
@@ -818,6 +899,10 @@ export class BrowserTabViewManager {
     try {
       view.setVisible(true);
       view.webContents.setBackgroundThrottling(false);
+      const owner = this.ownerFor(tabId);
+      if (owner && this.focusedFor(owner) !== tabId) {
+        this.parkedEmulation.apply(view.webContents, this.agentViewports.resolve(view.webContents, this.captureBounds.get(view)), true);
+      }
     } catch (err) {
       console.warn(`[BrowserTabView] wake failed tabId=${ tabId }:`, err);
     }
@@ -944,6 +1029,7 @@ export class BrowserTabViewManager {
       if (this.shuttingDown || this.views.get(tabId) !== view || this.focusedFor(mainWindow) !== tabId) return;
 
       const bounds = this.latestBounds.get(tabId);
+      this.parkedEmulation.clear(view.webContents);
       if (shouldRecreate) {
         const replacement = new WebContentsView({ webContents: view.webContents });
 

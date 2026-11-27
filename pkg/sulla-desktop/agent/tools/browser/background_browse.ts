@@ -14,7 +14,7 @@ import { getChromeApi } from '@pkg/main/chromeApi';
  *
  * Lets the AI agent do research without stealing the user's visible tab.
  * The hidden WebContentsView is fully functional (cookies, JS, network)
- * and screenshot capture transiently attaches it outside the visible viewport.
+ * and stays parked outside the visible window between reads and captures.
  */
 export class BackgroundBrowseWorker extends BaseTool {
   name = '';
@@ -39,7 +39,7 @@ export class BackgroundBrowseWorker extends BaseTool {
           return { successBoolean: false, responseString: '"url" is required for open action.' };
         }
 
-        const tab = await chrome.tabs.create({ url: input.url, hidden: true });
+        const tab = await chrome.tabs.create({ url: input.url, hidden: true, viewport: input.viewport });
 
         // Wait for page to load
         const waitMs = input.waitMs || 3000;
@@ -113,7 +113,9 @@ export class BackgroundBrowseWorker extends BaseTool {
           return { successBoolean: false, responseString: '"tabId" is required for screenshot action.' };
         }
 
-        const screenshot = await chrome.captureHiddenTabScreenshot(input.tabId);
+        const screenshot = await chrome.captureHiddenTabScreenshot(input.tabId, {
+          viewport: input.viewport, fullPage: input.fullPage, scale: input.scale,
+        });
 
         if (!screenshot) {
           return {
@@ -123,11 +125,11 @@ export class BackgroundBrowseWorker extends BaseTool {
         }
 
         const tab = await chrome.tabs.get(input.tabId);
-        const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+        const ref = await saveScreenshot(screenshot);
 
         return {
           successBoolean: true,
-          responseString: `[${ input.tabId }] Background screenshot captured: ${ tab?.title || tab?.url || 'Untitled' } — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Use Read on that path to load the image into vision context.`,
+          responseString: `[${ input.tabId }] Background screenshot captured: ${ tab?.title || tab?.url || 'Untitled' } — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Capture: ${ JSON.stringify(screenshot.metadata) }. Use Read on that path to load the image into vision context.`,
           screenshot:     ref,
         } as any;
       }

@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseTool, ToolResponse } from '../base';
-import { saveScreenshot } from './screenshot_store';
+import { LIVE_VIEW_NOTE, saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -29,36 +29,24 @@ export class ScreenshotWorker extends BaseTool {
     const addAnnotations = !!input.annotate;
 
     try {
-      // Inject coordinate grid overlay
-      if (addGrid) {
-        await result.bridge.execInPage(INJECT_GRID_JS);
-      }
-
-      // Annotate interactive elements if requested
-      if (addAnnotations) {
-        annotations = await result.bridge.annotateElements();
-      }
-
-      // Capture screenshot via CDP
+      // Measure elements and draw the grid only at the settled parked layout. Keep cleanup in
+      // the same per-tab transaction, including errors/concurrent screenshots.
       const screenshot = await result.bridge.captureScreenshot({
-        format:  'jpeg',
-        quality: 80,
-      });
-
-      // Clean up overlays after capture
-      if (addGrid) {
-        await result.bridge.execInPage(`document.querySelectorAll('[data-sulla-grid]').forEach(el => el.remove())`);
-      }
-      if (addAnnotations) {
-        await result.bridge.removeAnnotations();
-      }
-
-      if (!screenshot) {
-        return {
-          successBoolean: false,
-          responseString: `[${ result.assetId }] Failed to capture screenshot. The tab may not be ready.`,
-        };
-      }
+        format: 'jpeg', quality: 80, viewport: input.viewport, fullPage: input.fullPage, scale: input.scale,
+      }, addGrid || addAnnotations ? {
+        prepare: async() => {
+          // Submit both operations before awaiting either one: a timeout may
+          // clean up immediately and no later continuation should decorate the page.
+          const [, measured] = await Promise.all([
+            addGrid ? result.bridge.execInPage(INJECT_GRID_JS) : undefined,
+            addAnnotations ? result.bridge.annotateElements() : [],
+          ]);
+          annotations = measured;
+        },
+        remove: async() => {
+          await result.bridge.execInPage("document.querySelectorAll('[data-sulla-grid],[data-sulla-annotation]').forEach(el => el.remove())");
+        },
+      } : undefined);
 
       // Build annotation legend
       let legend = '';
@@ -70,16 +58,14 @@ export class ScreenshotWorker extends BaseTool {
 
       const title = await result.bridge.getPageTitle();
       const url = await result.bridge.getPageUrl();
-      const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+      const ref = await saveScreenshot(screenshot);
 
       return {
         successBoolean: true,
-        responseString: `[${ result.assetId }] Screenshot captured: ${ title } (${ url }) — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Use Read on that path to load the image into vision context.${ legend }`,
+        responseString: `[${ result.assetId }] Screenshot captured: ${ title } (${ url }) — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Capture: ${ JSON.stringify(screenshot.metadata) }. Use Read on that path to load the image into vision context.${ legend }${ ref.liveHumanView ? ` ${ LIVE_VIEW_NOTE }` : '' }`,
         screenshot:     ref,
       } as any;
     } catch (err) {
-      // Clean up on error
-      try { await result.bridge.execInPage(`document.querySelectorAll('[data-sulla-grid],[data-sulla-annotation]').forEach(el => el.remove())`) } catch { /* */ }
       return {
         successBoolean: false,
         responseString: `[${ result.assetId }] Screenshot failed: ${ String(err) }`,
