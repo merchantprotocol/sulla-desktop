@@ -12,13 +12,14 @@
       <div class="top-actions">
         <button class="btn ghost ico" type="button" title="Back to files" @click="emit('close')"><span class="bi" v-html="icons.previous" /></button>
         <button v-if="viewVersion || supportsDocumentEditor(item.path)" class="btn" type="button" @click="emit('open')">Open</button>
-        <button class="btn" type="button" :disabled="busy" @click="download"><span class="bi" v-html="icons.download" /> Download</button>
+        <button class="btn" type="button" :aria-label="'Download ' + name" :disabled="busy" @click="downloadAction.download(name, viewVersionId)"><span class="bi" v-html="icons.download" /> Download</button>
         <button v-if="activeLink" class="btn" type="button" @click="copyLink"><span class="bi" v-html="icons.link" /> {{ copied ? 'Copied' : 'Copy link' }}</button>
         <button v-if="trashItem" class="btn" type="button" :disabled="busy" @click="restoreTrash">Restore from Trash</button><button v-if="canCheckout && !item.checkout" class="btn" type="button" :disabled="busy" @click="checkout">Check out</button><button v-if="canPublish && hasPendingDraft" class="btn" type="button" :disabled="busy" @click="publishCurrent">Publish current</button><button class="btn primary" type="button" :disabled="!dataSource.capabilities.publicLinks" @click="emit('share')"><span class="bi" v-html="icons.share" /> Share</button>
       </div>
     </div>
 
     <div class="detail-content">
+      <div v-if="downloadAction.state.error" class="error" role="alert">{{ downloadAction.state.error }}</div>
       <div v-if="error" class="error" role="alert">{{ error }}</div>
       <div class="detail-grid">
         <section class="card preview-card">
@@ -51,7 +52,7 @@
             </div>
             <div class="media-pane">
               <template v-if="mediaTab === 'Preview'">
-                <h3>Preview <span class="muted">{{ item.mime }}</span></h3><p v-if="mediaUrl && item.mime === 'application/pdf'" class="preview-note">This PDF preview is sandboxed. Download the file if it cannot be displayed.</p><p v-else class="preview-note">{{ mediaUrl ? 'Use the player above to review this file.' : previewStatus }}</p><button v-if="mediaUrl && item.mime === 'application/pdf'" class="btn sm" type="button" :disabled="busy" @click="download">Download PDF</button>
+                <h3>Preview <span class="muted">{{ item.mime }}</span></h3><p v-if="mediaUrl && item.mime === 'application/pdf'" class="preview-note">This PDF preview is sandboxed. Download the file if it cannot be displayed.</p><p v-else class="preview-note">{{ mediaUrl ? 'Use the player above to review this file.' : previewStatus }}</p><button v-if="mediaUrl && item.mime === 'application/pdf'" class="btn sm" type="button" :aria-label="'Download ' + name" :disabled="busy" @click="downloadAction.download(name, viewVersionId)">Download PDF</button>
               </template>
               <template v-else-if="mediaTab === 'Transcript'">
                 <h3>Transcript <span class="pill idle">{{ detail?.recording?.generator || 'Not generated' }}</span><small>Click a time to jump</small></h3>
@@ -136,6 +137,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 
 import { filesItemHasActiveProtection } from './types';
 import { supportsDocumentEditor } from './editor/editorTypes';
+import { FileDownloadAction } from './FileDownloadAction';
 import { FileDetailPreviewRouter } from './FileDetailPreviewRouter';
 import { renderMarkdown } from '../chat/messages/markdown';
 
@@ -145,7 +147,9 @@ const props = defineProps<{ item:FilesItem; trashItem?:FilesTrashFile; dataSourc
 const emit = defineEmits<{ close:[]; open:[]; share:[]; restored:[]; 'trash-outcome':[message:string]; 'open-linked':[fileId:string, path:string] }>();
 const item = reactive<FilesItem>({ ...props.item });
 const trashItem = ref<FilesTrashFile | undefined>(props.trashItem);
-const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const busy = ref(false); const error = ref(''); const copied = ref(false);
+const detail = ref<FilesDetail>(); const versions = ref<FilesVersion[]>([]); const links = ref<ShareLink[]>([]); const linkActivity = ref<ShareActivity[]>([]); const mediaUrl = ref(''); const loading = ref(true); const operationBusy = ref(false); const error = ref(''); const copied = ref(false);
+const downloadAction = new FileDownloadAction((name, versionId) => props.dataSource.downloadFile(item.id, name, versionId));
+const busy = computed(() => operationBusy.value || downloadAction.state.busy);
 const previewError = ref('');
 const documentContent = ref(''); const documentPreviewLoading = ref(false); const documentPreviewError = ref('');
 const mediaTab = ref<'Preview' | 'Transcript' | 'Chapters'>('Preview'); const sideTab = ref<'Details' | 'Versions' | 'Access' | 'Activity'>(props.initialTab || 'Details'); const video = ref<HTMLVideoElement>(); const audio = ref<HTMLAudioElement>();
@@ -220,7 +224,6 @@ onMounted(async() => {
   loading.value = false;
 });
 function onMediaError() { mediaUrl.value = ''; previewError.value = 'Couldn’t load this preview. Check your Files connection or try opening the file.' }
-async function download() { busy.value = true; try { await props.dataSource.downloadFile(item.id, name.value, viewVersionId.value) } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
 async function restore(id:string) { await runLifecycle(() => props.dataSource.restoreVersion(item.id, id)) }
 type ActionForm = 'publish' | 'checkin' | 'retention'; const actionForm = ref<ActionForm>(); const actionVersionId = ref(''); const actionKind = ref<'major'|'minor'>('minor'); const actionComment = ref(''); const retentionError = ref(''); const policyLockConfirmed = ref(false); const disposalExtendedUntil = ref(''); const purgeConfirmed = ref(false);
 const lifecycleForm = reactive({ enabled: item.versioning?.enabled ?? false, majorMinor: item.versioning?.majorMinor ?? false, requireApproval: item.versioning?.requireApproval ?? false, requireCheckout: item.versioning?.requireCheckout ?? false });
@@ -300,14 +303,14 @@ async function reloadTrashStateAfterConflict(cause:unknown):Promise<void> {
 }
 async function restoreTrash() {
   if (!trashItem.value || !props.dataSource.restoreTrashItem) return;
-  busy.value = true; error.value = '';
+  operationBusy.value = true; error.value = '';
   try { await props.dataSource.restoreTrashItem(trashItem.value); emit('restored') }
   catch (cause) { await reloadTrashStateAfterConflict(cause) }
-  finally { busy.value = false }
+  finally { operationBusy.value = false }
 }
 async function purgeTrash() {
   if (!props.dataSource.purgeTrashItem || !trashItem.value || !canPurge.value || !purgeConfirmed.value) return;
-  busy.value = true; error.value = '';
+  operationBusy.value = true; error.value = '';
   try {
     const result = await props.dataSource.purgeTrashItem(trashItem.value);
     if (result.status === 'recovery-required') {
@@ -316,7 +319,7 @@ async function purgeTrash() {
     }
     purgeConfirmed.value = false; emit('restored');
   } catch (cause) { await reloadTrashStateAfterConflict(cause) }
-  finally { busy.value = false }
+  finally { operationBusy.value = false }
 }
 async function checkout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id)) }
 async function releaseCheckout() { if (!props.dataSource.checkout || !permissions.value.canEdit) return; await runLifecycle(() => props.dataSource.checkout!(item.id, true)) }
@@ -346,7 +349,7 @@ async function refreshLifecycleState():Promise<void> {
   });
 }
 async function runLifecycle(action:() => Promise<void>, refresh = true):Promise<boolean> {
-  busy.value = true;
+  operationBusy.value = true;
   error.value = '';
   try {
     await action();
@@ -357,13 +360,13 @@ async function runLifecycle(action:() => Promise<void>, refresh = true):Promise<
     await refreshLifecycleState().catch(() => undefined);
     return false;
   } finally {
-    busy.value = false;
+    operationBusy.value = false;
   }
 }
-async function reindex() { busy.value = true; try { await props.dataSource.reindex(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function revoke() { if (!activeLink.value || !props.dataSource.revokePublicLink) return; busy.value = true; try { await props.dataSource.revokePublicLink(activeLink.value.id); activeLink.value.revokedAt = new Date().toISOString() } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function keepOnMac() { if (!props.dataSource.keepOnMac) return; busy.value = true; try { await props.dataSource.keepOnMac(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
-async function makeOnlineOnly() { if (!props.dataSource.makeOnlineOnly) return; busy.value = true; try { await props.dataSource.makeOnlineOnly(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { busy.value = false } }
+async function reindex() { operationBusy.value = true; try { await props.dataSource.reindex(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { operationBusy.value = false } }
+async function revoke() { if (!activeLink.value || !props.dataSource.revokePublicLink) return; operationBusy.value = true; try { await props.dataSource.revokePublicLink(activeLink.value.id); activeLink.value.revokedAt = new Date().toISOString() } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { operationBusy.value = false } }
+async function keepOnMac() { if (!props.dataSource.keepOnMac) return; operationBusy.value = true; try { await props.dataSource.keepOnMac(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { operationBusy.value = false } }
+async function makeOnlineOnly() { if (!props.dataSource.makeOnlineOnly) return; operationBusy.value = true; try { await props.dataSource.makeOnlineOnly(item.id); emit('restored') } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) } finally { operationBusy.value = false } }
 async function copyLink() { if (!activeLink.value) return; try { await navigator.clipboard.writeText(activeLink.value.url); copied.value = true; setTimeout(() => { copied.value = false }, 1500) } catch { error.value = 'The link could not be copied.' } }
 function seek(seconds:number) { const media = video.value || audio.value; if (media) { media.currentTime = seconds; media.play().catch(() => undefined) } mediaTab.value = 'Preview' }
 function duration(seconds:number) { const value = Math.max(0, Math.round(Number(seconds) || 0)); return `${ Math.floor(value / 60) }:${ String(value % 60).padStart(2, '0') }` }
