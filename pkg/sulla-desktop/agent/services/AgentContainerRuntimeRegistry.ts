@@ -95,6 +95,12 @@ export class AgentContainerRuntimeRegistry {
     if (ctx.sub !== binding.subject || ctx.org_id !== binding.orgId || ctx.agent_id !== binding.agentId || ctx.job_id !== binding.jobId || ctx.thread_id !== binding.threadId || ctx.device_id !== binding.deviceId) throw Object.assign(new Error('Agent tool context is not bound to this live container job'), { reason: 'container_job_mismatch' });
     return binding;
   }
+  /** Forwarded agent-local work must enter the caller's registered, verified container; never the shared VM. */
+  forForwardedExecution(ctx: ToolExecutionContext | undefined, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined {
+    if (target !== 'agent-local') return undefined;
+    if (!ctx?.pod_id) throw Object.assign(new Error('Agent-local tools run only inside the calling agent container'), { reason: 'container_runtime_required' });
+    return this.forExecution(ctx, target);
+  }
   forExecution(ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined): AgentContainerRuntimeBinding | undefined {
     if (target !== 'agent-local' || !ctx.pod_id) return undefined;
     const binding = this.require(ctx);
@@ -133,3 +139,4 @@ export const currentAgentContainerRuntime = () => agentContainerRuntimeRegistry.
 export const registerAgentContainerRuntime = (binding: AgentContainerRuntimeBinding, leases?: ContainerSessionLeases) => agentContainerRuntimeRegistry.register(binding, leases);
 export const requireAgentContainerRuntime = (ctx: ToolExecutionContext) => agentContainerRuntimeRegistry.require(ctx);
 export const containerRuntimeForExecution = (ctx: ToolExecutionContext, target: ToolExecutionTarget | undefined) => agentContainerRuntimeRegistry.forExecution(ctx, target);
+export const containerRuntimeForForwardedExecution = (ctx: ToolExecutionContext | undefined, target: ToolExecutionTarget | undefined) => agentContainerRuntimeRegistry.forForwardedExecution(ctx, target);

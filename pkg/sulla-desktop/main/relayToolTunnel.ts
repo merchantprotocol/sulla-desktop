@@ -5,7 +5,7 @@
 
 import jwt from 'jsonwebtoken';
 
-import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { containerRuntimeForForwardedExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { toolRegistry } from '@pkg/agent/tools';
 import { ToolInputValidationError } from '@pkg/agent/tools/base';
@@ -58,7 +58,7 @@ async function executeThroughRegistry(
       },
     },
   };
-  const containerRuntime = containerRuntimeForExecution(ctx, executionTarget);
+  const containerRuntime = containerRuntimeForForwardedExecution(ctx, executionTarget);
   const state = containerRuntime ? isolatedState : (registered ?? isolatedState);
   try {
     const result = containerRuntime

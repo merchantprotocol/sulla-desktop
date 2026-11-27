@@ -24,7 +24,7 @@ import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsMode
 import { createDesktopClerkClient, type ClerkCaller } from '@pkg/agent/integrations/clerk/ClerkClient';
 import { CLERK_DEADLINE_MS } from '@pkg/agent/integrations/clerk/ClerkEndpoints';
 import { CLERK_CONTAINER_DENIAL, ClerkToolSessionResolver } from './ClerkToolSessionResolver';
-import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
+import { containerRuntimeForExecution, containerRuntimeForForwardedExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry, nextThreadId, nextMessageId } from '@pkg/agent/services/GraphRegistry';
 import { SlackAccountResolver } from '@pkg/agent/integrations/slack/SlackAccountResolver';
 import { ToolInputValidationError } from '@pkg/agent/tools/base';
@@ -509,6 +509,7 @@ export class ChatCompletionsServer {
         deadlineMs = Math.max(1, executionDeadlineAt - Date.now());
         worker.deadlineAt = executionDeadlineAt;
         const deadline = AbortSignal.timeout(deadlineMs);
+        let runtime: ReturnType<typeof containerRuntimeForForwardedExecution>;
         if (category === 'clerk') {
           const disconnected = new AbortController();
           res.once('close', () => { if (!res.writableEnded) disconnected.abort(); });
@@ -520,6 +521,11 @@ export class ChatCompletionsServer {
             return res.status(403).json({ success: false, error: { code: CLERK_CONTAINER_DENIAL, message: 'Clerk is unavailable from container agents.', details: { httpStatus: 403 } } });
           }
         } else {
+          try {
+            runtime = containerRuntimeForForwardedExecution(ctx, toolRegistry.getExecutionTarget(toolName));
+          } catch {
+            return res.status(403).json({ success: false, error: { code: 'container_runtime_required', message: 'Agent-local tools run only inside the calling agent container.' } });
+          }
           worker.executionContext = ctx;
           if (typeof ctx?.thread_id === 'string') {
             const graph = GraphRegistry.get(ctx.thread_id);
@@ -531,7 +537,7 @@ export class ChatCompletionsServer {
           worker.approvalSignal = deadline;
         }
         const result = await Promise.race([
-          worker.call(args),
+          runtime ? withAgentContainerRuntime(runtime, () => worker.call(args)) : worker.call(args),
           new Promise<never>((_resolve, reject) => deadline.addEventListener('abort', () => reject(new Error('Desktop executor deadline exceeded')), { once: true })),
         ]);
         if (category === 'clerk' && result && typeof result === 'object' && (result as { success?: unknown }).success === false) {
