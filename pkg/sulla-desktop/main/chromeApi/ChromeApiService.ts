@@ -1485,7 +1485,7 @@ export class ChromeApiService implements ChromeApi {
           if (mainWindow) {
             try { mainWindow.contentView.removeChildView(view) } catch { /* */ }
           }
-          try { this.hiddenLayout.detach(view) } finally { view.webContents.close() }
+          (view.webContents as any).close?.();
         }
 
         this.sidePanelViews.clear();

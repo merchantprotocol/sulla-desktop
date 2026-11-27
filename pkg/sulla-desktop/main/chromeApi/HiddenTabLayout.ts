@@ -21,8 +21,14 @@ export class HiddenTabLayout {
       });
       return;
     }
-    window.contentView.addChildView(view, 0);
     this.owners.set(view, window);
+    try {
+      window.contentView.addChildView(view, 0);
+    } catch (error) {
+      // A native attach can throw after it has partially modified the tree.
+      this.detach(view);
+      throw error;
+    }
   }
 
   owner(view: WebContentsView): BrowserWindow | null {
@@ -31,7 +37,7 @@ export class HiddenTabLayout {
   }
 
   detach(view: WebContentsView): void {
-    this.owner(view)?.contentView.removeChildView(view);
+    try { this.owner(view)?.contentView.removeChildView(view) } catch { /* already detached */ }
     this.owners.delete(view);
   }
 }

@@ -35,8 +35,13 @@ export class ScreenshotWorker extends BaseTool {
         format: 'jpeg', quality: 80, viewport: input.viewport, fullPage: input.fullPage, scale: input.scale,
       }, addGrid || addAnnotations ? {
         prepare: async() => {
-          if (addGrid) await result.bridge.execInPage(INJECT_GRID_JS);
-          if (addAnnotations) annotations = await result.bridge.annotateElements();
+          // Submit both operations before awaiting either one: a timeout may
+          // clean up immediately and no later continuation should decorate the page.
+          const [, measured] = await Promise.all([
+            addGrid ? result.bridge.execInPage(INJECT_GRID_JS) : undefined,
+            addAnnotations ? result.bridge.annotateElements() : [],
+          ]);
+          annotations = measured;
         },
         remove: async() => {
           await result.bridge.execInPage("document.querySelectorAll('[data-sulla-grid],[data-sulla-annotation]').forEach(el => el.remove())");

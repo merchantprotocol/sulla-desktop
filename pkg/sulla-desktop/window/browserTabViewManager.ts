@@ -663,12 +663,8 @@ export class BrowserTabViewManager {
    *     bounds (so it overlays the Vue chat renderer).
    *   - Every other view stays attached but parked off-screen at
    *     negative x-coordinates, with a valid non-zero size so the
-   *     compositor keeps producing frames. This combines with
-   *     `capturePage({stayHidden: true})` in GuestBridge to guarantee
-   *     screenshots work regardless of focus — `stayHidden` forces paint,
-   *     off-screen bounds hide it from the user, and the view never
-   *     leaves the window's view tree (which is what was breaking
-   *     capture for fully-detached views).
+   *     compositor keeps producing frames for CDP screenshots independently
+   *     of the human pane. The capturePage health probe remains separate.
    *
    * This is the ONLY place in the codebase that mutates
    * contentView.addChildView / removeChildView / setBounds for tab views.

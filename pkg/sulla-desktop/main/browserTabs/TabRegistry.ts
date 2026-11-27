@@ -146,9 +146,8 @@ class TabRegistryImpl {
     }
 
     // Create a new WebContentsView keyed by the SAME assetId as the map.
-    // Default to 1280×800 so window.innerWidth/innerHeight are non-zero and
-    // screenshots + getBoundingClientRect() work immediately. The UI overrides
-    // these bounds via setBounds() when it actually displays the tab.
+    // Initial human-pane fallback only. Until focused, the native view uses
+    // the independent agent viewport, including during initial navigation.
     BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 1280, height: 800 }, input.ownerWindow, input.viewport);
 
     const record: TabRecord = {

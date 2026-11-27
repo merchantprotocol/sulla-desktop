@@ -268,6 +268,40 @@ describe('agent capture transaction', () => {
     expect(cdp.isAttached()).toBe(attached);
   });
 
+  it('restores a borrowed debugger after a compositor timeout without running late capture steps', async() => {
+    vi.useFakeTimers();
+    const cdp = new CdpEdge(), service = new AgentScreenshotCapture(new AgentViewportPolicy());
+    cdp.attached = true;
+    let resume!: () => void;
+    const pending = new Promise<void>(resolve => { resume = resolve });
+    cdp.captureFrame.mockImplementationOnce(async() => { await pending; return { data: 'late' } });
+    try {
+      const failed = expect(service.capture(cdp.contents, () => 1)).rejects.toThrow('Timed out');
+      await vi.advanceTimersByTimeAsync(10_001);
+      await failed;
+      expect(cdp.emulated).toBeNull();
+      expect(cdp.detach).not.toHaveBeenCalled();
+      resume();
+      await service.capture(cdp.contents, () => 1, { viewport: { width: 390, height: 844 } });
+      expect(cdp.emulated).toBeNull();
+    } finally {
+      resume();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not detach a replacement debugger session when the original one disconnects', async() => {
+    const cdp = new CdpEdge(), service = new AgentScreenshotCapture(new AgentViewportPolicy());
+    cdp.captureFrame.mockImplementationOnce(async() => {
+      cdp.emit('detach');
+      cdp.attached = true; // another debugger has already attached
+      throw new Error('session replaced');
+    });
+    await expect(service.capture(cdp.contents, () => 1)).rejects.toThrow('session replaced');
+    expect(cdp.detach).not.toHaveBeenCalled();
+    expect(cdp.sendCommand).not.toHaveBeenCalledWith('Emulation.clearDeviceMetricsOverride', {});
+  });
+
   it('does not overlap two captures of one WebContents or serialize unrelated tabs', async() => {
     const service = new AgentScreenshotCapture(new AgentViewportPolicy()), first = new CdpEdge(), other = new CdpEdge();
     let unblock!: () => void, started!: () => void;
