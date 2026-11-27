@@ -487,6 +487,7 @@ const { findByUrl, addBookmark } = useBookmarks();
 const { showOverlay } = useStartupProgress();
 
 function onFilesNavigationResult(result:FilesNavigationResult):void {
+  if (!result.opened) console.warn('[files/open] File Manager selection failed after the Files tab was opened:', result.error || 'The requested Files item could not be opened.');
   const reply = result.opened
     ? { opened: true, tabId: props.tabId, path: result.path, how: result.kind === 'folder' ? 'file-manager-folder' : 'file-manager-viewer' }
     : { error: result.error || 'The File Manager could not select the requested item.' };
