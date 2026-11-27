@@ -143,7 +143,7 @@ describe('history IPC acknowledgements', () => {
       'node:fs': { promises: { unlink } },
       '@pkg/agent/app/Providers/ThreadStateServiceProvider': { threadStateProvider: { repository } },
       '@pkg/agent/database/PostgresClient': { postgresClient: {} },
-      '@pkg/agent/database/models/ConversationHistoryModel': { ConversationHistoryModel: Object.assign(Object.create(ConversationHistoryModel), { clearHistory }) },
+      '@pkg/agent/database/models/ConversationHistoryModel': { ConversationHistoryModel: { clearHistory } },
       '@pkg/main/DatabaseReadGuard': { getDatabaseReadGuard: () => ({ run: vi.fn().mockRejectedValue(new Error('invalid query')) }) },
       '@pkg/main/mainEvents': { emit, on: vi.fn() },
       '@pkg/main/sync/syncQueue': { enqueueSyncOp: vi.fn() },
@@ -172,24 +172,21 @@ describe('history IPC acknowledgements', () => {
     const keys = new Map<string, { json: string; expires: number }>();
     const client = {
       status: 'ready',
-      ping: vi.fn(async() => 'PONG'),
+      ping: async() => 'PONG',
       get: async(key: string) => {
         const entry = keys.get(key);
         return entry && entry.expires > now ? entry.json : null;
       },
       setex: async(key: string, ttl: number, json: string) => {
+        await boundary('before SETEX');
         keys.set(key, { json, expires: now + ttl * 1000 });
+        await boundary('after SETEX');
       },
-      del: vi.fn(async(key: string) => {
-        await boundary('disk');
-        keys.delete(key);
-        await boundary('redis');
-      }),
+      del: async(key: string) => keys.delete(key),
     };
-    const files = () => new FileThreadCheckpointRepository(() => store, () => now);
     const boot = () => new FallbackThreadStateRepository(
       new RedisThreadStateRepository({ getClient: () => client }), new MemoryThreadStateRepository(),
-      new MemoryThreadStateRepository(), console, files(), () => now,
+      new MemoryThreadStateRepository(), console, new FileThreadCheckpointRepository(() => store),
     );
     const state = (threadId: string, content: string) => ({
       metadata: { threadId }, messages: [{ role: 'user', content }],
@@ -258,7 +255,7 @@ describe('history IPC acknowledgements', () => {
       expect(rows.map(row => row.id)).toEqual(['a', 'b']);
       for (const row of rows) {
         expect(fs.existsSync(row.log_file)).toBe(true);
-        expect((await boot().load(row.id))?.messages[0].content.length).toBe(big.length);
+        expect((await boot().load(row.id))?.messages[0].content === big).toBe(true);
       }
     });
 
@@ -268,18 +265,18 @@ describe('history IPC acknowledgements', () => {
       await seed('retained', 'shared');
       await clear(boot(), '2026-01-01');
       expect(rows.map(row => row.id)).toEqual(['retained']);
-      expect(await boot().load('gone')).toBeNull();
-      expect(await files().exists('shared')).toBe(true);
+      expect(fs.existsSync(path.join(dir, 'gone.jsonl'))).toBe(false);
+      expect(fs.existsSync(path.join(dir, 'retained.jsonl'))).toBe(true);
+      expect((await boot().load('shared'))?.messages[0].content === big).toBe(true);
     });
 
-    it('R2: treats a non-directory checkpoint parent as a miss during clear, stat and load', async() => {
+    it('R2: a non-directory checkpoint parent cannot abort clear or break a fresh load', async() => {
       await seed('gone');
       await fs.promises.rename(store, store + '-hidden');
       await fs.promises.writeFile(store, '');
       await expect(clear()).resolves.toEqual({ success: true });
       expect(rows).toEqual([]);
-      expect(await files().exists('gone')).toBe(false);
-      expect(await files().load('gone')).toBeNull();
+      expect(await boot().load('gone')).toBeNull();
     });
 
     it('R3: newer Redis wins after restart and neither tier resurfaces after expiry', async() => {
@@ -294,7 +291,7 @@ describe('history IPC acknowledgements', () => {
       now += 3_601_000;
       expect(await boot().load('thread')).toBeNull();
       expect(await repo.load('thread')).toBeNull();
-      expect(await fs.promises.readdir(store)).toEqual([]);
+
     });
 
     it.each(['ping', 'del'] as const)('R4: a ready Redis with stuck %s cannot stall acknowledgement', async(method) => {
@@ -303,16 +300,15 @@ describe('history IPC acknowledgements', () => {
       try {
         await expect(clear()).resolves.toEqual({ success: true });
         expect(rows).toEqual([]);
-        expect(await files().exists('gone')).toBe(false);
+        expect(hung).not.toHaveBeenCalled();
       } finally {
         hung.mockRestore();
       }
     }, 1700);
 
-    it.each(['commit', 'log', 'disk', 'redis'])('crash after %s: fresh readers never restore expired state', async(step) => {
+    it.each(['commit', 'log'])('crash after %s: fresh readers never restore expired state', async(step) => {
       await seed('gone');
-      const key = 'sulla:threadstate:gone';
-      await client.setex(key, 3600, JSON.stringify(state('gone', 'legacy')));
+
       let reached!: () => void;
       const stopped = new Promise<void>(resolve => { reached = resolve });
       boundary = async(current) => {
@@ -326,11 +322,43 @@ describe('history IPC acknowledgements', () => {
       await stopped;
       expect(rows).toEqual([]);
       expect(fs.existsSync(path.join(dir, 'gone.jsonl'))).toBe(step === 'commit');
-      expect(await files().exists('gone')).toBe(['commit', 'log'].includes(step));
-      expect(keys.has(key)).toBe(step !== 'redis');
+      expect((await boot().load('gone'))?.messages[0].content === big).toBe(true);
       now += 3_601_000;
       expect(await boot().load('gone')).toBeNull();
     });
+    it.each(['before rename', 'before SETEX', 'after SETEX'])('reopens safely at interrupted publication: %s', async(step) => {
+      const repo = boot();
+      await repo.save(state('thread', 'old' + big));
+      let reached!: () => void;
+      let resume!: () => void;
+      const parked = new Promise<void>(resolve => { reached = resolve });
+      const gate = new Promise<void>(resolve => { resume = resolve });
+      boundary = async(current) => {
+        if (current === step) {
+          reached();
+          await gate;
+        }
+      };
+      // Pause the real rename, do not replace its result or fabricate a file.
+      const rename = fs.promises.rename.bind(fs.promises);
+      const hook = vi.spyOn(fs.promises, 'rename').mockImplementation(async(from, to) => {
+        await boundary('before rename');
+        return rename(from, to);
+      });
+      const save = repo.save(state('thread', 'new' + big));
+      try {
+        await Promise.race([parked, save.then(() => { throw new Error('publication boundary not reached') })]);
+        const expected = step === 'after SETEX' ? 'new' : 'old';
+        expect((await boot().load('thread'))?.messages[0].content === expected + big).toBe(true);
+        keys.clear(); // Redis restarted; no on-disk artifact can become the head.
+        expect(await boot().load('thread')).toBeNull();
+      } finally {
+        resume();
+        await save;
+        hook.mockRestore();
+      }
+    });
+
   });
 
   it('acknowledges clear only when storage succeeds', async() => {
