@@ -1019,6 +1019,8 @@ export class PersonaAdapter {
         output:       toolOutputDetail(b.toolCard.output, b.toolCard.result),
         error:        b.toolCard.error ?? undefined,
         outputFormat: b.toolCard.outputFormat,
+        // Keep the backend's safe timing contract on the durable transcript row.
+        meta:         (b.toolCard as typeof b.toolCard & { meta?: ToolMessage['meta'] }).meta,
       } satisfies ToolMessage;
     }
 
