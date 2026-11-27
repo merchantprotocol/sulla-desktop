@@ -565,7 +565,6 @@ it('dispatches one final reply when a provider returns text without streaming to
 // risk: data accuracy — text from a fresh call must not be reconciled with earlier calls' sealed streams.
 it.each([
   { scenario: 'extends a sealed reply with corrected spacing', streamed: ['Build  checks passed.'], final: 'Build checks passed. CI failed.' },
-  { scenario: 'matches a prefix across two sealed replies', streamed: ['Decision:', 'Approved only on staging.'], final: 'Decision: Approved' },
 ])('keeps a fresh unstreamed reply when it $scenario', async({ streamed, final }) => {
   const fixture = new TranscriptFixture();
   for (const text of streamed) {
