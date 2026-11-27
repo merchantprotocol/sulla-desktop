@@ -134,13 +134,23 @@ const isPaused = computed(() => hovered.value || pinned.value || !documentVisibl
 const fallbackItem = computed(() => props.rootFallback
   ? queue.present({ ...props.rootFallback, role: 'root' }, props.threadId, Date.now())
   : null);
+const urgentCheckIn = computed(() => props.checkIns.slice().reverse().find(item =>
+  item.urgency === 'needs-you' || item.urgency === 'failed') ?? null);
+const displaySelection = computed(() => toolStepClock.selectDisplayItem(
+  props.threadId,
+  urgentCheckIn.value ?? currentItem.value ?? queue.current,
+  fallbackItem.value,
+  activeToolStep.value,
+));
 const displayItem = computed(() => {
-  const step = activeToolStep.value;
-  if (!step) return currentItem.value ?? fallbackItem.value;
-  const elapsed = toolStepClock.elapsedMs(step.observedAt, undefined, toolStepNow.value);
-  return { ...step, text: `${step.text} · ${toolStepClock.durationLabel(elapsed)}` };
+  const selection = displaySelection.value;
+  if (!selection.item || !selection.toolStep) return selection.item;
+  const elapsed = toolStepClock.elapsed(selection.item, toolStepNow.value);
+  return { ...selection.item, text: `${selection.item.text} · ${toolStepClock.durationLabel(elapsed)}` };
 });
-const rollupText = computed(() => activeToolStep.value ? displayItem.value?.text ?? '' : typedText.value);
+const rollupText = computed(() => displaySelection.value.toolStep || displaySelection.value.urgent
+  ? displayItem.value?.text ?? ''
+  : typedText.value);
 
 const emitShown = (item: StatusRollupItem): void => {
   emit('shown', {
@@ -224,7 +234,7 @@ const syncInput = (): void => {
     hovered.value = false;
   }
 
-  toolStepClock.observe(props.checkIns);
+  toolStepClock.observe([...props.checkIns, ...(props.rootFallback ? [props.rootFallback] : [])]);
   activeToolStep.value = toolStepClock.currentStep(props.threadId);
 
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
@@ -242,6 +252,10 @@ watch(activeToolStep, (step, _, onCleanup) => {
   toolStepNow.value = toolStepClock.nowMs;
   if (step) onCleanup(toolStepClock.subscribe(now => { toolStepNow.value = now; }));
 }, { immediate: true });
+
+watch(toolStepNow, () => {
+  activeToolStep.value = toolStepClock.currentStep(props.threadId);
+});
 
 const togglePinned = (): void => {
   pinned.value = !pinned.value;
