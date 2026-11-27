@@ -20,7 +20,10 @@ COPY --from=build /app/services/sulla-workflows/dist ./services/sulla-workflows/
 COPY services/sulla-workflows/migrations ./services/sulla-workflows/migrations
 COPY services/sulla-workflows/ui ./services/sulla-workflows/ui
 COPY services/sulla-workflows/entrypoint.sh /usr/local/bin/sulla-workflows-entrypoint
-RUN chmod 0755 /usr/local/bin/sulla-workflows-entrypoint
+# Build contexts from a umask-077 checkout carry 0600 files; the manager runs as a non-root user and must read them.
+RUN chmod 0755 /usr/local/bin/sulla-workflows-entrypoint \
+ && chmod a+r /app/services/sulla-workflows/package.json \
+ && chmod -R a+rX /app/services/sulla-workflows/migrations /app/services/sulla-workflows/ui
 WORKDIR /app/services/sulla-workflows
 EXPOSE 8788
 ENTRYPOINT ["/usr/local/bin/sulla-workflows-entrypoint"]
