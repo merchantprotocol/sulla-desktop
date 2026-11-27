@@ -297,6 +297,13 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** The native Sulla runtime VM. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
+  #clockSyncInFlight?: Promise<void>;
+  private readonly handleHostResume = () => {
+    if (!this.#sullaRuntime) return;
+    void this.synchronizeGuestClockFromHost().catch(() => {
+      console.warn('[sulla-runtime] Guest clock correction after host resume failed');
+    });
+  };
 
   private beginManagedServicesGeneration(): number {
     this.#managedServicesGeneration += 1;
@@ -468,6 +475,20 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
   }
 
+  private async synchronizeGuestClockFromHost(): Promise<void> {
+    if (!this.#sullaRuntime) throw new Error('Sulla runtime is not running');
+    if (this.#clockSyncInFlight) return this.#clockSyncInFlight;
+
+    const hostTimeSeconds = Math.floor(Date.now() / 1000);
+    const sync = this.runtimeCommand(['exec', '--', '/bin/date', '-u', '-s', `@${ hostTimeSeconds }`]).then(() => undefined);
+    this.#clockSyncInFlight = sync;
+    try {
+      await sync;
+    } finally {
+      if (this.#clockSyncInFlight === sync) this.#clockSyncInFlight = undefined;
+    }
+  }
+
   spawn(...command: string[]): childProcess.ChildProcess;
   spawn(options: execOptions, ...command: string[]): childProcess.ChildProcess;
   spawn(optionsOrCommand: string | execOptions, ...command: string[]): ChildProcess {
@@ -558,7 +579,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       console.log('[sulla-runtime] Generated new API token during CLI install');
     }
     // Usually 3000; another app on the Mac may hold it (chatCompletionsPort).
-    const { chatCompletionsPort } = await import('@pkg/main/chatCompletionsServer');
+    const { chatCompletionsPort, getChatCompletionsServer } = await import('@pkg/main/chatCompletionsServer');
+    getChatCompletionsServer().setGuestClockSyncHandler(() => this.synchronizeGuestClockFromHost());
     const port = await chatCompletionsPort();
 
     await fs.promises.mkdir(paths.appHome, { recursive: true });
@@ -575,6 +597,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
 
   async start(config_: BackendSettings): Promise<void> {
+    Electron.powerMonitor.removeListener('resume', this.handleHostResume);
+    Electron.powerMonitor.on('resume', this.handleHostResume);
     const config = this.cfg = clone(config_);
     const managedServicesGeneration = this.beginManagedServicesGeneration();
 
@@ -2251,6 +2275,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   async stop(): Promise<void> {
+    Electron.powerMonitor.removeListener('resume', this.handleHostResume);
     // When we manually call stop, the subprocess will terminate, which will
     // cause stop to get called again.  Prevent the reentrancy.
     // If we're in the middle of starting, also ignore the call to stop (from
