@@ -48,7 +48,10 @@ const DEFAULT_OPTIONS: Required<LoopProviderResolutionOptions> = {
 export class LoopProviderResolution {
   private readonly options: Required<LoopProviderResolutionOptions>;
 
-  constructor(options: LoopProviderResolutionOptions = {}) {
+  constructor(
+    options: LoopProviderResolutionOptions = {},
+    private readonly monotonicNow: () => number = () => performance.now(),
+  ) {
     this.options = { ...DEFAULT_OPTIONS, ...options, retryBackoffMs: [...(options.retryBackoffMs ?? DEFAULT_OPTIONS.retryBackoffMs)] };
   }
 
@@ -58,7 +61,7 @@ export class LoopProviderResolution {
   ): Promise<T> {
     if (externalSignal?.aborted) throw externalSignal.reason ?? new DOMException('Aborted', 'AbortError');
 
-    const deadline = performance.now() + this.options.timeoutMs;
+    const deadline = this.monotonicNow() + this.options.timeoutMs;
     let activeStage = 'provider selection';
     let currentAttempt = 0;
     let activeController: AbortController | undefined;
@@ -67,11 +70,17 @@ export class LoopProviderResolution {
     let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
     const deadlineFailure = new Promise<never>((_resolve, reject) => {
-      timeoutTimer = setTimeout(() => {
+      const enforceDeadline = () => {
+        const remaining = deadline - this.monotonicNow();
+        if (remaining > 0) {
+          timeoutTimer = setTimeout(enforceDeadline, remaining);
+          return;
+        }
         expired = true;
         activeController?.abort();
         reject(new LoopProviderResolutionError(activeStage, Math.max(currentAttempt, 1), this.options.timeoutMs, true));
-      }, this.options.timeoutMs);
+      };
+      timeoutTimer = setTimeout(enforceDeadline, this.options.timeoutMs);
     });
     const abortFailure = new Promise<never>((_resolve, reject) => { rejectAbort = reject });
     const abort = () => {
@@ -111,7 +120,7 @@ export class LoopProviderResolution {
       if (externalSignal?.aborted) throw externalSignal.reason ?? new DOMException('Aborted', 'AbortError');
 
       attemptsUsed = attempt;
-      const attemptStarted = performance.now();
+      const attemptStarted = this.monotonicNow();
       const attemptDeadline = Math.min(deadline, attemptStarted + this.options.attemptTimeoutMs);
       const controller = new AbortController();
       const forwardAbort = () => controller.abort(externalSignal?.reason);
@@ -127,11 +136,11 @@ export class LoopProviderResolution {
               currentStage = name;
               lastStage = name;
               setActive(controller, attempt, name);
-              return this.withTimeout(work, name, Math.min(deadline, attemptDeadline) - performance.now());
+              return this.withTimeout(work, name, Math.min(deadline, attemptDeadline) - this.monotonicNow());
             },
           }),
           () => currentStage,
-          attemptDeadline - performance.now(),
+          attemptDeadline - this.monotonicNow(),
         );
       } catch (error) {
         if (isExpired() || externalSignal?.aborted) throw error;
@@ -139,10 +148,10 @@ export class LoopProviderResolution {
         lastTimedOut = error instanceof LoopProviderStageTimeoutError;
         controller.abort();
 
-        const remaining = deadline - performance.now();
+        const remaining = deadline - this.monotonicNow();
         if (attempt >= this.options.maxAttempts || remaining <= 0) break;
         const backoffMs = Math.min(this.options.retryBackoffMs[attempt - 1] ?? 0, remaining);
-        console.warn(`[LoopProviderResolution] retry stage=${ lastStage } attempt=${ attempt }/${ this.options.maxAttempts } elapsedMs=${ Math.round(performance.now() - attemptStarted) }`);
+        console.warn(`[LoopProviderResolution] retry stage=${ lastStage } attempt=${ attempt }/${ this.options.maxAttempts } elapsedMs=${ Math.round(this.monotonicNow() - attemptStarted) }`);
         if (backoffMs > 0) await new Promise<void>(resolveDelay => setTimeout(resolveDelay, backoffMs));
       } finally {
         externalSignal?.removeEventListener('abort', forwardAbort);
@@ -155,12 +164,21 @@ export class LoopProviderResolution {
   private async withTimeout<T>(work: () => Promise<T>, stage: string | (() => string), timeoutMs: number): Promise<T> {
     const stageName = typeof stage === 'function' ? stage() : stage;
     if (timeoutMs <= 0) throw new LoopProviderStageTimeoutError(stageName);
+    const deadline = this.monotonicNow() + timeoutMs;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
         Promise.resolve().then(work),
         new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new LoopProviderStageTimeoutError(typeof stage === 'function' ? stage() : stage)), timeoutMs);
+          const enforceDeadline = () => {
+            const remaining = deadline - this.monotonicNow();
+            if (remaining > 0) {
+              timer = setTimeout(enforceDeadline, remaining);
+              return;
+            }
+            reject(new LoopProviderStageTimeoutError(typeof stage === 'function' ? stage() : stage));
+          };
+          timer = setTimeout(enforceDeadline, timeoutMs);
         }),
       ]);
     } finally {
