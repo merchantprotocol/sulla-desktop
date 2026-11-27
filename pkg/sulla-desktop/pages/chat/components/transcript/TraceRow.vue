@@ -156,7 +156,11 @@ const agentMeta = computed(() => {
 const rowNow = ref(toolStepClock.nowMs);
 const ticking = computed(() => {
   const agent = props.row.subagent;
-  if (props.row.kind === 'tool') return props.row.toolStep?.endedAt === undefined && props.row.toolStep !== undefined;
+  if (props.row.kind === 'tool') {
+    const step = props.row.toolStep;
+    return props.row.status === 'running' && step?.endedAt === undefined && step !== undefined &&
+      !toolStepClock.isPastCeiling(step.startedAt, rowNow.value);
+  }
   // Time since launch for every unsettled state; total run time once it ends.
   return agent?.startedAt !== undefined && agent.endedAt === undefined &&
     !['returned', 'failed', 'stopped'].includes(props.row.status);
