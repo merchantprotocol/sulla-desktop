@@ -10,6 +10,7 @@ import { SubAgentTraceProjection, type SubAgentTraceInput } from './SubAgentTrac
 import { TracePayload, TracePayloadSerializer } from './TracePayloadSerializer';
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
 import { ToolPayloadRepository } from '../../services/ToolPayloadRepository';
+import { ToolStepClock } from './ToolStepClock';
 import type { SubAgentTraceStatus, TraceIcon, TraceRow, TraceRowKind, TraceRowStatus, TraceTurn } from './traceTypes';
 
 /** Pure renderer-facing projection. It only reads messages and never annotates them. */
@@ -22,6 +23,7 @@ export class DetailedTraceProjection {
     private readonly subagents = new SubAgentTraceProjection(),
     private readonly toolPayloads = new ToolPayloadRepository(),
     private readonly agentMessages = new A2aCardMarkup(),
+    private readonly toolSteps = new ToolStepClock(),
   ) {}
 
   project(messages: readonly Message[], standardEntries: readonly TranscriptEntry[], subagentInput: SubAgentTraceInput = {}): TraceTurn[] {
@@ -106,7 +108,11 @@ export class DetailedTraceProjection {
     // Don't render their legacy formatter summaries as a second trace item.
     const hasRecordedToolRow = message.kind === 'tool' ||
       (message.kind === 'thinking' && message.reportingActivity === 'tool' && !message.chatToolActivity);
-    const rows = (hasRecordedToolRow ? [] : activities ?? []).map((text, index) => this.row(`${message.id}:activity:${index}`, 'activity', 'Status', text, 'ok', anchor, message.createdAt));
+    const toolActivity = message.kind === 'thinking' && (message.chatToolActivity !== undefined || message.reportingActivity === 'tool');
+    const rows = (hasRecordedToolRow ? [] : activities ?? []).map((text, index) => {
+      const target = toolActivity ? this.toolSteps.safeLabel(undefined, text) : text;
+      return this.row(`${message.id}:activity:${index}`, 'activity', 'Status', target, 'ok', anchor, message.createdAt);
+    });
     let projected: TraceRow[];
     switch (message.kind) {
       case 'thinking': projected = rows.concat(this.rowsForThinking(message, anchor)); break;
@@ -146,8 +152,13 @@ export class DetailedTraceProjection {
   }
 
   private rowsForTool(message: ToolMessage, anchor: string): TraceRow[] {
-    const status: TraceRowStatus = message.status === 'error' ? 'failed' : message.status === 'running' ? 'running' : 'ok';
-    const target = message.recordedToolName ?? message.tool;
+    const step = this.toolSteps.step(message.meta);
+    const status: TraceRowStatus = step?.endedAt === undefined && step ? 'running'
+      : step?.ok !== undefined ? step.ok ? 'ok' : 'failed'
+        : message.status === 'error' ? 'failed'
+          : message.status === 'running' ? 'running' : 'ok';
+    const toolName = message.recordedToolName ?? message.tool;
+    const target = this.toolSteps.safeLabel(message.meta, toolName);
     const { input, output, error, desc, meta } = message;
     const payload = new TracePayload([target, message.status, input, output, error, desc, meta, message.toolPayloadRef], () =>
       this.serializer.serialize({ tool: target, status: message.status, input, output, error, description: desc, meta }),
@@ -157,17 +168,12 @@ export class DetailedTraceProjection {
         if (!Object.prototype.hasOwnProperty.call(stored, 'result')) throw new Error('The conversation log entry has no complete tool result.');
         return { tool: target, status: message.status, input, output: stored.result, error: typeof stored.error === 'string' ? stored.error : error, description: desc, meta };
       } : undefined);
-    const shell = this.shellCommand(message);
-    if (shell) {
-      // "Ran <command>  <tool> · exit N": the real tool name stays on the line (no-redaction rule).
-      const args = [target, this.exitCode(meta, output)].filter(Boolean).join(' · ');
-      return [{ ...this.row(message.id, 'tool', status === 'running' ? 'Running' : 'Ran', shell, status,
-         anchor, message.createdAt, this.duration(meta), args, payload), icon: this.toolIcon(target),
-        // Keep the recorded command byte-for-byte; visual clipping belongs in CSS.
-        target: shell, targetIsCode: true }];
-    }
-    return [{ ...this.row(message.id, 'tool', status === 'running' ? 'Calling' : 'Used', target, status,
-      anchor, message.createdAt, this.duration(meta), input, payload), icon: this.toolIcon(target) }];
+    const duration = step?.endedAt !== undefined
+      ? this.toolSteps.durationLabel(this.toolSteps.elapsedMs(step.startedAt, step.endedAt))
+      : step ? undefined : this.duration(meta);
+    const row = this.row(message.id, 'tool', status === 'running' ? 'Running' : 'Ran', target, status,
+      anchor, step?.startedAt ?? message.createdAt, duration, this.exitCode(meta, output), payload);
+    return [this.toolSteps.attachStep({ ...row, icon: this.toolIcon(toolName) }, step)];
   }
 
   private rowsForMemory(message: MemoryMessage, anchor: string): TraceRow[] {
@@ -223,34 +229,21 @@ export class DetailedTraceProjection {
     return 'shell';
   }
 
-  /** The full command of a shell tool call, or undefined for any other tool. */
-  private shellCommand(message: ToolMessage): string | undefined {
-    const name = message.recordedToolName ?? message.tool;
-    if (message.tool !== 'Bash' && !/^(?:bash|exec|exechost|(?:meta\/)?exec(?:host)?)$/i.test(name)) return undefined;
-    const input = message.input?.trim();
-    if (!input) return undefined;
-    try {
-      const parsed = JSON.parse(input) as { command?: unknown };
-      return typeof parsed?.command === 'string' && parsed.command ? parsed.command : undefined;
-    } catch {
-      return input;
-    }
-  }
-
   /**
    * The exit code the tool actually recorded: meta like "exit 2" first, then the
    * output exec ("Command failed with exit code N:") or exechost ("Command exited N:")
    * writes. No recorded code means none is shown; a successful call is never given
    * a made-up "exit 0".
    */
-  private exitCode(meta?: string, output?: string): string | undefined {
-    const code = meta?.match(/\bexit(?:\s+code)?\s*:?\s*(-?\d+)/i)?.[1] ??
+  private exitCode(meta?: ToolMessage['meta'], output?: string): string | undefined {
+    const legacyMeta = typeof meta === 'string' ? meta : undefined;
+    const code = legacyMeta?.match(/\bexit(?:\s+code)?\s*:?\s*(-?\d+)/i)?.[1] ??
       output?.match(/\b(?:exit(?:ed)?(?:\s+code)?)\s*:?\s*(-?\d+)/i)?.[1];
     return code !== undefined ? `exit ${ code }` : undefined;
   }
 
-  private duration(meta?: string): string | undefined {
-    return meta?.match(/\b\d+(?:\.\d+)?\s*(?:ms|s)\b/i)?.[0];
+  private duration(meta?: ToolMessage['meta']): string | undefined {
+    return typeof meta === 'string' ? meta.match(/\b\d+(?:\.\d+)?\s*(?:ms|s)\b/i)?.[0] : undefined;
   }
 
   private usage(group: readonly Message[]): TraceTurn['usage'] | undefined {
