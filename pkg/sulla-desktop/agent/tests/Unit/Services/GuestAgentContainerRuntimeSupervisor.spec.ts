@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ default: { app: { getVersion: () => 'test' } } }));
 import type { ContainerRuntimeDriver } from '@pkg/runtime/containerRuntime';
 import { GuestAgentContainerRuntimeSupervisor } from '../../../services/AgentContainerLauncher';
+import { AgentContainerRuntimeRegistry } from '../../../services/AgentContainerRuntimeRegistry';
 
 const runtime = (inspect: ContainerRuntimeDriver['inspect']): ContainerRuntimeDriver => ({
   list: vi.fn(async() => [{ ID: 'pod-1', Names: 'pod-1' }]), inspect,
@@ -27,6 +28,34 @@ describe('GuestAgentContainerRuntimeSupervisor', () => {
     await expect(new GuestAgentContainerRuntimeSupervisor(runtime(async() => { throw new Error('docker unavailable') })).liveBindings()).rejects.toThrow('docker unavailable');
     const hanging = new GuestAgentContainerRuntimeSupervisor(runtime(() => new Promise(() => undefined)), undefined, 5);
     await expect(hanging.liveBindings()).rejects.toThrow('timed out');
+  });
+});
+
+describe('AgentContainerRuntimeRegistry restart ownership', () => {
+  const binding = {
+    podId: 'pod-1', subject: 'subject-1', jobId: 'job-1', taskIndex: 0,
+    threadId: 'thread-1', deviceId: 'device-1', workspacePath: '/work',
+  } as any;
+
+  it('retains Docker inventory for cleanup without treating its dead Desktop bridge as live', async() => {
+    // risk: a container survives a force-quit, suppresses restart recovery, and keeps running
+    // without the MCP session, provider bridge, or capability-renewal owner that authorized it.
+    const registry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [{ ...binding, origin: 'inventory' }] });
+    await registry.rehydrate();
+
+    expect(registry.probe('job-1', 'thread-1')).toBe(true);
+    expect(registry.probe('job-1', 'thread-1', 'desktop')).toBe(false);
+    expect(registry.snapshot()).toMatchObject({ ready: true, bindings: [expect.objectContaining({ origin: 'inventory' })] });
+  });
+
+  it('becomes live only after the current Desktop process owns the runtime binding', async() => {
+    const registry = new AgentContainerRuntimeRegistry({ liveBindings: async() => [{ ...binding, origin: 'inventory' }] });
+    await registry.rehydrate();
+    const unregister = registry.register(binding);
+
+    expect(registry.probe('job-1', 'thread-1', 'desktop')).toBe(true);
+    unregister();
+    expect(registry.probe('job-1', 'thread-1', 'desktop')).toBe(false);
   });
 });
 

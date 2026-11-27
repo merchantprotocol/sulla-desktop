@@ -35,6 +35,8 @@ export default defineConfig({
   plugins: [new VueSfcTestPlugin()],
   resolve: {
     alias: [
+      // Webpack raw-loads scripts by path; Vitest needs Vite's raw-text loader.
+      { find: /^@pkg\/assets\/scripts\/([^?]+)$/, replacement: path.join(root, 'pkg/sulla-desktop/assets/scripts/$1') + '?raw' },
       { find: /^@pkg\/(.*)$/, replacement: path.join(root, 'pkg/sulla-desktop/$1') },
       { find: '@sulla/vault-crypto', replacement: path.join(root, 'packages/vault-crypto/src/index.ts') },
     ],

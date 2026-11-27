@@ -8,6 +8,10 @@ import crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import seedBroker from '@pkg/assets/scripts/stable-seed-broker.py';
+import seedGitlinks from '@pkg/assets/scripts/stable-seed-gitlinks.py';
+import seedPublisher from '@pkg/assets/scripts/stable-seed-publisher.py';
+import seedReader from '@pkg/assets/scripts/stable-seed-reader.py';
 import { sullaRuntimeGuestUser } from '@pkg/backend/sullaRuntime/state';
 import paths from '@pkg/utils/paths';
 
@@ -24,6 +28,7 @@ const GUEST_PATH_ROOTS = [GUEST_RUNTIME_ROOT, '/dev/shm/sulla-agent-secrets'];
 const CAPTURE_LIMIT = 64 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
 const TRANSFER_TIMEOUT_MS = 5 * 60_000;
+const WORKSPACE_DISK_RESERVE_KIB = 1024 * 1024;
 
 export interface GuestRuntimeIdentity {
   uid: number;
@@ -160,12 +165,14 @@ export async function ensureGuestRuntimeDirectories(parent: string, relativeName
     [
       'set -eu', 'umask 077',
       'parent="$1"; uid="$2"; gid="$3"; root="$4"; shift 4',
+      '[ "$(realpath -m "$parent")" = "$parent" ]',
       'sudo install -d -m 0700 -o "$uid" -g "$gid" "$parent"',
       '[ "$(realpath "$parent")" = "$parent" ]',
       'case "$parent" in "$root"|"$root"/*) ;; *) exit 73;; esac',
       [
         'for target; do',
         'case "$target" in "$parent"/*) ;; *) exit 73;; esac',
+        '[ "$(realpath -m "$target")" = "$target" ]',
         'sudo install -d -m 0700 -o "$uid" -g "$gid" "$target"',
         '[ "$(realpath "$target")" = "$target" ]',
         '[ "$(stat -c %u:%g "$target")" = "$uid:$gid" ]',
@@ -175,6 +182,71 @@ export async function ensureGuestRuntimeDirectories(parent: string, relativeName
     'sulla-stable-guest-mkdirs', boundedParent, String(uid), String(gid), GUEST_RUNTIME_ROOT, ...targets,
   ]);
   return targets;
+}
+
+/** Prepare the private scratch directory without changing an existing worktree root. */
+export async function ensureGuestWorktreeDirectories(identity: GuestRuntimeIdentity): Promise<void> {
+  if (![identity.uid, identity.gid].every(value => Number.isSafeInteger(value) && value >= 0)) {
+    throw new Error('Invalid guest worktree ownership');
+  }
+  await runGuest([
+    'python3', '-c',
+    [
+      'import os, stat, sys',
+      'root, uid, gid = sys.argv[1:]',
+      'uid, gid = int(uid), int(gid)',
+      'try: os.mkdir(root, 0o755)',
+      'except FileExistsError: pass',
+      'flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW',
+      'root_fd = os.open(root, flags)',
+      'try: os.mkdir("_scratch", 0o700, dir_fd=root_fd)',
+      'except FileExistsError: pass',
+      'scratch_fd = os.open("_scratch", flags, dir_fd=root_fd)',
+      'info = os.fstat(scratch_fd)',
+      'if (info.st_uid, info.st_gid) != (uid, gid): os.fchown(scratch_fd, uid, gid)',
+      'if stat.S_IMODE(info.st_mode) != 0o700: os.fchmod(scratch_fd, 0o700)',
+    ].join('\n'), '/mnt/worktrees', String(identity.uid), String(identity.gid),
+  ]);
+}
+
+interface StableSeedRuntime {
+  image: string;
+  identity?: () => Promise<GuestRuntimeIdentity>;
+}
+
+async function configuredSeedIdentity(): Promise<GuestRuntimeIdentity> {
+  const login = sullaRuntimeGuestUser();
+  if (!login?.name || !Number.isSafeInteger(login.uid) || login.uid <= 0) throw new Error('Missing guest seed identity');
+  const identity = await getGuestRuntimeIdentity();
+  if (identity.uid !== login.uid) throw new Error('Guest seed identity does not match the configured account');
+  return identity;
+}
+
+/**
+ * Initialize a stable conversation workspace from a clean VM worktree once.
+ * The marker lives inside .git, so it never dirties the worker checkout. The
+ * staged clone and marker move into place together; a crash cannot publish a
+ * half-cloned workspace as resumable.
+ */
+export async function seedGitWorktreeIntoStableGuest(source: string, target: string, existingJobKey: string | undefined, runtime: StableSeedRuntime): Promise<string> {
+  const identity = await (runtime.identity ?? configuredSeedIdentity)();
+  if (![identity?.uid, identity?.gid].every(id => Number.isSafeInteger(id) && id > 0)) throw new Error('Invalid guest seed identity');
+  if (!runtime.image || runtime.image.startsWith('-')) throw new Error('Missing trusted seed image');
+  if (/[\r\n\0]/.test(source)) throw new Error('Invalid stable seed path');
+  const normalizedSource = path.posix.resolve(source);
+  if (normalizedSource !== '/mnt/worktrees' && !normalizedSource.startsWith('/mnt/worktrees/')) {
+    throw new Error('Container workspacePath must be an existing worktree under /mnt/worktrees');
+  }
+  const boundedTarget = assertGuestPath(target, [GUEST_CONVERSATIONS_ROOT]);
+  if (existingJobKey && !/^[a-zA-Z0-9_.-]+$/.test(existingJobKey)) throw new Error('Invalid existing worktree job key');
+  const workspace = await runGuest([
+    '/usr/bin/python3', '-IS', '-c', seedGitlinks + '\n' + seedBroker, normalizedSource, boundedTarget, GUEST_CONVERSATIONS_ROOT,
+    GUEST_AGENT_WORKSPACES_ROOT, '/mnt/data/.sulla-stable-seed', String(identity.uid), String(identity.gid),
+    runtime.image, String(WORKSPACE_DISK_RESERVE_KIB), existingJobKey ?? '', seedReader + '\n' + seedPublisher,
+  ], undefined, TRANSFER_TIMEOUT_MS);
+  if (workspace === boundedTarget) return workspace;
+  if (!existingJobKey || path.posix.dirname(workspace) !== GUEST_AGENT_WORKSPACES_ROOT) throw new Error('Invalid retained workspace');
+  return assertGuestPath(workspace, [GUEST_AGENT_WORKSPACES_ROOT]);
 }
 
 export async function writeGuestFileAtomic(target: string, data: string | Buffer, mode = 0o600): Promise<void> {

@@ -53,12 +53,12 @@ export class ParkedAgentRehydrator {
    * this task from rehydration (or vice versa — a sibling parking must not
    * stop a still-running task from being recognised as recovered).
    */
-  async resolve(threadId: string): Promise<ParkedAgentIdentity | null> {
+  async resolve(threadId: string, deliveringDecision = false): Promise<ParkedAgentIdentity | null> {
     const job = await this.jobs.findByTaskThread(threadId);
     if (!job || ['stopped', 'failed', 'completed'].includes(job.status)) return null;
     const taskIndex = job.tasks.findIndex(task => task.threadId === threadId);
     const task = job.tasks[taskIndex];
-    if (!task || (task.status !== 'parked' && !(task.status === 'running' && Number(job.restartResumeCount) > 0))) return null;
+    if (!task || (task.status !== 'parked' && !(task.status === 'running' && (deliveringDecision || Number(job.restartResumeCount) > 0)))) return null;
     const agentId = String(task.agentId || job.parentAgentId || '').trim();
     const definition = agentId ? await this.definitions.findBySlug(agentId) : null;
     if (!agentId || !definition || !definition.enabled || definition.status === 'archive') {
@@ -88,10 +88,16 @@ export class ParkedAgentRehydrator {
   apply(state: any, identity: ParkedAgentIdentity): void {
     const precedence = identity.modelPrecedence;
     installWorkerRoute(state, precedence.workerModelRoute, { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation });
+    // The graph is recreated with the saved persona, but the restored state can
+    // still carry the parent chat channel as its legacy identity. Keep the
+    // durable task identity explicit so container labels, capabilities, Files
+    // actors, and audit records do not silently fall back to `sulla-desktop`.
+    state.metadata.agentId = identity.agentId;
     state.metadata.isSubAgent = true;
     state.metadata.modelSlot = 'primary';
     state.metadata.subAgentDepth = Number(identity.task.depth) || 1;
     state.metadata.delegatedJobId = identity.job.jobId;
+    state.metadata.delegatedTaskIndex = identity.taskIndex;
     state.metadata.modelDecisionTask = { jobId: identity.job.jobId, taskIndex: identity.taskIndex, generation: identity.task.generation ?? 1, threadId: identity.task.threadId };
     state.metadata.modelDecision = identity.task.modelDecision ?? { requested: precedence.requested, ran: null, step: precedence.step, ...(precedence.reason ? { reason: precedence.reason } : {}) };
     if (identity.task.modelOverride) state.metadata.modelOverride = identity.task.modelOverride;
