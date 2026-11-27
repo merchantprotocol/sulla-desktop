@@ -13,7 +13,7 @@ import DecisionsPanel from '@pkg/pages/chat/components/sidedock/DecisionsPanel.v
 import SideDock from '@pkg/pages/chat/components/sidedock/SideDock.vue';
 import { DOCK_POSITION_KEY, DockPositions, SIDE_RATIO_DEFAULT, SIDE_RATIO_KEY } from '@pkg/pages/chat/composables/useDockPosition';
 import { ChatControllerKey } from '@pkg/pages/chat/controller/useChatController';
-import { activityBins, ActivityTrail, chatDecisions, ciStateOf, groupResults, laneStep } from '@pkg/pages/chat/messages/sideDock';
+import { ActivityBinProjector, ActivityTrail, chatDecisions, ciStateOf, groupResults, laneStep } from '@pkg/pages/chat/messages/sideDock';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_channel: string): Promise<unknown> => Promise.resolve([])) }));
@@ -265,11 +265,23 @@ describe('the lane step and activity meter', () => {
     // risk: a 40-character commit hash filled the lane's step line
     expect(laneStep(row('j:0', 'working', { lastCheckinSummary: 'Pushed fix commit bb3f01443952aea49f2eff28109f09d6a7954975 to the branch' }), NOW)).toBe('Pushed fix commit bb3f014 to the branch');
     const trail = new ActivityTrail();
-    trail.record([row('j:0', 'working', { lastActivityAt: new Date(NOW - 30_000).toISOString() })], NOW);
-    trail.record([row('j:0', 'working', { lastActivityAt: new Date(NOW - 30_000).toISOString() })], NOW);
-    expect(trail.times('j:0')).toHaveLength(1);
-    expect(activityBins(trail.times('j:0'), NOW).reduce((a, b) => a + b, 0)).toBe(1);
-    expect(activityBins([], NOW).every(n => n === 0)).toBe(true);
+    const binProjector = new ActivityBinProjector();
+    const activityRow = row('j:0', 'working', { actionCount: 0 });
+    trail.record([activityRow], NOW - 50_000);
+    activityRow.actionCount = 4;
+    trail.record([activityRow], NOW - 25_000);
+    activityRow.lastActivityAt = new Date(NOW - 1_000).toISOString();
+    trail.record([activityRow], NOW - 10_000);
+    activityRow.actionCount = 7;
+    trail.record([activityRow], NOW);
+    trail.record([activityRow], NOW);
+    const samples = trail.samples('j:0');
+    const bins = binProjector.values(samples, NOW);
+    expect(samples.map(sample => sample.count)).toEqual([4, 3]);
+    expect(bins[22]).toBe(4);
+    expect(bins[23]).toBe(3);
+    expect(bins.reduce((a, b) => a + b, 0)).toBe(7);
+    expect(binProjector.values([], NOW).every(n => n === 0)).toBe(true);
   });
 });
 
