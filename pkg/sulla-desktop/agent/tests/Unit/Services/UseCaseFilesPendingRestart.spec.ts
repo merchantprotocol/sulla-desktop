@@ -57,7 +57,7 @@ const SCHEMA = `
     soul_content TEXT NOT NULL DEFAULT '', allowed_tools TEXT[] NOT NULL DEFAULT '{}', skill_refs TEXT[] NOT NULL DEFAULT '{}', routine_refs TEXT[] NOT NULL DEFAULT '{}',
     model_priority JSONB NOT NULL DEFAULT '[]'::jsonb, version TEXT, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','production','archive')),
     enabled BOOLEAN NOT NULL DEFAULT TRUE, config JSONB NOT NULL DEFAULT '{}'::jsonb, prompt_content TEXT NOT NULL DEFAULT '', goals_content TEXT NOT NULL DEFAULT '',
-    prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb, provider TEXT, model TEXT, model_slot TEXT,
+    prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb, provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB, agent_awareness BOOLEAN NOT NULL DEFAULT TRUE,
     source_kind TEXT NOT NULL DEFAULT 'local' CHECK (source_kind IN ('local','filesystem-import','marketplace')),
     when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '', send TEXT NOT NULL DEFAULT '', returns TEXT NOT NULL DEFAULT '',
     cost_tier TEXT CHECK (cost_tier IS NULL OR cost_tier IN ('low','medium','high')), can_call TEXT[] NOT NULL DEFAULT '{}', front_door BOOLEAN,
@@ -82,6 +82,7 @@ async function files(endpoint: string, init: RequestInit = {}): Promise<Response
   if (endpoint === '/v1/local/system-areas') return Response.json([{ id: 'home', systemArea: 'sulla' }]);
   if (endpoint.startsWith('/v1/files?')) return Response.json([{ id: FILE, path: ROOT_PATH, published_version_id: version }]);
   if (endpoint.startsWith('/v1/files/publish-requests?')) return Response.json({ requests: approved ? [{ file_id: FILE, version_id: version, status: 'approved', path: ROOT_PATH }] : [] });
+  if (endpoint === `/v1/files/${ FILE }`) return Response.json({ id: FILE, path: ROOT_PATH, published_version_id: version });
   if (endpoint.startsWith(`/v1/files/${ FILE }/preview`)) return new Response(MANIFEST, { status: 200 });
   if (endpoint === '/v1/local/system-areas/audit') { audits.push(String(init.body ?? '')); return Response.json({ ok: true }) }
   return Response.json({ error: `unexpected ${ endpoint }` }, { status: 500 });
@@ -99,6 +100,7 @@ beforeEach(async() => {
   await f.db.exec(SCHEMA);
   f.settings.clear(); f.failSettingsWrites = 0; f.beforeTransaction = undefined; approved = true; version = V1; audits = []; MANIFEST = manifestFor('grok-4.7');
   vi.spyOn(workerModelRouting, 'validateSubscriptionCandidates').mockResolvedValue({ grok: 'grok-oauth-account' });
+  vi.spyOn(workerModelRouting, 'subscriptionConnections').mockResolvedValue({ grok: 'grok-oauth-account' });
   // Definition lookup for new routes reads the same SQL rows.
   vi.spyOn(agentDefinitionService, 'findBySlug').mockImplementation(async(slug: string) => (await f.db.query('SELECT * FROM agent_definitions WHERE slug=$1', [slug])).rows[0] ?? null);
 });

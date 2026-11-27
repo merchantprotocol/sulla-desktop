@@ -96,6 +96,12 @@ export class ParkedAgentRehydrator {
     state.metadata.modelDecision = identity.task.modelDecision ?? { requested: precedence.requested, ran: null, step: precedence.step, ...(precedence.reason ? { reason: precedence.reason } : {}) };
     if (identity.task.modelOverride) state.metadata.modelOverride = identity.task.modelOverride;
     else delete state.metadata.modelOverride;
+    if (identity.task.inheritedModel && !precedence.workerModelRoute && precedence.step !== 'override') state.metadata.inheritedResumeModel = { ...identity.task.inheritedModel };
+    else delete state.metadata.inheritedResumeModel;
+    state.metadata.agentId = identity.agentId;
+    state.metadata.delegatedGeneration = identity.task.generation ?? 1;
+    state.metadata.delegatedTaskIndex = identity.taskIndex;
+    state.metadata.productOwnerWorkflowStep = identity.task.workflowStep;
     state.metadata.workflowParentChannel = identity.job.parentChannel;
     state.metadata.delegatedRunActive = false;
     const persistenceKey = delegatedContainerPersistenceKey(identity);

@@ -32,7 +32,7 @@
  * stores: the model category policy rewrites provider/model/model_slot/
  * model_priority and config.modelChoice, so those are left out and the agent's
  * model choice survives a refresh. Rows that still carry an older 'sha256:'
- * hash of the raw bundle are never refreshed or front-door filled: one that
+ * hash of the raw bundle are refreshed only for exact, known shipped predecessors and are never front-door filled: one that
  * already equals the current bundle only has its hash re-stamped, and any other
  * stays exactly as it is, so existing instructions are not upgraded behind the
  * user's back. Status and enabled always stay the human's.
@@ -43,6 +43,7 @@
  * Non-fatal by contract: callers wrap it; a failure re-seeds next boot.
  */
 
+import { BUILTIN_AGENT_RENAMES } from '../../shared/agentJobNames';
 import os from 'node:os';
 
 import {
@@ -51,6 +52,7 @@ import {
   getBuiltinAgentSpecs,
   getRetiredBuiltinSlugs,
   BuiltinAgentHasher,
+  matchesKnownLegacyRoutingPrompt,
   readGitIdentity,
   RETIRED_CODING_MANAGER_SLUGS,
   RETIRED_OBSERVATION_AGENT_SLUGS,
@@ -165,6 +167,29 @@ export function decideBuiltinSeedAction(
   return hasFill ? { kind: 'fill-cards', patch: fill } : { kind: 'kept' };
 }
 
+/** Update only the old shipped identity phrases, keeping the user's adjoining prose. */
+function legacyAdvisorIdentityPatch(row: AgentDefinition): AgentDefinitionPatch | undefined {
+  if (!row.is_builtin || (row.slug !== 'advisor' && row.slug !== 'opus-worker')) return undefined;
+  const prompt = (text: string) => text
+    .replace('You are the **Opus Worker** — a high-capability Claude agent running in your Preferences model slot spawned by the primary Sulla agent.',
+      'You are **Advisor**, a specialist in deep analysis, architecture, and hard debugging. Use the model routing configured for this handoff.')
+    .replace('you are Opus. Use the depth.', 'give hard problems the time and evidence they need.');
+  const goals = (text: string) => text.replace('# Opus Worker — Goals', '# Advisor — Goals').replace('benefits from Opus depth', 'benefits from deeper analysis');
+  const patch: AgentDefinitionPatch = {};
+  const description = row.description.replace(
+    'High-capability Claude worker for complex reasoning, deep analysis, multi-step research, architecture, and hard debugging. Routes through claude-code with its Preferences model slot',
+    'Advisor for complex reasoning, deep analysis, multi-step research, architecture, and hard debugging');
+  if (description !== row.description) patch.description = description;
+  if (prompt(row.prompt_content) !== row.prompt_content) patch.promptContent = prompt(row.prompt_content);
+  if (prompt(row.system_prompt) !== row.system_prompt) patch.systemPrompt = prompt(row.system_prompt);
+  if (goals(row.goals_content) !== row.goals_content) patch.goalsContent = goals(row.goals_content);
+  const promptFiles = { ...row.prompt_files };
+  if (typeof promptFiles['prompt.md'] === 'string') promptFiles['prompt.md'] = prompt(promptFiles['prompt.md']);
+  if (typeof promptFiles['goals.md'] === 'string') promptFiles['goals.md'] = goals(promptFiles['goals.md']);
+  if (promptFiles['prompt.md'] !== row.prompt_files['prompt.md'] || promptFiles['goals.md'] !== row.prompt_files['goals.md']) patch.promptFiles = promptFiles;
+  return Object.keys(patch).length ? patch : undefined;
+}
+
 function contentPatch(content: BuiltinManagedContent, bundleHash: string): AgentDefinitionPatch {
   return {
     name:          content.name,
@@ -224,13 +249,28 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
   const home = os.homedir();
   const git = readGitIdentity(home);
 
-  for (const spec of specs) {
+  const collisions = new Map<string, string>();
+  for (const [previous, slug] of BUILTIN_AGENT_RENAMES) {
+    if (!specs.some(spec => spec.slug === slug)) continue;
+    const existing = await AgentDefinitionModel.findBySlug(slug);
+    if (existing && !existing.is_builtin) collisions.set(slug, previous);
+    if (!existing && (await AgentDefinitionModel.findExactBySlug(previous))?.is_builtin) collisions.set(slug, previous);
+  }
+
+  for (const bundled of specs) {
+    const slug = collisions.get(bundled.slug) ?? bundled.slug;
+    const spec = { ...bundled, slug,
+      ...(bundled.card ? { card: { ...bundled.card, canCall: bundled.card.canCall?.map(callee => collisions.get(callee) ?? callee) } } : {}),
+    };
     try {
       if (isRetiredCodingManagerSlug(spec.slug)) continue;
       const content = renderBuiltinAgent(spec, home, git);
       const bundleHash = BuiltinAgentHasher.hashManagedContent(content);
       const row = await AgentDefinitionModel.findBySlug(spec.slug);
-      const action = decideBuiltinSeedAction(content, row, seen.has(spec.slug));
+      const decision = decideBuiltinSeedAction(content, row, seen.has(spec.slug));
+      const action: BuiltinSeedAction = decision.kind === 'kept' && row && !(row.use_case_file_id && row.use_case_version_id) && row.agent_awareness === content.agent_awareness && matchesKnownLegacyRoutingPrompt(row, home, git)
+        ? { kind: 'refresh' }
+        : decision;
 
       switch (action.kind) {
       case 'insert':
@@ -265,7 +305,12 @@ export async function seedBuiltinAgents(specs: BuiltinAgentSpec[] = getBuiltinAg
         if (await AgentDefinitionModel.update(row!.id, action.patch, row!.updated_at)) summary.filled++;
         else summary.kept++;
         break;
-      case 'kept': summary.kept++; break;
+      case 'kept': {
+        const identity = row && !(row.use_case_file_id && row.use_case_version_id) && legacyAdvisorIdentityPatch(row);
+        if (identity) await AgentDefinitionModel.update(row!.id, identity, row!.updated_at);
+        summary.kept++;
+        break;
+      }
       case 'unchanged': summary.unchanged++; break;
       case 'deleted-by-human': summary.skipped++; break;
       }
