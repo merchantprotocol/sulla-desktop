@@ -13,6 +13,7 @@ import express, { Request, Response, NextFunction } from 'express';
 
 import { getMCPServerHost } from './MCPServerHost';
 import { ChatToolRequestSecurity } from './ChatToolRequestSecurity';
+import { HostRuntimeClockSyncEndpoint } from './runtimeClockSync';
 import { apiRequestTokenIsValid, sessionAllowsTool } from './toolSessionPolicy';
 import { AgentAwarenessPolicy, type AgentAwarenessSetting } from '@pkg/agent/services/AgentAwarenessPolicy';
 import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '../vault-broker';
@@ -161,15 +162,28 @@ export class ChatCompletionsServer {
   private readonly wsService = getWebSocketClientService();
   private taskerUnsubscribe: (() => void) | null = null;
   private apiToken:          string | null = null;
+  private guestClockSyncHandler: (() => Promise<void>) | undefined;
+  private readonly runtimeClockSyncEndpoint: HostRuntimeClockSyncEndpoint;
 
   constructor(
     agentAwarenessPolicy = new AgentAwarenessPolicy(),
     private readonly removedObservationCommand: RemovedObservationCommand = new RemovedObservationCommand(),
   ) {
     this.agentAwarenessPolicy = agentAwarenessPolicy;
+    this.runtimeClockSyncEndpoint = new HostRuntimeClockSyncEndpoint(
+      () => this.apiToken ?? '',
+      async() => {
+        if (!this.guestClockSyncHandler) throw new Error('Guest clock sync is unavailable');
+        await this.guestClockSyncHandler();
+      },
+    );
     this.initializeTaskerWebSocketListener();
     this.setupMiddleware();
     this.setupRoutes();
+  }
+
+  setGuestClockSyncHandler(handler: () => Promise<void>): void {
+    this.guestClockSyncHandler = handler;
   }
 
   private initializeTaskerWebSocketListener(): void {
@@ -461,6 +475,17 @@ export class ChatCompletionsServer {
     // Private target for calls the catalog has authorized but that must execute
     // against Electron/Mac state. It accepts only Desktop's installation bearer
     // and private/loopback source addresses; capability tokens never enter here.
+    this.app.post('/internal/runtime/sync-clock', async(req: Request, res: Response) => {
+      const result = await this.runtimeClockSyncEndpoint.handle({
+        remoteAddress: req.socket.remoteAddress ?? '',
+        nonce:         req.header('x-sulla-clock-sync-nonce') ?? '',
+        signature:     req.header('x-sulla-clock-sync-signature') ?? '',
+      });
+      res.status(result.status).json(result.status === 200
+        ? { success: true }
+        : { success: false, error: result.error ?? 'unavailable' });
+    });
+
     this.app.post('/internal/desktop-executor/:category/:tool', async(req: Request, res: Response) => {
       const remote = req.socket.remoteAddress ?? '';
       const privateSource = /^(::1|::ffff:127\.|127\.|::ffff:10\.|10\.|::ffff:172\.(?:1[6-9]|2\d|3[01])\.|172\.(?:1[6-9]|2\d|3[01])\.|::ffff:192\.168\.|192\.168\.)/.test(remote);
