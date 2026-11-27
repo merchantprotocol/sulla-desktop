@@ -48,12 +48,12 @@
           v-for="file in group.files"
           :key="`${file.fileId}:${file.versionId}`"
           class="file-row"
+          @contextmenu.stop.prevent="openMenu?.show($event, file)"
         >
           <button
             class="row-main"
             type="button"
             @click="openFile(file)"
-            @contextmenu.stop.prevent="openMenu?.show($event, file)"
           >
             <FileGlyph
               :name="file.name"
