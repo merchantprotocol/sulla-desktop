@@ -101,6 +101,7 @@ export class ThreadAgentActivityMapper {
       ...item,
       phase: phase === 'started' ? 'start' : 'result',
       correlationId,
+      ...(phase === 'started' ? { startedAt: at } : {}),
       ...(phase === 'failed' ? { urgency: 'failed' as const } : {}),
     };
   }
@@ -160,7 +161,12 @@ export class ThreadAgentActivityMapper {
       observedAt: at,
       urgency,
       role: agentRow ? 'worker' : 'root',
-      ...(row.kind === 'tool' ? { phase: state === 'running' ? 'start' as const : 'result' as const, correlationId: `primary:${threadId}:${row.id}` } : {}),
+      ...(row.kind === 'tool' ? {
+        phase: state === 'running' ? 'start' as const : 'result' as const,
+        correlationId: `primary:${threadId}:${row.id}`,
+        ...(step ? { startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}) } : {}),
+      } : {}),
+      ...(agentRow && ['returned', 'failed', 'stopped'].includes(row.status) ? { agentTerminal: true } : {}),
     };
   }
 
@@ -213,6 +219,7 @@ export class ThreadAgentActivityMapper {
       observedAt,
       urgency: agent.urgency,
       role: role ?? (agent.row.waitingOnChildren > 0 ? 'manager' : 'worker'),
+      ...(['failed', 'lost', 'stopped', 'done'].includes(agent.state) ? { agentTerminal: true } : {}),
     };
   }
 
