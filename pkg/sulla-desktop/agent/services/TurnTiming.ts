@@ -185,7 +185,7 @@ export class TurnTiming implements TurnTimingProviderRequestSink {
     request.bodyBytes = this.durationOrNull(bodyBytes);
   }
 
-  beginToolStep(stepId: string, safeLabel: string, source: TurnTimingToolSource): void {
+  beginToolStep(stepId: string, safeLabel: string, source: TurnTimingToolSource, startedAtMs?: number): void {
     if (this.finished || !stepId || this.toolStepsById.has(stepId)) return;
     if (this.toolSteps.length >= 500) {
       this.truncatedSteps++;
@@ -194,7 +194,7 @@ export class TurnTiming implements TurnTimingProviderRequestSink {
     const step: ToolStepTiming = {
       name: SafeToolLabel.from(safeLabel),
       source,
-      startMs: this.elapsedMs(),
+      startMs: this.relativeAt(startedAtMs),
       endMs: null,
       durationMs: null,
       ok: null,
@@ -203,11 +203,11 @@ export class TurnTiming implements TurnTimingProviderRequestSink {
     this.toolStepsById.set(stepId, step);
   }
 
-  endToolStep(stepId: string, ok: boolean): void {
+  endToolStep(stepId: string, ok: boolean, endedAtMs?: number): void {
     if (this.finished) return;
     const step = this.toolStepsById.get(stepId);
     if (!step || step.endMs !== null) return;
-    step.endMs = this.elapsedMs();
+    step.endMs = this.relativeAt(endedAtMs);
     step.durationMs = Math.max(0, step.endMs - step.startMs);
     step.ok = ok;
   }
@@ -259,6 +259,13 @@ export class TurnTiming implements TurnTimingProviderRequestSink {
 
   private elapsedMs(): number {
     return Math.max(0, this.options.clock.now() - this.startedAtClockMs);
+  }
+
+  /** Convert an event's exact epoch sample to the record's turn-relative axis. */
+  private relativeAt(epochMs?: number): number {
+    return typeof epochMs === 'number' && Number.isFinite(epochMs)
+      ? Math.max(0, epochMs - this.startedAtMs)
+      : this.elapsedMs();
   }
 
   private durationOrNull(value: number | null | undefined): number | null {
