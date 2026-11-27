@@ -329,9 +329,9 @@
               </svg>
             </button>
 
-            <!-- Recording indicator: ALWAYS visible when recording, independent of other states -->
+            <!-- Voice mode status stays beside the same mic toggle. -->
             <div
-              v-if="isRecording && !queryValue.trim()"
+              v-if="isRecording"
               class="mb-0.5 flex items-center gap-2"
             >
               <div class="flex items-center gap-1.5 rounded-full bg-red-600/10 px-2.5 py-1 text-xs font-medium text-red-500">
@@ -348,31 +348,6 @@
                 </div>
                 <span>{{ recordingDuration }}</span>
               </div>
-              <button
-                type="button"
-                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-[var(--text-on-accent)] animate-pulse hover:cursor-pointer transition-colors"
-                aria-label="Stop recording (Ctrl+Shift+V)"
-                title="Stop recording (Ctrl+Shift+V)"
-                @click="toggleRecording()"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="18"
-                  height="18"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <rect
-                    x="7"
-                    y="7"
-                    width="10"
-                    height="10"
-                    rx="2"
-                    fill="currentColor"
-                  />
-                </svg>
-              </button>
             </div>
 
             <!-- Sulla speaking: speaker icon with animated waves (independent of recording) -->
@@ -445,17 +420,16 @@
               </svg>
             </button>
 
-            <!-- Mic start button: available whenever not already recording/typing,
-                 including while the graph runs (speech queues like typed messages).
-                 Hidden during TTS so speaker bleed can't trigger an instant barge-in. -->
+            <!-- The mic icon toggles voice mode; it stays red while active. -->
             <button
-              v-if="voiceConfigured && !isRecording && !queryValue.trim() && !isTTSPlaying"
+              v-if="voiceConfigured && (!queryValue.trim() || isRecording) && (!isTTSPlaying || isRecording)"
               type="button"
-              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-content text-page disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
-              aria-label="Voice (Ctrl+Shift+V)"
-              title="Start voice mode (Ctrl+Shift+V)"
+              class="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full disabled:opacity-60 disabled:cursor-not-allowed hover:cursor-pointer transition-colors"
+              :class="isRecording ? 'bg-red-600 text-[var(--text-on-accent)] animate-pulse' : 'bg-content text-page'"
+              :aria-label="isRecording ? 'Stop voice mode (Ctrl+Shift+V)' : 'Start voice mode (Ctrl+Shift+V)'"
+              :title="isRecording ? 'Stop voice mode (Ctrl+Shift+V)' : 'Start voice mode (Ctrl+Shift+V)'"
               :disabled="showOverlay"
-              @click="toggleRecording()"
+              @click="requestVoiceModeToggle"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -511,10 +485,11 @@ const props = withDefaults(defineProps<{
 
 // Voice state comes from the owning chat page via provide/inject —
 // no props threading. Hosts without a voice session get inert defaults.
+const voiceState = useVoiceState();
 const {
   isRecording, audioLevel, recordingDuration, isTTSPlaying,
   pipelineState, voiceConfigured, toggleRecording, stopTTS,
-} = useVoiceState();
+} = voiceState;
 
 // ── Voice pipeline stage chip (latency feedback) ──
 // Shows which leg of the voice round trip time is being spent in.
@@ -704,17 +679,19 @@ watch(() => props.modelValue, async() => {
 
 // Keyboard shortcut for voice mode toggle (Ctrl+Shift+V / Cmd+Shift+V)
 function handleVoiceShortcut(e: KeyboardEvent): void {
-  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
-    e.preventDefault();
-    toggleRecording();
-  }
+  const transition = voiceState.handleVoiceShortcut(e);
+  if (transition) void transition.catch(error => console.warn('[VoiceModeToggle] Shortcut failed', error));
+}
+
+function requestVoiceModeToggle(): void {
+  void toggleRecording().catch(error => console.warn('[VoiceModeToggle] Click failed', error));
 }
 
 onMounted(async() => {
+  window.addEventListener('keydown', handleVoiceShortcut);
   await nextTick();
   updateComposerLayout();
   composerTextareaEl.value?.focus();
-  window.addEventListener('keydown', handleVoiceShortcut);
 });
 
 onUnmounted(() => {
