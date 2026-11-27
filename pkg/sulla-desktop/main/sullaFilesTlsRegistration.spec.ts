@@ -38,7 +38,7 @@ describe('SullaFilesSessionPool recovery', () => {
     // risk: availability — a stale Chromium keep-alive socket must not strand the next Files request.
     const session = {
       fetch: vi.fn()
-        .mockImplementationOnce((_input:string | URL, init?:RequestInit) => new Promise<Response>((_resolve, reject) => {
+        .mockImplementationOnce((_input:string, init?:RequestInit) => new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
         }))
         .mockResolvedValueOnce(new Response('ok')),
