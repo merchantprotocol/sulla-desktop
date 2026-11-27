@@ -21,10 +21,6 @@ export const FILES_HTTPS_ORIGIN = loopbackOrigin('https', 30124);
 const SESSION_PARTITION = 'sulla-files-service';
 const RETRY_TIMEOUT_MS = 1_500;
 const FILES_NODE_CONNECTIONS = 64;
-// Chromium's per-host HTTP socket group is capped at six. Keep this explicit in the rollback path
-// so its queue and wait measurements remain observable rather than hidden inside Electron.
-const ELECTRON_FILES_CONNECTIONS = 6;
-
 interface PinnedFilesSession {
   fetch(input:string, init?:RequestInit):Promise<Response>;
   closeAllConnections():Promise<void> | void;
@@ -36,6 +32,7 @@ export interface SullaFilesTlsDependencies {
   nodeFetch:typeof undiciFetch;
   nodeAgentFactory:PinnedNodeAgentFactory;
   nodeConnections:number;
+  logConcurrency?:(line:string) => void;
 }
 
 /** Owns the single pinned Chromium session and recovers stale keep-alive pools. */
@@ -112,7 +109,7 @@ export class SullaFilesTlsService {
   private readonly nodeAgentFactory:PinnedNodeAgentFactory;
   private readonly nodeConnections:number;
   private nodeDispatcher?:Promise<Agent>;
-  private readonly concurrencyMeter = new FilesTransportConcurrencyMeter(FILES_NODE_CONNECTIONS);
+  private readonly concurrencyMeter:FilesTransportConcurrencyMeter;
 
   constructor(dependencies:Partial<SullaFilesTlsDependencies> = {}) {
     const readFingerprintFile = dependencies.readFingerprintFile ?? (() => fs.readFile(path.join(paths.appHome, 'files-tls-fingerprint'), 'utf8'));
@@ -122,6 +119,7 @@ export class SullaFilesTlsService {
     this.nodeFetch = dependencies.nodeFetch ?? undiciFetch;
     this.nodeAgentFactory = dependencies.nodeAgentFactory ?? new PinnedNodeAgentFactory();
     this.nodeConnections = dependencies.nodeConnections ?? FILES_NODE_CONNECTIONS;
+    this.concurrencyMeter = new FilesTransportConcurrencyMeter(undefined, dependencies.logConcurrency);
     this.sessionPool = new SullaFilesSessionPool<PinnedFilesSession>(async() => {
       const session = await (dependencies.createSession ?? (async() => {
         const electronSession = Electron.session.fromPartition(SESSION_PARTITION, { cache: false });
@@ -170,12 +168,11 @@ export class SullaFilesTlsService {
     // SULLA_FILES_TRANSPORT=electron is the reversible fallback to the previous session path.
     const useElectron = process.env.SULLA_FILES_TRANSPORT === 'electron';
     const method = (init?.method ?? 'GET').toUpperCase();
-    const route = url.pathname.startsWith('/v1/') ? `/${ url.pathname.split('/').filter(Boolean).slice(0, 2).join('/') }` : '/other';
-    const operation = `${ useElectron ? 'electron' : 'node' } ${ method } ${ route }`;
-    const limit = useElectron ? ELECTRON_FILES_CONNECTIONS : this.nodeConnections;
+    const operation = { transport: useElectron ? 'electron' as const : 'node' as const, method, pathname: url.pathname };
+    // The meter only measures. Node's undici Agent and Chromium itself enforce their respective bounds.
     return this.concurrencyMeter.run(operation, () => useElectron
       ? this.sessionPool.fetch(url.toString(), init)
-      : this.fetchWithNode(input, init), init?.signal, limit);
+      : this.fetchWithNode(input, init), init?.signal);
   }
 
   getConcurrencyMetrics():Record<string, FilesTransportConcurrencySnapshot> {
