@@ -325,7 +325,7 @@ export class ChromeApiService implements ChromeApi {
       if (!tabViewManager) {
         throw new Error('[ChromeApiService] First call must provide tabViewManager');
       }
-      ChromeApiService.instance = new ChromeApiService(tabViewManager, new HiddenTabLayout(tabViewManager.agentViewports));
+      ChromeApiService.instance = new ChromeApiService(tabViewManager, new HiddenTabLayout(tabViewManager.agentViewports, tabViewManager.parkedEmulation));
     }
 
     return ChromeApiService.instance;
@@ -569,23 +569,18 @@ export class ChromeApiService implements ChromeApi {
       const parkedOwner = this.hiddenLayout.owner(view);
       const window = parkedOwner ?? this.ownerWindow();
       if (!window || window.isDestroyed()) throw new Error('Cannot capture without a browser window');
-      const wasThrottled = view.webContents.getBackgroundThrottling();
-      try {
-        if (!parkedOwner) {
-          view.webContents.disableDeviceEmulation();
-          this.hiddenLayout.prepare(view, window);
-        }
-        view.webContents.setBackgroundThrottling(false);
-        return await this.tabViewManager.agentScreenshots.capture(view.webContents, once => this.tabViewManager.beginHiddenCapture(view, window, once), options);
-      } finally {
-        if (!view.webContents.isDestroyed()) {
-          view.webContents.setBackgroundThrottling(wasThrottled);
-          if (!parkedOwner) {
+      return this.hiddenLayout.whileAwake(view.webContents, async() => {
+        try {
+          if (!parkedOwner) this.hiddenLayout.prepare(view, window);
+          return await this.tabViewManager.agentScreenshots.capture(view.webContents,
+            once => this.tabViewManager.beginHiddenCapture(view, window, once), options);
+        } finally {
+          if (!parkedOwner && !view.webContents.isDestroyed()) {
             this.hiddenLayout.detach(view);
             this.hiddenLayout.prepare(view, null);
           }
         }
-      }
+      });
     });
   }
 
@@ -612,7 +607,7 @@ export class ChromeApiService implements ChromeApi {
       const hiddenView = this.hiddenViews.get(tabId);
 
       if (hiddenView) {
-        result = await hiddenView.webContents.executeJavaScript(code, true);
+        result = await this.hiddenLayout.whileAwake(hiddenView.webContents, () => hiddenView.webContents.executeJavaScript(code, true));
       } else {
         result = await this.tabViewManager.executeJavaScript(tabId, code);
       }

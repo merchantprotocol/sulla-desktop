@@ -1,29 +1,48 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import type { BrowserWindow, WebContentsView } from 'electron';
+import type { BrowserWindow, WebContents, WebContentsView } from 'electron';
 
 import type { AgentViewport, AgentViewportPolicy } from '../browserTabs/AgentViewportPolicy';
+import type { ParkedViewportEmulation } from '../browserTabs/ParkedViewportEmulation';
 
 /** Park before attaching: even a brand new hidden tab must never cover the
  * renderer. Windowless function jobs can still navigate and evaluate. */
 export class HiddenTabLayout {
   private readonly owners = new WeakMap<WebContentsView, BrowserWindow>();
 
-  constructor(private readonly viewports: AgentViewportPolicy) {}
+  private readonly active = new WeakMap<WebContents, { uses: number; wasThrottled: boolean }>();
+
+  constructor(private readonly viewports: AgentViewportPolicy, private readonly emulation: ParkedViewportEmulation) {}
+
+  /** Reads may overlap captures. Only the last user may restore idle throttling. */
+  async whileAwake<T>(wc: WebContents, run: () => Promise<T>): Promise<T> {
+    let lease = this.active.get(wc);
+    if (!lease) {
+      lease = { uses: 0, wasThrottled: wc.getBackgroundThrottling() };
+      wc.setBackgroundThrottling(false);
+      this.active.set(wc, lease);
+    }
+    lease.uses++;
+    try {
+      return await run();
+    } finally {
+      if (--lease.uses === 0) {
+        this.active.delete(wc);
+        if (!wc.isDestroyed()) wc.setBackgroundThrottling(lease.wasThrottled);
+      }
+    }
+  }
 
   prepare(view: WebContentsView, window: BrowserWindow | null, viewport?: AgentViewport): void {
     if (viewport !== undefined) this.viewports.set(view.webContents, viewport);
-    view.setBounds(this.viewports.parked(view.webContents));
-    if (!window || window.isDestroyed()) {
-      const size = this.viewports.resolve(view.webContents);
-      view.webContents.enableDeviceEmulation({
-        screenPosition: 'desktop', viewPosition: { x: 0, y: 0 }, viewSize: size,
-        screenSize: size, scale: 1, deviceScaleFactor: 0,
-      });
-      return;
-    }
-    this.owners.set(view, window);
+    const parked = this.viewports.parked(view.webContents);
+    view.setBounds(parked);
+    view.setVisible(true);
     try {
-      window.contentView.addChildView(view, 0);
+      if (window && !window.isDestroyed()) {
+        this.owners.set(view, window);
+        window.contentView.addChildView(view, 0);
+      }
+      this.emulation.apply(view.webContents, parked, true);
     } catch (error) {
       // A native attach can throw after it has partially modified the tree.
       this.detach(view);
