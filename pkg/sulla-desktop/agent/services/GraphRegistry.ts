@@ -666,7 +666,11 @@ ${ feedbackJson }`);
       if (String(metadata?.agentId || metadata?.wsChannel || '').trim() !== channel) return [];
       const threadId = String(metadata?.threadId || key || '').trim();
       if (!threadId) return [];
-      return [{ channel, threadId, label: String(metadata?.delegatedTaskLabel || metadata?.agentLabel || metadata?.agent?.name || metadata?.agentId || channel), jobId: String(metadata?.delegatedJobId || metadata?.jobId || '') || undefined }];
+      // Only the task identity stamped on this exact thread can label it with a job.
+      // delegatedJobId/jobId alone can be stale or describe a child launched by a parent.
+      const ownTask = metadata?.modelDecisionTask;
+      const jobId = String(ownTask?.threadId === threadId ? ownTask?.jobId || '' : '').trim() || undefined;
+      return [{ channel, threadId, label: String(metadata?.delegatedTaskLabel || metadata?.agentLabel || metadata?.agent?.name || metadata?.agentId || channel), jobId }];
     });
   },
 
