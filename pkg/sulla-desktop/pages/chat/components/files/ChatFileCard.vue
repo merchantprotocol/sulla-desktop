@@ -16,7 +16,11 @@
       <FileStatusIcon />
     </button>
     <div class="actions">
-      <ChatFileDownload :file-id="reference.fileId" :name="reference.name" :version-id="reference.versionId" />
+      <ChatFileDownload
+        :file-id="reference.fileId"
+        :name="reference.name"
+        :version-id="reference.versionId"
+      />
       <button type="button" @click.stop="navigate('detail')">
         <svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5H5V6h5" /></svg><span>Open</span>
       </button><button
@@ -43,7 +47,12 @@
     </div>
     <span v-if="navigationError" class="navigation-error" role="alert" @click.stop>{{ navigationError }}</span>
     <div v-if="editing" class="inline-editor" @click.stop>
-      <ChatFileDownload v-if="editorVersionId !== reference.versionId" :file-id="reference.fileId" :name="reference.name" :version-id="editorVersionId" />
+      <ChatFileDownload
+        v-if="editorVersionId !== reference.versionId"
+        :file-id="reference.fileId"
+        :name="reference.name"
+        :version-id="editorVersionId"
+      />
       <textarea v-model="draft" :disabled="saving" aria-label="Edit project file markdown" />
       <div><span v-if="error" role="alert">{{ error }}</span><button type="button" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save new version' }}</button><button type="button" @click="editing = false">Cancel</button></div>
     </div>
@@ -52,9 +61,9 @@
 </template>
 
 <script setup lang="ts">
-import ChatFileDownload from './ChatFileDownload.vue';
 import { computed, ref } from 'vue';
 
+import ChatFileDownload from './ChatFileDownload.vue';
 import ChatFileOpenMenu from './ChatFileOpenMenu.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';
