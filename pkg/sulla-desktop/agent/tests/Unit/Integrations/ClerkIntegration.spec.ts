@@ -48,6 +48,8 @@ import { ClerkWorker } from '../../../tools/clerk/ClerkWorker';
 import { clerkToolManifests } from '../../../tools/clerk/manifests';
 import { ToolApprovalGate } from '../../../tools/ToolApprovalGate';
 import { toolDecisionPort } from '../../../tools/toolDecisionPort';
+import { BaseTool } from '../../../tools/base';
+import { currentAgentContainerRuntime } from '../../../services/AgentContainerRuntimeRegistry';
 
 import type { DecisionOutcome, DecisionRecord } from '@pkg/shared/decisions';
 
@@ -1401,5 +1403,70 @@ describe('Desktop relay dispatch', () => {
       });
       expect(load).toHaveBeenCalledTimes(1);
     } finally { stopRelayToolTunnel(); start.mockRestore(); vi.unstubAllEnvs(); }
+  });
+});
+
+describe('Agent-local dispatch from container callers', () => {
+  // Records where agent-local work would run: inside a container runtime, or (undefined) the shared VM.
+  const ran: (string | undefined)[] = [];
+  class RuntimeProbe extends BaseTool {
+    name = 'runtime_probe'; description = '';
+    protected async _validatedCall() {
+      ran.push(currentAgentContainerRuntime()?.podId);
+      return { successBoolean: true, responseString: 'probed' };
+    }
+  }
+  toolRegistry.registerManifests([{ name: 'runtime_probe', category: 'fs', description: '', schemaDef: {}, loader: async() => ({ RuntimeProbe }) }] as any);
+  const binding = { podId: 'sulla-agent-fixture', subject: context.sub, agentId: 'worker', threadId: 'thread-local', jobId: 'job-local', taskIndex: 0, deviceId: 'device', workspacePath: '/fixture' };
+  const caller = { sub: binding.subject, agent_id: binding.agentId, pod_id: binding.podId, thread_id: binding.threadId, job_id: binding.jobId,
+    task_index: 0, device_id: binding.deviceId, exp: Number.MAX_SAFE_INTEGER, scopes: ['*'], request_id: 'fixture-request', jti: 'fixture-jti' } as ToolExecutionContext;
+  const refused = { success: false, error: { code: 'container_runtime_required' } };
+  const callers: [string, ToolExecutionContext][] = [
+    ['unregistered pod', { ...caller, pod_id: 'sulla-agent-other' }],
+    ['mismatched job', { ...caller, job_id: 'job-other' }],
+    ['missing pod', { ...caller, pod_id: undefined }],
+  ];
+
+  it('runs forwarded agent-local work only inside the verified calling container (private HTTP executor)', async() => {
+    const server = new ChatCompletionsServer();
+    server['apiToken'] = 'fixture-desktop';
+    const endpoint = server['app'].router.stack.find((layer: { route?: { path?: string } }) =>
+      layer.route?.path === '/internal/desktop-executor/:category/:tool').route.stack[0].handle;
+    const http = new HttpDesktopExecutor('http://fixture.invalid', 'fixture-desktop', async(url, init) => {
+      const [, , , category, tool] = new URL(String(url)).pathname.split('/');
+      const res = proxyResponse();
+      const result = await endpoint({ params: { category, tool }, socket: { remoteAddress: '127.0.0.1' },
+        headers: Object.fromEntries(new Headers(init?.headers)), body: JSON.parse(String(init?.body)) }, res);
+      return Response.json(result, { status: vi.mocked(res.status).mock.calls.at(-1)?.[0] ?? 200 });
+    });
+    const decisions = vi.spyOn(toolDecisionPort.resolve(), 'requiresApproval').mockResolvedValue(false);
+    const unregister = agentContainerRuntimeRegistry.register(binding);
+    ran.length = 0;
+    try {
+      const call = (ctx: ToolExecutionContext) => http.execute(ctx, 'fs', 'runtime_probe', {}, { deadlineMs: 10_000 });
+      await expect(call(caller)).resolves.toMatchObject({ success: true });
+      expect(ran).toEqual([binding.podId]);
+      for (const [label, ctx] of callers) await expect(call(ctx), label).resolves.toMatchObject(refused);
+      expect(ran).toEqual([binding.podId]);
+    } finally { unregister(); decisions.mockRestore(); }
+  });
+
+  it('applies the same verified-runtime rule on the relay tunnel', async() => {
+    vi.stubEnv('SULLA_RELAY_URL', 'http://relay.invalid');
+    vi.stubEnv('SULLA_RELAY_DEVICE_TOKEN', 'fixture');
+    const start = vi.spyOn(RelayToolTunnel.prototype, 'start').mockImplementation(() => {});
+    const decisions = vi.spyOn(toolDecisionPort.resolve(), 'requiresApproval').mockResolvedValue(false);
+    const unregister = agentContainerRuntimeRegistry.register(binding);
+    ran.length = 0;
+    try {
+      const execute = startRelayToolTunnel()!['options'].execute;
+      const signal = new AbortController().signal;
+      await expect(execute(caller, 'fs', 'runtime_probe', {}, signal)).resolves.toMatchObject({ success: true });
+      for (const [label, ctx] of callers) {
+        const outcome = await execute(ctx, 'fs', 'runtime_probe', {}, signal).catch((error: Error) => ({ success: false, error: { code: (error as { reason?: string }).reason ?? error.message } }));
+        expect(outcome, label).toMatchObject({ success: false });
+      }
+      expect(ran).toEqual([binding.podId]);
+    } finally { stopRelayToolTunnel(); start.mockRestore(); unregister(); decisions.mockRestore(); vi.unstubAllEnvs(); }
   });
 });
