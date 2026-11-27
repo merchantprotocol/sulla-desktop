@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { chatHeartbeatProvider } from '../../app/Providers/ChatHeartbeatServiceProvider';
-import { getJob } from '../agents/jobRegistry';
+import { findTaskByThread, getJob } from '../agents/jobRegistry';
 import { BaseTool, ToolResponse } from '../base';
 
 import { CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES, DEFAULT_CHAT_HEARTBEAT_MESSAGE, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
@@ -20,14 +20,31 @@ export class SetChatHeartbeatWorker extends BaseTool {
       return { successBoolean: false, responseString: 'This tool must be called from a chat thread or delegated agent task.' };
     }
 
-    const contextJobId = String(this.executionContext?.job_id || '').trim();
-    const contextTaskIndex = this.executionContext?.task_index;
-    const hasContextTarget = !!contextJobId && Number.isInteger(contextTaskIndex) && Number(contextTaskIndex) >= 0;
-    const jobId = hasContextTarget ? contextJobId : String(metadata?.delegatedJobId || '').trim();
-    const job = jobId ? await getJob(jobId) : undefined;
-    const taskIndex = hasContextTarget ? Number(contextTaskIndex) : job?.tasks.findIndex(task => task.threadId === threadId) ?? -1;
-    if (jobId && (!job || taskIndex < 0 || !['running', 'parked'].includes(job.status)
-        || job.tasks[taskIndex]?.threadId !== threadId || !['running', 'parked'].includes(job.tasks[taskIndex]?.status))) {
+    const candidateIds = [...new Set([
+      String(this.executionContext?.job_id || '').trim(),
+      String(metadata?.modelDecisionTask?.jobId || '').trim(),
+      String(metadata?.delegatedJobId || '').trim(),
+      String(metadata?.jobId || '').trim(),
+    ].filter(Boolean))];
+    // A thread is job-bound only through the task that actually owns that thread.
+    // Parent links and stale delegated metadata describe launched children, not the caller.
+    const owner = candidateIds.length ? await findTaskByThread(threadId) : undefined;
+    let job = owner?.job;
+    let taskIndex = owner?.taskIndex ?? -1;
+    if (!job) {
+      for (const candidateId of candidateIds) {
+        const candidate = await getJob(candidateId);
+        const candidateIndex = candidate?.tasks.findIndex(task => task.threadId === threadId) ?? -1;
+        if (candidate && candidateIndex >= 0) {
+          job = candidate;
+          taskIndex = candidateIndex;
+          break;
+        }
+      }
+    }
+    const jobId = job?.jobId ?? '';
+    if (job && (!['running', 'parked'].includes(job.status)
+        || taskIndex < 0 || !['running', 'parked'].includes(job.tasks[taskIndex]?.status))) {
       return { successBoolean: false, responseString: 'This delegated task is no longer open; its heartbeat cannot be changed.' };
     }
 
@@ -39,7 +56,10 @@ export class SetChatHeartbeatWorker extends BaseTool {
     // Register only when something is missing: this tool usually runs inside the
     // very turn a beat woke, and that beat's delivery is still in flight.
     const current = service.status(threadId);
-    if (!current || (jobId && !service.jobTarget(threadId))) {
+    const registeredTarget = service.jobTarget(threadId);
+    const targetMatches = !!jobId && registeredTarget?.jobId === jobId && registeredTarget.taskIndex === taskIndex;
+    if (!jobId && registeredTarget) service.unbindJob(threadId);
+    if (!current || (jobId && !targetMatches) || (!jobId && registeredTarget)) {
       service.register({
         threadId,
         channel:  job?.parentChannel || String(metadata?.wsChannel || '').trim() || 'sulla-desktop',
