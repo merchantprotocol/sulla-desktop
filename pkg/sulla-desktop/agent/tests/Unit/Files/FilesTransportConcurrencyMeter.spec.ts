@@ -5,132 +5,88 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { FilesTransportConcurrencyMeter } from '../../../files/FilesTransportConcurrencyMeter';
+import { FilesTransportConcurrencyMeter, type FilesTransportOperation } from '../../../files/FilesTransportConcurrencyMeter';
 
-function deferred<T = void>():{ promise:Promise<T>; resolve:(value:T) => void } {
-  let resolve!:(value:T) => void;
-  const promise = new Promise<T>((done) => { resolve = done });
-  return { promise, resolve };
+const filesOperation:FilesTransportOperation = { transport:'node', method:'GET', pathname:'/v1/files' };
+
+function withTimeout<T>(promise:Promise<T>, timeoutMs = 500):Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Timed out waiting for un-gated Files request')), timeoutMs);
+    promise.then(
+      value => { clearTimeout(timer); resolve(value) },
+      error => { clearTimeout(timer); reject(error) },
+    );
+  });
 }
 
 describe('FilesTransportConcurrencyMeter', () => {
-  it('runs 20 mixed reads and writes concurrently and records per-operation counts', async() => {
-    // risk: availability — UI and agent file reads/writes must not inherit Chromium’s six-request queue.
-    const meter = new FilesTransportConcurrencyMeter(64);
-    const releaseRequests = deferred();
-    let active = 0;
-    let maxActive = 0;
-    const operations = Array.from({ length: 20 }, (_, index) => {
-      const method = index % 2 ? 'PUT' : 'GET';
-      const operation = `${method} /v1/files`;
-      return meter.run(operation, async() => {
-        active += 1;
-        maxActive = Math.max(maxActive, active);
-        await releaseRequests.promise;
-        active -= 1;
-        return { method };
-      });
-    });
+  it('lets the 101st request reach headers after 100 unread response bodies', async() => {
+    // risk: availability — callers that discard error bodies must never exhaust a meter slot and stall Files.
+    const meter = new FilesTransportConcurrencyMeter(() => 10, () => undefined);
+    const unreadResponses = await withTimeout(Promise.all(Array.from({ length: 100 }, (_, index) => meter.run(
+      { ...filesOperation, pathname:`/v1/files/synthetic-${ index }` },
+      async() => new Response(new ReadableStream<Uint8Array>({ start() {} })),
+    ))));
 
-    await new Promise(resolve => setImmediate(resolve));
-    const snapshot = meter.snapshot();
-    releaseRequests.resolve();
-    await expect(Promise.all(operations)).resolves.toHaveLength(20);
-    expect(maxActive).toBe(20);
-    expect(snapshot['GET /v1/files']).toMatchObject({ active: 10, pending: 0, maxActive: 10 });
-    expect(snapshot['PUT /v1/files']).toMatchObject({ active: 10, pending: 0, maxActive: 10 });
+    const oneHundredFirst = await withTimeout(meter.run(filesOperation, async() => new Response('available')));
+    const metrics = meter.snapshot()['node GET /v1/files'];
+    expect(unreadResponses).toHaveLength(100);
+    expect(await oneHundredFirst.text()).toBe('available');
+    expect(metrics).toMatchObject({ active:0, bodyOpen:101, maxActive:100, count:101 });
+    expect(Object.keys(meter.snapshot())).toEqual(['node GET /v1/files']);
+
+    await Promise.all(unreadResponses.map(response => response.body?.cancel()));
+    expect(meter.snapshot()['node GET /v1/files']?.bodyOpen).toBe(0);
   });
 
-  it('caps active requests at the configured bound and measures queue wait', async() => {
-    // risk: availability — a burst must be bounded without exceeding the configured transport limit.
-    let now = 0;
-    const meter = new FilesTransportConcurrencyMeter(3, () => now);
-    const releaseFirstWave = deferred();
-    let active = 0;
-    let maxActive = 0;
-    const operations = Array.from({ length: 20 }, () => meter.run('GET /v1/files', async() => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      if (active <= 3) await releaseFirstWave.promise;
-      active -= 1;
-      return { ok: true };
-    }));
+  it('measures request-to-headers separately and returns the original Response unchanged', async() => {
+    // risk: availability — timing observation must preserve the real response and release bodyOpen on consumption.
+    let now = 100;
+    const meter = new FilesTransportConcurrencyMeter(() => now, () => undefined);
+    let resolveResponse!:(response:Response) => void;
+    const pendingResponse = new Promise<Response>(resolve => { resolveResponse = resolve });
+    const resultPromise = meter.run(filesOperation, () => pendingResponse);
+    expect(meter.snapshot()['node GET /v1/files']).toMatchObject({ active:1, bodyOpen:0, count:0, maxActive:1 });
 
-    await new Promise(resolve => setImmediate(resolve));
-    const beforeRelease = meter.snapshot()['GET /v1/files'];
-    now = 10;
-    releaseFirstWave.resolve();
-    await Promise.all(operations);
-    expect(beforeRelease).toMatchObject({ active: 3, pending: 17, maxActive: 3 });
-    expect(maxActive).toBe(3);
-    expect(meter.snapshot()['GET /v1/files']?.waitMs).toBeGreaterThanOrEqual(170);
+    const response = new Response('body bytes');
+    Object.defineProperty(response, 'url', { configurable:true, value:'https://127.0.0.1:30124/v1/files' });
+    Object.defineProperty(response, 'redirected', { configurable:true, value:true });
+    now = 135;
+    resolveResponse(response);
+    const result = await resultPromise;
+
+    expect(result).toBe(response);
+    expect(result.url).toBe('https://127.0.0.1:30124/v1/files');
+    expect(result.redirected).toBe(true);
+    expect(meter.snapshot()['node GET /v1/files']).toMatchObject({ active:0, bodyOpen:1, count:1, maxActive:1, totalMs:35, p95Ms:35 });
+    await expect(result.text()).resolves.toBe('body bytes');
+    expect(meter.snapshot()['node GET /v1/files']?.bodyOpen).toBe(0);
   });
 
-  it('lets healthy work proceed beside a hung request and releases an aborted active slot', async() => {
-    // risk: availability — one hung Files call must not serialize unrelated work, and abort must free capacity.
-    const meter = new FilesTransportConcurrencyMeter(2);
+  it('releases bodyOpen when a request is aborted after a partial body read', async() => {
+    // risk: availability — cancellation of an in-progress download must clear its open-body measurement.
+    const meter = new FilesTransportConcurrencyMeter(() => 10, () => undefined);
     const controller = new AbortController();
-    const hungStarted = deferred();
-    const hung = meter.run('GET /v1/files', () => new Promise((_resolve, reject) => {
-      hungStarted.resolve();
-      controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true });
-    }), controller.signal);
-    await hungStarted.promise;
-    let healthyStarted = false;
-    const healthy = meter.run('PUT /v1/files', async() => {
-      healthyStarted = true;
-      return { ok: true };
-    });
-    await new Promise(resolve => setImmediate(resolve));
-    const proceededBesideHungRequest = healthyStarted;
+    const response = await meter.run(filesOperation, async() => new Response(new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new Uint8Array([1]));
+      },
+    })), controller.signal);
+    const reader = response.body!.getReader();
+
+    await expect(reader.read()).resolves.toMatchObject({ done:false });
+    expect(meter.snapshot()['node GET /v1/files']?.bodyOpen).toBe(1);
     controller.abort(new DOMException('cancelled', 'AbortError'));
-    await expect(hung).rejects.toThrow('cancelled');
-    await expect(healthy).resolves.toEqual({ ok: true });
-    expect(proceededBesideHungRequest).toBe(true);
-    expect(meter.snapshot()['GET /v1/files']).toMatchObject({ active: 0, pending: 0 });
+    expect(meter.snapshot()['node GET /v1/files']).toMatchObject({ active:0, bodyOpen:0, count:1 });
+
+    await reader.cancel();
   });
 
-  it('releases a streaming slot when the response body is cancelled', async() => {
-    // risk: availability — abandoned downloads/streams must not occupy a bounded connection slot.
-    const meter = new FilesTransportConcurrencyMeter(1);
-    const response = await meter.run('GET /v1/files', async() => new Response(new ReadableStream<Uint8Array>({ start() {} })));
-    let didStart = false;
-    const next = meter.run('GET /v1/files', async() => {
-      didStart = true;
-      return { ok: true };
-    });
-    expect(meter.snapshot()['GET /v1/files']).toMatchObject({ active: 1, pending: 1 });
+  it('records a rejected request without retaining active state', async() => {
+    // risk: availability — failed network attempts must leave the meter ready for subsequent Files work.
+    const meter = new FilesTransportConcurrencyMeter(() => 10, () => undefined);
+    await expect(meter.run(filesOperation, async() => { throw new Error('synthetic network failure') })).rejects.toThrow('synthetic network failure');
 
-    await response.body?.cancel();
-    await new Promise(resolve => setImmediate(resolve));
-    if (didStart) await expect(next).resolves.toEqual({ ok: true });
-    else void next;
-    expect(didStart).toBe(true);
-    expect(meter.snapshot()['GET /v1/files']).toMatchObject({ active: 0, pending: 0, maxActive: 1 });
-  });
-
-  it('removes a queued request when its signal aborts', async() => {
-    // risk: availability — a cancelled waiter must not remain queued or consume the next available slot.
-    const meter = new FilesTransportConcurrencyMeter(1);
-    const controller = new AbortController();
-    const hold = deferred();
-    const active = meter.run('GET /v1/files', async() => {
-      await hold.promise;
-      return { ok: true };
-    });
-    const queued = meter.run('GET /v1/files', async() => ({ ok: false }), controller.signal);
-    let queuedRejected = false;
-    const observedQueue = queued.catch((error) => {
-      queuedRejected = true;
-      return error;
-    });
-    controller.abort(new DOMException('cancelled', 'AbortError'));
-    await new Promise(resolve => setImmediate(resolve));
-    const afterAbort = meter.snapshot()['GET /v1/files'];
-    hold.resolve();
-    await expect(active).resolves.toEqual({ ok: true });
-    await observedQueue;
-    expect(afterAbort).toMatchObject({ active: 1, pending: 0 });
-    expect(queuedRejected).toBe(true);
+    expect(meter.snapshot()['node GET /v1/files']).toMatchObject({ active:0, bodyOpen:0, maxActive:1, count:1 });
   });
 });
