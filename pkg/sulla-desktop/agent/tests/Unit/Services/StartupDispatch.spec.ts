@@ -14,6 +14,9 @@ async function fixture() {
   service.readinessWaits = new Map();
   service.dispatchedRuns = new Set();
   service.activeAborts = new Map();
+  service.deliveringDecisionThreads = new Set();
+  service.retryDecisionAnswers = vi.fn(() => Promise.resolve());
+  service.restartResumeCheckin = vi.fn(() => Promise.resolve(null));
   service.emitMessage = vi.fn();
   service.executeReadyTurn = vi.fn(() => Promise.resolve('accepted'));
   return service;
@@ -31,7 +34,7 @@ describe('startup-only dispatch guard', () => {
     runtime.ready = true;
     await vi.advanceTimersByTimeAsync(10);
     await expect(request).resolves.toBe('accepted');
-    expect(service.executeReadyTurn.mock.calls[0]).toEqual(['desktop', 'sulla-desktop', 'work', 'thread', undefined, 'chosen-agent', 'keyboard', metadata, undefined]);
+    expect(service.executeReadyTurn.mock.calls[0]).toEqual(['desktop', 'sulla-desktop', 'work', 'thread', undefined, 'chosen-agent', 'keyboard', metadata, undefined, undefined]);
   });
   it('does not serialize running chat turns after readiness', async() => {
     const service = await fixture(); runtime.ready = true;
@@ -92,11 +95,12 @@ describe('startup-only dispatch guard', () => {
     finish(); await Promise.all([...service.dispatchedRuns]);
   });
 
-  it('rechecks skipped startup jobs, excludes new work and never reclaims an already resumed job', async() => {
+  it('dispatches each interrupted sibling once as decisions expire without reclaiming the job or starting new work', async() => {
     vi.useFakeTimers(); runtime.ready = true;
     const service = await fixture(); service.recoveryAbort = new AbortController();
     service.recoveryCutoff = Date.now(); service.agentInbox = { replayPending: vi.fn() };
     service.subscribeToAgentChannels = vi.fn(); service.hasPendingDecision = vi.fn().mockResolvedValue(true);
+    service.hasActiveRun = vi.fn((_channel: string, threadId: string) => threadId === 'busy-sibling');
     const { agentJobProvider } = await import('../../../app/Providers/AgentJobServiceProvider');
     const { agentWaitProvider } = await import('../../../services/AgentWaitServices');
     const completion = await import('../../../services/AgentCompletionRecoveryService');
@@ -108,18 +112,27 @@ describe('startup-only dispatch guard', () => {
     vi.spyOn(agentWaitProvider.scheduler, 'start').mockResolvedValue(undefined);
     vi.spyOn(completion, 'recoverPendingAgentCompletions').mockResolvedValue(undefined);
     vi.spyOn(lifecycle.returnedTaskSettlement, 'settleStranded').mockResolvedValue(0);
-    const old = { jobId: 'old', createdAt: service.recoveryCutoff - 1000, status: 'running', visibility: 'hidden', parentChannel: 'desktop', tasks: [{ status: 'running', threadId: 'old-thread', agentId: 'luna' }] } as any;
+    const old = { jobId: 'old', createdAt: service.recoveryCutoff - 1000, status: 'running', visibility: 'hidden', parentChannel: 'desktop', tasks: [
+      { status: 'running', threadId: 'busy-sibling', agentId: 'luna' },
+      { status: 'running', threadId: 'decision-sibling', agentId: 'luna' },
+      { status: 'running', threadId: 'old-thread', agentId: 'luna' },
+    ] } as any;
     const newer = { ...old, jobId: 'new', createdAt: service.recoveryCutoff + 1000 };
     vi.spyOn(agentJobProvider.jobs, 'jobsForList').mockResolvedValue([old, newer]);
-    const claim = vi.spyOn(agentJobProvider.states, 'claimInterruptedJob').mockImplementation(async(_id, _max, eligible) =>
-      await eligible!(old) ? { resumable: [old], exhausted: [] } : { resumable: [], exhausted: [] });
+    vi.spyOn(agentJobProvider.jobs, 'job').mockImplementation(async id => id === old.jobId ? structuredClone(old) : undefined);
+    const write = vi.spyOn(agentJobProvider.jobs, 'replaceState').mockImplementation(async next => { Object.assign(old, next); });
     const run = service.recoverRuntimeWork();
     await vi.advanceTimersByTimeAsync(0);
     expect(service.executeReadyTurn).not.toHaveBeenCalled();
+    service.hasPendingDecision.mockImplementation((threadId: string) => Promise.resolve(threadId === 'decision-sibling'));
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(service.executeReadyTurn.mock.calls.map((args: any[]) => args[3])).toEqual(['old-thread']);
+    // The second sibling's decision expires without an answer after the first sibling was dispatched.
     service.hasPendingDecision.mockResolvedValue(false);
-    await vi.advanceTimersByTimeAsync(30000); await run;
-    await vi.advanceTimersByTimeAsync(0);
-    expect(claim.mock.calls.map(call => call[0])).toEqual(['old', 'old']);
-    expect(service.executeReadyTurn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30000);
+    await run;
+    expect(service.executeReadyTurn.mock.calls.map((args: any[]) => args[3])).toEqual(['old-thread', 'decision-sibling']);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(old.restartResumeCount).toBe(1);
   });
 });

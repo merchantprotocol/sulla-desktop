@@ -28,7 +28,7 @@ describe('ParkedAgentRehydrator', () => {
     expect(identity).toMatchObject({ agentId: 'coding-manager-sol', taskIndex: 0, job: { jobId: 'manager-job' } });
     const state = { metadata: {} as Record<string, unknown> };
     service.apply(state, identity!);
-    expect(state.metadata).toMatchObject({ isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'codex', model: 'gpt-6.1-sol', effort: 'max' } });
+    expect(state.metadata).toMatchObject({ agentId: 'coding-manager-sol', isSubAgent: true, delegatedJobId: 'manager-job', subAgentDepth: 1, agent: { provider: 'codex', model: 'gpt-6.1-sol', effort: 'max' } });
     expect(state.metadata).not.toHaveProperty('workerModelRoute');
   });
 
