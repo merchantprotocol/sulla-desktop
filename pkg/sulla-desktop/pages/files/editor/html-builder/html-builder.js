@@ -507,6 +507,7 @@
     function setEditing(on) {
       on = Boolean(on && !options.readOnly);
       editing = on;
+      options.onToolbarChange?.(on ? $('bar') : $('pTools').parentElement);
       rootEl.classList.toggle('preview', !on);
       $('editTog').classList.toggle('on', on);
       $('editLbl').textContent = on ? 'Editing' : 'Editing off';
