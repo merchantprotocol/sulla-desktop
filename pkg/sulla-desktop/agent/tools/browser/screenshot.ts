@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseTool, ToolResponse } from '../base';
-import { saveScreenshot } from './screenshot_store';
+import { LIVE_VIEW_NOTE, saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -29,7 +29,7 @@ export class ScreenshotWorker extends BaseTool {
     const addAnnotations = !!input.annotate;
 
     try {
-      // Measure elements and draw the grid *after* emulation. Keep cleanup in
+      // Measure elements and draw the grid only at the settled parked layout. Keep cleanup in
       // the same per-tab transaction, including errors/concurrent screenshots.
       const screenshot = await result.bridge.captureScreenshot({
         format: 'jpeg', quality: 80, viewport: input.viewport, fullPage: input.fullPage, scale: input.scale,
@@ -62,7 +62,7 @@ export class ScreenshotWorker extends BaseTool {
 
       return {
         successBoolean: true,
-        responseString: `[${ result.assetId }] Screenshot captured: ${ title } (${ url }) — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Capture: ${ JSON.stringify(screenshot.metadata) }. Use Read on that path to load the image into vision context.${ legend }`,
+        responseString: `[${ result.assetId }] Screenshot captured: ${ title } (${ url }) — ${ ref.width }×${ ref.height }, ${ ref.bytes } bytes at ${ ref.path }. Capture: ${ JSON.stringify(screenshot.metadata) }. Use Read on that path to load the image into vision context.${ legend }${ ref.liveHumanView ? ` ${ LIVE_VIEW_NOTE }` : '' }`,
         screenshot:     ref,
       } as any;
     } catch (err) {

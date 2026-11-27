@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { BaseTool, ToolResponse } from '../base';
-import { saveScreenshot } from './screenshot_store';
+import { LIVE_VIEW_NOTE, saveScreenshot } from './screenshot_store';
 import { resolveBridge, isBridgeResolved } from './resolve_bridge';
 
 /**
@@ -317,6 +317,7 @@ export class ExecInPageWorker extends BaseTool {
           if (screenshotData?.base64) {
             const ref = await saveScreenshot(screenshotData);
             responseObj.screenshot = ref;
+            if (ref.liveHumanView) responseObj.responseString += ` ${ LIVE_VIEW_NOTE }`;
           }
         } catch { /* screenshot is best-effort */ }
       }

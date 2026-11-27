@@ -20,6 +20,8 @@ import { nativeImage } from 'electron';
 import type { CapturedScreenshot, CaptureMetadata } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import paths from '@pkg/utils/paths';
 
+export const LIVE_VIEW_NOTE = "This tab is in the human's view, so it was captured at their pane size. Open/keep agent tabs with active:false to capture at the agent viewport.";
+
 const SCREENSHOT_DIR = path.join(paths.sullaHome, 'artifacts', 'screenshots');
 const THUMBNAIL_WIDTH = 300;
 const THUMBNAIL_QUALITY = 60;
@@ -57,7 +59,10 @@ export async function saveScreenshot({ base64, mediaType, metadata }: CapturedSc
   const img = nativeImage.createFromBuffer(buf);
   const { width, height } = img.getSize();
 
-  if (width !== metadata.viewport.width * metadata.devicePixelRatio || height !== metadata.cssHeight * metadata.devicePixelRatio) {
+  // CDP scales the clip by output scale / display DPR; fractional backing
+  // coordinates can round either edge by a pixel. Always report decoded size.
+  if (width < 1 || height < 1 || Math.abs(width - metadata.viewport.width * metadata.devicePixelRatio) > 1 ||
+      Math.abs(height - metadata.cssHeight * metadata.devicePixelRatio) > 1) {
     throw new Error(`Browser returned an unexpected screenshot size: ${ width }×${ height }`);
   }
 

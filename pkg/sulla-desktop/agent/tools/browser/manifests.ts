@@ -47,7 +47,7 @@ export const browserToolManifests: ToolManifest[] = [
     description: 'Open, navigate, or close a browser tab. When opening/navigating (action=upsert), the response already includes a dehydrated DOM snapshot of the loaded page — title, URL, interactive elements, and a summary — so you do NOT need to call `browser/snapshot` separately afterwards. Reuse the same assetId to navigate an existing tab to a new URL.',
     category:    'browser',
     schemaDef:   {
-      viewport:  { type: 'object', optional: true, properties: viewportProperties, description: 'Persist this tab’s agent layout in CSS pixels (default 1440x900). Does not set the human pane size.' },
+      viewport:  { type: 'object', optional: true, properties: viewportProperties, description: 'Persist this tab’s agent layout in CSS pixels (default 1440x900). Open with active:false to keep this layout off-screen. Never resizes the human pane.' },
       action:    { type: 'enum', enum: ['upsert', 'remove'], default: 'upsert', description: 'upsert creates or navigates a tab; remove closes by assetId.' },
       assetType: { type: 'enum', optional: true, enum: ['browser', 'iframe', 'document'], description: 'Type of tab to open. Defaults to browser.' },
       assetId:   { type: 'string', optional: true, description: 'Stable asset ID. Reuse the same ID to update an existing tab.' },
@@ -106,11 +106,11 @@ export const browserToolManifests: ToolManifest[] = [
   },
   {
     name:        'screenshot',
-    description: 'Capture a visual screenshot of a tab. Image is saved to disk and the response returns a compact `{ screenshot: { assetId, path, width, height, bytes } }` reference — never inline base64. Use Read on the returned path to inspect the image visually. By default includes a coordinate grid so click_at/type_at coordinates are easy to pick. Set annotate=true to draw numbered boxes on interactive elements.',
+    description: 'Capture a visual screenshot of a tab. Image is saved to disk and the response returns a compact `{ screenshot: { assetId, path, width, height, bytes } }` reference — never inline base64. Use Read on the returned path to inspect the image visually. Parked tabs include a coordinate grid by default; set annotate=true for numbered boxes. A selected tab returns liveHumanView:true and its unmodified pane. Use active:false for agent-sized captures.',
     category:    'browser',
     schemaDef:   {
       assetId:  { type: 'string', optional: true, description: 'Target tab (omit for the active tab)' },
-      viewport: { type: 'object', optional: true, properties: viewportProperties, description: 'CSS dimensions for this screenshot only. Defaults to the tab viewport.' },
+      viewport: { type: 'object', optional: true, properties: viewportProperties, description: 'One-shot CSS dimensions for a parked tab; otherwise defaults to its persisted agent viewport. For a selected tab, liveHumanView is true: capture its actual pane without grid, annotations or resizing.' },
       fullPage: { type: 'boolean', optional: true, description: 'Capture from the top through scroll height. The result reports capped when truncated.' },
       scale:    { type: 'number', optional: true, description: 'Image pixels per CSS pixel: 1 (default) or 2.' },
       grid:     { type: 'boolean', optional: true, description: 'Show coordinate grid overlay (default true)' },
