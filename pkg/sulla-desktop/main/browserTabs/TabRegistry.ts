@@ -21,6 +21,7 @@
 
 import { EventEmitter } from 'node:events';
 
+import type { AgentViewport } from './AgentViewportPolicy';
 import { GuestBridge } from './GuestBridge';
 
 import { BrowserTabViewManager } from '@pkg/window/browserTabViewManager';
@@ -117,7 +118,7 @@ class TabRegistryImpl {
   }
 
   /** Open or update a tab. Re-entrant: same assetId + URL is a no-op. */
-  open(input: { assetId: string; url: string; title?: string; origin?: 'user' | 'agent'; owner?: TabOwner; ownerWindow?: Electron.BrowserWindow }): TabRecord {
+  open(input: { viewport?: AgentViewport; assetId: string; url: string; title?: string; origin?: 'user' | 'agent'; owner?: TabOwner; ownerWindow?: Electron.BrowserWindow }): TabRecord {
     const reserved = this.owners.get(input.assetId);
     if (reserved && !this.sameOwner(reserved, input.owner)) {
       throw this.ownershipError(input.assetId);
@@ -128,6 +129,7 @@ class TabRegistryImpl {
       if (!this.sameOwner(existing.owner, input.owner)) {
         throw this.ownershipError(input.assetId);
       }
+      if (input.viewport !== undefined) BrowserTabViewManager.getInstance().setAgentViewport(input.assetId, input.viewport);
       const sameUrl = existing.url === input.url;
       existing.title = input.title ?? existing.title;
       existing.url = input.url;
@@ -147,7 +149,7 @@ class TabRegistryImpl {
     // Default to 1280×800 so window.innerWidth/innerHeight are non-zero and
     // screenshots + getBoundingClientRect() work immediately. The UI overrides
     // these bounds via setBounds() when it actually displays the tab.
-    BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 1280, height: 800 }, input.ownerWindow);
+    BrowserTabViewManager.getInstance().createView(input.assetId, input.url, { x: 0, y: 0, width: 1280, height: 800 }, input.ownerWindow, input.viewport);
 
     const record: TabRecord = {
       assetId:        input.assetId,

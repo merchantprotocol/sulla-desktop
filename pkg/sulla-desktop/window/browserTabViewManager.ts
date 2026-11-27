@@ -8,6 +8,7 @@ import path from 'path';
 import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
+import { AgentViewportPolicy, type AgentViewport } from '@pkg/main/browserTabs/AgentViewportPolicy';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
 import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
@@ -192,11 +193,11 @@ export class BrowserTabViewManager {
   private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
-  private constructor() {}
+  private constructor(readonly agentViewports: AgentViewportPolicy) {}
 
   static getInstance(): BrowserTabViewManager {
     if (!BrowserTabViewManager.instance) {
-      BrowserTabViewManager.instance = new BrowserTabViewManager();
+      BrowserTabViewManager.instance = new BrowserTabViewManager(new AgentViewportPolicy());
     }
 
     return BrowserTabViewManager.instance;
@@ -346,13 +347,15 @@ export class BrowserTabViewManager {
   // Lifecycle
   // ---------------------------------------------------------------------------
 
-  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow()): void {
+  createView(tabId: string, url: string, bounds: Electron.Rectangle, ownerWindow: Electron.BrowserWindow | null = this.activeAgentWindow(), viewport?: AgentViewport): void {
     // Idempotent: if the view already exists, just navigate (if URL changed)
     // and cache the new bounds. Actual attach/visibility state is driven
     // exclusively by `focusedTabId` via reconcileVisibility.
+    if (viewport !== undefined) this.agentViewports.validate(viewport);
     const existing = this.views.get(tabId);
     if (existing) {
       if (ownerWindow && this.owners.get(tabId) !== ownerWindow) throw new Error(`Browser tab "${ tabId }" is owned by another window`);
+      if (viewport !== undefined) this.setAgentViewport(tabId, viewport);
       if (existing.webContents.getURL() !== url) {
         existing.webContents.loadURL(url).catch(() => {});
       }
@@ -402,7 +405,8 @@ export class BrowserTabViewManager {
     // brand-new views that have never been in a visible position.
     view.webContents.setBackgroundThrottling(false);
 
-    view.setBounds(bounds);
+    if (viewport !== undefined) this.agentViewports.set(view.webContents, viewport);
+    view.setBounds(this.agentViewports.parked(view.webContents));
     this.views.set(tabId, view);
     this.owners.set(tabId, mainWindow);
     this.latestBounds.set(tabId, bounds);
@@ -500,7 +504,8 @@ export class BrowserTabViewManager {
       return true;
     }
     try { oldOwner.contentView.removeChildView(view) } catch { /* detached already */ }
-    targetWin.contentView.addChildView(view);
+    view.setBounds(this.agentViewports.parked(view.webContents));
+    targetWin.contentView.addChildView(view, 0);
     this.trackOwnerWindow(targetWin);
     this.owners.set(tabId, targetWin);
     this.awaitingOwnerBounds.add(tabId);
@@ -510,9 +515,6 @@ export class BrowserTabViewManager {
       this.focusedTabIds.delete(oldOwner.id);
     }
     if (options.focus) this.focusedTabIds.set(targetWin.id, tabId);
-    const bounds = this.latestBounds.get(tabId);
-    const width = Math.max(bounds?.width ?? 1280, 1);
-    view.setBounds({ x: -(width + 100), y: bounds?.y ?? 0, width, height: Math.max(bounds?.height ?? 800, 1) });
     this.reconcileVisibility(oldOwner);
     this.reconcileVisibility(targetWin);
     return true;
@@ -551,6 +553,17 @@ export class BrowserTabViewManager {
   // ---------------------------------------------------------------------------
   // Layout
   // ---------------------------------------------------------------------------
+
+  setAgentViewport(tabId: string, viewport: AgentViewport): void {
+    const view = this.views.get(tabId);
+    if (!view) throw new Error('Cannot set viewport for a missing tab');
+    this.agentViewports.set(view.webContents, viewport);
+    const owner = this.ownerFor(tabId);
+    if (owner && (this.focusedFor(owner) !== tabId || this.awaitingOwnerBounds.has(tabId))) {
+      view.setBounds(this.agentViewports.parked(view.webContents));
+      this.appliedPlacement.delete(view);
+    }
+  }
 
   /**
    * Cache the renderer's latest layout rectangle for a tab. Bounds are
@@ -660,15 +673,6 @@ export class BrowserTabViewManager {
     if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
     let totalTouched = 0;
 
-    // Park unfocused views just off-screen to the left: x = -(width + margin)
-    // so the right edge sits PARK_MARGIN pixels past the viewport's left edge.
-    // Must be dynamic — a hardcoded PARK_X (previously -1300) leaves the right
-    // portion of wide views visible on wide displays (e.g. 2958px wide screen,
-    // width≥1400px view → right edge at x ≥ 100, visibly bleeding through).
-    // Margin stays small so the view remains within Chromium's tile-cache
-    // buffer zone; -100_000 kills tile generation and capturePage returns
-    // empty NativeImages indefinitely.
-    const PARK_MARGIN = 100;
     for (const mainWindow of windows) {
     if (mainWindow.isDestroyed()) continue;
     const focusedTabId = this.focusedFor(mainWindow);
@@ -699,14 +703,7 @@ export class BrowserTabViewManager {
         // Park off-screen. Keep the view attached so its compositor stays
         // alive — detached WebContentsViews stop painting in Electron 40
         // even with stayHidden, which breaks capturePage.
-        const last = this.latestBounds.get(tabId);
-        const width = Math.max(last?.width ?? 1280, 1);
-        const parked: Electron.Rectangle = {
-          x:      -(width + PARK_MARGIN),
-          y:      last?.y ?? 0,
-          width,
-          height: Math.max(last?.height ?? 800, 1),
-        };
+        const parked = this.agentViewports.parked(view.webContents);
         // Window id in the key: a recreated main window must re-attach every view.
         const placement = `${ mainWindow.id }:${ parked.x },${ parked.y },${ parked.width },${ parked.height }`;
         // Already parked here — re-bounding and re-ordering it again is pure
