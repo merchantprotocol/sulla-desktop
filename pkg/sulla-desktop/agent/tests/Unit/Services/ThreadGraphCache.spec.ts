@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
+
 import { ThreadGraphCache } from '../../../services/ThreadGraphCache';
 
 const record = (metadata: Record<string, unknown> = {}) => ({
