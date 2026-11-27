@@ -21,6 +21,7 @@ vi.mock('electron', () => {
 import { BrowserTabCdpIpc } from '../main/startup/BrowserTabCdpIpc';
 import { AgentScreenshotCapture, type CaptureOptions, type CaptureOverlays } from '../main/browserTabs/AgentScreenshotCapture';
 import { AgentViewportPolicy } from '../main/browserTabs/AgentViewportPolicy';
+import { ParkedViewportEmulation } from '../main/browserTabs/ParkedViewportEmulation';
 import { HiddenTabLayout } from '../main/chromeApi/HiddenTabLayout';
 import { BrowserTabViewManager } from './browserTabViewManager';
 
@@ -34,6 +35,7 @@ const ownerWindow = (id: number) => ({
 const managerWith = (tabId: string, view: any, owner: any) => {
   const manager = Object.create(BrowserTabViewManager.prototype) as any;
   manager.agentViewports = new AgentViewportPolicy();
+  manager.parkedEmulation = new ParkedViewportEmulation();
   manager.sleepingTabs = new Set();
   manager.views = new Map([[tabId, view]]);
   manager.owners = new Map([[tabId, owner]]);
@@ -57,7 +59,7 @@ describe('BrowserTabViewManager window ownership', () => {
     // risk: session/history/CDP continuity during tab tear-off
     const source = ownerWindow(1);
     const target = ownerWindow(2);
-    const webContents = { id: 91, loadURL: vi.fn(), reload: vi.fn() };
+    const webContents = { ...new CaptureEdge().contents, id: 91, loadURL: vi.fn(), reload: vi.fn() };
     const view = { webContents, setBounds: vi.fn() };
     const manager = managerWith('tab-a', view, source);
 
@@ -173,7 +175,7 @@ describe('agent viewport lifecycle', () => {
 
   it('restores the latest human pane on focus, even after changing the agent viewport', () => {
     const owner = ownerWindow(10);
-    const view = { setBounds: vi.fn(), setVisible: vi.fn(), webContents: { setBackgroundThrottling: vi.fn() } };
+    const { view } = new CaptureEdge();
     const manager = managerWith('tab', view, owner);
     delete manager.reconcileVisibility;
     const pane = { x: 37, y: 19, width: 157, height: 3982 };
@@ -189,12 +191,13 @@ describe('agent viewport lifecycle', () => {
   });
 
   it('parks the hidden surface before attaching it and releases it from that same owner on close', () => {
-    const layout = new HiddenTabLayout(new AgentViewportPolicy());
+    const layout = new HiddenTabLayout(new AgentViewportPolicy(), new ParkedViewportEmulation());
     const window = ownerWindow(1);
-    const view = { webContents: {}, setBounds: vi.fn() };
+    const { view } = new CaptureEdge();
     layout.prepare(view as any, window as any, { width: 1280, height: 800 });
     expect(view.setBounds).toHaveBeenCalledWith({ x: -1380, y: 0, width: 1280, height: 800 });
     expect(view.setBounds.mock.invocationCallOrder[0]).toBeLessThan(window.contentView.addChildView.mock.invocationCallOrder[0]);
+    expect(view.setVisible).toHaveBeenCalledWith(true);
     expect(layout.owner(view as any)).toBe(window);
     expect(window.contentView.removeChildView).not.toHaveBeenCalled();
     layout.detach(view as any);
@@ -211,7 +214,11 @@ class CaptureEdge extends EventEmitter {
   attached = false;
   contentHeight = 1;
   rect = { ...pane };
-  get size() { return { width: this.rect.width, height: this.rect.height } }
+  emulated?: { width: number; height: number };
+  throttled = true;
+  get size() {
+    return this.emulated ?? (this.rect.x < 0 ? { width: 0, height: 0 } : { width: this.rect.width, height: this.rect.height });
+  }
   readonly captureFrame = vi.fn(async() => ({ data: 'encoded' }));
   readonly isAttached = () => this.attached;
   readonly attach = () => { this.attached = true };
@@ -226,27 +233,34 @@ class CaptureEdge extends EventEmitter {
   readonly executeJavaScript = vi.fn(async(_code: string) => this.size);
   readonly contents = {
     debugger: this, isDestroyed: () => false, executeJavaScript: this.executeJavaScript,
-    setBackgroundThrottling: vi.fn(), enableDeviceEmulation: vi.fn(), disableDeviceEmulation: vi.fn(),
+    on: this.on.bind(this),
+    getBackgroundThrottling: () => this.throttled,
+    setBackgroundThrottling: vi.fn((enabled: boolean) => { this.throttled = enabled }),
+    enableDeviceEmulation: vi.fn((params: { viewSize: typeof laptop }) => { this.emulated = params.viewSize }),
+    disableDeviceEmulation: vi.fn(() => { this.emulated = undefined }),
   };
   readonly view = {
     webContents: this.contents, setVisible: vi.fn(), setBounds: vi.fn((rect: typeof pane) => { this.rect = rect }),
   };
 }
 
-function fixture(focused = false, displayDpr = 1) {
+function fixture(focused = false, displayDpr = 1, persisted: typeof laptop | null = laptop) {
   const edge = new CaptureEdge();
   const owner = { ...ownerWindow(101), getBounds: () => ({ x: displayDpr === 2 ? 2000 : 0 }) };
   const wc = edge.contents as unknown as Electron.WebContents;
   const service = new AgentScreenshotCapture();
-  const manager: BrowserTabViewManager = Reflect.construct(BrowserTabViewManager as any, [new AgentViewportPolicy(), service]);
+  const manager: BrowserTabViewManager = Reflect.construct(BrowserTabViewManager as any, [new AgentViewportPolicy(), service, new ParkedViewportEmulation()]);
   // Seed Electron's registered view and owner without launching Chromium.
   (manager as any).views.set('tab', edge.view);
   (manager as any).owners.set('tab', owner);
   const focus = (selected: boolean) => manager.setFocusedTab(selected ? 'tab' : null, undefined, undefined, owner as any);
-  manager.setAgentViewport('tab', laptop);
+  if (persisted) manager.setAgentViewport('tab', persisted);
+  else (manager as any).reconcileVisibility(owner);
   manager.setBounds('tab', pane, owner as any);
   if (focused) focus(true);
   edge.view.setBounds.mockClear();
+  edge.contents.enableDeviceEmulation.mockClear();
+  edge.contents.disableDeviceEmulation.mockClear();
   const capture = (options?: CaptureOptions, overlays?: CaptureOverlays) =>
     service.capture(wc, once => manager.beginTabCapture('tab', wc, once), options, overlays);
   return { edge, wc, owner, manager, service, focus, capture };
@@ -275,7 +289,7 @@ describe('native screenshot transactions', () => {
     const { metadata } = await capture({ scale });
     expect(metadata).toMatchObject({ liveHumanView: false, viewport: laptop, displayDpr: dpr, devicePixelRatio: scale });
     expect(edge.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
-      clip: { x: 0, y: 123, ...laptop, scale: scale / dpr }, fromSurface: true, captureBeyondViewport: true,
+      clip: { x: 0, y: 123, ...laptop, scale: scale / dpr }, fromSurface: true, captureBeyondViewport: false,
     }));
     expect(edge.view.setBounds).not.toHaveBeenCalled();
   });
@@ -310,22 +324,75 @@ describe('native screenshot transactions', () => {
     expect(edge.isAttached()).toBe(borrowed);
   });
 
-  it('restores the parked view after renderer timeout and sends no late capture command', async() => {
+  it.each(['zero frames', 'no rAF', 'no initial reply'])('falls back by 3 seconds (%s), leaving no late capture', async(mode) => {
     vi.useFakeTimers();
     const { edge, capture } = fixture();
-    let resume!: (size: typeof laptop) => void;
-    edge.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { resume = resolve }));
+    let resume: (() => void) | undefined;
+    const zero = { width: 0, height: 0 };
+    edge.executeJavaScript.mockImplementation(async code => {
+      if (mode === 'no initial reply' || (mode === 'no rAF' && code.includes('requestAnimationFrame'))) {
+        await new Promise<void>(resolve => { resume = resolve });
+      } else if (code.includes('requestAnimationFrame')) {
+        await new Promise(resolve => setTimeout(resolve, 16));
+      }
+      return zero;
+    });
     try {
-      const failed = expect(capture({ viewport: phone })).rejects.toThrow('Timed out');
-      await vi.advanceTimersByTimeAsync(10_001);
-      await failed;
+      const pending = capture({ viewport: phone, fullPage: true });
+      await vi.advanceTimersByTimeAsync(2999);
+      expect(edge.captureFrame).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2);
+      expect(edge.captureFrame).toHaveBeenCalledOnce();
+      expect((await pending).metadata).toMatchObject({ viewport: phone, viewportSettled: false,
+        observedViewport: mode === 'no initial reply' ? null : zero, fullPage: false });
+      expect(edge.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
+        clip: { x: 0, y: 123, ...phone, scale: 1 }, captureBeyondViewport: true,
+      }));
       expect(edge.size).toEqual(laptop);
-      resume(phone);
-      await capture();
+      resume?.();
+      await vi.advanceTimersByTimeAsync(100);
       expect(edge.captureFrame).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('reports both sizes if the fallback capture also fails', async() => {
+    vi.useFakeTimers();
+    const { edge, capture } = fixture();
+    edge.executeJavaScript.mockResolvedValueOnce({ width: 0, height: 0 }).mockImplementationOnce(() => new Promise(() => {}));
+    edge.captureFrame.mockRejectedValueOnce(new Error('no surface'));
+    try {
+      const failed = expect(capture()).rejects.toThrow('Agent viewport did not settle: expected 1280x800, page reports 0x0');
+      await vi.advanceTimersByTimeAsync(3001);
+      await failed;
+      expect(edge.size).toEqual(laptop);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lays out a never-shown tab at 1440x900, including after a one-shot capture and renderer swaps', async() => {
+    const { edge, capture, focus } = fixture(false, 1, null);
+    const defaultSize = { width: 1440, height: 900 };
+    expect(edge.size).toEqual(defaultSize);
+    edge.captureFrame.mockImplementationOnce(async() => {
+      edge.emulated = undefined;
+      edge.emit('did-navigate');
+      expect(edge.size).toEqual(phone); // navigation honors even the transient size
+      return { data: 'encoded' };
+    });
+    expect((await capture({ viewport: phone })).metadata.viewportSettled).toBe(true);
+    expect(edge.size).toEqual(defaultSize);
+    edge.emulated = undefined;
+    edge.emit('dom-ready');
+    expect(edge.size).toEqual(defaultSize);
+    focus(true);
+    expect(edge.contents.disableDeviceEmulation.mock.invocationCallOrder[0]).toBeLessThan(edge.view.setBounds.mock.invocationCallOrder.at(-1)!);
+    edge.emit('did-navigate');
+    edge.emit('dom-ready');
+    expect(edge.emulated).toBeUndefined();
+    expect(edge.size).toEqual({ width: pane.width, height: pane.height });
   });
 
   it('lets focus win synchronously during an in-flight parked capture and rejects the stale image', async() => {
@@ -338,6 +405,7 @@ describe('native screenshot transactions', () => {
     });
     await expect(capture({ viewport: phone })).rejects.toThrow('placement changed');
     expect(edge.rect).toEqual(pane);
+    expect(edge.emulated).toBeUndefined();
     expect((await capture()).metadata.liveHumanView).toBe(true);
   });
 
@@ -365,11 +433,16 @@ describe('native screenshot transactions', () => {
     const { edge, capture } = fixture(false, 2);
     for (const h of [4900, 10 ** 8]) {
       edge.contentHeight = h;
+      edge.captureFrame.mockImplementationOnce(async() => {
+        edge.emulated = undefined; // Chromium may drop widget emulation when restoring a beyond-viewport clip
+        return { data: 'encoded' };
+      });
       const { metadata } = await capture({ fullPage: true, scale: 2 });
+      expect(edge.size).toEqual(laptop);
       expect(metadata.cssHeight).toEqual(Math.min(h, 8192, Math.floor(32 * 1024 ** 2 / (4 * laptop.width))));
       expect(metadata.capped).toBe(metadata.cssHeight < h);
       expect(edge.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
-        clip: { x: 0, y: 0, width: laptop.width, height: metadata.cssHeight, scale: 1 },
+        captureBeyondViewport: true, clip: { x: 0, y: 0, width: laptop.width, height: metadata.cssHeight, scale: 1 },
       }));
     }
   });
@@ -406,10 +479,29 @@ describe('native screenshot transactions', () => {
     }
   });
 
+  it('lays out windowless hidden pages and keeps overlapping operations awake until the last finishes', async() => {
+    const layout = new HiddenTabLayout(new AgentViewportPolicy(), new ParkedViewportEmulation());
+    const edge = new CaptureEdge();
+    const wc = edge.contents as unknown as Electron.WebContents;
+    layout.prepare(edge.view as any, null, phone);
+    expect(edge.size).toEqual(phone);
+    let finishRead!: () => void;
+    const read = layout.whileAwake(wc, () => new Promise<void>(resolve => { finishRead = resolve }));
+    expect(edge.throttled).toBe(false);
+    await expect(layout.whileAwake(wc, async() => { throw new Error('capture failed') })).rejects.toThrow('capture failed');
+    expect(edge.throttled).toBe(false);
+    finishRead();
+    await read;
+    expect(edge.throttled).toBe(true);
+  });
+
   it('captures attached hidden views without reparenting, restoring their native bounds', async() => {
-    const { owner, edge, wc, manager, service } = fixture();
-    const layout = new HiddenTabLayout(manager.agentViewports);
+    const { owner, manager, service } = fixture();
+    const edge = new CaptureEdge();
+    const wc = edge.contents as unknown as Electron.WebContents;
+    const layout = new HiddenTabLayout(manager.agentViewports, manager.parkedEmulation);
     layout.prepare(edge.view as any, owner as any, laptop);
+    expect(edge.size).toEqual(laptop);
     const captureHidden = () => service.capture(wc, once => manager.beginHiddenCapture(edge.view as any, owner as any, once), { viewport: phone });
     expect((await captureHidden()).metadata.viewport).toEqual(phone);
     expect(edge.size).toEqual(laptop);
@@ -417,6 +509,6 @@ describe('native screenshot transactions', () => {
     await expect(captureHidden()).rejects.toThrow('closed');
     expect(edge.size).toEqual(laptop);
     expect(owner.contentView.removeChildView).not.toHaveBeenCalled();
-    expect(edge.contents.enableDeviceEmulation).not.toHaveBeenCalled();
+    expect(edge.emulated).toEqual(laptop);
   });
 });
