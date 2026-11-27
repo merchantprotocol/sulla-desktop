@@ -19,7 +19,7 @@ const SESSION_PARTITION = 'sulla-files-service';
 const RETRY_TIMEOUT_MS = 1_500;
 
 interface PinnedFilesSession {
-  fetch(input:string | URL, init?:RequestInit):Promise<Response>;
+  fetch(input:string, init?:RequestInit):Promise<Response>;
   closeAllConnections():Promise<void> | void;
 }
 
@@ -33,7 +33,7 @@ export class SullaFilesSessionPool<TSession extends PinnedFilesSession> {
     private readonly retryTimeoutMs = RETRY_TIMEOUT_MS,
   ) {}
 
-  async fetch(input:string | URL, init?:RequestInit):Promise<Response> {
+  async fetch(input:string, init?:RequestInit):Promise<Response> {
     const session = await this.getSession();
     try {
       return await session.fetch(input, init);
