@@ -944,38 +944,55 @@ export class ChatController {
     this.thread.value = { ...this.thread.value, messages: merged };
   }
 
+  /**
+   * Settle tool cards only after the backend confirms this thread is idle.
+   * Hydration is deliberately non-authoritative: another renderer can mount
+   * while the backend graph and its tool call are still live.
+   */
+  settleInterruptedToolSteps(): void {
+    const now = Date.now();
+    let changed = false;
+    for (const [index, message] of this.thread.value.messages.entries()) {
+      if (message.kind !== 'tool' || message.status !== 'running') continue;
+      const metadata = typeof message.meta === 'object' && message.meta !== null ? message.meta : undefined;
+      const step = metadata?.step;
+      const endedAt = typeof step?.endedAt === 'number' && Number.isFinite(step.endedAt) ? step.endedAt : undefined;
+      if (endedAt !== undefined && typeof step?.ok === 'boolean') {
+        this.updateMessage<ToolMessage>(message.id, {
+          status: step.ok ? 'ok' : 'error',
+          error: step.ok ? undefined : message.error ?? 'Tool step failed.',
+        }, index);
+        changed = true;
+        continue;
+      }
+
+      const settledAt = endedAt ?? now;
+      this.updateMessage<ToolMessage>(message.id, {
+        status: 'error',
+        error: message.error ?? 'Interrupted after app restart.',
+        ...(step ? { meta: { ...metadata, step: {
+          ...step,
+          endedAt: settledAt,
+          durationMs: typeof step.durationMs === 'number' && Number.isFinite(step.durationMs)
+            ? step.durationMs
+            : Number.isFinite(step.startedAt) ? Math.max(0, settledAt - step.startedAt) : 0,
+          ok: false,
+        } } } : {}),
+      }, index);
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
   hydrate(state: ThreadState): void {
     // The backend thread belongs to this tab's persona, not the stored blob.
     // DB-restored blobs often lack it; dropping it left per-chat features
     // (heartbeat, sub-agent cards) unable to find their backend thread.
     const backendThreadId = this.thread.value.backendThreadId ?? state.thread.backendThreadId;
     const bounded = new MessageWindow().trim(state.thread.messages);
-    const interruptedAt = Date.now();
-    const hydratedMessages = bounded.map(message => {
-      if (message.kind !== 'tool' || message.status !== 'running') return message;
-      const metadata = typeof message.meta === 'object' && message.meta !== null ? message.meta : undefined;
-      const step = metadata?.step;
-      if (!step) return { ...message, status: 'error' as const, error: message.error ?? 'Interrupted after app restart.' };
-      const completedAt = typeof step.endedAt === 'number' && Number.isFinite(step.endedAt) ? step.endedAt : undefined;
-      if (completedAt !== undefined && typeof step.ok === 'boolean') {
-        return {
-          ...message,
-          status: step.ok ? 'ok' as const : 'error' as const,
-          ...(step.ok ? {} : { error: message.error ?? 'Tool step failed.' }),
-        };
-      }
-      const endedAt = completedAt ?? interruptedAt;
-      return {
-        ...message,
-        status: 'error' as const,
-        error: message.error ?? 'Interrupted after app restart.',
-        meta: { ...metadata, step: { ...step, endedAt,
-          durationMs: Number.isFinite(step.startedAt) ? Math.max(0, endedAt - step.startedAt) : 0, ok: false } },
-      };
-    });
-    const messagesChanged = hydratedMessages.length !== state.thread.messages.length ||
-      hydratedMessages.some((message, index) => message !== state.thread.messages[index]);
-    const restored = messagesChanged ? { ...state.thread, messages: hydratedMessages } : state.thread;
+    const messagesChanged = bounded.length !== state.thread.messages.length ||
+      bounded.some((message, index) => message !== state.thread.messages[index]);
+    const restored = messagesChanged ? { ...state.thread, messages: bounded } : state.thread;
     this.thread.value = backendThreadId ? { ...restored, backendThreadId } : restored;
     // Never rehydrate a non-idle runState across a process restart.
     // The backend (ci.graphRunning via PersonaAdapter.syncRunState) is the
