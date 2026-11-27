@@ -872,7 +872,11 @@ export async function openWorkspaceTab(request: WorkspaceTabRequest): Promise<vo
     openDocumentTab(request.documentFile);
     return;
   }
-  const tab = useBrowserTabs().createTab('about:blank', request);
+  const { tabs, createTab } = useBrowserTabs();
+  // An isolated Files renderer reads its navigation target only at boot.
+  const existing = request.mode === 'files' && !request.filesNavigation ? tabs.find(tab => tab.mode === 'files') : undefined;
+  const tab = existing ?? createTab('about:blank', request);
+
   window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }
 

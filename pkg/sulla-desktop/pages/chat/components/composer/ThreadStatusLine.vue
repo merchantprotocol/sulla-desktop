@@ -73,7 +73,7 @@
         class="ta-cols"
         aria-hidden="true"
       >
-        <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Age</span><span />
+        <span>State</span><span>Item</span><span>Latest</span><span class="ta-r">Time</span><span />
       </div>
 
       <!-- Agents launched from this thread. -->
@@ -104,7 +104,7 @@
             class="ta-last"
             :title="rowDetail(node.row)"
           >{{ shortShas(rowDetail(node.row)) }}</span>
-          <span class="ta-when">{{ age(Date.parse(node.row.lastActivityAt)) }}</span>
+          <span class="ta-when"><AgentActivityTime :row="node.row" /></span>
           <ThreadAgentActions
             :row="node.row"
             :stalled="rowState(node.row) === 'stalled'"
@@ -178,7 +178,9 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, 
 import ThreadAgentActions from './ThreadAgentActions.vue';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
-import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
+import { activityAge, blockedDetail, deriveThreadActivity, hasActiveChatWork, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
+
+import AgentActivityTime from '../chrome/AgentActivityTime.vue';
 
 import { windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
@@ -214,13 +216,13 @@ const tree = computed(() => context.backendThreadId.value
   ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)
   : []);
 // Show every live descendant as a row without requiring its parent to expand.
-const agentNodes = computed(() => new AgentTreeBuilder([]).flatten(tree.value).filter(node => LIVE.has(node.row.state)));
+const agentNodes = computed(() => new AgentTreeBuilder<AgentStateRow>([]).flatten(tree.value).filter(node => LIVE.has(node.row.state)));
 const liveRows = computed(() => agentNodes.value.map(node => node.row));
 const heartbeatMinutes = computed(() => controller.heartbeat.value.intervalMinutes ?? null);
 const humanMessages = computed(() => controller.messages.value.filter((msg): msg is ToolQuestionMessage | ToolApprovalMessage =>
   (msg.kind === 'tool_question' && msg.status === 'pending') || (msg.kind === 'tool_approval' && msg.decision === 'pending')));
 
-// For You requests live in the side dock's For You tab, not on this line (Jonathon, 2026-11-19).
+// Decision requests live in the side dock's Decide tab, not on this line (Jonathon, 2026-11-19).
 const activity = computed(() => deriveThreadActivity({
   running:          controller.isRunning.value,
   messages:         controller.messages.value.filter(message => !['tool_question', 'tool_approval'].includes(message.kind)),
@@ -260,7 +262,6 @@ function rowDetail(row: AgentStateRow): string {
   if (running) return running;
   return row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
-function age(at: number): string { return Number.isFinite(at) ? activityAge(now.value - at) : '' }
 function clock(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '' : `${ d.getHours() }:${ String(d.getMinutes()).padStart(2, '0') }`;
@@ -328,8 +329,9 @@ watch([
   () => openCount.value
     ? `${ openCount.value } pending request${ openCount.value === 1 ? '' : 's' }`
     : activity.value.parts.slice(0, 2).join(' · ').slice(0, 240),
-], ([state, detail]) => {
-  reportTabActivity({ state, detail });
+  () => hasActiveChatWork(controller.isRunning.value, liveRows.value),
+], ([state, detail, active]) => {
+  reportTabActivity({ state, detail, active });
 }, { immediate: true });
 watch(hasItems, has => { if (!has) open.value = false; });
 

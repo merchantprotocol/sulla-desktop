@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { AgentResultItem, ResultActivityRecord } from '@pkg/shared/agentResults/AgentResultCard';
+import type { AgentResultItem, ResultActivityRecord, SavedOutcomeReport } from '@pkg/shared/agentResults/AgentResultCard';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 
-import type { ResultEntry } from './sideDock';
+import type { WorkflowRunRow } from '@pkg/shared/productOwnerWorkflow';
 
 export interface ThreadMilestone {
   key:        string;
@@ -28,7 +28,7 @@ export class ThreadGoalProgress {
     return !!row && !row.endedAt && (['queued', 'working', 'parked', 'quiet', 'lost'].includes(row.state) || (row.state === 'blocked' && (row.canMessage || row.canStop)));
   }
 
-  static scope(threadId: string | undefined, rows: readonly AgentStateRow[], entries: readonly ResultEntry[]): AgentStateRow[] {
+  static scope(threadId: string | undefined, rows: readonly AgentStateRow[], entries: readonly SavedOutcomeReport[]): AgentStateRow[] {
     if (!threadId) return [];
     const included = new Set(rows.filter(row => row.rootThreadId === threadId).map(row => row.key));
     const parents = new Set(rows.filter(row => row.threadId === threadId).map(row => row.key));
@@ -45,7 +45,7 @@ export class ThreadGoalProgress {
     return rows.filter(row => included.has(row.key));
   }
 
-  static build(threadId: string | undefined, rows: readonly AgentStateRow[], entries: readonly ResultEntry[], records: readonly ResultActivityRecord[] = []): ThreadWorkstream[] {
+  static build(threadId: string | undefined, rows: readonly AgentStateRow[], entries: readonly SavedOutcomeReport[], records: readonly ResultActivityRecord[] = [], history: readonly WorkflowRunRow[] = []): ThreadWorkstream[] {
     const nodes = new Map<string, ThreadMilestone>();
     for (const entry of entries) {
       const key = this.key(entry.item);
@@ -55,11 +55,17 @@ export class ThreadGoalProgress {
       const previous = nodes.get(row.key);
       nodes.set(row.key, { ...previous, key: row.key, title: row.label || previous?.title || 'Delegated task', row });
     }
+    const saved = new Map(history.filter(row => row.rootThreadId === threadId).map(row => [row.key, row]));
+    for (const row of saved.values()) {
+      if (!nodes.has(row.key)) nodes.set(row.key, { key: row.key, title: row.label });
+    }
     const links = new Map(records.map(record => [this.key(record), record]));
     for (const node of nodes.values()) {
-      const follow = node.row?.followUpOf ?? links.get(node.key)?.followUpOf ?? node.report?.followUpOf;
-      const parent = follow ? this.key(follow) : node.row?.parentJobId !== null && node.row?.parentJobId !== undefined && node.row?.parentTaskIndex !== null && node.row?.parentTaskIndex !== undefined ? `${ node.row.parentJobId }:${ node.row.parentTaskIndex }` : undefined;
-      if (parent && parent !== node.key && nodes.has(parent)) node.parent = parent;
+      const run = node.row ?? saved.get(node.key);
+      const follow = run?.followUpOf ?? links.get(node.key)?.followUpOf ?? node.report?.followUpOf;
+      const assigned = run?.parentJobId && run.parentTaskIndex != null ? `${run.parentJobId}:${run.parentTaskIndex}` : undefined;
+      const references = [follow && this.key(follow), assigned];
+      node.parent = references.find(ref => ref && ref !== node.key && nodes.has(ref)) || undefined;
     }
     const roots = new Map<string, ThreadMilestone[]>();
     for (const node of nodes.values()) {

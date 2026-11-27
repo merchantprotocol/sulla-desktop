@@ -3,7 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { findAgentBySlug } from '@pkg/shared/agentJobNames';
+
 import { computed, inject, watch, type ComputedRef } from 'vue';
+
 
 import { ModelSelectorKey, useChatController } from '../controller/useChatController';
 
@@ -19,12 +22,13 @@ export function useSelectionLabel(): { label: ComputedRef<string>; title: Comput
   const agentId = computed(() => controller.thread.value.agentId ?? null);
   const agentName = computed(() => {
     if (!agentId.value) return '';
-    return selector?.agentOptions.value.find(agent => agent.slug === agentId.value)?.name ?? agentId.value;
+    const agent = findAgentBySlug(selector?.agentOptions.value ?? [], agentId.value);
+    return agent ? agent.name : agentId.value;
   });
 
   // A restored chat can name an agent before the agent list has loaded.
   watch(agentId, (id) => {
-    if (id && selector && !selector.agentOptions.value.some(agent => agent.slug === id)) {
+    if (id && selector && !findAgentBySlug(selector.agentOptions.value, id)) {
       selector.refreshAgents().catch(() => undefined);
     }
   }, { immediate: true });

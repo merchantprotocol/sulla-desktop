@@ -254,7 +254,7 @@ function createStore(threadId: Ref<string | undefined>, transcriptIds?: Ref<stri
       return run(record, async() => {
         const owner = threadId.value; const version = generation; const started = eventVersion;
         const result = await ipcRenderer.invoke('decisions:dismiss', record.id, record.conversationId);
-        if (!result?.settled) throw new Error('This request changed. Refresh For You before dismissing it.');
+        if (!result?.settled) throw new Error('This request changed. Refresh Decide before dismissing it.');
         if (owner !== threadId.value || version !== generation) return;
         if ((changedAt.get(record.id) ?? 0) <= started) put({ ...record, attention: 'dismissed' });
         await read(false);
