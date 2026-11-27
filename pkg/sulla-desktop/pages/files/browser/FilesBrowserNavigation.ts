@@ -140,8 +140,8 @@ export class FilesBrowserNavigation {
   /** Resolve a viewer open by identity first, then through the authorized listing of its parent folder. */
   private async resolveOpenFile(fileId?:string, path?:string):Promise<FilesItem | null> {
     const state = this.state; const source = state.props.dataSource;
-    const cached = state.snapshot.value?.files.find(item => !item.deletedAt
-      && (fileId ? item.id === fileId : item.path === path));
+    const matchesReference = (item:FilesItem) => !item.deletedAt && (fileId ? item.id === fileId : item.path === path);
+    const cached = state.snapshot.value?.files.find(matchesReference);
     if (cached) return cached;
 
     if (fileId && source.filesByIds) {
@@ -156,13 +156,13 @@ export class FilesBrowserNavigation {
     const parent = slash < 0 ? '' : path.slice(0, slash);
     if (source.loadFolder) {
       try {
-        const file = (await source.loadFolder(parent)).find(item => item.path === path && !item.deletedAt);
+        const file = (await source.loadFolder(parent)).find(matchesReference);
         if (file) return file;
       } catch { /* Try the complete child listing when the first folder page fails. */ }
     }
     if (source.listFolderChildren) {
       try {
-        const file = (await source.listFolderChildren(parent)).find(item => item.path === path && !item.deletedAt);
+        const file = (await source.listFolderChildren(parent)).find(matchesReference);
         if (file) return file;
       } catch { /* The caller reports an actionable error if resolution remains unavailable. */ }
     }
@@ -180,7 +180,14 @@ export class FilesBrowserNavigation {
     state.navigationError.value = '';
     browser.sharing.closeShare();
 
-    if (detail.section === 'shared-by-me') { this.selectSection('sharedByMe'); return true }
+    if (detail.section === 'shared-by-me') {
+      if (detail.collectionId && detail.collectionId !== state.snapshot.value?.collection.id) {
+        await this.selectCollection(detail.collectionId);
+        if (!isCurrent()) return false;
+        if (detail.collectionId !== state.snapshot.value?.collection.id) return fail('This Files collection could not be opened. Check your access and try again.');
+      }
+      this.selectSection('sharedByMe'); return true;
+    }
     const isFileOpen = detail.openKind === 'file';
     if (isFileOpen) {
       if (detail.fileId !== undefined && !DURABLE_FILE_ID_PATTERN.test(detail.fileId)) return fail('This Files reference is invalid. Ask for a fresh reference.');

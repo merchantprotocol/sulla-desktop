@@ -23,7 +23,10 @@ import store from './store';
 
 import { AgentStateClient } from '@pkg/services/agentState/AgentStateClient';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
+import { ThemeStore } from '@pkg/composables/useTheme';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
+ThemeStore.shared().applyCachedTheme();
 
 const windowBootStartedAt = Date.now();
 console.info(`[WindowBoot] renderer entry started at ${ windowBootStartedAt }`);
