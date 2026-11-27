@@ -11,6 +11,14 @@ export interface CaptureOptions {
   quality?:  number;
 }
 
+export interface PaneCaptureOptions {
+  format?: 'jpeg' | 'png';
+  quality?: number;
+  clip?: { x: number; y: number; width: number; height: number; scale?: number };
+}
+
+type PageCommand = (name: string, params?: Record<string, unknown>) => Promise<any>;
+
 export interface CaptureMetadata {
   viewport:         AgentViewport;
   liveHumanView:    boolean;
@@ -57,14 +65,31 @@ export class AgentScreenshotCapture {
     return this.serialize(wc, async() => {
       const placement = begin(options.viewport);
       try {
-        return await this.captureOne(wc, placement, scale, options, overlays);
+        return await this.withDebugger(wc, (command, deadline) =>
+          this.captureOne(wc, placement, scale, options, command, deadline, overlays));
       } finally {
         placement.release();
       }
     });
   }
 
-  async serialize<T>(wc: WebContents, run: () => Promise<T>): Promise<T> {
+  /** Human IPC keeps the live surface, caller's optional clip and legacy result. */
+  capturePane(wc: WebContents, authorize: () => void, options?: PaneCaptureOptions) {
+    return this.serialize(wc, () => {
+      authorize(); // the view may have moved while waiting for another capture
+      return this.withDebugger(wc, async(command) => {
+        const format = options?.format ?? 'jpeg';
+        const { data } = await command('Page.captureScreenshot', {
+          format, quality: options?.quality ?? 80, captureBeyondViewport: false,
+          ...(options?.clip && { clip: { ...options.clip, scale: options.clip.scale ?? 1 } }),
+        });
+        authorize();
+        return { base64: data as string, mediaType: `image/${ format }` };
+      });
+    });
+  }
+
+  private async serialize<T>(wc: WebContents, run: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(wc) ?? Promise.resolve();
     const operation = previous.then(run);
     const tail = operation.then(() => {}, () => {});
@@ -92,8 +117,7 @@ export class AgentScreenshotCapture {
     }
   }
 
-  private async captureOne(wc: WebContents, placement: CapturePlacement, devicePixelRatio: 1 | 2,
-    options: CaptureOptions, overlays?: CaptureOverlays): Promise<CapturedScreenshot> {
+  private async withDebugger<T>(wc: WebContents, run: (command: PageCommand, deadline: number) => Promise<T>): Promise<T> {
     if (wc.isDestroyed()) throw new Error('Cannot capture a closed browser tab');
     const dbg = wc.debugger;
     let ownsAttachment = false;
@@ -111,10 +135,20 @@ export class AgentScreenshotCapture {
     const onDetach = () => { detached = true };
     dbg.once('detach', onDetach);
     const deadline = Date.now() + 10_000;
-    const command = (name: string, params?: Record<string, unknown>, until = deadline) => {
+    const command = (name: string, params?: Record<string, unknown>) => {
       if (detached || wc.isDestroyed()) throw new Error('Browser debugger disconnected');
-      return this.until(dbg.sendCommand(name, params), until);
+      return this.until(dbg.sendCommand(name, params), deadline);
     };
+    try {
+      return await run(command, deadline);
+    } finally {
+      dbg.removeListener('detach', onDetach);
+      if (ownsAttachment && !detached && !wc.isDestroyed() && dbg.isAttached()) dbg.detach();
+    }
+  }
+
+  private async captureOne(wc: WebContents, placement: CapturePlacement, devicePixelRatio: 1 | 2,
+    options: CaptureOptions, command: PageCommand, deadline: number, overlays?: CaptureOverlays): Promise<CapturedScreenshot> {
     const { displayDpr, parkedViewport } = placement;
     const liveHumanView = !parkedViewport;
     let overlaysAttempted = false;
@@ -171,12 +205,7 @@ export class AgentScreenshotCapture {
         viewport, liveHumanView, displayDpr, devicePixelRatio, fullPage, capped: requested > cssHeight, cssHeight,
       } };
     } finally {
-      try {
-        if (overlaysAttempted) await this.until(overlays!.remove(), Date.now() + 1000);
-      } finally {
-        dbg.removeListener('detach', onDetach);
-        if (ownsAttachment && !detached && !wc.isDestroyed() && dbg.isAttached()) dbg.detach();
-      }
+      if (overlaysAttempted) await this.until(overlays!.remove(), Date.now() + 1000);
     }
   }
 }
