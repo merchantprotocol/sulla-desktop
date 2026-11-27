@@ -139,6 +139,46 @@ export class MessageDispatcher {
 
 // ─── Handler: chat / assistant / system messages ────────────────
 
+// Return the last bubble's content, or undefined if the final needs its own bubble.
+function reconcileStreamSegments(segments: string[], final: string, oneStream: boolean): string | undefined {
+  const last = segments[segments.length - 1];
+  if (segments.length === 1) {
+    // Main's exact-prefix rule counts Markdown padding. Only trim the edges
+    // for this extension check; the replacement is always the verbatim final.
+    const prefix = last.trim();
+    const incoming = final.trim();
+    if (incoming === prefix) return final; // same reply, only edge blank lines differ
+    if (incoming.length > prefix.length && prefix.length >= incoming.length * 0.6 && incoming.startsWith(prefix)) return final;
+  }
+  let rest = final;
+  for (const [index, segment] of segments.entries()) {
+    if (index > 0 && !rest.startsWith(segment) && !segment.startsWith(rest)) {
+      // Only a known segment boundary can supply a missing separator. After
+      // a line break leave the next line's indentation on the content itself.
+      rest = rest.replace(/^(?:[ \t]*\r?\n)+|^[ \t]+/, '');
+    }
+    if (segment.startsWith(rest)) return last; // the complete final is already visible
+    if (index === segments.length - 1 && oneStream) {
+      const unseen = rest.slice(segment.length);
+      const visibleLength = (text: string) => text.replace(/\s/g, '').length;
+      if (rest.startsWith(segment) && visibleLength(unseen) <= visibleLength(final) * 0.4) return rest;
+
+      // A single prose bubble can also gain a tail while its spacing is
+      // corrected. Use word boundaries to recognize an extension ONLY for
+      // replacement: never use this comparison to discard authoritative text.
+      if (segments.length === 1 && !rest.startsWith(segment)) {
+        const words = segment.split(/ +/);
+        const finalWords = rest.split(/ +/);
+        if (words.length < finalWords.length && words.every((word, i) => word === finalWords[i]) &&
+            visibleLength(segment) >= visibleLength(final) * 0.6) return final;
+      }
+    }
+    if (!rest.startsWith(segment)) break;
+    rest = rest.slice(segment.length);
+  }
+  return undefined;
+}
+
 function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: string, msg: WebSocketMessage): void {
   if (msg.data && typeof msg.data === 'object' && AgentReadinessStatus.apply(ctx.messages, agentId, msgThreadId, msg.data as Record<string, unknown>)) return;
   const activity = msg.data as { kind?: string; thread_id?: string; chatToolActivity?: ChatMessage['chatToolActivity'] } | null;
@@ -242,6 +282,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
   const kindRaw = typeof data.kind === 'string' ? data.kind : undefined;
   const replyStreamId = msg.type === 'assistant_message' && typeof data.replyStreamId === 'string'
     ? data.replyStreamId : undefined;
+  const replySegment = replyStreamId && Number.isInteger(data.replySegment) ? data.replySegment as number : undefined;
   const agentReporting = (msg.type === 'assistant_message' || msg.type === 'subconscious_message' || msg.type === 'chat_message') &&
     (data.role === undefined || data.role === 'assistant') &&
     (data.agentReporting === 'brief' || data.agentReporting === 'standard')
@@ -602,6 +643,14 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
         break;
       }
     }
+    // A numbered chunk from a later segment never overwrites an open bubble
+    // from an earlier one (its close sentinel was lost or never sent): close
+    // that bubble and give the new segment its own.
+    const existingSegment = existingIdx !== -1 ? ctx.messages[existingIdx].replySegment : undefined;
+    if (existingIdx !== -1 && replySegment !== undefined && existingSegment !== undefined && existingSegment !== replySegment) {
+      (ctx.messages[existingIdx] as any)._completed = true;
+      existingIdx = -1;
+    }
     if (existingIdx !== -1) {
       ctx.messages[existingIdx] = { ...ctx.messages[existingIdx], content: finalContent, ...referenceUpdate };
       return;
@@ -631,6 +680,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       ...(decisionFollowUpId ? { decisionFollowUpId } : {}),
       ...(replyAttribution ? { replyAttribution } : {}),
       ...(replyStreamId ? { replyStreamId } : {}),
+      ...(replySegment !== undefined ? { replySegment } : {}),
       ...referenceUpdate,
     });
     return;
@@ -682,7 +732,7 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       if (m.kind === 'streaming' && m.threadId === msgThreadId && belongsToReply(m)) recentStreamIndexes.push(i);
     }
 
-    if (!terminalRunError && recentStreamIndexes.length > 0) {
+    if (!terminalRunError && data?.standaloneReply !== true && recentStreamIndexes.length > 0) {
       // The user has already seen the streaming segments. NEVER wipe them
       // here — abort messages, error notices, and other status pings would
       // erase the actual response content (this is the bug where hitting
@@ -694,25 +744,16 @@ function handleChatMessage(ctx: DispatchContext, agentId: string, msgThreadId: s
       //   2. Incoming content is something else (status, error, abort,
       //      separate follow-up). Let it through as a new bubble alongside
       //      the segments.
-      const streamedConcat = recentStreamIndexes
-        .slice()
-        .reverse()
-        .map(i => ctx.messages[i].content || '')
-        .join('');
-      const incoming = finalContent.trim();
-      const streamed = streamedConcat.trim();
-      const alreadyShown = streamed.length > 0 && (
-        streamed === incoming ||
-        (streamed.length >= Math.max(1, incoming.length * 0.6) && incoming.startsWith(streamed)) ||
-        streamed.startsWith(incoming)
-      );
-      if (alreadyShown) {
-        // A final dump can carry the last part of a formatted block after
-        // a throttled stream update. Keep it in the existing bubble.
-        const lastSegment = recentStreamIndexes[0];
-        if (recentStreamIndexes.length === 1 && incoming.length > streamed.length && incoming.startsWith(streamed)) {
-          ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: finalContent };
-        }
+      const lastSegment = recentStreamIndexes[0];
+      // The final reply carries no stream id. Its extra text can only go into
+      // the last segment when every segment here provably belongs to one stream.
+      const lastStreamId = ctx.messages[lastSegment].replyStreamId;
+      const oneStream = recentStreamIndexes.length === 1 ||
+        (lastStreamId !== undefined && recentStreamIndexes.every(i => ctx.messages[i].replyStreamId === lastStreamId));
+      const segments = recentStreamIndexes.slice().reverse().map(i => ctx.messages[i].content);
+      const tail = reconcileStreamSegments(segments, finalContent, oneStream);
+      if (tail !== undefined) {
+        if (tail !== ctx.messages[lastSegment].content) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], content: tail };
         if (explicitReferences?.length) ctx.messages[lastSegment] = { ...ctx.messages[lastSegment], ...referenceUpdate };
         // Close any open thinking bubble and swallow the duplicate dump.
         for (let i = ctx.messages.length - 1; i >= 0; i--) {
