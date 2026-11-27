@@ -32,6 +32,72 @@ describe('capability token clock recovery', () => {
     expect(syncCalls).toBe(0);
   });
 
+  it('resyncs only once for expired-token calls within the 30-second cooldown', async() => {
+    // risk: availability — repeated expired-token traffic must not repeatedly set the VM clock.
+    let syncCalls = 0;
+    let monotonicNow = 5_000;
+    const recovery = new CapabilityTokenClockRecovery(
+      async() => { syncCalls++; },
+      () => 2_000,
+      () => monotonicNow,
+    );
+    const token = signedToken(1_000, 1_500);
+
+    await expect(recovery.verify(token, signingKey)).rejects.toMatchObject({ code: 'expired' });
+    monotonicNow += 29_999;
+    await expect(recovery.verify(token, signingKey)).rejects.toMatchObject({ code: 'expired' });
+
+    expect(syncCalls).toBe(1);
+  });
+
+  it('resyncs again for a not-yet-valid token after the cooldown window', async() => {
+    // risk: availability — a stale cooldown must not prevent clock correction after 30 seconds.
+    let syncCalls = 0;
+    let monotonicNow = 0;
+    const recovery = new CapabilityTokenClockRecovery(
+      async() => { syncCalls++; },
+      () => 1_000,
+      () => monotonicNow,
+    );
+    const token = signedToken(1_600, 2_200);
+
+    await expect(recovery.verify(token, signingKey)).rejects.toMatchObject({ code: 'not_yet_valid' });
+    monotonicNow += 29_999;
+    await expect(recovery.verify(token, signingKey)).rejects.toMatchObject({ code: 'not_yet_valid' });
+    expect(syncCalls).toBe(1);
+
+    monotonicNow += 1;
+    await expect(recovery.verify(token, signingKey)).rejects.toMatchObject({ code: 'not_yet_valid' });
+
+    expect(syncCalls).toBe(2);
+  });
+
+  it('shares one in-flight resync between concurrent token-time failures', async() => {
+    // risk: availability — concurrent failures must not cause duplicate VM clock writes.
+    let syncCalls = 0;
+    let startSync!: () => void;
+    let finishSync!: () => void;
+    const syncStarted = new Promise<void>((resolve) => { startSync = resolve; });
+    const syncGate = new Promise<void>((resolve) => { finishSync = resolve; });
+    const recovery = new CapabilityTokenClockRecovery(async() => {
+      syncCalls++;
+      startSync();
+      await syncGate;
+    }, () => 2_000, () => 0);
+    const token = signedToken(1_000, 1_500);
+    const first = recovery.verify(token, signingKey);
+    const second = recovery.verify(token, signingKey);
+
+    await syncStarted;
+    expect(syncCalls).toBe(1);
+    finishSync();
+    await Promise.all([
+      expect(first).rejects.toMatchObject({ code: 'expired' }),
+      expect(second).rejects.toMatchObject({ code: 'expired' }),
+    ]);
+    expect(syncCalls).toBe(1);
+  });
+
   it('still rejects a token expired at the corrected host time', async() => {
     // risk: authentication integrity — host resync must not extend actual token expiry.
     let now = 2_000;
