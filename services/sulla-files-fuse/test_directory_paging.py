@@ -61,11 +61,9 @@ def load_adapter():
     pyfuse3.FUSEError = FUSEError
     pyfuse3.readdir_reply = Reply()
     trio = types.ModuleType("trio")
-    async def run_sync(function, *args, **kwargs):
-        limiter = kwargs.pop("limiter", None)
-        cancellable = kwargs.pop("cancellable", None)
-        trio.run_sync_calls.append((limiter, cancellable))
-        return await asyncio.to_thread(function, *args, **kwargs)
+    async def run_sync(function, *args, limiter=None, abandon_on_cancel=False):
+        trio.run_sync_calls.append((limiter, abandon_on_cancel))
+        return await asyncio.to_thread(function, *args)
     trio.to_thread = types.SimpleNamespace(run_sync=run_sync)
     trio.Lock = asyncio.Lock
     trio.run_sync_calls = []

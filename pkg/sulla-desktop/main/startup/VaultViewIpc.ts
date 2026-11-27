@@ -166,6 +166,7 @@ export class VaultViewIpc implements MainProcessIpcStep {
         if (popupOrigin) target.searchParams.set('site', new URL(popupOrigin).hostname);
       }
       if (tabHostView && agentWindowFromSender(event.sender) !== parentWindow) {
+        vaultViewManager.discardPreparedView(preparedView);
         vaultViewManager.hide(ownerId, parentWindow);
         return { state: 'cancelled' };
       }
@@ -175,10 +176,12 @@ export class VaultViewIpc implements MainProcessIpcStep {
         parentWindow,
         target.toString(),
         bounds,
-        tabHostView ?? undefined,
-        tabHostView ? listener => agentWindowFromSender(event.sender) === parentWindow
-          ? internalTabViews.onHostDisposed(event.sender, listener)
-          : null : undefined,
+        tabHostView ? {
+          observeLayout: listener => internalTabViews.observeHostLayout(event.sender, listener),
+          onDisposed: listener => agentWindowFromSender(event.sender) === parentWindow
+            ? internalTabViews.onHostDisposed(event.sender, listener)
+            : null,
+        } : undefined,
         hint?.theme,
         preparedView,
         { requestedAt: openStartedAt, waitUntilStartedMs, createHumanSessionMs, createViewMs, onLoadURLComplete: durationMs => { loadURLMs = durationMs } },
@@ -191,6 +194,12 @@ export class VaultViewIpc implements MainProcessIpcStep {
       vaultStatus.startPolling();
       console.info(`[VaultView] IPC open timing waitUntilStarted=${waitUntilStartedMs}ms createHumanSession=${createHumanSessionMs}ms createView=${createViewMs}ms loadURL=${loadURLMs}ms total=${Math.round(performance.now() - openStartedAt)}ms`);
       return { state: 'opened', expiresAt: humanSession.expiresAt };
+    });
+
+    ipc.handle('vault:view-owned', (event: Electron.IpcMainInvokeEvent, ownerId: string) => {
+      const senderWindow = agentWindowFromSender(event.sender) ?? (window.getWindow('main-agent')?.webContents === event.sender ? window.getWindow('main-agent') : null);
+      if (!senderWindow || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted vault view caller');
+      return vaultViewManager.hasOwnerView(senderWindow, ownerId);
     });
 
     ipc.handle('vault:view-theme', async(event: Electron.IpcMainInvokeEvent, ownerId: string, theme: unknown) => {
