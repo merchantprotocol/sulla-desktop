@@ -13,11 +13,14 @@ import {
 import type { StatusRollupItem, StatusRollupKind } from '../components/composer/StatusRollupQueue';
 import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
 import type { TraceRow } from '../components/transcript/traceTypes';
+import { ToolStepClock } from '../components/transcript/ToolStepClock';
 import type { Message } from '../models/Message';
 import type { WorkerChartAgent, WorkerChartRole, WorkerChartState } from '../components/workerChart/workerChartModel';
 
 /** Adapts the detailed transcript, scoped live snapshots, and authorized trace history into line events. */
 export class ThreadAgentActivityMapper {
+  private readonly toolSteps = new ToolStepClock();
+
   public constructor(private readonly traceProjection: DetailedTraceProjection) {}
 
   checkins(projection: ThreadAgentActivityProjection, threadId: string): StatusRollupItem[] {
@@ -90,8 +93,9 @@ export class ThreadAgentActivityMapper {
   }
 
   tool(agent: PresentedThreadAgent, threadId: string, name: string, at: number, key: string, phase: 'started' | 'finished' | 'failed', correlationId: string): StatusRollupItem {
-    const kind = this.toolKind(name);
-    const item = this.statusItem(agent, threadId, `${phase === 'started' ? 'Running' : phase === 'failed' ? 'Failed' : 'Finished'} ${name}`,
+    const safeLabel = this.toolSteps.safeLabel(undefined, name);
+    const kind = this.toolKind(safeLabel);
+    const item = this.statusItem(agent, threadId, `${phase === 'started' ? 'Running' : phase === 'failed' ? 'Failed' : 'Finished'} ${safeLabel}`,
       at, key, kind);
     return {
       ...item,
@@ -140,7 +144,8 @@ export class ThreadAgentActivityMapper {
     const name = row.kind === 'subagent' ? row.target : agentName.trim() || 'Sulla';
     const kind = this.traceKind(row, message);
     const text = this.traceText(row, message);
-    const at = Number.isFinite(row.at) ? row.at! : now;
+    const step = message?.kind === 'tool' ? this.toolSteps.step(message.meta) : undefined;
+    const at = step?.startedAt ?? (Number.isFinite(row.at) ? row.at! : now);
     const state = row.status;
     const urgency = state === 'failed' ? 'failed' : state === 'blocked' || state === 'waiting' ? 'needs-you' : 'normal';
     return {
@@ -172,7 +177,7 @@ export class ThreadAgentActivityMapper {
     switch (row.kind) {
       case 'tool': {
         if (message?.kind !== 'tool') return `${row.verb} ${row.target}`;
-        return message.desc?.trim() || message.recordedToolName || message.tool;
+        return this.toolSteps.safeLabel(message.meta, message.recordedToolName ?? message.tool);
       }
       case 'thought': return row.target;
       case 'activity': return row.target;
