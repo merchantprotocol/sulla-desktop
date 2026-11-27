@@ -10,6 +10,7 @@ import Electron, { WebContentsView } from 'electron';
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
 import { AgentScreenshotCapture, type CapturePlacement } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import { AgentViewportPolicy, type AgentViewport } from '@pkg/main/browserTabs/AgentViewportPolicy';
+import { ParkedViewportEmulation } from '@pkg/main/browserTabs/ParkedViewportEmulation';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
 import { BROWSER_SESSION_PARTITION, getBrowserSession } from '@pkg/main/browserTabs/browserSession';
@@ -196,7 +197,8 @@ export class BrowserTabViewManager {
   private viewCreatedListeners = new Set<(tabId: string, wc: Electron.WebContents) => void>();
   private webRequestFixer: SullaWebRequestFixer | null = null;
 
-  private constructor(readonly agentViewports: AgentViewportPolicy, readonly agentScreenshots: AgentScreenshotCapture) {}
+  private constructor(readonly agentViewports: AgentViewportPolicy, readonly agentScreenshots: AgentScreenshotCapture,
+    readonly parkedEmulation: ParkedViewportEmulation) {}
 
   displayDpr(window: Electron.BrowserWindow | null): number | null {
     return window && !window.isDestroyed() ? Electron.screen.getDisplayMatching(window.getBounds()).scaleFactor : null;
@@ -205,7 +207,7 @@ export class BrowserTabViewManager {
   static getInstance(): BrowserTabViewManager {
     if (!BrowserTabViewManager.instance) {
       const viewports = new AgentViewportPolicy();
-      BrowserTabViewManager.instance = new BrowserTabViewManager(viewports, new AgentScreenshotCapture());
+      BrowserTabViewManager.instance = new BrowserTabViewManager(viewports, new AgentScreenshotCapture(), new ParkedViewportEmulation());
     }
 
     return BrowserTabViewManager.instance;
@@ -369,7 +371,7 @@ export class BrowserTabViewManager {
       }
       this.latestBounds.set(tabId, bounds);
       if (this.owners.get(tabId) && this.focusedFor(this.owners.get(tabId)!) === tabId) {
-        existing.setBounds(bounds);
+        this.setBounds(tabId, bounds, ownerWindow ?? undefined);
       }
       return;
     }
@@ -414,7 +416,9 @@ export class BrowserTabViewManager {
     view.webContents.setBackgroundThrottling(false);
 
     if (viewport !== undefined) this.agentViewports.set(view.webContents, viewport);
-    view.setBounds(this.agentViewports.parked(view.webContents));
+    const parked = this.agentViewports.parked(view.webContents);
+    view.setBounds(parked);
+    this.parkedEmulation.apply(view.webContents, parked);
     this.views.set(tabId, view);
     this.owners.set(tabId, mainWindow);
     this.latestBounds.set(tabId, bounds);
@@ -513,7 +517,9 @@ export class BrowserTabViewManager {
     }
     this.captureBounds.delete(view);
     try { oldOwner.contentView.removeChildView(view) } catch { /* detached already */ }
-    view.setBounds(this.agentViewports.parked(view.webContents));
+    const parked = this.agentViewports.parked(view.webContents);
+    view.setBounds(parked);
+    this.parkedEmulation.apply(view.webContents, parked);
     targetWin.contentView.addChildView(view, 0);
     this.trackOwnerWindow(targetWin);
     this.owners.set(tabId, targetWin);
@@ -582,16 +588,17 @@ export class BrowserTabViewManager {
 
     const persisted = this.agentViewports.resolve(wc);
     const resized = size.width !== persisted.width || size.height !== persisted.height;
+    this.wakeView(tabId);
     this.captureBounds.set(view, size);
     const release = () => {
       if (this.captureBounds.get(view) !== size) return; // focus/transfer already reconciled
       this.captureBounds.delete(view);
       if (!this.shuttingDown && this.views.get(tabId) === view && this.ownerFor(tabId) === owner && !isFocused()) {
-        this.reconcileVisibility(owner, tabId);
+        this.reconcileVisibility(owner, tabId, true);
       }
     };
     try {
-      if (resized) this.reconcileVisibility(owner, tabId);
+      this.reconcileVisibility(owner, tabId);
       return { displayDpr, parkedViewport: size, resized, assertCurrent, release };
     } catch (error) {
       this.appliedPlacement.delete(view);
@@ -610,10 +617,14 @@ export class BrowserTabViewManager {
     const persisted = this.agentViewports.resolve(wc);
     const resized = size.width !== persisted.width || size.height !== persisted.height;
     const release = () => {
-      if (resized && !wc.isDestroyed()) view.setBounds(this.agentViewports.parked(wc));
+      if (owner.isDestroyed() || wc.isDestroyed()) return;
+      const parked = this.agentViewports.parked(wc);
+      if (resized) view.setBounds(parked);
+      this.parkedEmulation.apply(wc, parked, true);
     };
     try {
       if (resized) view.setBounds(this.agentViewports.parked(wc, size));
+      this.parkedEmulation.apply(wc, size);
       return { displayDpr, parkedViewport: size, resized, release, assertCurrent: () => {
         if (owner.isDestroyed() || wc.isDestroyed()) throw new Error('Hidden tab unavailable');
       } };
@@ -731,7 +742,7 @@ export class BrowserTabViewManager {
    * This is the ONLY place in the codebase that mutates
    * contentView.addChildView / removeChildView / setBounds for tab views.
    */
-  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow, onlyTabId?: string): number {
+  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow, onlyTabId?: string, refreshEmulation = false): number {
     if (this.shuttingDown) return 0;
     const windows = ownerWindow ? [ownerWindow] : [...new Set(this.owners.values())];
     if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
@@ -749,6 +760,7 @@ export class BrowserTabViewManager {
         // Explicitly clear any native hidden state before attaching/promoting
         // the focused view. Parked views remain drawable off-screen for agent
         // capture, while focused pages report visibilityState=visible.
+        this.parkedEmulation.clear(view.webContents);
         view.setVisible(true);
         view.webContents.setBackgroundThrottling(false);
         this.sleepingTabs.delete(tabId);
@@ -773,9 +785,14 @@ export class BrowserTabViewManager {
         const placement = `${ mainWindow.id }:${ parked.x },${ parked.y },${ parked.width },${ parked.height }`;
         // Already parked here — re-bounding and re-ordering it again is pure
         // native churn on every switch.
-        if (this.appliedPlacement.get(view) === placement) continue;
+        if (this.appliedPlacement.get(view) === placement) {
+          this.parkedEmulation.apply(view.webContents, parked, refreshEmulation);
+          continue;
+        }
         touched++;
         view.setBounds(parked);
+        if (!this.sleepingTabs.has(tabId)) view.setVisible(true);
+        this.parkedEmulation.apply(view.webContents, parked, refreshEmulation);
         this.appliedPlacement.set(view, placement);
         try {
           // Ensure still attached (no-op if already attached). Index 0 puts
@@ -880,6 +897,10 @@ export class BrowserTabViewManager {
     try {
       view.setVisible(true);
       view.webContents.setBackgroundThrottling(false);
+      const owner = this.ownerFor(tabId);
+      if (owner && this.focusedFor(owner) !== tabId) {
+        this.parkedEmulation.apply(view.webContents, this.agentViewports.resolve(view.webContents, this.captureBounds.get(view)), true);
+      }
     } catch (err) {
       console.warn(`[BrowserTabView] wake failed tabId=${ tabId }:`, err);
     }
@@ -1006,6 +1027,7 @@ export class BrowserTabViewManager {
       if (this.shuttingDown || this.views.get(tabId) !== view || this.focusedFor(mainWindow) !== tabId) return;
 
       const bounds = this.latestBounds.get(tabId);
+      this.parkedEmulation.clear(view.webContents);
       if (shouldRecreate) {
         const replacement = new WebContentsView({ webContents: view.webContents });
 
