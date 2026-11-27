@@ -5,6 +5,7 @@
 
 import { FilesBrowserState } from './FilesBrowserState';
 import { FilesFileBookmarker } from './FilesFileBookmarker';
+import { FilesOpenDestinationRouter } from '../FilesOpenDestinationRouter';
 
 import type { FilesBrowserController } from './FilesBrowserController';
 import type { FilesTargetAction } from './FilesBrowserTypes';
@@ -13,6 +14,7 @@ import type { FilesTargetAction } from './FilesBrowserTypes';
 export class FilesBrowserTargetActions {
   constructor(
     private readonly browser:FilesBrowserController,
+    private readonly openDestinationRouter = new FilesOpenDestinationRouter(),
   ) {}
 
   readonly runTargetAction = async(action:FilesTargetAction):Promise<void> => {
@@ -22,7 +24,10 @@ export class FilesBrowserTargetActions {
     if (action === 'open') { browser.navigation.activate(target); return }
     if (action === 'new-folder' || action === 'new-file') { if (target.folder) await (action === 'new-folder' ? browser.creation.newFolder(target.path) : browser.creation.newFile(target.path)); return }
     if (action === 'open-sulla') { browser.navigation.openInSulla(target); return }
-    if (action === 'native-open') { await browser.refresher.runMutation(() => (source.openFileWithDefaultApp ?? source.openFile).call(source, target.id, target.currentVersionId), false); return }
+    if (action === 'native-open') {
+      if (this.openDestinationRouter.isHtmlPath(target.path)) { browser.navigation.openInSulla(target); return }
+      await browser.refresher.runMutation(() => (source.openFileWithDefaultApp ?? source.openFile).call(source, target.id, target.currentVersionId), false); return;
+    }
     if (action === 'reveal') {
       if (!source.capabilities.nativeReveal || !source.revealFile) return;
       try {
