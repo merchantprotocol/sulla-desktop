@@ -166,7 +166,9 @@ export class ProviderCliBridgeService {
     let status = 500;
     let retryAfterSeconds: number | undefined;
     let openAIReason: string | undefined;
-    // Internal phase for failure classification/console diagnostics; never emitted in BridgeTiming.
+    let timingPath: string | undefined;
+    let failureNote = '';
+    // Internal phase for failure classification and the fixed-code timing diagnostic.
     let stage = 'request';
     response.socket?.setNoDelay(true);
     const requestAbort = new AbortController();
@@ -184,6 +186,9 @@ export class ProviderCliBridgeService {
     });
     const deny = (code: number, type: string, extra: { message?: string; reason: string; headers?: Record<string, string> }) => {
       status = code;
+      const safeType = ProviderCliBridgeFailurePolicy.safeToken(type);
+      const safeReason = ProviderCliBridgeFailurePolicy.safeToken(extra.reason);
+      failureNote += ` failure=${ safeType ?? 'provider_bridge_denied' }${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ stage }`;
       ProviderCliBridgeResponsePolicy.sendError(response, code, type, extra);
     };
     // Revoking destroys every in-flight request, including this one; detach it
@@ -231,7 +236,8 @@ export class ProviderCliBridgeService {
         return;
       }
       const incomingPath = incoming.pathname.slice(scopedPrefix.length);
-      const upstreamPath = definition.routes[incomingPath];
+      const isDefinedRoute = Object.prototype.hasOwnProperty.call(definition.routes, incomingPath);
+      const upstreamPath = isDefinedRoute ? definition.routes[incomingPath] : undefined;
       const upstreamSearch = definition.cli === 'claude-code' && incoming.search === '?beta=true'
         ? incoming.search
         : '';
@@ -239,6 +245,8 @@ export class ProviderCliBridgeService {
         deny(404, 'unsupported_provider_route', { reason: upstreamPath ? 'query_not_allowed' : 'route_not_allowed' });
         return;
       }
+      // This value is safe to log only after it has matched the fixed route table.
+      timingPath = incomingPath;
       stage = 'authorize';
       if (!await checkLive()) return;
       stage = 'request_body';
@@ -269,6 +277,7 @@ export class ProviderCliBridgeService {
         // usually still valid. Failing the request here surfaced as a
         // terminal "request denied" and killed healthy workers. A credential
         // that really expired gets the provider's own 401 instead.
+        failureNote += ' upkeep=credential_upkeep_failed';
         console.warn(`[ProviderCliBridge] credential upkeep failed reason=credential_upkeep_failed error=${ ProviderCliBridgeFailurePolicy.safeToken((error as { name?: unknown })?.name) ?? 'Error' }; forwarding with the stored credential`);
       }
       beforeUpstreamMs = performance.now() - upkeepStartedAt;
@@ -360,6 +369,7 @@ export class ProviderCliBridgeService {
           // alone leaves the socket up once the request body was fully read.
           response.destroy();
         }
+        failureNote += ` failure=provider_bridge_cancelled reason=${ reason } stage=${ stage }`;
         console.warn(`[ProviderCliBridge] request cancelled reason=${ reason } stage=${ stage }`);
         return;
       }
@@ -371,6 +381,11 @@ export class ProviderCliBridgeService {
       const brokerStatus = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
       const vaultKind = VaultHealthMonitor.failureKind(brokerStatus, failure.errorCode === 'vault_locked' ? 'vault_locked' : failure.reason);
       if (vaultKind) vaultHealthMonitor.record(vaultKind);
+      const safeType = ProviderCliBridgeFailurePolicy.safeToken(failure.type);
+      const safeCode = ProviderCliBridgeFailurePolicy.safeToken(failure.errorCode);
+      const safeReason = ProviderCliBridgeFailurePolicy.safeToken(failure.reason);
+      const safeStage = ProviderCliBridgeFailurePolicy.safeToken(stage);
+      failureNote += ` failure=${ safeType ?? 'provider_bridge_failed' }${ safeCode ? `:${ safeCode }` : '' }${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ safeStage ?? 'bridge' }`;
       console.error(`[ProviderCliBridge] request failed: ${ failure.errorName }${ failure.errorCode ? ` (${ failure.errorCode })` : '' }` +
         `${ failure.reason ? ` reason=${ failure.reason }` : '' } -> ${ failure.status } ${ failure.type }`);
       if (!response.headersSent) {
@@ -386,7 +401,7 @@ export class ProviderCliBridgeService {
       lifetime.signal.removeEventListener('abort', abort);
       requestTurnTiming?.endProviderRequest(bridgeRequestId, status, bodyBytes);
       const ms = (value: number) => value.toFixed(1);
-      options.logTiming?.(`[BridgeTiming] runId=${ requestRunId } bridgeRequestId=${ bridgeRequestId } provider=${ definition.cli } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ retryAfterSeconds !== undefined ? ` retry_after=${ retryAfterSeconds }s` : '' }`);
+      options.logTiming?.(`[BridgeTiming] runId=${ requestRunId } bridgeRequestId=${ bridgeRequestId } provider=${ definition.cli }${ timingPath ? ` path=${ timingPath }` : '' } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ retryAfterSeconds !== undefined ? ` retry_after=${ retryAfterSeconds }s` : '' }${ failureNote }`);
     }
   });
   try {
