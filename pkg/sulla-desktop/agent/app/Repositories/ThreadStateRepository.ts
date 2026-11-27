@@ -145,6 +145,36 @@ export class FileThreadCheckpointRepository {
       }
     }
   }
+
+  async sweep(ttlSeconds: number): Promise<void> {
+    const cutoff = this.now() - 2 * ttlSeconds * 1000;
+    try {
+      await this.sweepDirectory(this.directory(), cutoff, true);
+    } catch (err) { this.logSweepFailure(err); }
+  }
+
+  private async sweepDirectory(dir: string, cutoff: number, root: boolean): Promise<void> {
+    for (const entry of await fs.promises.readdir(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      try {
+        if (root && entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name)) {
+          await this.sweepDirectory(file, cutoff, false);
+        } else if (entry.isFile()) {
+          const owned = root
+            ? /^[a-f0-9]{64}\.json(?:\.[a-f0-9-]{36}\.tmp)?$/.test(entry.name)
+            : FileThreadCheckpointRepository.ID.test(entry.name.replace(/\.json(?:\.tmp)?$/, '')) && entry.name.includes('.json');
+          if (owned && (await fs.promises.lstat(file)).mtimeMs < cutoff) await fs.promises.unlink(file);
+        }
+      } catch (err) { this.logSweepFailure(err); }
+    }
+  }
+
+  private logSweepFailure(err: unknown): void {
+    if (!['ENOENT', 'ENOTDIR'].includes((err as NodeJS.ErrnoException).code ?? '')) {
+      this.logger.error('[ThreadStateStore] Could not sweep checkpoint storage');
+    }
+  }
+
 }
 
 export class LogRecoveryThreadStateRepository extends Service implements ThreadStateRepository {

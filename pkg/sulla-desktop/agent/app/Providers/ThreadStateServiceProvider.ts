@@ -21,5 +21,9 @@ export class ThreadStateServiceProvider {
   readonly repository = new FallbackThreadStateRepository(
     this.redis, this.memory, this.recovery, console,
   );
+
+  constructor() {
+    void this.files.sweep(THREAD_STATE_TTL_SECONDS);
+  }
 }
 export const threadStateProvider = new ThreadStateServiceProvider();
