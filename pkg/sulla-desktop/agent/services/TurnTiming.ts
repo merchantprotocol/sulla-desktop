@@ -9,11 +9,27 @@ export type TurnTimingOutcome = 'ok' | 'error' | 'aborted';
 export type TurnTimingToolSource = 'native' | 'codex_cli' | 'claude_cli' | 'mcp';
 
 export interface TurnTimingClock {
+  epochNow(): number;
   now(): number;
+}
+
+/** Production clock: wall time for the record anchor, monotonic time for spans. */
+export class SystemTurnTimingClock implements TurnTimingClock {
+  epochNow(): number { return Date.now(); }
+  now(): number { return performance.now(); }
 }
 
 export interface TurnTimingLog {
   log(message: string): void;
+}
+
+/** Narrow structural seam shared with the provider bridge's request handler. */
+export interface TurnTimingProviderRequestSink {
+  readonly runId?: string;
+  beginProviderRequest(bridgeRequestId: string): void;
+  markFirstByte(bridgeRequestId: string): void;
+  markFirstText(bridgeRequestId: string): void;
+  endProviderRequest(bridgeRequestId: string, status: number | null, bodyBytes: number | null): void;
 }
 
 export interface TurnTimingOptions {
@@ -82,42 +98,59 @@ export class SafeToolLabel {
  * One isolated accumulator per accepted agent turn. Only identifiers, enums,
  * safe tool labels, and numeric timing data are ever written to perf.log.
  */
-export class TurnTiming {
+export class TurnTiming implements TurnTimingProviderRequestSink {
   private readonly startedAtMs: number;
+  private readonly startedAtClockMs: number;
   private queueWaitMs: number | null;
+  private provider: TurnTimingProvider;
+  private model: string | null;
   private preModelMs: number | null = null;
+  private preModelEndElapsedMs: number | null = null;
   private firstVisibleTextMs: number | null = null;
   private reasoningMs: number | null = null;
   private readonly providerRequests: ProviderRequestTiming[] = [];
-  private readonly providerRequestsById = new Map<string, ProviderRequestTiming | null>();
+  private readonly providerRequestsById = new Map<string, ProviderRequestTiming>();
   private readonly toolSteps: ToolStepTiming[] = [];
-  private readonly toolStepsById = new Map<string, ToolStepTiming | null>();
+  private readonly toolStepsById = new Map<string, ToolStepTiming>();
   private truncatedSteps = 0;
   private finished = false;
 
   constructor(private readonly options: TurnTimingOptions) {
-    this.startedAtMs = options.startedAtMs ?? options.clock.now();
+    this.startedAtMs = options.startedAtMs ?? options.clock.epochNow();
+    this.startedAtClockMs = options.clock.now();
     this.queueWaitMs = this.durationOrNull(options.queueWaitMs);
+    this.provider = options.provider;
+    this.model = options.model;
   }
 
   get runId(): string { return this.options.runId; }
 
   /** Set once the turn reaches its first provider request. */
   markPreModelEnd(): void {
-    if (this.preModelMs === null) this.preModelMs = this.elapsedMs();
+    if (this.preModelEndElapsedMs !== null) return;
+    this.preModelEndElapsedMs = this.elapsedMs();
+    this.preModelMs = Math.max(0, this.preModelEndElapsedMs - (this.queueWaitMs ?? 0));
   }
 
   /** Admission/dispatch wait measured outside the accumulator. */
   setQueueWaitMs(durationMs: number | null): void {
-    if (!this.finished) this.queueWaitMs = this.durationOrNull(durationMs);
+    if (this.finished) return;
+    this.queueWaitMs = this.durationOrNull(durationMs);
+    if (this.preModelEndElapsedMs !== null) {
+      this.preModelMs = Math.max(0, this.preModelEndElapsedMs - (this.queueWaitMs ?? 0));
+    }
+  }
+
+  setProviderModel(provider: TurnTimingProvider, model: string | null): void {
+    if (this.finished) return;
+    this.provider = provider;
+    this.model = typeof model === 'string' && model.trim() ? model.trim() : null;
   }
 
   beginProviderRequest(bridgeRequestId: string): void {
     if (this.finished || !bridgeRequestId || this.providerRequestsById.has(bridgeRequestId)) return;
-    if (this.providerRequests.length >= 500) {
-      this.providerRequestsById.set(bridgeRequestId, null);
-      return;
-    }
+    this.markPreModelEnd();
+    if (this.providerRequests.length >= 500) return;
     const request: ProviderRequestTiming = {
       bridgeRequestId,
       startMs: this.elapsedMs(),
@@ -132,16 +165,19 @@ export class TurnTiming {
   }
 
   markFirstByte(bridgeRequestId: string): void {
+    if (this.finished) return;
     const request = this.providerRequestsById.get(bridgeRequestId);
     if (request && request.firstByteMs === null) request.firstByteMs = this.elapsedMs();
   }
 
   markFirstText(bridgeRequestId: string): void {
+    if (this.finished) return;
     const request = this.providerRequestsById.get(bridgeRequestId);
     if (request && request.firstTextMs === null) request.firstTextMs = this.elapsedMs();
   }
 
   endProviderRequest(bridgeRequestId: string, status: number | null, bodyBytes: number | null): void {
+    if (this.finished) return;
     const request = this.providerRequestsById.get(bridgeRequestId);
     if (!request || request.endMs !== null) return;
     request.endMs = this.elapsedMs();
@@ -153,7 +189,6 @@ export class TurnTiming {
     if (this.finished || !stepId || this.toolStepsById.has(stepId)) return;
     if (this.toolSteps.length >= 500) {
       this.truncatedSteps++;
-      this.toolStepsById.set(stepId, null);
       return;
     }
     const step: ToolStepTiming = {
@@ -169,6 +204,7 @@ export class TurnTiming {
   }
 
   endToolStep(stepId: string, ok: boolean): void {
+    if (this.finished) return;
     const step = this.toolStepsById.get(stepId);
     if (!step || step.endMs !== null) return;
     step.endMs = this.elapsedMs();
@@ -181,19 +217,29 @@ export class TurnTiming {
   }
 
   markFirstVisibleText(): void {
+    if (this.finished) return;
     if (this.firstVisibleTextMs === null) this.firstVisibleTextMs = this.elapsedMs();
   }
 
   /** Flush one privacy-safe JSON record; repeated settlement is a no-op. */
   finish(outcome: TurnTimingOutcome): void {
     if (this.finished) return;
+    const endMs = this.elapsedMs();
+    for (const request of this.providerRequests) {
+      if (request.endMs === null) request.endMs = endMs;
+    }
+    for (const step of this.toolSteps) {
+      if (step.endMs !== null) continue;
+      step.endMs = endMs;
+      step.durationMs = Math.max(0, endMs - step.startMs);
+    }
     this.finished = true;
     const record: Record<string, unknown> = {
       schemaVersion: 1,
       runId: this.options.runId,
       surface: this.options.surface,
-      provider: this.options.provider,
-      model: this.options.model,
+      provider: this.provider,
+      model: this.model,
       outcome,
       threadId: this.options.threadId,
       jobId: this.options.jobId ?? null,
@@ -203,7 +249,7 @@ export class TurnTiming {
       preModelMs: this.preModelMs,
       firstVisibleTextMs: this.firstVisibleTextMs,
       reasoningMs: this.reasoningMs,
-      totalMs: this.elapsedMs(),
+      totalMs: endMs,
       providerRequests: this.providerRequests,
       toolSteps: this.toolSteps,
     };
@@ -212,7 +258,7 @@ export class TurnTiming {
   }
 
   private elapsedMs(): number {
-    return Math.max(0, this.options.clock.now() - this.startedAtMs);
+    return Math.max(0, this.options.clock.now() - this.startedAtClockMs);
   }
 
   private durationOrNull(value: number | null | undefined): number | null {
