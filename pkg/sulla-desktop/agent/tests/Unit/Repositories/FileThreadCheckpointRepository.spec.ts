@@ -140,6 +140,32 @@ describe('large thread checkpoints', () => {
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private-marker');
   });
 
+  it('evicts RAM copies of idle threads once their Redis pointer has expired', async() => {
+    const client = redisClient();
+    const file = path.join(directory, 'not-a-directory');
+    await fs.promises.writeFile(file, '');
+    let clock = 0;
+    const redis = new RedisThreadStateRepository(
+      { getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => file), logger, () => clock,
+    );
+    const repo = new FallbackThreadStateRepository(redis, new MemoryThreadStateRepository(), new MemoryThreadStateRepository(), logger);
+    await repo.save(state('idle-a', 'a' + big));
+    await repo.save(state('idle-b', 'b' + big));
+    clock = 3599 * 1000;
+    expect((await repo.load('idle-a'))?.messages[0].content === 'a' + big).toBe(true);
+    expect(redis['memoryHeads'].size).toBe(2);
+    // Both threads go idle past the TTL: Redis drops the pointers, and an unrelated thread's save evicts the copies.
+    clock = 3600 * 1000;
+    client.values.clear();
+    await repo.save(state('active', 'inline'));
+    expect(redis['memoryHeads'].size).toBe(0);
+    await repo.save(state('idle-c', 'c' + big));
+    clock = 7200 * 1000;
+    client.values.clear();
+    expect(await repo.load('active')).toBeNull();
+    expect(redis['memoryHeads'].size).toBe(0);
+  });
+
   it('falls through to real transcript recovery for an unreadable pointer without logging its payload', async() => {
     const client = redisClient();
     const badId = await files().write('thread', 'private-body: not JSON');

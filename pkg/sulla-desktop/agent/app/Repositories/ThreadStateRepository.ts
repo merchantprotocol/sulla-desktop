@@ -52,12 +52,14 @@ export class MemoryThreadStateRepository extends Service implements ThreadStateR
 
 export class RedisThreadStateRepository extends Service implements ThreadStateRepository {
   private static readonly KEY_PREFIX = 'sulla:threadstate:';
-  private readonly memoryHeads = new Map<string, { id: string; state: BaseThreadState }>();
+  private readonly memoryHeads = new Map<string, { id: string; state: BaseThreadState; expiresAt: number }>();
   constructor(
     private readonly clientSource: RedisThreadStateClientSource,
     private readonly ttlSeconds = THREAD_STATE_TTL_SECONDS,
     private readonly files?: FileThreadCheckpointRepository,
     private readonly logger: ThreadStateLogger = console,
+    // Monotonic: a wall-clock jump must never evict a head whose Redis pointer is still live.
+    private readonly now: () => number = () => performance.now(),
   ) { super() }
 
   async available(): Promise<boolean> {
@@ -72,6 +74,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async save(state: BaseThreadState): Promise<void> {
+    this.evictExpiredMemoryHeads();
     const thread = state.metadata.threadId;
     const json = JSON.stringify(state);
     let id: string | undefined;
@@ -84,7 +87,8 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
         const memoryId = randomUUID();
 
         await this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds, JSON.stringify({ sullaCheckpointMemory: 1, id: memoryId }));
-        this.memoryHeads.set(thread, { id: memoryId, state: JSON.parse(json) });
+        // Measured after SETEX returns, so the Redis pointer always expires first.
+        this.memoryHeads.set(thread, { id: memoryId, state: JSON.parse(json), expiresAt: this.now() + this.ttlSeconds * 1000 });
         return;
       }
     }
@@ -96,6 +100,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async load(threadId: string): Promise<BaseThreadState | null> {
+    this.evictExpiredMemoryHeads();
     const json = await this.clientSource.getClient().get(this.key(threadId));
     const value = json ? JSON.parse(json) : null;
     const kind = this.pointerKind(value);
@@ -114,6 +119,12 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   async delete(threadId: string): Promise<void> {
     await this.clientSource.getClient().del(this.key(threadId));
     this.memoryHeads.delete(threadId);
+  }
+
+  // Idle threads are never loaded again, so expired copies are dropped on any thread's save or load.
+  private evictExpiredMemoryHeads(): void {
+    const now = this.now();
+    for (const [thread, head] of this.memoryHeads) if (head.expiresAt <= now) this.memoryHeads.delete(thread);
   }
 
   private pointerKind(value: Record<string, unknown> | null): 'file' | 'memory' | undefined {
