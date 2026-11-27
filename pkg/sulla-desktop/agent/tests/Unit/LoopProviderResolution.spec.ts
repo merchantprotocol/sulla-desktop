@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import { performance } from 'node:perf_hooks';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { LoopProviderResolution, LoopProviderResolutionError } from '../../nodes/LoopProviderResolution';
 
@@ -61,5 +61,26 @@ describe('LoopProviderResolution', () => {
     expect(failure).toBeInstanceOf(LoopProviderResolutionError);
     expect((failure as Error).message).toContain('turnProviderResolver.resolve');
     expect((failure as Error).message).not.toContain(privateDetail);
+  });
+
+  it('does not count a suspended wall-clock timer as an active timeout after resume', async() => {
+    vi.useFakeTimers();
+    let activeMs = 0;
+    const resolution = new LoopProviderResolution({ timeoutMs: 40, attemptTimeoutMs: 40, maxAttempts: 1 }, () => activeMs);
+    const pending = resolution.run(({ stage }) => stage('workerModelRouting.resolveRoute', () => new Promise<never>(() => {})));
+    let settled = false;
+    pending.catch(() => { settled = true });
+
+    try {
+      // A wake callback can run after suspend while the monotonic budget did not advance.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+
+      activeMs = 40;
+      await vi.advanceTimersByTimeAsync(40);
+      await expect(pending).rejects.toMatchObject({ stage: 'workerModelRouting.resolveRoute', timedOut: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
