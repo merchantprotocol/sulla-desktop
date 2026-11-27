@@ -166,7 +166,7 @@ describe('DetailedTraceProjection', () => {
   it('shows a persisted safe shell label and exit code without the raw command', () => {
     // risk: privacy — command arguments must not leak into the Detailed row target or arguments.
     const command = 'git grep -n "overwrite" AgentSeeder.ts';
-    const tool = { kind: 'tool', id: '1_tool_exec', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'ok',
+    const tool = { kind: 'tool', id: '1_tool_exec', createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'error',
       meta: { step: { stepId: 'step-1', runId: 'run-1', provider: 'codex', source: 'codex_cli', safeLabel: 'git', startedAt: 1_000, endedAt: 1_094, durationMs: 94, ok: false } },
       input: JSON.stringify({ command }), output: 'Command failed with exit code 2:\ntwo hits' } as const;
     const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
@@ -185,16 +185,19 @@ describe('DetailedTraceProjection', () => {
     expect(row).toMatchObject({ kind: 'activity', target: 'shell' });
     expect(row.target).not.toContain(command);
   });
-  it('settles a completed step from its persisted result even if the card status update trails it', () => {
-    // risk: ordering — tool_result's persisted ok/duration must win over a stale running card snapshot.
-    const tool = { kind: 'tool', id: 'step-result-before-card', createdAt: 1, recordedToolName: 'exec', tool: 'Bash',
-      desc: 'Running command', status: 'running', input: '{"command":"git status"}',
-      meta: { step: { stepId: 'step-2', runId: 'run-1', provider: 'codex', source: 'codex_cli', safeLabel: 'git',
-        startedAt: 1_000, endedAt: 2_000, ok: true } } } as const;
+  it('uses terminal card status instead of keeping a step running from incomplete timing metadata', () => {
+    // risk: false status — an aborted or failed card must not keep ticking when endedAt was never persisted.
+    const interrupted = { kind: 'tool', id: 'step-card-error', createdAt: 1, recordedToolName: 'exec', tool: 'Bash',
+      desc: 'Running command', status: 'error', input: '{"command":"git status"}',
+      meta: { step: { stepId: 'step-2', runId: 'run-1', provider: 'codex', source: 'codex_cli', safeLabel: 'git', startedAt: 1_000 } } } as const;
+    const staleResult = { ...interrupted, id: 'step-card-error-with-result',
+      meta: { step: { ...interrupted.meta.step, endedAt: 2_000, durationMs: 1_000, ok: true } } } as const;
 
-    const [row] = new DetailedTraceProjection().project([tool as never], []).flatMap(turn => turn.rows);
+    const rows = new DetailedTraceProjection().project([interrupted, staleResult] as never, []).flatMap(turn => turn.rows);
 
-    expect(row).toMatchObject({ target: 'git', status: 'ok', durationLabel: '1s', at: 1_000 });
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.status)).toEqual(['failed', 'failed']);
+    expect(rows.map(row => row.at)).toEqual([1_000, 1_000]);
   });
   it('reads the exit code exechost writes into its output', () => {
     // risk: a failed host command shown without the code it exited with.
