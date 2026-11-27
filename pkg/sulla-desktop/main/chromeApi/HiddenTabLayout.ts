@@ -33,6 +33,7 @@ export class HiddenTabLayout {
   }
 
   prepare(view: WebContentsView, window: BrowserWindow | null, viewport?: AgentViewport): void {
+    this.emulation.track(view.webContents);
     if (viewport !== undefined) this.viewports.set(view.webContents, viewport);
     const parked = this.viewports.parked(view.webContents);
     view.setBounds(parked);

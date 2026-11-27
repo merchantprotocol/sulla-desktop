@@ -4,6 +4,7 @@
 
 import { EventEmitter } from 'node:events';
 
+import { WebContentsView } from 'electron';
 import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,7 +15,7 @@ vi.mock('electron', () => {
     default: { app, screen: { getDisplayMatching: (b: { x: number }) => ({ scaleFactor: b.x > 0 ? 2 : 1 }) }, BrowserWindow: { fromWebContents: () => null } },
     app,
     BrowserWindow: { fromWebContents: () => null },
-    WebContentsView: class {},
+    WebContentsView: vi.fn(),
   };
 });
 
@@ -211,6 +212,15 @@ const laptop = { width: 1280, height: 800 };
 const pane = { x: 23, y: 99, width: 157, height: 3982 };
 
 class CaptureEdge extends EventEmitter {
+  constructor(public live = true) { super() }
+
+  crashed = false;
+  destroyed = false;
+
+  private requireWidget(): void {
+    if (!this.live || this.crashed || this.destroyed) throw new Error('native emulation without a renderer widget');
+  }
+
   attached = false;
   contentHeight = 1;
   rect = { ...pane };
@@ -232,20 +242,21 @@ class CaptureEdge extends EventEmitter {
   });
   readonly executeJavaScript = vi.fn(async(_code: string) => this.size);
   readonly contents = {
-    debugger: this, isDestroyed: () => false, executeJavaScript: this.executeJavaScript,
+    debugger: this, isDestroyed: () => this.destroyed, isCrashed: () => this.crashed,
+    isLoadingMainFrame: () => false, getURL: () => this.live ? 'about:blank' : '', getOSProcessId: () => 42,
+    executeJavaScript: this.executeJavaScript,
     on: this.on.bind(this),
     getBackgroundThrottling: () => this.throttled,
     setBackgroundThrottling: vi.fn((enabled: boolean) => { this.throttled = enabled }),
-    enableDeviceEmulation: vi.fn((params: { viewSize: typeof laptop }) => { this.emulated = params.viewSize }),
-    disableDeviceEmulation: vi.fn(() => { this.emulated = undefined }),
+    enableDeviceEmulation: vi.fn((params: { viewSize: typeof laptop }) => { this.requireWidget(); this.emulated = params.viewSize }),
+    disableDeviceEmulation: vi.fn(() => { this.requireWidget(); this.emulated = undefined }),
   };
   readonly view = {
     webContents: this.contents, setVisible: vi.fn(), setBounds: vi.fn((rect: typeof pane) => { this.rect = rect }),
   };
 }
 
-function fixture(focused = false, displayDpr = 1, persisted: typeof laptop | null = laptop) {
-  const edge = new CaptureEdge();
+function fixture(focused = false, displayDpr = 1, persisted: typeof laptop | null = laptop, edge = new CaptureEdge()) {
   const owner = { ...ownerWindow(101), getBounds: () => ({ x: displayDpr === 2 ? 2000 : 0 }) };
   const wc = edge.contents as unknown as Electron.WebContents;
   const service = new AgentScreenshotCapture();
@@ -265,6 +276,120 @@ function fixture(focused = false, displayDpr = 1, persisted: typeof laptop | nul
     service.capture(wc, once => manager.beginTabCapture('tab', wc, once), options, overlays);
   return { edge, wc, owner, manager, service, focus, capture };
 }
+
+describe('parked renderer liveness', () => {
+  it('creates and parks a tab before the first commit without calling native emulation', () => {
+    const edge = new CaptureEdge(false);
+    const owner = ownerWindow(1);
+    const webContents = { ...edge.contents, session: {}, ipc: new EventEmitter(), setWindowOpenHandler: vi.fn(),
+      loadURL: vi.fn(async() => {}) };
+    vi.mocked(WebContentsView).mockImplementationOnce(() => ({ ...edge.view, webContents }) as unknown as Electron.WebContentsView);
+    const manager: BrowserTabViewManager = Reflect.construct(BrowserTabViewManager as any, [
+      new AgentViewportPolicy(), new AgentScreenshotCapture(), new ParkedViewportEmulation(),
+    ]);
+    vi.spyOn(manager as any, 'ensureSession').mockReturnValue(webContents.session);
+    try {
+      manager.createView('tab', 'about:blank', pane, owner as any, laptop);
+      expect(webContents.loadURL).toHaveBeenCalledWith('about:blank');
+      expect(edge.rect.x + edge.rect.width).toBeLessThan(0);
+      expect(webContents.enableDeviceEmulation).not.toHaveBeenCalled();
+      edge.live = true;
+      edge.emit('dom-ready');
+      expect(edge.emulated).toEqual(laptop);
+    } finally {
+      manager.beginShutdown();
+    }
+  });
+
+  it('cancels pending emulation on focus, even for a never-live hidden view', () => {
+    const emulation = new ParkedViewportEmulation();
+    const edge = new CaptureEdge(false);
+    new HiddenTabLayout(new AgentViewportPolicy(), emulation).prepare(edge.view as any, null, phone);
+    emulation.clear(edge.contents as unknown as Electron.WebContents);
+    edge.live = true;
+    edge.emit('dom-ready');
+    expect(edge.contents.enableDeviceEmulation).not.toHaveBeenCalled();
+    expect(edge.contents.disableDeviceEmulation).not.toHaveBeenCalled();
+  });
+
+  it.each(['dom-ready', 'did-navigate', 'did-finish-load'])('restores only the latest parked size on %s after renderer loss', event => {
+    const edge = new CaptureEdge();
+    const wc = edge.contents as unknown as Electron.WebContents;
+    const emulation = new ParkedViewportEmulation();
+    emulation.apply(wc, laptop);
+    expect(edge.emulated).toEqual(laptop);
+    edge.crashed = true;
+    edge.live = false;
+    edge.emulated = undefined;
+    emulation.apply(wc, phone, true); // crash flag can precede notification
+    edge.emit('render-process-gone');
+    edge.crashed = false; // replacement has started but hasn't committed
+    emulation.clear(wc);
+    emulation.apply(wc, phone);
+    expect(edge.contents.enableDeviceEmulation).toHaveBeenCalledTimes(1);
+    expect(edge.contents.disableDeviceEmulation).not.toHaveBeenCalled();
+    edge.live = true;
+    edge.emit(event);
+    expect(edge.emulated).toEqual(phone);
+    edge.emulated = undefined;
+    edge.emit(event);
+    expect(edge.emulated).toEqual(phone);
+  });
+
+  it('never calls native emulation on destroyed contents, even before the destroyed notification', () => {
+    const edge = new CaptureEdge();
+    const wc = edge.contents as unknown as Electron.WebContents;
+    const emulation = new ParkedViewportEmulation();
+    emulation.apply(wc, laptop);
+    edge.destroyed = true;
+    emulation.apply(wc, phone);
+    emulation.clear(wc);
+    edge.emit('destroyed');
+    emulation.apply(wc, laptop);
+    emulation.clear(wc);
+    expect(edge.contents.enableDeviceEmulation).toHaveBeenCalledTimes(1);
+    expect(edge.contents.disableDeviceEmulation).not.toHaveBeenCalled();
+  });
+
+  it('defers late observation during main-frame load or without a renderer process', () => {
+    for (const facts of [{ isLoadingMainFrame: () => true }, { getOSProcessId: () => 0 }]) {
+      const edge = new CaptureEdge(false);
+      const wc = { ...edge.contents, getURL: () => 'about:blank', ...facts } as unknown as Electron.WebContents;
+      new ParkedViewportEmulation().apply(wc, laptop);
+      expect(edge.contents.enableDeviceEmulation).not.toHaveBeenCalled();
+      edge.live = true;
+      edge.emit('did-finish-load');
+      expect(edge.emulated).toEqual(laptop);
+    }
+  });
+
+  it('never enters native emulation without a widget across renderer, parking and focus transitions', () => {
+    const actions = fc.constantFrom('park', 'capture-size', 'focus', 'dom-ready', 'did-navigate', 'crash', 'destroy');
+    fc.assert(fc.property(fc.array(actions, { minLength: 1, maxLength: 60 }), steps => {
+      const edge = new CaptureEdge(false);
+      const wc = edge.contents as unknown as Electron.WebContents;
+      const emulation = new ParkedViewportEmulation();
+      let desired: typeof laptop | undefined;
+      emulation.track(wc);
+      for (const step of steps) {
+        if (step === 'park' || step === 'capture-size') {
+          desired = step === 'park' ? laptop : phone;
+          emulation.apply(wc, desired, step === 'capture-size');
+        } else if (step === 'focus') {
+          desired = undefined;
+          emulation.clear(wc);
+        } else if (!edge.destroyed) {
+          edge.emulated = undefined;
+          edge.live = step === 'dom-ready' || step === 'did-navigate';
+          edge.destroyed = step === 'destroy';
+          edge.crashed = step === 'crash';
+          edge.emit(edge.destroyed ? 'destroyed' : edge.crashed ? 'render-process-gone' : step);
+        }
+        expect(edge.emulated).toEqual(edge.live ? desired : undefined);
+      }
+    }));
+  });
+});
 
 describe('native screenshot transactions', () => {
   it('never mutates a selected pane, even for a one-shot request with overlays and a borrowed debugger', async() => {
@@ -326,7 +451,7 @@ describe('native screenshot transactions', () => {
 
   it.each(['zero frames', 'no rAF', 'no initial reply'])('falls back by 3 seconds (%s), leaving no late capture', async(mode) => {
     vi.useFakeTimers();
-    const { edge, capture } = fixture();
+    const { edge, capture } = fixture(false, 1, laptop, new CaptureEdge(mode !== 'no initial reply'));
     let resume: (() => void) | undefined;
     const zero = { width: 0, height: 0 };
     edge.executeJavaScript.mockImplementation(async code => {
@@ -348,6 +473,11 @@ describe('native screenshot transactions', () => {
       expect(edge.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', expect.objectContaining({
         clip: { x: 0, y: 123, ...phone, scale: 1 }, captureBeyondViewport: true,
       }));
+      if (!edge.live) {
+        expect(edge.contents.enableDeviceEmulation).not.toHaveBeenCalled();
+        edge.live = true;
+        edge.emit('dom-ready');
+      }
       expect(edge.size).toEqual(laptop);
       resume?.();
       await vi.advanceTimersByTimeAsync(100);

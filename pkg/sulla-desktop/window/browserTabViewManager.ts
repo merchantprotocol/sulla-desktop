@@ -409,6 +409,8 @@ export class BrowserTabViewManager {
       throw new Error('[BrowserTabView] WebContentsView did not adopt the shared browser session');
     }
 
+    this.parkedEmulation.track(view.webContents);
+
     // Disable background throttling so the Chromium renderer stays awake and
     // the compositor keeps producing frames even when the view is parked
     // off-screen. Without this, capturePage returns empty NativeImage on
