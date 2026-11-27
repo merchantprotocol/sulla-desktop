@@ -1,5 +1,5 @@
 <template>
-  <InlineFileCard :file="file" @open-in-tab="openInTab" @show-in-files="showInFiles" @download="download">
+  <InlineFileCard :file="file" :download-busy="downloadAction.state.busy" :download-error="downloadAction.state.error" @open-in-tab="openInTab" @show-in-files="showInFiles" @download="download">
     <template #preview="{ file: previewFile }">
       <InlineTextPreview
         v-if="textKind"
@@ -18,6 +18,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { FileDownloadAction } from '@pkg/pages/files/FileDownloadAction';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import InlineFileCard from './InlineFileCard.vue';
@@ -76,7 +77,10 @@ async function load(): Promise<void> {
 }
 async function openInTab(reference: InlineFileActionReference): Promise<void> { await ipcRenderer.invoke('files-ui:open-file', { fileId: reference.fileId, versionId: versionId.value }); }
 async function showInFiles(reference: InlineFileActionReference): Promise<void> { await openWorkspaceTab({ mode: 'files', title: 'File Manager', filesNavigation: { fileId: reference.fileId, path: reference.path, section: 'detail', collectionId: props.reference.collectionId, ...(versionId.value ? { versionId: versionId.value } : {}) } }); }
-async function download(reference: InlineFileActionReference): Promise<void> { await ipcRenderer.invoke('files-ui:download-file', { fileId: reference.fileId, name: reference.name }); }
+const downloadAction = FileDownloadAction.forIpc(ipcRenderer, () => file.value.fileId);
+function download(reference: InlineFileActionReference): Promise<void> {
+  return downloadAction.download(reference.name, versionId.value || undefined);
+}
 async function saveMarkdown(request: { requestId: number; content: string; baseVersionId: string }): Promise<void> {
   try {
     const result = await ipcRenderer.invoke('sulla-files:save-content', {

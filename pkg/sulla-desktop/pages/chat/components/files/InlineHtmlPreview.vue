@@ -27,9 +27,11 @@
       <header class="lightbox-header">
         <strong>{{ name }}</strong>
         <span class="lightbox-spacer" />
+        <button type="button" :aria-label="'Download ' + name" :disabled="downloadBusy" @click="emit('download')">Download</button>
         <button type="button" @click="openInTab">Open in tab</button>
         <button type="button" aria-label="Close preview" @click="closeFullscreen">Close</button>
       </header>
+      <p v-if="downloadError" class="lightbox-error" role="alert">{{ downloadError }}</p>
       <iframe
         v-if="fullscreenOpen"
         :srcdoc="srcdoc"
@@ -48,6 +50,8 @@ import { InlineHtmlPreviewPolicy, type InlineFileActionReference } from './inlin
 
 const props = defineProps<{
   fileId: string;
+  downloadBusy?: boolean;
+  downloadError?: string;
   name: string;
   path: string;
   source: string;
@@ -55,6 +59,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
+  download: [];
   'open-in-tab': [reference: InlineFileActionReference];
 }>();
 
@@ -108,6 +113,7 @@ defineExpose({ openFullscreen });
 </script>
 
 <style scoped>
+.lightbox-error { margin: 0; padding: 8px 12px; color: var(--text-primary); font-size: 12px; }
 .inline-html-preview { min-width: 0; }
 .html-stage { display: flex; justify-content: center; min-height: 0; background: var(--bg-surface-alt); }
 .html-stage iframe { display: block; width: 100%; height: 400px; border: 0; background: #fff; }
