@@ -9,11 +9,13 @@ import { LONG_TOOL_CEILING_MS, toolHoldsRunAlive } from '../../services/RunLiven
 
 export interface AgentTaskActivityReader {
   lastActivityAt(key: string): number | undefined;
+  /** Cumulative count of discrete task actions since this run began. */
+  actionCount?(key: string): number;
   /** The oldest tool call still running for this task, if the reader tracks them. */
   toolInFlight?(key: string): { name: string; startedAt: number } | undefined;
 }
 export interface AgentTaskActivityCheckin { createdAt: number; blockers?: string[] }
-export interface AgentTaskActivityProjection { lastActivityAt: number; state: string }
+export interface AgentTaskActivityProjection { lastActivityAt: number; actionCount: number; state: string }
 
 /** One task-scoped activity and presentation-state policy shared by every fleet surface. */
 export class AgentTaskActivityProjector {
@@ -40,18 +42,20 @@ export class AgentTaskActivityProjector {
   /** `answeredAt` is the latest orchestrator-message delivery to this task, used to resolve its blocker. */
   project(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null): AgentTaskActivityProjection {
     const startedAt = task.startedAt ?? job.createdAt;
+    const activityKey = `${ job.jobId }#${ taskIndex }`;
     const tool = this.toolInFlight(job.jobId, taskIndex);
     const lastActivityAt = Math.max(
       startedAt,
       checkin?.createdAt ?? 0,
-      this.activity.lastActivityAt(`${ job.jobId }#${ taskIndex }`) ?? 0,
+      this.activity.lastActivityAt(activityKey) ?? 0,
       task.finishedAt ?? 0,
       task.returnedAt ?? 0,
       // A tool still running is activity right now (up to the ceiling), so every
       // reader of lastActivityAt (directory "stalled", alerts) sees a busy agent.
       task.status === 'running' && this.isBusy(tool) ? this.now() : 0,
     );
-    return { lastActivityAt, state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, tool) };
+    return { lastActivityAt, actionCount: this.activity.actionCount?.(activityKey) ?? 0,
+      state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, tool) };
   }
 
   /** A tool call still running and still under the hung-tool ceiling, or waiting on the human. */
