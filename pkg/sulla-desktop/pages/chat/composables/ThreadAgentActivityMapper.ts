@@ -238,9 +238,8 @@ export class ThreadAgentActivityMapper {
       startedAt: this.timestamp(row.startedAt),
       finishedAt: this.timestamp(row.endedAt),
       lastCheckIn: latestCheckin ? { timestamp: this.timestamp(latestCheckin.at)!, text: latestCheckin.summary } : null,
-      activity: agent.activity.flatMap(value => {
-        const timestamp = this.timestamp(value);
-        return timestamp === null ? [] : [{ timestamp, value: 1 }];
+      activity: agent.activity.flatMap(sample => {
+        return Number.isFinite(sample.at) && sample.count > 0 ? [{ timestamp: sample.at, value: sample.count }] : [];
       }),
       children: node.children.map(child => this.chartNode(child)),
     };
