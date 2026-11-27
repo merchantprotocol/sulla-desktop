@@ -18,8 +18,15 @@ interface ActiveStep {
   readonly sequence: number;
 }
 
+export interface ToolStepDisplaySelection {
+  readonly item: StatusRollupItem | null;
+  readonly toolStep: boolean;
+  readonly urgent: boolean;
+}
+
 /** One view-scoped 1s clock shared by every running trace row and status line. */
 export class ToolStepClock {
+  static readonly maximumRunningMs = 6 * 60 * 60_000;
   private readonly listeners = new Set<(now: number) => void>();
   private readonly activeSteps = new Map<string, ActiveStep>();
   private interval: IntervalHandle | undefined;
@@ -70,6 +77,15 @@ export class ToolStepClock {
     return Math.max(0, end - startedAt);
   }
 
+  /** Uses the persisted start timestamp instead of when a renderer observed the event. */
+  elapsed(item: StatusRollupItem, now = this.nowMs): number {
+    return this.elapsedMs(item.startedAt ?? item.observedAt, item.endedAt, now);
+  }
+
+  isPastCeiling(startedAt: number, now = this.nowMs): boolean {
+    return this.elapsedMs(startedAt, undefined, now) > ToolStepClock.maximumRunningMs;
+  }
+
   durationLabel(milliseconds: number): string {
     const duration = Math.max(0, milliseconds);
     if (duration < 1_000) return `${Math.round(duration)}ms`;
@@ -87,22 +103,44 @@ export class ToolStepClock {
   /** Starts/results are correlated independently per root or worker, then the latest live start wins. */
   observe(items: readonly StatusRollupItem[]): void {
     const ordered = items.map((item, index) => ({ item, index }))
-      .filter(({ item }) => item.phase && item.correlationId)
+      .filter(({ item }) => item.agentTerminal || item.phase && item.correlationId)
       .sort((left, right) => left.item.observedAt - right.item.observedAt ||
         (left.item.phase === 'start' ? 0 : 1) - (right.item.phase === 'start' ? 0 : 1) || left.index - right.index);
     for (const { item } of ordered) {
+      if (item.agentTerminal) {
+        for (const [key, step] of this.activeSteps) {
+          if (step.item.threadId === item.threadId && step.item.agentId === item.agentId) this.activeSteps.delete(key);
+        }
+        continue;
+      }
       const key = this.key(item);
       if (item.phase === 'start') this.activeSteps.set(key, { item, sequence: ++this.sequence });
       else this.activeSteps.delete(key);
     }
+    this.pruneExpired(this.now());
   }
 
   currentStep(threadId: string): StatusRollupItem | null {
+    this.pruneExpired(this.now());
     const latest = [...this.activeSteps.values()]
       .filter(step => step.item.threadId === threadId)
       .sort((left, right) => left.item.observedAt - right.item.observedAt || left.sequence - right.sequence)
       .at(-1);
     return latest?.item ?? null;
+  }
+
+  /** Urgent needs-you/failure items stay visible ahead of a long-running tool step. */
+  selectDisplayItem(
+    threadId: string,
+    current: StatusRollupItem | null,
+    fallback: StatusRollupItem | null,
+    activeStep?: StatusRollupItem | null,
+  ): ToolStepDisplaySelection {
+    const urgent = [current, fallback].find(item => item?.urgency === 'needs-you' || item?.urgency === 'failed') ?? null;
+    if (urgent) return { item: urgent, toolStep: false, urgent: true };
+    const step = activeStep === undefined ? this.currentStep(threadId) : activeStep;
+    if (step) return { item: step, toolStep: true, urgent: false };
+    return { item: current ?? fallback, toolStep: false, urgent: false };
   }
 
   reset(): void { this.activeSteps.clear(); }
@@ -129,6 +167,12 @@ export class ToolStepClock {
 
   private key(item: StatusRollupItem): string {
     return `${item.threadId}:${item.agentId}:${item.correlationId}`;
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [key, step] of this.activeSteps) {
+      if (this.isPastCeiling(step.item.startedAt ?? step.item.observedAt, now)) this.activeSteps.delete(key);
+    }
   }
 
   /** Legacy fallbacks are tool names only; paths, URLs, and command snippets are never labels. */
