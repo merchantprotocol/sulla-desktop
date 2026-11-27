@@ -129,6 +129,7 @@ import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, ge
 import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import { FilesOpenCommandHandler } from '@pkg/pages/files/FilesOpenCommandHandler';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -147,6 +148,18 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 const route = useRoute();
 const router = useRouter();
 const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
+const filesOpenCommandHandler = new FilesOpenCommandHandler({
+  hasWindow: () => typeof window !== 'undefined',
+  supportsDocumentEditor,
+  openDocumentTab,
+  findFilesTab: () => browserTabs.find(tab => tab.mode === 'files'),
+  createFilesTab: navigation => createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation: navigation }),
+  updateFilesTab: (tabId, navigation) => updateTab(tabId, { filesNavigation: navigation }),
+  focusFilesTab: tabId => {
+    void router.push(`/Browser/${ tabId }`).catch(error => console.warn('[AgentRouter] Could not navigate to the Files tab:', error));
+  },
+  reply: (requestId, result) => ipcRenderer.send(`agent-command-result:${ requestId }` as any, result),
+});
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
   statusResolved: vaultStatusResolved.value,
@@ -603,30 +616,7 @@ function onAgentCommand(_event: any, args: any) {
     break;
   }
   case 'open-files-item': {
-    const reply = (value:Record<string, unknown>) => ipcRenderer.send(`agent-command-result:${ args.requestId }` as any, value);
-    if (!args.requestId || !args.path || (args.kind !== 'folder' && !args.fileId)) {
-      reply({ error: 'The resolved Files item is incomplete.' });
-      break;
-    }
-    if (args.kind === 'file' && args.mode !== 'view' && supportsDocumentEditor(args.path)) {
-      const tab = openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId }, args.focus !== false);
-      reply({ opened: true, tabId: tab.id, path: args.path, how: 'document-editor' });
-      break;
-    }
-    // File Manager owns viewer selection for every other type. Feeding its
-    // normal navigation input reaches the same navigateTo -> selectEntry/openPath
-    // path used by a click and keeps viewer behavior in one place. A tab open
-    // is complete once that navigation is queued on the Files tab; waiting for
-    // the File Manager renderer to finish selecting the item can hang forever
-    // for a background tab (focus:false) because its isolated tab host is lazy.
-    const filesNavigation = args.kind === 'folder'
-      ? { path: args.path, collectionId: args.collectionId, openKind: 'folder' as const }
-      : { fileId: args.fileId, path: args.path, collectionId: args.collectionId, openKind: 'file' as const };
-    const existing = browserTabs.find(tab => tab.mode === 'files');
-    const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
-    if (existing) updateTab(existing.id, { filesNavigation });
-    if (args.focus !== false) router.push(`/Browser/${ tab.id }`);
-    reply({ opened: true, tabId: tab.id, path: args.path, how: 'file-manager-tab' });
+    filesOpenCommandHandler.handle(args);
     break;
   }
   case 'open-url': {
