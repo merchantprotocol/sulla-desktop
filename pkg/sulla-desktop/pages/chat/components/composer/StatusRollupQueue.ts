@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  * "Sulla" is a trademark. See TRADEMARK.md.
  */
-
 export type StatusRollupUrgency = 'normal' | 'needs-you' | 'failed';
 export type StatusRollupAgentRole = 'root' | 'manager' | 'worker' | 'reviewer';
 export type StatusRollupKind = 'read' | 'edit' | 'run' | 'agent' | 'status' | 'thought' | 'reply' | 'tool';
@@ -17,9 +16,7 @@ export interface StatusRollupItem {
   readonly agentId: string;
   readonly agentName: string;
   readonly lane?: string;
-  /** Short action label shown between the agent name and the activity text. */
   readonly kind?: StatusRollupKind;
-  /** Start/result pairing for glow depth tracking; never used as rendered content. */
   readonly phase?: StatusRollupPhase;
   readonly correlationId?: string;
   readonly text: string;
@@ -41,65 +38,89 @@ export interface StatusRollupShownEvent {
   readonly correlationId?: string;
 }
 
-interface QueuedStatusRollupItem {
-  readonly item: StatusRollupItem;
-  readonly sequence: number;
-}
+/** Bounded memory for status keys already displayed, scoped by their owning thread. */
+export class BoundedThreadKeyLedger {
+  static readonly maxKeysPerThread = 2_000;
+  static readonly maxThreads = 20;
 
-interface VisibleStatusRollupItem {
-  readonly item: StatusRollupItem;
-  readonly holdUntil: number;
+  private readonly keysByThread = new Map<string, Set<string>>();
+
+  get retainedThreadCount(): number {
+    return this.keysByThread.size;
+  }
+
+  retainedKeyCount(threadId: string): number {
+    return this.keysByThread.get(threadId)?.size ?? 0;
+  }
+
+  has(threadId: string, key: string): boolean {
+    const keys = this.keysByThread.get(threadId);
+    if (!keys) return false;
+    this.touchThread(threadId, keys);
+    return keys.has(key);
+  }
+
+  remember(threadId: string, key: string): void {
+    if (!threadId || !key) return;
+    let keys = this.keysByThread.get(threadId);
+    if (!keys) keys = new Set<string>();
+    if (!keys.has(key)) {
+      keys.add(key);
+      if (keys.size > BoundedThreadKeyLedger.maxKeysPerThread) {
+        const oldest = keys.values().next().value as string | undefined;
+        if (oldest !== undefined) keys.delete(oldest);
+      }
+    }
+    this.touchThread(threadId, keys);
+  }
+
+  private touchThread(threadId: string, keys: Set<string>): void {
+    this.keysByThread.delete(threadId);
+    this.keysByThread.set(threadId, keys);
+    if (this.keysByThread.size > BoundedThreadKeyLedger.maxThreads) {
+      const oldestThread = this.keysByThread.keys().next().value as string | undefined;
+      if (oldestThread !== undefined) this.keysByThread.delete(oldestThread);
+    }
+  }
 }
 
 /**
- * Bounded status-snippet scheduler. Time is supplied by callers so queue policy
- * can be verified deterministically without timers or a browser environment.
+ * Sanitizes and remembers status events. Despite the historical class name,
+ * this deliberately has no queue or replay policy: each observation selects
+ * the newest unseen live item and remembers it for the life of this instance.
  */
 export class StatusRollupQueue {
-  static readonly quietGapMs = 1_200;
-  static readonly busyGapMs = 250;
-  static readonly maximumDrainMs = 3_000;
-  static readonly urgentHoldMs = 2_600;
   static readonly historyLimit = 6;
   private static readonly textLimit = 180;
   private static readonly labelLimit = 80;
 
   private threadId = '';
-  private queued: QueuedStatusRollupItem[] = [];
-  private visible: VisibleStatusRollupItem | null = null;
-  private lastShownAt: number | null = null;
-  private burstGapMs: number | null = null;
-  private sequence = 0;
+  private currentItem: StatusRollupItem | null = null;
   private historyItems: StatusRollupItem[] = [];
+  private readonly seenKeysByThread = new BoundedThreadKeyLedger();
 
   get current(): StatusRollupItem | null {
-    return this.visible?.item ?? null;
+    return this.currentItem;
   }
 
   get history(): readonly StatusRollupItem[] {
     return [...this.historyItems];
   }
 
-  get pending(): readonly StatusRollupItem[] {
-    return this.queued.map(entry => entry.item);
-  }
-
-  /** Typewrite only a single item after its batch has left no backlog behind. */
-  shouldAnimateTypewriter(shownCount: number): boolean {
-    return shownCount === 1 && this.queued.length === 0;
+  /** Prime source rows visible at setup without rendering or adding history. */
+  prime(items: readonly StatusRollupItem[], threadId: string): void {
+    for (const item of items) {
+      if (item.threadId === threadId && item.key) this.rememberKey(threadId, item.key);
+    }
   }
 
   reset(threadId: string): void {
     this.threadId = threadId;
-    this.queued = [];
-    this.visible = null;
-    this.lastShownAt = null;
-    this.burstGapMs = null;
-    this.sequence = 0;
+    this.currentItem = null;
     this.historyItems = [];
   }
 
-  /** Sanitizes input for text-only rendering, rejecting items from other chats. */
+  /** Sanitize a source event and reject empty, malformed, or foreign-thread rows. */
   present(item: StatusRollupItem | null | undefined, threadId: string, now: number): StatusRollupItem | null {
     if (!item || !threadId || item.threadId !== threadId || !item.key || !item.agentId) return null;
     const agentName = this.cleanLabel(item.agentName);
@@ -124,128 +145,55 @@ export class StatusRollupQueue {
   }
 
   /**
-   * Tracks unique observed events and queues every eligible item. The queue is
-   * intentionally lossless: only repeated stable keys are collapsed.
+   * Accept only items newer than the subscription boundary. A batch is never
+   * drained: all new events are remembered for recent-history, while only its
+   * latest event is returned for immediate display.
    */
   observe(
     items: readonly StatusRollupItem[],
     threadId: string,
     now: number,
-    displayedItem: StatusRollupItem | null = null,
-  ): void {
+    newerThan: number,
+  ): StatusRollupItem | null {
+    if (!threadId) return null;
     if (threadId !== this.threadId) this.reset(threadId);
-    const startingLength = this.queued.length;
-    const ordered = [...items]
-      .filter(item => item.threadId === threadId)
+    const ordered = [...items].filter(item => item.threadId === threadId)
       .sort((left, right) => left.observedAt - right.observedAt);
+    let newest: StatusRollupItem | null = null;
 
     for (const source of ordered) {
       const item = this.present(source, threadId, now);
-      if (!item) continue;
+      if (!item || item.observedAt <= newerThan) continue;
+      if (this.seenKeysByThread.has(threadId, item.key)) {
+        if (item.updateOnly && this.currentItem?.key === item.key) {
+          this.currentItem = item;
+          newest = item;
+        }
+        continue;
+      }
 
-      const alreadyQueuedOrVisible = this.updateExistingItem(item);
-      if (item.updateOnly || alreadyQueuedOrVisible) continue;
-
+      this.rememberKey(threadId, item.key);
       this.historyItems.unshift(item);
       this.historyItems = this.historyItems.slice(0, StatusRollupQueue.historyLimit);
+      newest = item;
+    }
 
-      const shown = this.visible?.item ?? displayedItem;
-      if (shown?.key === item.key) continue;
-      this.queued.push({ item, sequence: ++this.sequence });
-    }
-    const added = this.queued.length - startingLength;
-    if (added > 0 && this.queued.length > 1) {
-      const paceForBurst = Math.min(StatusRollupQueue.busyGapMs,
-        StatusRollupQueue.maximumDrainMs / this.queued.length);
-      this.burstGapMs = Math.min(this.burstGapMs ?? paceForBurst, paceForBurst);
-    }
+    if (newest) this.currentItem = newest;
+    return newest;
   }
 
-  /** Seeds an idle/thread-switched roll-up from its newest scoped check-in, regardless of age. */
-  seed(items: readonly StatusRollupItem[], threadId: string, now: number): StatusRollupItem | null {
-    // A single initial item can render during setup/SSR; with a real backlog,
-    // keep FIFO playback intact instead of jumping to the newest event.
-    if (this.visible || !threadId || this.queued.length > 1) return this.current;
-    const newest = [...items]
-      .filter(item => item.threadId === threadId)
-      .sort((left, right) => right.observedAt - left.observedAt)[0];
-    const item = this.present(newest, threadId, now);
-    if (!item) return null;
-    this.queued = this.queued.filter(entry => entry.item.key !== item.key);
-    const holdMs = this.isUrgent(item) ? StatusRollupQueue.urgentHoldMs : 0;
-    this.visible = { item, holdUntil: now + holdMs };
-    this.lastShownAt = now;
-    return item;
+  /** Records a status once it has actually made it to the line. */
+  markShown(item: StatusRollupItem): void {
+    this.rememberKey(item.threadId, item.key);
+    this.currentItem = item;
   }
 
-  /**
-   * Advances the queue by fakeable epoch time. Quiet updates have a relaxed
-   * cadence; a burst drains at a pace calculated to fit in roughly three seconds.
-   * Urgent items jump ahead of normal work and keep their full reading hold.
-   */
-  pump(now: number, paused = false): StatusRollupItem | null {
-    return this.pumpItems(now, paused, 1)[0] ?? null;
+  clearCurrent(key: string): void {
+    if (this.currentItem?.key === key) this.currentItem = null;
   }
 
-  /** Returns every event whose burst slot elapsed since the previous UI tick. */
-  pumpDue(now: number, paused = false): StatusRollupItem[] {
-    return this.pumpItems(now, paused, Number.POSITIVE_INFINITY);
-  }
-
-  private pumpItems(now: number, paused: boolean, limit: number): StatusRollupItem[] {
-    if (paused || this.queued.length === 0) return [];
-    const items: StatusRollupItem[] = [];
-    while (items.length < limit && this.queued.length > 0) {
-      const urgentIndex = this.queued.findIndex(entry => this.isUrgent(entry.item));
-      const currentUrgent = Boolean(this.visible && this.isUrgent(this.visible.item));
-      if (currentUrgent && now < this.visible!.holdUntil) break;
-
-      let dueAt = this.lastShownAt === null
-        ? now
-        : this.lastShownAt + (this.burstGapMs ?? StatusRollupQueue.quietGapMs);
-      if (currentUrgent) dueAt = Math.max(dueAt, this.visible!.holdUntil);
-      else if (urgentIndex >= 0) dueAt = now;
-      if (dueAt > now) break;
-
-      const next = this.queued.splice(urgentIndex >= 0 ? urgentIndex : 0, 1)[0];
-      if (!next) break;
-      const shownAt = this.isUrgent(next.item) ? now : dueAt;
-      const holdMs = this.isUrgent(next.item) ? StatusRollupQueue.urgentHoldMs : 0;
-      this.visible = { item: next.item, holdUntil: shownAt + holdMs };
-      this.lastShownAt = shownAt;
-      items.push(next.item);
-      if (this.queued.length === 0) this.burstGapMs = null;
-    }
-    return items;
-  }
-
-  private isUrgent(item: StatusRollupItem): boolean {
-    return item.urgency === 'needs-you' || item.urgency === 'failed';
-  }
-
-  private updateExistingItem(item: StatusRollupItem): boolean {
-    let found = false;
-    if (this.visible?.item.key === item.key) {
-      found = true;
-      if (item.kind === 'thought') this.visible = { ...this.visible, item };
-    }
-    const queuedIndex = this.queued.findIndex(entry => entry.item.key === item.key);
-    if (queuedIndex >= 0) {
-      found = true;
-      if (item.kind === 'thought') {
-        this.queued[queuedIndex] = { ...this.queued[queuedIndex]!, item };
-      }
-    }
-    const historyIndex = this.historyItems.findIndex(entry => entry.key === item.key);
-    if (historyIndex >= 0) {
-      found = true;
-      if (item.kind === 'thought') {
-        const updated = [...this.historyItems];
-        updated[historyIndex] = item;
-        this.historyItems = updated;
-      }
-    }
-    return found;
+  private rememberKey(threadId: string, key: string): void {
+    this.seenKeysByThread.remember(threadId, key);
   }
 
   private cleanText(value: string): string {

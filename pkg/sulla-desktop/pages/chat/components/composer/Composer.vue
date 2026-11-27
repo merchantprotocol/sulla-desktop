@@ -184,7 +184,7 @@
           :class="glowClasses" :style="{ '--glow-c': glowColor }"
           :data-glow-level="glow.state.level"
         >
-          <div class="composer-halo composer-halo--breathing" aria-hidden="true" :style="{ animation: glow.state.active && !glow.state.paused ? 'composer-glow-breathe 3.2s ease-in-out infinite' : 'none' }" />
+          <div class="composer-halo composer-halo--breathing" aria-hidden="true" :style="{ animation: glow.state.active && !glow.state.paused ? 'composer-glow-breathe 3.8s ease-in-out infinite alternate' : 'none' }" />
           <div class="composer-halo" aria-hidden="true" />
           <div class="composer-halo composer-halo--stalled" aria-hidden="true" />
           <div
@@ -337,13 +337,8 @@ const glowClasses = computed(() => ({
   'glow-hit':        glow.state.pulses.hit,
   'glow-soft':       glow.state.pulses.soft,
   'glow-tick':       glow.state.pulses.tick,
-  'glow-settle':     glow.state.pulses.settle,
 }));
-watch(isRunActive, (active) => {
-  // Only a run that finished normally settles; a stop, error or limit pause just fades.
-  const finished = remoteChat.remote.value || controller.runState.value.phase === 'idle';
-  glow.setActive(active, !active && finished);
-}, { immediate: true });
+watch(isRunActive, active => glow.setActive(active), { immediate: true });
 watch(() => isDocumentHidden.value || tabActive?.value === false, paused => glow.setPaused(paused), { immediate: true });
 function onStatusItemObserved(item: StatusRollupItem): void {
   if (item.threadId !== statusThreadId.value) return;
@@ -945,7 +940,8 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 <style scoped>
 .composer-wrap {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 15;
-  box-sizing: border-box; padding: 0 20px 48px;
+  /* Reserve the halo’s 63px bottom spread inside ChatPage’s clipping column. */
+  box-sizing: border-box; padding: 0 20px 63px;
   container-name: composer-wrap; container-type: inline-size;
 }
 .composer-inner { position: relative; width: 100%; max-width: 760px; min-width: 0; margin: 0 auto; }
@@ -980,46 +976,45 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 .composer-capsule { position: relative; isolation: isolate; min-width: 0; }
 /* Breathing glow: pre-painted layers; only opacity and transform change (ComposerGlow.ts drives the classes). */
 .composer-capsule {
-  --glow-level-o: .2; --glow-o: .2; --glow-c: var(--primary-color-override, var(--accent));
+  --glow-level-o: .72; --glow-o: .72; --glow-c: var(--primary-color-override, var(--accent));
   --glow-ease: cubic-bezier(.22, 1, .36, 1); --glow-ease-in: cubic-bezier(.16, 1, .3, 1);
 }
-.composer-capsule[data-glow-level="1"] { --glow-level-o: .36; }
-.composer-capsule[data-glow-level="2"] { --glow-level-o: .52; }
-.composer-capsule[data-glow-level="3"] { --glow-level-o: .66; }
-.composer-capsule.glow-on { --glow-o: max(.56, var(--glow-level-o)); } .composer-capsule.glow-stream { --glow-o: max(var(--glow-o), .62); }
-.composer-capsule.glow-deep { --glow-o: max(var(--glow-o), .56); }
+.composer-capsule[data-glow-level="1"] { --glow-level-o: .76; }
+.composer-capsule[data-glow-level="2"] { --glow-level-o: .80; }
+.composer-capsule[data-glow-level="3"] { --glow-level-o: .84; }
+.composer-capsule.glow-on { --glow-o: max(.72, var(--glow-level-o)); } .composer-capsule.glow-stream { --glow-o: max(var(--glow-o), .76); }
+.composer-capsule.glow-deep { --glow-o: max(var(--glow-o), .72); }
 .composer-halo {
-  position: absolute; z-index: -1; inset: -30px -30px -42px; pointer-events: none;
-  background: radial-gradient(closest-side, color-mix(in srgb, var(--glow-c) 56%, transparent), color-mix(in srgb, var(--glow-c) 22%, transparent) 55%, transparent);
-  opacity: 0; transform: none; transition: opacity 2600ms var(--glow-ease), transform 2600ms var(--glow-ease); will-change: opacity, transform;
+  position: absolute; z-index: -1; inset: -45px -45px -63px; --glow-scale-x: 1.03; transform-origin: center bottom; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--glow-c) 76%, transparent), color-mix(in srgb, var(--glow-c) 36%, transparent) 55%, transparent);
+  opacity: 0; transform: none; transition: opacity 300ms var(--glow-ease), transform 300ms var(--glow-ease); will-change: opacity, transform;
 }
 /* ChatPage clips its column; keep the halo inside the wrapper's safe x padding on narrow panes. */
-@container composer-wrap (max-width: 780px) {
-  .composer-halo { left: -20px; right: -20px; }
+@container composer-wrap (max-width: 835px) {
+  .composer-halo { left: -8px; right: -8px; }
 }
 @container composer-wrap (max-width: 680px) {
-  .composer-halo { left: -10px; right: -10px; }
+  .composer-halo { left: -10px; right: -10px; --glow-scale-x: 1; }
 }
-.composer-halo--stalled { --glow-c: var(--status-warning, #f0a020); }
+.composer-halo--stalled { --glow-c: var(--status-warning, var(--accent)); }
 .composer-capsule.glow-on .composer-halo--breathing {
   opacity: var(--glow-o);
-  transition-duration: 1600ms;
+  transition-duration: 300ms;
 }
-.composer-capsule.glow-on .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 0; transition-duration: 1600ms; }
+.composer-capsule.glow-on .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 0; transition-duration: 300ms; }
 .composer-capsule.glow-on .composer-halo--stalled { opacity: 0; }
 .composer-capsule.glow-soft .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: .72; transition-duration: 280ms; }
 .composer-capsule.glow-tick .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: .88; transition-duration: 110ms; }
 .composer-capsule.glow-hit .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) {
-  opacity: 1; transform: scale(1.03, 1.2); transition-duration: 200ms; transition-timing-function: var(--glow-ease-in);
+  opacity: 1; transform: scale(var(--glow-scale-x), 1.2); transition-duration: 200ms; transition-timing-function: var(--glow-ease-in);
 }
 .composer-capsule.glow-stalled .composer-halo:not(.composer-halo--breathing) { opacity: 0; }
-.composer-capsule.glow-stalled .composer-halo--breathing { --glow-c: var(--status-warning, #f0a020); --glow-o: .55; }
+.composer-capsule.glow-stalled .composer-halo--breathing { --glow-c: var(--status-warning, var(--accent)); --glow-o: .55; }
 .composer-capsule.glow-stalled .composer-halo--stalled { opacity: .55; transition-duration: 1600ms; }
-.composer-capsule.glow-settle .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 1; transform: scale(1.03, 1.2); transition-duration: 320ms; }
 .composer-capsule.document-hidden .composer-halo { visibility: hidden; transition: none; animation-play-state: paused; }
 @keyframes composer-glow-breathe {
-  0%, 100% { opacity: var(--glow-o); transform: scale(.98, 1.02); }
-  50% { opacity: min(.88, calc(var(--glow-o) + .2)); transform: scale(1.03, 1.2); }
+  from { opacity: var(--glow-o); transform: scale(var(--glow-scale-x), .9); }
+  to { opacity: min(.95, calc(var(--glow-o) + .22)); transform: scale(var(--glow-scale-x), 1.2); }
 }
 .composer {
   position: relative; z-index: 1; display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; min-width: 0;
@@ -1061,10 +1056,10 @@ defineExpose({ wrapEl, focus: () => inputRef.value?.focus() });
 }
 @media (prefers-reduced-motion: reduce) {
   /* Steady glow at the activity level: no pulses, no scale. */
-  .composer-capsule .composer-halo { transform: none !important; animation: none !important; transition: opacity .6s linear !important; }
+  .composer-capsule .composer-halo { transform: none !important; animation: none !important; transition: opacity 300ms linear !important; }
   .composer-capsule.glow-on:not(.glow-stalled) .composer-halo--breathing { opacity: var(--glow-o) !important; }
   .composer-capsule.glow-on.glow-stalled .composer-halo--breathing { opacity: .55 !important; }
-  .composer-capsule.glow-on:not(.glow-stalled) .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 0 !important; } .composer-capsule.glow-settle:not(.glow-on) .composer-halo { opacity: 0 !important; }
+  .composer-capsule.glow-on:not(.glow-stalled) .composer-halo:not(.composer-halo--stalled):not(.composer-halo--breathing) { opacity: 0 !important; }
 }
 @keyframes usecase-strip-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 /* ─── Use-case suggestions (approved mockup: mockups/usecase-suggestions) ─── */
