@@ -22,8 +22,16 @@ const APPROVAL_TOKEN_FILE = 'vault-approval-token.enc';
 const BROKER_SERVICE_ID = 'sulla-tools';
 const APPROVAL_SERVICE_ID = 'sulla-desktop-approval';
 const SESSION_PARTITION = 'sulla-vault-broker';
+// Electron fallback preserves separate cookie/cache and socket pools; Node uses isolated Agents without Electron session state.
 const CONTROL_SESSION_PARTITION = 'sulla-vault-broker-control';
+// Dedicated short-call capacity keeps lookups and metadata off the stream pool.
+const VAULT_CONTROL_CONNECTIONS = 128;
+// Headroom for the 300 simultaneous provider streams this transport must support.
+const VAULT_STREAM_CONNECTIONS = 512;
 const IDENTITY_TTL_MS = 60_000;
+
+type VaultNodeAgentFactory = (options: Agent.Options) => Agent;
+type VaultTlsPeerVerifier = (hostname: string, certificatePem: string) => Promise<boolean>;
 
 /** Reads the OS-protected service identities the runtime writes when it starts the vault. */
 export class DesktopVaultIdentityRepository {
@@ -76,14 +84,16 @@ export class DesktopVaultIdentityRepository {
   invalidate(): void { this.cache.clear(); }
 }
 
-/** Electron net transport pinned to the locally provisioned vault certificate. */
+/** Pinned Node vault transports with Electron-session fallbacks. */
 export class DesktopVaultTransport {
   private pinnedSession: Promise<Electron.Session> | undefined;
   private controlSession: Promise<Electron.Session> | undefined;
+  private nodeControlDispatcher: Agent | undefined;
   private nodeStreamDispatcher: Agent | undefined;
+  private loggedControlTransport = false;
   private loggedStreamTransport = false;
   private readonly nodeFetch: typeof undiciFetch;
-  private readonly dispatcherFactory: () => Agent;
+  private readonly dispatcherFactory: VaultNodeAgentFactory;
 
   constructor(
     private readonly identities: DesktopVaultIdentityRepository = new DesktopVaultIdentityRepository(),
@@ -95,18 +105,25 @@ export class DesktopVaultTransport {
       await configureVaultPinnedSession(session);
     },
     nodeFetch: typeof undiciFetch = undiciFetch,
-    dispatcherFactory?: () => Agent,
+    dispatcherFactory?: VaultNodeAgentFactory,
+    private readonly tlsConnect: typeof tls.connect = tls.connect,
+    private readonly peerVerifier?: VaultTlsPeerVerifier,
   ) {
     this.nodeFetch = nodeFetch;
-    this.dispatcherFactory = dispatcherFactory ?? (() => this.createNodeStreamDispatcher());
+    this.dispatcherFactory = dispatcherFactory ?? (options => new Agent(options));
   }
 
   readonly fetch: VaultBrokerFetch = async(input, init) => {
-    const pathname = new URL(input).pathname;
-    const execution = pathname === '/v1/broker/execute' || pathname === '/v1/broker/execute-stream' ||
-      /^\/v1\/broker\/relay\/[^/]+\/events$/.test(pathname);
-    const session = await this.getPinnedSession(!execution);
-    const response = await session.fetch(input, init);
+    const useElectron = process.env.SULLA_VAULT_CONTROL_TRANSPORT === 'electron';
+    if (!this.loggedControlTransport) {
+      this.loggedControlTransport = true;
+      console.info(`[vault-broker] control transport: ${ useElectron ? 'electron' : 'node-pinned' }`);
+    }
+    this.assertVaultOrigin(input, 'control');
+    const response = useElectron ? await this.fetchWithElectron(input, init) : await this.nodeFetch(input, {
+      ...init,
+      dispatcher: this.nodeControlDispatcher ??= this.createNodeDispatcher(VAULT_CONTROL_CONNECTIONS),
+    } as never) as unknown as Response;
     if (response.status === 401 || response.status === 423) this.identities.invalidate();
     return response;
   };
@@ -118,16 +135,11 @@ export class DesktopVaultTransport {
       this.loggedStreamTransport = true;
       console.info(`[vault-broker] stream transport: ${useElectron ? 'electron' : 'node-pinned'}`);
     }
+    this.assertVaultOrigin(input, 'stream');
     if (!useElectron) {
-      // Resolved per call: configureInstancePorts() remaps the vault port on offset instances.
-      // Comparing full origins keeps https + loopback-only enforcement and the exact port.
-      const target = new URL(input);
-      if (target.origin !== loopbackOrigin('https', 30135)) {
-        throw new Error('Vault stream transport only accepts the local vault origin');
-      }
       const response = await this.nodeFetch(input, {
         ...init,
-        dispatcher: this.nodeStreamDispatcher ??= this.dispatcherFactory(),
+        dispatcher: this.nodeStreamDispatcher ??= this.createNodeDispatcher(VAULT_STREAM_CONNECTIONS),
       } as never);
       if (response.status === 401 || response.status === 423) this.identities.invalidate();
       return response as unknown as Response;
@@ -139,15 +151,15 @@ export class DesktopVaultTransport {
     return response;
   };
 
-  private createNodeStreamDispatcher(): Agent {
-    return new Agent({
-      connections: 64,
+  private createNodeDispatcher(connections: number): Agent {
+    return this.dispatcherFactory({
+      connections,
       connect: (options, callback) => {
         const hostname = typeof options.hostname === 'string' ? options.hostname : '';
         // Explicit mapping instead of spreading undici's connector options (port is a string there, and it carries undici-only fields).
         // Mirrors undici's buildConnector: SNI only for non-IP hostnames. The vault is loopback-only,
         // so localAddress and connect timeouts are not needed (neither is typed on these options).
-        const socket = tls.connect({
+        const socket = this.tlsConnect({
           host: hostname,
           port: Number(options.port) || 443,
           servername: options.servername ?? (net.isIP(hostname) ? undefined : hostname),
@@ -170,8 +182,7 @@ export class DesktopVaultTransport {
             const certificate = socket.getPeerCertificate(true);
             const raw = certificate.raw;
             const pem = raw ? `-----BEGIN CERTIFICATE-----\n${raw.toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----` : '';
-            const { vaultTlsPins } = require('@pkg/main/vaultTls') as typeof import('@pkg/main/vaultTls');
-            if (!pem || !await vaultTlsPins.verifyPeer(hostname, pem)) {
+            if (!pem || !await this.verifyPeer(hostname, pem)) {
               socket.destroy();
               fail(new Error('Vault TLS certificate pin verification failed'));
               return;
@@ -185,6 +196,28 @@ export class DesktopVaultTransport {
         return socket;
       },
     });
+  }
+
+  private assertVaultOrigin(input: string, transport: 'control' | 'stream'): void {
+    // Resolved per call because configureInstancePorts() remaps offset instances.
+    if (new URL(input).origin !== loopbackOrigin('https', 30135)) {
+      throw new Error(`Vault ${ transport } transport only accepts the local vault origin`);
+    }
+  }
+
+  private async verifyPeer(hostname: string, certificatePem: string): Promise<boolean> {
+    if (this.peerVerifier) return this.peerVerifier(hostname, certificatePem);
+    // Loaded lazily so non-Electron callers do not initialize main-process TLS state.
+    const { vaultTlsPins } = require('@pkg/main/vaultTls') as typeof import('@pkg/main/vaultTls');
+    return vaultTlsPins.verifyPeer(hostname, certificatePem);
+  }
+
+  private async fetchWithElectron(input: string, init?: RequestInit): Promise<Response> {
+    const pathname = new URL(input).pathname;
+    const execution = pathname === '/v1/broker/execute' || pathname === '/v1/broker/execute-stream' ||
+      /^\/v1\/broker\/relay\/[^/]+\/events$/.test(pathname);
+    const session = await this.getPinnedSession(!execution);
+    return session.fetch(input, init);
   }
 
   loadBrokerIdentity(): Promise<VaultBrokerServiceIdentity> {
