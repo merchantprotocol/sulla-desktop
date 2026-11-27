@@ -87,6 +87,8 @@ export class AgentJobMessagingRepository extends Repository<AgentJobMessageModel
         WHERE task.value->>'threadId' = $1
           AND m.task_index = task.ordinality - 1
           AND m.delivered_at IS NULL
+          AND j.status IN ('running', 'parked')
+          AND task.value->>'status' IN ('queued', 'running', 'parked')
         ORDER BY m.created_at ASC`,
       [threadId],
     );
