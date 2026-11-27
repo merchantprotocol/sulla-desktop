@@ -79,6 +79,22 @@ describe('TurnTiming', () => {
     expect(log.lines[0]).not.toContain('/private/project');
   });
 
+  it('uses the exact supplied epoch samples for tool span boundaries', () => {
+    // risk: live progress rows and final perf spans disagree because each samples a different timestamp
+    const clock = new ManualClock(1_000);
+    const log = new RecordingPerfLog();
+    const timing = createTiming(clock, log);
+    timing.beginToolStep('step-exact', 'npx test', 'codex_cli', 1_025);
+    clock.advance(10);
+    timing.endToolStep('step-exact', true, 1_055);
+    clock.advance(10);
+    timing.finish('ok');
+
+    expect(log.record().toolSteps).toMatchObject([
+      { name: 'npx', startMs: 25, endMs: 55, durationMs: 30, ok: true },
+    ]);
+  });
+
   it.each<TurnTimingOutcome>(['ok', 'error', 'aborted'])('flushes exactly once for %s settlement', (outcome) => {
     // risk: error/abort settlement drops a turn record or writes duplicate records during cleanup
     const clock = new ManualClock(30);
