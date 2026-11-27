@@ -53,6 +53,7 @@ export class MemoryThreadStateRepository extends Service implements ThreadStateR
 export class RedisThreadStateRepository extends Service implements ThreadStateRepository {
   private static readonly KEY_PREFIX = 'sulla:threadstate:';
   private readonly memoryHeads = new Map<string, { id: string; state: BaseThreadState; expiresAt: number }>();
+  private probeFailureLogged = false;
   constructor(
     private readonly clientSource: RedisThreadStateClientSource,
     private readonly ttlSeconds = THREAD_STATE_TTL_SECONDS,
@@ -74,7 +75,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async save(state: BaseThreadState): Promise<void> {
-    await this.evictExpiredMemoryHeads();
+    this.evictExpiredMemoryHeads();
     const thread = state.metadata.threadId;
     const json = JSON.stringify(state);
     let id: string | undefined;
@@ -100,7 +101,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
   }
 
   async load(threadId: string): Promise<BaseThreadState | null> {
-    await this.evictExpiredMemoryHeads();
+    this.evictExpiredMemoryHeads();
     // Captured before the GET: another thread's save may evict the copy while the reply is in flight.
     const head = this.memoryHeads.get(threadId);
     const json = await this.clientSource.getClient().get(this.key(threadId));
@@ -121,14 +122,26 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
 
   // Idle threads are never loaded again, so any thread's save or load checks expired copies. Redis expiry is
   // wall-clock, so the local deadline only says when to ask: a copy goes only once its pointer is gone or replaced.
-  private async evictExpiredMemoryHeads(): Promise<void> {
+  private evictExpiredMemoryHeads(): void {
     const now = this.now();
-    await Promise.all([...this.memoryHeads].filter(([, head]) => head.expiresAt <= now).map(async([thread, head]) => {
-      const json = await this.clientSource.getClient().get(this.key(thread)).catch(() => undefined);
-      if (json === undefined || this.memoryHeads.get(thread) !== head) return; // Best-effort: checked again later.
-      if (this.isMemoryPointer(json, head.id)) head.expiresAt = this.now() + Math.min(this.ttlSeconds, 60) * 1000;
+
+    this.memoryHeads.forEach(async(head, thread) => {
+      if (head.expiresAt > now) return;
+      head.expiresAt = Infinity; // A pending probe owns this head's next deadline.
+      let json: string | null | undefined;
+
+      try {
+        json = await this.clientSource.getClient().get(this.key(thread));
+      } catch {
+        if (!this.probeFailureLogged) {
+          this.probeFailureLogged = true;
+          this.logger.error('[ThreadStateStore] Could not check memory checkpoint expiry');
+        }
+      }
+      if (this.memoryHeads.get(thread) !== head) return;
+      if (json === undefined || this.isMemoryPointer(json, head.id)) head.expiresAt = this.now() + Math.min(this.ttlSeconds, 60) * 1000;
       else this.memoryHeads.delete(thread);
-    }));
+    });
   }
 
   private isMemoryPointer(json: string | null, id: string): boolean {

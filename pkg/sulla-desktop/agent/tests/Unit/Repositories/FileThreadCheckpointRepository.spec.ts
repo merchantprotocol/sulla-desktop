@@ -211,6 +211,74 @@ describe('large thread checkpoints', () => {
     expect(redis['memoryHeads'].size).toBe(0);
   });
 
+  it('saves and loads an inline thread while an unrelated checkpoint probe never settles', async() => {
+    const client = redisClient();
+    let clock = 0;
+    const redis = new RedisThreadStateRepository({ getClient: () => client }, 1, undefined, logger, () => clock);
+    const saved = state('active', 'inline');
+
+    await redis.save(state('idle', big));
+    clock = 1000;
+    client.get.mockImplementation(key => key === 'sulla:threadstate:idle'
+      ? new Promise(() => {})
+      : Promise.resolve(client.values.get(key) ?? null));
+    const roundTrip = redis.save(saved).then(() => redis.load('active'));
+
+    // Both foreground commands resolve in microtasks; only the idle GET can stay pending.
+    expect(await Promise.race([roundTrip, new Promise(resolve => setImmediate(() => resolve('stalled')))])).toEqual(saved);
+    expect(client.get).toHaveBeenCalledWith('sulla:threadstate:idle');
+  });
+
+  it('issues at most one outstanding probe per due head across concurrent saves', async() => {
+    const client = redisClient();
+    let clock = 0;
+    const redis = new RedisThreadStateRepository({ getClient: () => client }, 1, undefined, logger, () => clock);
+    const threads = ['a', 'b', 'c'];
+
+    await Promise.all(threads.map(thread => redis.save(state(thread, big))));
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve });
+    client.get.mockImplementation(key => gate.then(() => client.values.get(key) ?? null));
+    const saves = Array.from({ length: 16 }, (_, i) => {
+      clock += 1000; // Even a probe older than the recheck interval is still in flight.
+      return redis.save(state(String(i), 'inline'));
+    });
+
+    release();
+    await Promise.all(saves);
+    for (const thread of threads) {
+      expect(client.get.mock.calls.filter(([key]) => key === 'sulla:threadstate:' + thread)).toHaveLength(1);
+    }
+  });
+
+  it('backs off after a rejected probe and retries without exposing the error', async() => {
+    const client = redisClient();
+    const getClient = vi.fn(() => client);
+    let clock = 0;
+    const redis = new RedisThreadStateRepository({ getClient }, 3600, undefined, logger, () => clock);
+    const active = state('active', 'inline');
+
+    await redis.save(state('idle', big));
+    logger.error.mockClear();
+    const error = new Error('private-probe-marker');
+
+    client.get.mockRejectedValueOnce(error).mockRejectedValueOnce(error);
+    clock = 3600_000;
+    await redis.save(active);
+    clock += 59_999;
+    await redis.save(active);
+    expect(client.get).toHaveBeenCalledTimes(1);
+    clock += 1;
+    await redis.save(active);
+    expect(client.get).toHaveBeenCalledTimes(2);
+    clock += 60_000;
+    getClient.mockImplementationOnce(() => { throw error });
+    await redis.save(active);
+    expect(await redis.load('active')).toEqual(active);
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    expect(logger.error.mock.calls.flat().map(String).join(' ')).not.toContain('private-probe-marker');
+  });
+
   it('falls through to real transcript recovery for an unreadable pointer without logging its payload', async() => {
     const client = redisClient();
     const badId = await files().write('thread', 'private-body: not JSON');
