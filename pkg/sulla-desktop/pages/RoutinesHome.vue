@@ -71,14 +71,17 @@
           <div class="studio-content">
             <div class="tb">
               <h1>Workflows</h1>
-              <span>{{ routinesController.routines.value.length }} in database</span>
+              <span v-if="!routinesController.isLoading.value && !routinesController.loadError.value">{{ routinesController.routines.value.length }} in database</span>
             </div>
 
-            <!-- Booting state — the app shell repaints tabs from localStorage
-                 before the Electron backend is up. Show a benign "warming up"
-                 message instead of blowing up with a DB connection error. -->
+            <ConfigurationLoadState
+              v-if="routinesController.showListLoadState.value"
+              label="Loading workflows…"
+              :error="routinesController.loadError.value ? 'Couldn’t load workflows.' : ''"
+              @retry="loadAll"
+            />
             <EmptyState
-              v-if="routinesController.routines.value.length === 0 && !routinesController.isLoading.value"
+              v-else-if="routinesController.routines.value.length === 0"
               kicker="No workflows yet"
               title="Your stage is empty."
               message="You haven't built a workflow yet. Get one from Use Cases, or compose one from scratch on the canvas."
@@ -140,6 +143,7 @@ import EmptyState from '@pkg/components/routines/EmptyState.vue';
 import PackagesTab from '@pkg/components/routines/PackagesTab.vue';
 import type { StudioSection } from '@pkg/components/routines/studioSections';
 import WorkflowTable from '@pkg/components/routines/WorkflowTable.vue';
+import ConfigurationLoadState from '@pkg/components/settings/ConfigurationLoadState.vue';
 import StudioAgentsPage from '@pkg/components/studio/StudioAgentsPage.vue';
 import StudioLivePage from '@pkg/components/studio/StudioLivePage.vue';
 import StudioRecipesPage from '@pkg/components/studio/StudioRecipesPage.vue';
@@ -182,23 +186,9 @@ const filteredRoutines = computed(() => {
   return routinesController.routines.value.filter(r => `${ r.name } ${ (r as any).description ?? '' }`.toLowerCase().includes(q));
 });
 
-// The playbill can't query Postgres until the backend has booted — the
-// tab is restored from localStorage on first paint, which regularly
-// beats the Electron main-process bring-up. Gate the initial load on
-// `systemReady` and reload automatically the moment it flips true, so
-// the first real render gets real data instead of an ECONNREFUSED.
 const { systemReady } = useStartupProgress();
 
-async function loadAll() {
-  await Promise.all([
-    routinesController.load(),
-    loadRunSummaries(),
-  ]);
-  // load() swallows the error into controller state and empties the list;
-  // without this the page shows "No workflows yet" for a failed read.
-  const err = routinesController.error.value;
-  if (err) showFeedback('error', `Couldn't load workflows: ${ err }`);
-}
+const loadAll = routinesController.load;
 
 // ── Workflows list run data ─────────────────────────────────────────
 // Last 12 runs, trigger, next fire and location per workflow, read from
@@ -221,17 +211,18 @@ async function loadRunSummaries() {
 
 onMounted(() => {
   summaryTimer = setInterval(() => {
-    if (systemReady.value && section.value === 'workflows') void loadRunSummaries();
+    if (section.value === 'workflows' && (systemReady.value || routinesController.routines.value.length > 0)) {
+      void loadRunSummaries();
+    }
   }, 15_000);
 });
 onBeforeUnmount(() => {
   if (summaryTimer) clearInterval(summaryTimer);
 });
 
-onMounted(() => {
-  if (systemReady.value) {
-    void loadAll();
-  }
+onMounted(() => { void loadAll() });
+watch(routinesController.isLoading, (loading) => {
+  if (!loading && section.value === 'workflows') void loadRunSummaries();
 });
 
 // Re-fire when readiness toggles true. Handles both the first-boot race

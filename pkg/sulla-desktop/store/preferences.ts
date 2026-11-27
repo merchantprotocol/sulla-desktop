@@ -114,7 +114,7 @@ export const actions = {
     if (!response.ok) {
       commit('SET_HAS_ERROR', true);
 
-      return;
+      return response.status;
     }
 
     const settings: Settings = await response.json();
@@ -136,7 +136,7 @@ export const actions = {
     if (!response.ok) {
       commit('SET_HAS_ERROR', true);
 
-      return;
+      return response.status;
     }
 
     const settings: Settings = await response.json();

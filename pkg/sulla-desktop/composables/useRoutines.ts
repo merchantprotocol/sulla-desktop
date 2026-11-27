@@ -23,6 +23,7 @@
  */
 
 import { computed, ref } from 'vue';
+import { useConfigurationLoad } from './useConfigurationLoad';
 
 import type {
   RoutineCategory,
@@ -155,7 +156,7 @@ function rowToSummary(row: DbListRow): RoutineSummary {
 }
 
 async function fetchRoutines(): Promise<RoutineSummary[]> {
-  const rows = await ipcRenderer.invoke('workflow-db-list');
+  const rows = await ipcRenderer.invoke('workflow-db-list', { strict: true });
 
   return rows.map(rowToSummary);
 }
@@ -182,27 +183,23 @@ function computeStats(routines: RoutineSummary[]): RoutinesStats {
 
 export function useRoutines() {
   const routines = ref<RoutineSummary[]>([]);
-  const isLoading = ref(false);
-  const error = ref<string | null>(null);
+  const actionError = ref<string | null>(null);
+  const { loading: isLoading, error: loadError, start: startLoad } = useConfigurationLoad(async() => {
+    routines.value = await fetchRoutines();
+  });
+  const showListLoadState = computed(() => !!loadError.value || (isLoading.value && routines.value.length === 0));
+  const error = computed({ get: () => loadError.value || actionError.value, set: value => { actionError.value = value } });
 
   async function load(): Promise<void> {
-    isLoading.value = true;
-    error.value = null;
-    try {
-      routines.value = await fetchRoutines();
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
-      routines.value = [];
-    } finally {
-      isLoading.value = false;
-    }
+    actionError.value = null;
+    await startLoad();
   }
 
   async function refresh(): Promise<void> {
     return load();
   }
 
-  // workflow-db-list returns [] while the database is starting; refill when it is up.
+  // Refresh after recovery from a brief database outage.
   useDatabaseAvailableReload(load, 'useRoutines');
 
   /**
@@ -267,7 +264,7 @@ export function useRoutines() {
 
       // load() deliberately captures IPC failures rather than throwing.
       // Do not announce success when the refreshed list could not be read.
-      return error.value === null;
+      return !isLoading.value && error.value === null;
     } catch (err) {
       error.value = err instanceof Error ? err.message : String(err);
 
@@ -324,6 +321,8 @@ export function useRoutines() {
     // state
     routines,
     isLoading,
+    loadError,
+    showListLoadState,
     isEmpty,
     error,
 
