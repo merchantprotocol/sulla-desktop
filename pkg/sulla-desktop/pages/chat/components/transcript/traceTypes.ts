@@ -5,7 +5,8 @@
 
 import type { TracePayload } from './TracePayloadSerializer';
 
-export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
+export type TraceRowKind = 'thought' | 'tool' | 'memory' | 'heartbeat' | 'activity' | 'handoff' | 'result' | 'retry' | 'approval' | 'usage' | 'source' | 'subagent';
+export type TraceIcon = 'thought' | 'browser' | 'shell' | 'file' | 'edit' | 'memory' | 'search' | 'read' | 'handoff' | 'result' | 'retry' | 'approval' | 'dot';
 export type SubAgentTraceStatus = 'starting' | 'working' | 'quiet' | 'blocked' | 'returned' | 'failed' | 'stopped';
 
 export interface SubAgentTraceDetails {
@@ -31,11 +32,12 @@ export interface SubAgentTraceDetails {
   followUpOf?: { jobId: string; taskIndex: number };
 }
 
-export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'running';
+export type TraceRowStatus = SubAgentTraceStatus | 'ok' | 'failed' | 'waiting' | 'approved' | 'denied' | 'running';
 
 export interface TraceRow {
   id: string;
   kind: TraceRowKind;
+  icon: TraceIcon;
   verb: string;
   target: string;
   targetIsCode: boolean;
@@ -48,11 +50,14 @@ export interface TraceRow {
   subagent?: SubAgentTraceDetails;
   payload?: TracePayload;
   anchorEntryId: string;
+  /** The transcript event that produced this row; used for inline placement. */
+  sourceMessageId?: string;
   at?: number;
 }
 
 export interface TraceTurn {
   id: string;
+  /** Legacy status-line correlation; the inline Detailed timeline never renders by this anchor. */
   anchorEntryId: string;
   rows: TraceRow[];
   usage?: { model?: string; promptTokens?: number; completionTokens?: number; totalTokens?: number; durationLabel?: string };

@@ -3,26 +3,24 @@ import { describe, expect, it } from 'vitest';
 import { TraceDisclosureController } from '@pkg/pages/chat/components/transcript/traceDisclosure';
 
 describe('TraceDisclosureController', () => {
-  it('opens and closes every payload without sharing state across controllers', () => {
+  it('keeps payload disclosure state isolated per transcript', () => {
     const first = new TraceDisclosureController();
     const second = new TraceDisclosureController();
-    first.openAll();
+    first.toggle('a');
     expect(first.isOpen('a')).toBe(true);
     expect(second.isOpen('a')).toBe(false);
-    first.closeAll();
+    first.toggle('a');
     expect(first.isOpen('a')).toBe(false);
   });
 
-  it('keeps the other rows open when closing one payload in all-open mode', () => {
+  it('opens and closes only the selected payload', () => {
     const controller = new TraceDisclosureController();
     controller.toggle('a');
+    controller.toggle('b');
     expect(controller.isOpen('a')).toBe(true);
-    controller.toggle('a');
-    expect(controller.isOpen('a')).toBe(false);
-    controller.openAll();
+    expect(controller.isOpen('b')).toBe(true);
     controller.toggle('a');
     expect(controller.isOpen('a')).toBe(false);
     expect(controller.isOpen('b')).toBe(true);
-    expect(controller.isAllOpen).toBe(true);
   });
 });

@@ -7,11 +7,21 @@ import type { AgentJob } from '../../../tools/agents/jobRegistry';
 import { AgentStateService, type AgentStateStore } from '../../../app/Services/AgentStateService';
 import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
 
-const { send, handle, removeHandler } = vi.hoisted(() => ({ send: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() }));
+const { send, handle, removeHandler, getAllWebContents, getAllWindows, isAgentWindowSender } = vi.hoisted(() => {
+  const send = vi.fn();
+  const shell = { getURL: () => 'app://./agent.html', isDestroyed: () => false, send };
+  return {
+    send, handle: vi.fn(), removeHandler: vi.fn(),
+    getAllWebContents: vi.fn(() => [shell]),
+    getAllWindows: vi.fn(() => [{ isDestroyed: () => false, webContents: shell }]),
+    isAgentWindowSender: vi.fn<(sender: unknown) => boolean>(() => false),
+  };
+});
 vi.mock('electron', () => ({
-  BrowserWindow: { getAllWindows: () => [{ isDestroyed: () => false, webContents: { send } }] },
+  BrowserWindow: { getAllWindows }, webContents: { getAllWebContents },
   ipcMain: { handle, removeHandler },
 }));
+vi.mock('@pkg/window/agentWindowTrust', () => ({ isAgentWindowSender }));
 
 import { AgentStatePublisher } from '../../../../main/AgentStatePublisher';
 
@@ -49,7 +59,7 @@ const makeJob = (jobId: string, threadId: string, parentThreadId?: string): Agen
 });
 
 describe('AgentStatePublisher', () => {
-  afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+  afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); });
 
   it('reads saved result links by owner after finished lanes expire without exposing prompts', async() => {
     const saved = makeJob('follow', 'worker', 'manager');
@@ -65,6 +75,32 @@ describe('AgentStatePublisher', () => {
     expect(JSON.stringify(result)).not.toContain('prompt');
     expect(store.durable.get('follow')!.tasks[0].status).toBe('error');
     publisher.dispose();
+  });
+
+  it('pushes a state change to registered hosted chats and desktop windows only', async() => {
+    vi.useFakeTimers();
+    const content = (url: string, destroyed = false) => ({ getURL: () => url, isDestroyed: () => destroyed, send: vi.fn() });
+    const shell = content('app://./agent.html');
+    const hosted = content('app://./agent.html?tabHost=1');
+    const unowned = content('app://./agent.html?tabHost=1');
+    const closed = content('app://./agent.html?tabHost=1', true);
+    const browser = content('https://example.invalid/');
+    getAllWindows.mockReturnValueOnce([shell, browser].map(webContents => ({ isDestroyed: () => false, webContents })));
+    getAllWebContents.mockReturnValueOnce([shell, hosted, unowned, closed, browser]);
+    isAgentWindowSender.mockImplementation(sender => sender === hosted || sender === closed);
+    const states = new AgentStateService(new PublisherStore([]), { jobs: new Map() });
+    const projector = new AgentStateProjector(states, { latest: async() => null });
+    const publisher = new AgentStatePublisher(states, projector, 10);
+    publisher.register();
+    try {
+      states.touch();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(shell.send).toHaveBeenCalledExactlyOnceWith('agents:state-changed', expect.objectContaining({ version: states.version }));
+      expect(hosted.send).toHaveBeenCalledExactlyOnceWith('agents:state-changed', expect.objectContaining({ version: states.version }));
+      for (const other of [unowned, closed, browser]) expect(other.send).not.toHaveBeenCalled();
+    } finally {
+      publisher.dispose();
+    }
   });
 
   it('shares slow IPC and event snapshots and publishes a trailing update', async() => {

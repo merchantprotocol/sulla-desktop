@@ -103,7 +103,7 @@ function fixture(main = true, includeLegacy = false) {
   return { controller, wrapper, transcript: wrapper.getComponent(TranscriptHarness), drawer: wrapper.getComponent(ForYouPanel) };
 }
 
-describe('For You from the original transcript', () => {
+describe('Decide from the original transcript', () => {
   it('shares the question selection and sends only one late answer when both surfaces submit', async() => {
     // risk: sending two human messages to a parked agent
     const { transcript, drawer, controller } = fixture();

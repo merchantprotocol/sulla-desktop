@@ -34,6 +34,7 @@ import { up as up_0170, down as down_0170 } from './0170_episode_checkin_superse
 import { up as up_0171, down as down_0171 } from './0171_agent_job_heartbeats';
 import { up as up_0172, down as down_0172 } from './0172_agent_awareness_setting';
 import { up as up_0173, down as down_0173 } from './0173_agent_job_message_kinds';
+import { up as up_0174 } from './0174_builtin_agent_identities';
 import { up as up_0166, down as down_0166 } from './0166_agent_job_custody';
 import { up as up_0106, down as down_0106 } from './0106_create_chat_artifacts';
 import { up as up_0107, down as down_0107 } from './0107_create_work_file_claims';
@@ -322,4 +323,5 @@ export const migrationsRegistry = [
   { name: '0171_agent_job_heartbeats', up: up_0171, down: down_0171 },
   { name: '0172_agent_awareness_setting', up: up_0172, down: down_0172 },
   { name: '0173_agent_job_message_kinds', up: up_0173, down: down_0173 },
+  { name: '0174_builtin_agent_identities', up: up_0174, down: '' },
 ] as const;

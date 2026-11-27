@@ -51,13 +51,19 @@ export class WindowTabStripState {
   readActivity(tabId: string) {
     const snapshot = this.snapshots.get(tabId);
 
-    return { snapshot, working: this.running.has(tabId) || snapshot?.state === 'working' };
+    return { snapshot, working: this.running.has(tabId) || snapshot?.active === true || snapshot?.state === 'working' };
+  }
+
+  readHeaderActivity(tab: { id: string; mode: string }) {
+    const { working, snapshot } = tab.mode === 'chat' ? this.readActivity(tab.id) : { working: false, snapshot: undefined };
+
+    return { working, activity: working && (!snapshot || snapshot.state === 'idle') ? 'working' as const : snapshot?.state, detail: snapshot?.detail };
   }
 
   setSnapshot(tabId: string, activity: ChatTabActivitySnapshot): void {
     const previous = this.snapshots.get(tabId);
 
-    if (previous?.state !== activity.state || previous?.detail !== activity.detail) this.snapshots.set(tabId, activity);
+    if (previous?.state !== activity.state || previous?.detail !== activity.detail || previous?.active !== activity.active) this.snapshots.set(tabId, activity);
   }
 
   clearSnapshot(tabId: string): void {

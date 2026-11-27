@@ -58,7 +58,7 @@ export async function shippedModelDefaults(): Promise<ModelDefaults> {
   };
 }
 
-export async function getModelDefaults(): Promise<ModelDefaults> {
+export async function getModelDefaults(readOnly = false): Promise<ModelDefaults> {
   const saved = await SullaSettingsModel.get(MODEL_DEFAULTS_SETTING, null) as Partial<ModelDefaults> | null;
   if (saved && isModelDefaultChoice(saved.chat) && isModelDefaultChoice(saved.heartbeat)) return { chat: saved.chat, heartbeat: saved.heartbeat };
 
@@ -71,7 +71,7 @@ export async function getModelDefaults(): Promise<ModelDefaults> {
   );
   if (legacy) next.heartbeat = legacy;
   for (const key of MODEL_DEFAULT_KEYS) if (isModelDefaultChoice(saved?.[key])) next[key] = saved![key]!;
-  await SullaSettingsModel.set(MODEL_DEFAULTS_SETTING, next, 'json');
+  if (!readOnly) await SullaSettingsModel.set(MODEL_DEFAULTS_SETTING, next, 'json');
   return next;
 }
 

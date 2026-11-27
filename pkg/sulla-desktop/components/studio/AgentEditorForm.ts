@@ -3,15 +3,13 @@
  */
 
 import {
-  AGENT_EDITOR_WORKER_PROVIDERS,
   cloneAgentEditorCapabilities,
   cloneAgentEditorRouting,
-  cloneModelCandidates,
-  type AgentEditorCreateInput,
+  type AgentEditorCreateRequest,
   type AgentEditorPatch,
 } from '../../shared/agentEditor';
 
-import type { ModelCandidate } from '../../agent/languagemodels/modelRouter';
+import type { AgentModelTiers } from '../../agent/languagemodels/agentModelTiers';
 import type { AgentModelChoice } from '../../agent/languagemodels/modelRoutingTypes';
 import type { AgentDefinitionResponse } from '../../main/agentsIpc';
 
@@ -88,85 +86,23 @@ export function editorPatchFromForm(
   };
 }
 
+export function editorProfileSignature(form: AgentEditorFormState): string {
+  return JSON.stringify([form.slug, editorPatchFromForm(form)]);
+}
+
 export function editorCreateFromForm(
   form: AgentEditorFormState,
   modelChoice: AgentModelChoice,
-  fallbacks: readonly ModelCandidate[] = [],
-): AgentEditorCreateInput {
+  modelTiers: AgentModelTiers | null,
+): AgentEditorCreateRequest {
   return {
-    slug:           form.slug,
+    slug: form.slug,
     ...editorPatchFromForm(form),
+    name: form.name,
+    prompt: form.prompt,
     modelChoice,
-    // IPC structured clone keeps `effort: undefined`, which the create contract rejects; send only set fields.
-    modelFallbacks: normalizedModelChain(fallbacks),
-  } as AgentEditorCreateInput;
-}
-
-export function editorDraftSignature(
-  form: AgentEditorFormState,
-  modelChoice: AgentModelChoice | undefined,
-  fallbacks: readonly ModelCandidate[],
-): string {
-  return JSON.stringify({
-    form:        editorPatchFromForm(form),
-    modelChoice: modelChoice ? { ...modelChoice } : null,
-    fallbacks:   cloneModelCandidates(fallbacks),
-  });
-}
-
-/** Replace only the model portion of a saved editor baseline after late routing recovery. */
-export function editorSnapshotWithModel(
-  savedSnapshot: string,
-  modelChoice: AgentModelChoice | undefined,
-  fallbacks: readonly ModelCandidate[],
-): string {
-  try {
-    const parsed = JSON.parse(savedSnapshot) as { form?: AgentEditorFormState };
-    if (parsed.form) return editorDraftSignature(parsed.form, modelChoice, fallbacks);
-  } catch {
-    // An older or malformed local snapshot should remain comparable as-is.
-  }
-  return savedSnapshot;
-}
-
-/** Replace only the profile portion of a saved editor baseline after that profile was persisted. */
-export function editorSnapshotWithForm(
-  savedSnapshot: string,
-  form: AgentEditorFormState,
-): string {
-  try {
-    const parsed = JSON.parse(savedSnapshot) as { modelChoice?: AgentModelChoice | null; fallbacks?: ModelCandidate[] };
-    return editorDraftSignature(form, parsed.modelChoice ?? undefined, parsed.fallbacks ?? []);
-  } catch {
-    // A malformed baseline stays as-is, so the editor keeps reporting unsaved edits.
-  }
-  return savedSnapshot;
-}
-
-/**
- * The saved model a baseline records, and the exact owner chain it implies:
- * a subscription pin plus its ordered fallbacks, or null for shared/class choices.
- * Undefined when the baseline cannot be read.
- */
-export function editorSnapshotSavedModel(
-  savedSnapshot: string,
-): { modelChoice: AgentModelChoice; chain: ModelCandidate[] | null } | undefined {
-  try {
-    const parsed = JSON.parse(savedSnapshot) as { modelChoice?: AgentModelChoice | null; fallbacks?: ModelCandidate[] };
-    const modelChoice = parsed.modelChoice ?? { mode: 'list' as const };
-    const subscriptionPin = modelChoice.mode === 'pin' && (AGENT_EDITOR_WORKER_PROVIDERS as readonly string[]).includes(modelChoice.provider);
-    const chain = subscriptionPin
-      ? [{ provider: modelChoice.provider, model: modelChoice.model, ...(modelChoice.effort ? { effort: modelChoice.effort } : {}) }, ...(parsed.fallbacks ?? [])]
-      : null;
-    return { modelChoice, chain: chain && normalizedModelChain(chain) };
-  } catch {
-    return undefined;
-  }
-}
-
-/** Provider, model and optional effort only, in order, for exact chain comparison. */
-export function normalizedModelChain(chain: readonly ModelCandidate[]): ModelCandidate[] {
-  return chain.map(row => ({ provider: row.provider, model: row.model, ...(row.effort ? { effort: row.effort } : {}) }));
+    ...(modelTiers ? { modelTiers } : {}),
+  };
 }
 
 export function validateEditorDraft(form: AgentEditorFormState): string | null {

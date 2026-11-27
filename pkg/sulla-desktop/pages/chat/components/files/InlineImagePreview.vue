@@ -28,9 +28,24 @@
       <header class="lightbox-header">
         <strong>{{ name }}</strong>
         <span class="lightbox-spacer" />
+        <button
+          type="button"
+          :aria-label="'Download ' + name"
+          :disabled="downloadBusy"
+          @click="emit('download')"
+        >
+          Download
+        </button>
         <button type="button" @click="openInTab">Open in tab</button>
         <button type="button" aria-label="Close preview" @click="closeLightbox">Close</button>
       </header>
+      <p
+        v-if="downloadError"
+        class="lightbox-error"
+        role="alert"
+      >
+        {{ downloadError }}
+      </p>
       <img v-if="lightboxOpen && previewUrl && !error" :src="previewUrl" :alt="altText || name" />
     </dialog>
   </div>
@@ -42,15 +57,18 @@ import { onBeforeUnmount, ref, watch } from 'vue';
 import { InlineImagePreviewSource, type InlineFileActionReference } from './inlineFilePreview';
 
 const props = defineProps<{
-  fileId: string;
-  name: string;
-  path: string;
-  bytes: Uint8Array;
-  mimeType: string;
-  altText?: string;
+  fileId:         string;
+  downloadBusy?:  boolean;
+  downloadError?: string;
+  name:           string;
+  path:           string;
+  bytes:          Uint8Array;
+  mimeType:       string;
+  altText?:       string;
 }>();
 
 const emit = defineEmits<{
+  download:      [];
   'open-in-tab': [reference: InlineFileActionReference];
 }>();
 
@@ -109,6 +127,7 @@ onBeforeUnmount(() => source.release());
 </script>
 
 <style scoped>
+.lightbox-error { margin: 0; padding: 8px 12px; color: var(--text-primary); font-size: 12px; }
 .inline-image-preview { min-width: 0; background: var(--bg-surface-alt); }
 .image-trigger { display: block; width: 100%; max-height: 440px; overflow: hidden; padding: 0; border: 0; background: var(--bg-surface-alt); cursor: zoom-in; }
 .image-trigger:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: -2px; }

@@ -41,15 +41,6 @@
       >{{ controller.thread.value.title }}</span>
     </div>
 
-    <button
-      class="ch-payloads"
-      :class="{ open: activeReportingLevel === 'debug' }"
-      type="button"
-      :aria-hidden="activeReportingLevel !== 'debug'"
-      :tabindex="activeReportingLevel === 'debug' ? 0 : -1"
-      @click="traceDisclosure.toggleAll()"
-    >{{ traceDisclosure.isAllOpen ? 'Close all payloads' : 'Open all payloads' }}</button>
-
     <div
       ref="reportingGroup"
       class="ch-reporting"
@@ -83,10 +74,8 @@ import { computed, inject, nextTick, ref, type Ref } from 'vue';
 import { useChatController } from '../../controller/useChatController';
 
 import type { ReportingLevel } from '../../models/ReportingLevel';
-import { TraceDisclosureController } from '../transcript/traceDisclosure';
 
 const reportingLevel = defineModel<ReportingLevel>('reportingLevel', { default: 'info' });
-const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 const controller = useChatController();
 const reportingModes: Array<{ value: ReportingLevel; label: string; shortLabel: string }> = [
   { value: 'fatal', label: 'Brief', shortLabel: 'B' },
@@ -184,10 +173,6 @@ html.dark .ch-title { --chat-title-chip-bg: #1d2126; --chat-title-chip-text: #e8
 .ch-origin:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ch-origin > [aria-hidden] { flex: none; }
 .ch-origin-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ch-payloads {
-  flex: none; margin-left: 8px; padding: 4px 8px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11px; cursor: pointer; }
-.ch-payloads:not(.open) { visibility: hidden; }
-.ch-payloads:hover { color: var(--text-primary); }
 .ch-reporting {
   display: flex; align-items: center; gap: 2px; min-width: 0; padding: 2px;
   flex: none; margin-left: 8px;

@@ -2,13 +2,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const f = vi.hoisted(() => ({
-  storedAgent: undefined as { id:string; source_kind:string; use_case_file_id:string|null } | undefined,
+  storedAgent: undefined as { id:string; source_kind:string; use_case_file_id:string|null; use_case_version_id:string|null } | undefined,
   failRegistrations: 1,
   insertParams: [] as any[][],
   insertSql: [] as string[],
   initializedRoutes: [] as any[][],
   routeCreated: false,
-  removedRoutes: [] as any[][],
 }));
 
 vi.mock('electron', () => ({ Notification: { isSupported: () => false } }));
@@ -26,8 +25,8 @@ vi.mock('@pkg/agent/database/PostgresClient', () => ({ postgresClient: {
       f.failRegistrations--;
       throw new Error('temporary projection failure');
     }
-    const [id, slug, , , , , , , , , , , , , , , , , , , , fileId] = params;
-    f.storedAgent = { id: String(id), source_kind: 'local', use_case_file_id: String(fileId) };
+    const [id, , , , , , , , , , , , , , , , , , , , , fileId, versionId] = params;
+    f.storedAgent = { id: String(id), source_kind: 'local', use_case_file_id: String(fileId), use_case_version_id: String(versionId) };
     // node-postgres returns rows for an upsert only when the statement asks for them.
     return { rows: /\bRETURNING\s+id\b/i.test(sql) ? [{ id: String(id) }] : [] };
   } })),
@@ -39,15 +38,13 @@ vi.mock('@pkg/agent/services/SkillDefinitionService', () => ({ hashSkillContent:
 vi.mock('@pkg/agent/memory/MemoryPackLoader', () => ({ installMemoryPackForSkill: vi.fn(), listPacks: async() => [], uninstallPack: vi.fn() }));
 vi.mock('@pkg/agent/database/registry/SkillsRegistry', () => ({ skillsRegistry: { invalidate: vi.fn() } }));
 vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
-  initializeBindingForPublishedPackage: vi.fn(async(...args: any[]) => {
+  reconcilePublishedPackageBinding: vi.fn(async(...args: any[]) => {
     f.initializedRoutes.push(args);
-    if (f.routeCreated) return { created: false };
+    if (f.routeCreated) return { outcome: 'unchanged' };
+    const { postgresClient } = await import('@pkg/agent/database/PostgresClient');
+    await postgresClient.transaction(args[4].project);
     f.routeCreated = true;
-    return { created: true, binding: { editToken: 'created-token', revision: 1 } };
-  }),
-  removeBindingForDefinition: vi.fn(async(...args: any[]) => {
-    f.removedRoutes.push(args);
-    f.routeCreated = false;
+    return { outcome: 'written', written: { editToken: 'created-token', revision: 1 } };
   }),
 } }));
 
@@ -80,7 +77,6 @@ describe('published legacy agent registration retry', () => {
     currentPackageText = packageText;
     f.initializedRoutes = [];
     f.routeCreated = false;
-    f.removedRoutes = [];
   });
 
   it('routes the exact approved model before registration and retries a failed projection without caching success', async() => {
@@ -89,13 +85,13 @@ describe('published legacy agent registration retry', () => {
     expect(f.insertParams).toHaveLength(1);
     expect(f.initializedRoutes).toHaveLength(1);
     expect(f.initializedRoutes[0][0]).toBe('grok-pr-reviewer');
-    expect(f.initializedRoutes[0][2]).toEqual([{ provider: 'grok', model: 'grok-4.7' }]);
+    expect(f.initializedRoutes[0][2]).toEqual({ kind: 'pin', candidates: [{ provider: 'grok', model: 'grok-4.7' }] });
+    expect(f.initializedRoutes[0][3]).toEqual({ fileId: 'grok-file', versionId: 'published-v1' });
     expect(f.initializedRoutes[0][1]).toBe(f.insertParams[0][0]);
     expect(f.insertParams[0][1]).toBe('grok-pr-reviewer');
     expect(f.insertParams[0][12]).toBe('grok');
     expect(f.insertParams[0][23]).toBe(false);
-    // The rollback carries the exact identity it created, never just the agent id.
-    expect(f.removedRoutes).toEqual([[ 'grok-pr-reviewer', f.insertParams[0][0], { editToken: 'created-token', revision: 1 } ]]);
+    expect(f.routeCreated).toBe(false);
     expect(f.storedAgent).toBeUndefined();
 
     await service.scan();
@@ -123,6 +119,12 @@ describe('published legacy agent registration retry', () => {
     expect(f.insertParams).toHaveLength(1);
     expect(f.insertParams[0][23]).toBeNull();
     expect(f.insertSql[0]).toContain('COALESCE($24,TRUE)');
-    expect(f.insertSql[0]).toContain('agent_awareness=COALESCE($24,agent_definitions.agent_awareness)');
+    expect(f.insertSql[0]).toContain('ON CONFLICT DO NOTHING');
+
+    // A fresh scanner observes the stored definition and takes the guarded update branch.
+    await new SullaUseCaseFiles(request).scan();
+    expect(f.insertParams).toHaveLength(2);
+    expect(f.insertParams[1][23]).toBeNull();
+    expect(f.insertSql[1]).toContain('agent_awareness=COALESCE($24,agent_definitions.agent_awareness)');
   });
 });

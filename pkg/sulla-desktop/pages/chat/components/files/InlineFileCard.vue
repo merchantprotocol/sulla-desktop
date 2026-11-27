@@ -56,16 +56,17 @@
           >
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h4l1.2 1.5h5.8v6.5h-11z" /></svg><span>Show in Files</span>
           </button>
-          <button
-            class="file-action"
-            type="button"
-            :aria-label="'Download ' + file.name"
-            title="Download"
-            @click="download"
-          >
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10" /></svg><span>Download</span>
-          </button>
         </template>
+        <button
+          class="file-action"
+          type="button"
+          :aria-label="'Download ' + file.name"
+          :disabled="downloadBusy"
+          title="Download"
+          @click="download"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v11M7 11l5 5 5-5M4 19h16" /></svg><span>Download</span>
+        </button>
         <button
           v-if="canOpenInTab"
           class="file-action"
@@ -78,6 +79,14 @@
         </button>
       </div>
     </header>
+
+    <p
+      v-if="downloadError"
+      class="file-status file-error"
+      role="alert"
+    >
+      {{ downloadError }}
+    </p>
 
     <div v-if="hasPreviewCap && isReady" class="file-cap" role="status">
       <span>{{ capLabel }}</span>
@@ -98,6 +107,9 @@
         :path="file.path"
         :source="htmlPreview.source"
         :view="htmlView"
+        :download-busy="downloadBusy"
+        :download-error="downloadError"
+        @download="download"
         @open-in-tab="emitOpenInTab"
       />
     </div>
@@ -109,6 +121,9 @@
         :bytes="imagePreview.bytes"
         :mime-type="imagePreview.mimeType"
         :alt-text="imagePreview.altText"
+        :download-busy="downloadBusy"
+        :download-error="downloadError"
+        @download="download"
         @open-in-tab="emitOpenInTab"
       />
     </div>
@@ -138,7 +153,7 @@ import {
   type InlineFileCardViewModel,
 } from './inlineFilePreview';
 
-const props = defineProps<{ file: InlineFileCardViewModel }>();
+const props = defineProps<{ file: InlineFileCardViewModel; downloadBusy?: boolean; downloadError?: string }>();
 
 const emit = defineEmits<{
   'open-in-tab': [reference: InlineFileActionReference];

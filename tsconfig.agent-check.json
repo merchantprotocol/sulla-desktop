@@ -5,6 +5,7 @@
     "skipLibCheck": true
   },
   "include": [
-    "pkg/sulla-desktop/agent/**/*.ts"
+    "pkg/sulla-desktop/agent/**/*.ts",
+    "pkg/sulla-desktop/typings/assets.d.ts"
   ]
 }

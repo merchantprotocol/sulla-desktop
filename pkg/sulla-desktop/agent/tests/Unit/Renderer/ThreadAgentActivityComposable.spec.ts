@@ -278,6 +278,33 @@ describe('useThreadAgentActivity', () => {
     expect(activity.checkIns.value.filter(item => item.key === snapshotKey)).toEqual([]);
   });
 
+  it('shares authorized check-in history with Detailed and clears it on thread switch', async() => {
+    // risk: cross-thread history disclosure or losing recorded events before Detailed renders them.
+    const row = new RowFactory().create('worker-job:0', 'thread-a', null);
+    const history: AgentTraceHistoryData = {
+      checkins: [{ step: 'verify', summary: 'Full check-in', blockers: [], filesTouched: ['src/worker.ts'], createdAt: 1_000 }],
+      messages: [{ message: 'Review this exact edge case', createdAt: 1_500 }],
+    };
+    const snapshot = ref<AgentStateSnapshot>({ version: 1, generatedAt: '2026-11-23T17:02:00.000Z', rows: [row] });
+    const threadId = ref<string | undefined>('thread-a');
+    const activity = useActivityWithConsumer({
+      snapshot,
+      threadId,
+      traceHistory: async(parentThreadId, jobId, taskIndex) =>
+        parentThreadId === 'thread-a' && jobId === 'worker-job' && taskIndex === 0 ? history : null,
+      now: () => Date.parse('2026-11-23T17:02:00.000Z'),
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await nextTick();
+    expect(activity.traceHistories.value.get('worker-job:0')).toEqual(history);
+
+    threadId.value = 'thread-b';
+    await nextTick();
+    expect([...activity.traceHistories.value]).toEqual([]);
+  });
+
   // risk: memory lifecycle — an absent consumer keeps only the latest event and does not replay consumed source rows.
   it('retains one newest history event while detached and delivers it once after attachment', async() => {
     const rows = new RowFactory();

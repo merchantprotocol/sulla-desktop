@@ -26,7 +26,32 @@ async function fixture() {
   const component = defineComponent({ setup() { store = ChatDecisions.provide(owner); return () => visible.value ? h(ForYouPanel) : h('div') } });
   const wrapper = mount(component, { global: { provide: { [ChatControllerKey as symbol]: { thread: ref({ id: 'ui-a' }), messages: ref([]) }, 'chat:activity-context': { backendThreadId: owner } } } }); mounted.push(wrapper); await flushPromises(); return { wrapper, store, owner, visible };
 }
-describe('For You requests', () => {
+describe('Decide requests', () => {
+  it('uses the same compact panel structure when there is no active content', async() => {
+    f.records = [];
+    const v = await fixture();
+    expect(v.wrapper.get('.fy-head h2').text()).toBe('Decide');
+    expect(v.wrapper.get('.fy-count').text()).toBe('Questions and approvals for this chat');
+    expect(v.wrapper.get('.fy-empty h3').text()).toBe('Nothing needs you');
+    expect(v.wrapper.find('.fy-empty-mark').exists()).toBe(true);
+    expect(v.wrapper.find('.fy-past').exists()).toBe(true);
+  });
+
+  it('loads saved requests when opening the panel after an update was missed', async() => {
+    f.records = [];
+    const v = await fixture();
+    v.visible.value = false;
+    await nextTick();
+
+    f.records = [question('recovered')];
+    expect(v.store.openCount.value).toBe(0);
+    v.visible.value = true;
+    await flushPromises();
+
+    expect(v.store.openCount.value).toBe(1);
+    expect(v.wrapper.get('.fy-request').attributes('data-decision-id')).toBe('recovered');
+  });
+
   it('does not ask again when submitting the newer copy of an expired duplicate', async() => {
     f.records = [question('old'), question('new', { createdAt: 20 })];
     const v = await fixture();

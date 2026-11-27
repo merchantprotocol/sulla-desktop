@@ -45,6 +45,12 @@
       >
         {{ busy.has(index) ? 'Opening…' : 'Read report' }} <span aria-hidden="true">↗</span>
       </button>
+      <ChatFileDownload
+        v-if="!resolver.webUrl(source)"
+        :key="source.origin"
+        :file-id="() => reportFile(source).then(file => file.fileId)"
+        :name="source.origin.split(/[\\/]/).at(-1) || source.title"
+      />
     </li>
   </ul>
 </template>
@@ -53,6 +59,7 @@
 import { reactive } from 'vue';
 
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
+import ChatFileDownload from '../files/ChatFileDownload.vue';
 
 import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
@@ -65,12 +72,17 @@ const resolver = new SupportingReportResolver(ipcRenderer);
 const busy = reactive(new Set<number>());
 const errors = reactive<Record<number, string>>({});
 
+async function reportFile(source: CitationMessage['sources'][number]) {
+  const file = await resolver.file(source);
+  await resolver.verify(file);
+  return file;
+}
+
 async function open(source: CitationMessage['sources'][number], index: number): Promise<void> {
   if (busy.has(index)) return;
   busy.add(index); delete errors[index];
   try {
-    const file = await resolver.file(source);
-    await resolver.verify(file);
+    const file = await reportFile(source);
     if (supportsDocumentEditor(file.path)) await openWorkspaceTab({ mode: 'paper', documentFile: file });
     else await openWorkspaceTab({ mode: 'files', title: source.title, filesNavigation: { ...file, section: 'detail' } });
   } catch (error) { errors[index] = error instanceof Error ? error.message : 'The report could not be opened. Please retry.' } finally { busy.delete(index) }

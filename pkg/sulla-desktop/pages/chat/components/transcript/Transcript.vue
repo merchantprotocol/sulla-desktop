@@ -30,53 +30,55 @@
           :label="todayLabel"
         />
 
-        <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
-          <TraceTurn
-            v-for="turn in traceTurnsByAnchor?.get(entry.id)"
-            :key="turn.id"
-            :turn="turn"
-          />
-        <div
-          :ref="el => jumper.register(entry.id, el)"
-          v-if="!replyCitations.attached.has(entry.id)"
-          class="report-entry"
-        >
-          <span
-            v-if="reportLabelVisible(entry)"
-            class="report-label"
-            :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
-          >{{ entry.label }}</span>
-          <MessageRouter
-            v-if="entry.kind === 'card'"
-            :msg="entry.message"
-            :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
-          >
-            <template v-if="replyCitations.byReply.has(entry.id)" #sources>
-              <div
-                v-for="citation in replyCitations.byReply.get(entry.id)"
-                :key="citation.id"
-                :ref="el => jumper.register(citation.id, el)"
+        <DetailedTimeline
+          v-if="reportingLevel === 'debug'"
+          :items="detailedTimeline"
+          :register-element="(id, element) => jumper.register(id, element)"
+          @stop="controller.stop()"
+          @resend="resend"
+        />
+        <template v-else>
+          <template v-for="(entry, index) in transcriptEntries" :key="entry.id">
+            <div
+              :ref="el => jumper.register(entry.id, el)"
+              v-if="!replyCitations.attached.has(entry.id)"
+              class="report-entry"
+            >
+              <span
+                v-if="reportLabelVisible(entry)"
+                class="report-label"
+                :class="{ 'report-label-user': entry.kind === 'card' && entry.message.kind === 'user' }"
+              >{{ entry.label }}</span>
+              <MessageRouter
+                v-if="entry.kind === 'card'"
+                :msg="entry.message"
+                :streaming-paragraph-break="reporting.isStreamingContinuation(transcriptEntries, index)"
               >
-                <CitationRow :msg="citation" />
+                <template v-if="replyCitations.byReply.has(entry.id)" #sources>
+                  <div
+                    v-for="citation in replyCitations.byReply.get(entry.id)"
+                    :key="citation.id"
+                    :ref="el => jumper.register(citation.id, el)"
+                  >
+                    <CitationRow :msg="citation" />
+                  </div>
+                </template>
+              </MessageRouter>
+              <div v-else class="report-activity">
+                <span class="report-activity-text">{{ entry.text }}</span>
               </div>
-            </template>
-          </MessageRouter>
-          <div v-else class="report-activity">
-            <span class="report-activity-text">{{ entry.text }}</span>
-
+            </div>
+          </template>
+          <div v-if="waiting" :key="waiting.since" class="report-entry">
+            <span class="report-label">Status</span>
+            <TurnWaiting
+              :since="waiting.since"
+              :can-resend="!waiting.message.attachments?.length"
+              @stop="controller.stop()"
+              @resend="resend"
+            />
           </div>
-        </div>
         </template>
-        <TraceTurn v-for="turn in trailingTraceTurns" :key="turn.id" :turn="turn" />
-        <div v-if="waiting" :key="waiting.since" class="report-entry">
-          <span class="report-label">Status</span>
-          <TurnWaiting
-            :since="waiting.since"
-            :can-resend="!waiting.message.attachments?.length"
-            @stop="controller.stop()"
-            @resend="resend"
-          />
-        </div>
       </div>
     </div>
 
@@ -97,17 +99,18 @@ import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, w
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import MessageRouter from './MessageRouter.vue';
-import TraceTurn from './TraceTurn.vue';
+import DetailedTimeline from './DetailedTimeline.vue';
 import CitationRow from '../citation/CitationRow.vue';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { ReplyCitationProjection } from './ReplyCitationProjection';
 import { DetailedTraceProjection } from './DetailedTraceProjection';
-import { TraceDisclosureController } from './traceDisclosure';
+import { DetailedTimelineProjection } from './DetailedTimelineProjection';
 import ScrollPill from './ScrollPill.vue';
 import TimeMarker from './TimeMarker.vue';
 import TurnWaiting from './TurnWaiting.vue';
 import { TranscriptReporting, type TranscriptEntry } from './toolGroups';
 import { useResultActivity } from '../../composables/useResultActivity';
+import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
 import { ChatDecisions } from '../../composables/useChatDecisions';
 import { ApprovalTranscriptProjector } from '../../services/ApprovalTranscriptProjector';
 import { useScrollAnchor } from '../../composables/useScrollAnchor';
@@ -124,10 +127,11 @@ const reporting = new TranscriptReporting();
 const decisions = ChatDecisions.useChatDecisions();
 const approvalProjector = new ApprovalTranscriptProjector();
 const traceProjection = new DetailedTraceProjection();
+const timelineProjection = new DetailedTimelineProjection(traceProjection, reporting);
 const citationProjection = new ReplyCitationProjection();
 const agentState = inject(AGENT_STATE_CLIENT_KEY, undefined);
+const threadAgentActivity = inject(THREAD_AGENT_ACTIVITY_KEY, undefined);
 const { activity: resultActivity } = useResultActivity();
-const traceDisclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 
 const transcriptMessages = computed(() => approvalProjector.project(
   controller.messages.value,
@@ -136,10 +140,6 @@ const transcriptMessages = computed(() => approvalProjector.project(
 ));
 const transcriptEntries = computed(() => reporting.standardEntries(transcriptMessages.value, props.reportingLevel, item => !!resultActivity(item).decision));
 const replyCitations = computed(() => citationProjection.project(transcriptEntries.value));
-const traceTurnsByAnchor = computed(() => props.reportingLevel === 'debug'
-  ? traceProjection.byAnchor(traceProjection.project(controller.messages.value, transcriptEntries.value, { agents: agentState?.snapshot.value.rows }))
-  : undefined);
-const trailingTraceTurns = computed(() => traceTurnsByAnchor.value?.get(DetailedTraceProjection.trailingAnchor));
 function reportLabelVisible(entry: TranscriptEntry): boolean {
   if (entry.kind !== 'card') return true;
   if (entry.message.kind === 'proactive' && entry.message.result) return false;
@@ -160,7 +160,8 @@ provide(LineTimeKey, id => times.value.get(id));
 const jumper = new TranscriptJump();
 function onJump(event: Event): void {
   const messageId = (event as CustomEvent<{ messageId?: string }>).detail?.messageId;
-  if (messageId) jumper.jump(transcriptEntries.value, String(messageId), matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (messageId) jumper.jump(props.reportingLevel === 'debug' ? detailedJumpEntries() : transcriptEntries.value,
+    String(messageId), matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 let loadingOlder = false;
 let historyExhausted = false;
@@ -201,6 +202,23 @@ onBeforeUnmount(() => { pageEpoch++; window.removeEventListener('chat:jump-to-me
 
 // Sent but nothing back yet: show a live "working" row instead of nothing.
 const waiting = computed(() => waitingOn(controller.messages.value, controller.isRunning.value));
+const detailedTimeline = computed(() => timelineProjection.project(
+  transcriptMessages.value,
+  transcriptEntries.value,
+  agentState?.snapshot.value.rows,
+  waiting.value,
+  threadAgentActivity?.traceHistories.value,
+));
+function detailedJumpEntries(): Array<{ id: string; sourceId?: string }> {
+  const entries: Array<{ id: string; sourceId?: string }> = [];
+  for (const item of detailedTimeline.value) {
+    if (item.kind === 'header') continue;
+    if (item.kind === 'trace') entries.push({ id: item.row.id, sourceId: item.row.sourceMessageId });
+    else if (item.kind === 'message') entries.push({ id: item.entry.id, sourceId: item.entry.sourceId });
+    else entries.push({ id: item.id, sourceId: String(item.message.id) });
+  }
+  return entries;
+}
 function resend(): void {
   const text = waiting.value?.message.text;
   controller.stop();

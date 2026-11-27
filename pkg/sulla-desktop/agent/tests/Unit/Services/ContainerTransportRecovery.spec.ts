@@ -3,17 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import '../../Support/TestHomeEnv';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
 import * as runner from '../../../tools/util/CommandRunner';
 import { BaseTool } from '../../../tools/base';
 import { toolDecisionPort } from '../../../tools/toolDecisionPort';
-import { GitStatusWorker } from '../../../tools/github/git_status';
-import { ExecWorker } from '../../../tools/meta/exec';
-import { AgentContainerRuntimeRegistry, agentContainerRuntimeRegistry, ContainerExecutionContextFactory } from '../../../services/AgentContainerRuntimeRegistry';
+import { AgentContainerRuntimeRegistry, ContainerExecutionContextFactory } from '../../../services/AgentContainerRuntimeRegistry';
 import { toolSessionOrigin } from '../../../services/ToolSessionOrigin';
 import { ContainerSessionLeases } from '../../../services/ContainerSessionLeases';
 import { EventEmitter } from 'node:events';
@@ -186,7 +179,7 @@ describe('launcher compatibility', () => {
         return p;
       });
       try {
-        const failure = await launch({ jobId: 'clock', taskIndex: 0, state, provider: 'codex', instructions: 'fixture' } as never)
+        const failure = await launch({ kind: 'chat', jobId: 'clock', taskIndex: 0, state, provider: 'codex', instructions: 'fixture' } as never)
           .then(() => '', (error: Error) => error.message);
         expect(created, failure).toBe(true);
         const proof = await verifyCapabilityToken(files.get('SULLA_API_TOKEN'), key, { category: 'meta', tool: 'ping' });
@@ -248,69 +241,21 @@ async function inventory(scoped: boolean) {
 }
 
 describe('cold container inventory', () => {
-  it('runs credential-scoped Git status after recovery without delegating the credential', async() => {
-    const { registry, parent } = await inventory(true);
+  // Restart ownership (#2944): a container that outlived its Desktop has no live MCP session,
+  // provider bridge or renewal owner, so it must not run agent-local work anywhere, including the VM.
+  it.each([false, true])('refuses agent-local dispatch for a recovered container (persisted scopes: %s)', async scoped => {
+    const { registry, parent } = await inventory(scoped);
     await registry.rehydrate();
-    const scoped = { ...parent, scopes: ['github/git_status'], credential_scope: { integration_id: 'github', account_id: 'fixture' } };
-    expect(() => registry.forExecution({ ...scoped, task_index: 1 }, 'agent-local')).toThrow();
-    expect(() => registry.forExecution({ ...scoped, exp: 0 }, 'agent-local')).toThrow();
-    const runtime = registry.forExecution(scoped, 'agent-local')!;
-    expect(runtime.podId).toBe(binding.podId);
-    const git = new GitStatusWorker();
-    git.executionContext = scoped;
-    const guest = vi.spyOn(runner, 'runCommand').mockImplementation(async cmd => {
-      expect(registry.current()).toBe(runtime);
-      return { stdout: cmd.includes('--show-toplevel') ? '/fixture' : cmd.includes('--abbrev-ref') ? 'fixture-branch' : '', stderr: '', exitCode: 0 };
-    });
+    const guest = vi.spyOn(runner, 'runCommand');
     try {
-      const result = await registry.withRuntime(runtime, () => git['_validatedCall']({ absolutePath: '/fixture' }));
-      expect(result.successBoolean).toBe(true);
-      expect(result.responseString).toContain('Working tree clean');
-      expect(() => registry.sessionLeases(runtime)).toThrow('Invalid authority for recovered container');
+      const git = { ...parent, scopes: ['github/git_status'], credential_scope: { integration_id: 'github', account_id: 'fixture' } };
+      for (const ctx of [parent, git]) {
+        expect(() => registry.require(ctx)).toThrow(expect.objectContaining({ reason: 'container_owner_not_rehydrated' }));
+        expect(() => registry.forExecution(ctx, 'agent-local')).toThrow(expect.objectContaining({ reason: 'container_owner_not_rehydrated' }));
+        expect(() => registry.forForwardedExecution(ctx, 'agent-local')).toThrow(expect.objectContaining({ reason: 'container_owner_not_rehydrated' }));
+      }
+      expect(registry.probe(binding.jobId, binding.threadId, 'desktop')).toBe(false);
+      expect(guest).not.toHaveBeenCalled();
     } finally { guest.mockRestore(); }
-  });
-
-  it.each([
-    { scoped: false, caller: 'stale' }, { scoped: true, caller: 'stale' }, { scoped: true, caller: 'absent' },
-  ])('runs an ordinary nested CLI with $caller parent (persisted scopes: $scoped)', async({ scoped, caller }) => {
-    const { lifecycle, directory, registry, parent } = await inventory(scoped);
-    const dir = mkdtempSync(join(tmpdir(), 'cold-lease-'));
-    const helper = fileURLToPath(new URL('../../../../../../services/sulla-agent/secret-env.sh', import.meta.url));
-    writeFileSync(join(dir, 'SULLA_TOOL_SESSION'), 'old-default');
-    edges.spawn.mockImplementation((_cmd, argv: string[]) => {
-      const p = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
-      const target = argv.find(s => s.startsWith(directory + '/LEASE_'));
-      if (target) p.stdin.on('data', chunk => writeFileSync(join(dir, target.slice(directory.length + 1)), chunk));
-      queueMicrotask(() => p.emit('close', 0)); return p;
-    });
-    const port = host['port']; host['port'] = 1;
-    const running = vi.spyOn(host, 'running', 'get').mockReturnValue(true);
-    const guest = vi.spyOn(runner, 'runCommand').mockImplementation(async command => {
-      const out = spawnSync('sh', ['-ec', command, 'fixture', helper, dir], { encoding: 'utf8', env: { PATH: '/bin:/usr/bin' } });
-      if (out.status !== 0) return { stdout: '', stderr: 'nested CLI wrapper has no process lease', exitCode: 77 };
-      const [id, token] = out.stdout.split('\n');
-      const proof = await verifyCapabilityToken(token, key, { category: 'meta', tool: 'ping' });
-      expect(await clerkAllowed(id)).toBe(false);
-      if (caller === 'stale') expect(proof.exp).toBeLessThanOrEqual(parent.exp);
-      expect(proof.jti).toBe(lifecycle);
-      expect(proof.tool_session_generation).toBeUndefined();
-      await expect(resolver.bindForwarded(worker(), 'clerk_get_user', id, { ...proof, request_id: 'child' }, new AbortController().signal))
-        .rejects.toMatchObject({ status: 403 });
-      await expect(resolver.bindForwarded(worker(), 'clerk_get_user', id, parent, new AbortController().signal))
-        .rejects.toMatchObject({ status: 403 });
-      return { stdout: 'pong', stderr: '', exitCode: 0 };
-    });
-    try {
-      await registry.rehydrate();
-      const recovered = caller === 'stale' ? registry.forExecution(parent, 'agent-local')! : registry.require(parent);
-      const release = agentContainerRuntimeRegistry.register(recovered, registry.sessionLeases(recovered));
-      try {
-        const exec = new ExecWorker(); exec.setState(state);
-        const result = await agentContainerRuntimeRegistry.withRuntime(recovered, () => exec['_validatedCall']({
-          command: '. "$1"; load_sulla_tool_session "$2"; load_sulla_api_token "$2"; printf "%s\\n%s" "$SULLA_TOOL_SESSION" "$SULLA_API_TOKEN"',
-        }));
-        expect(result).toMatchObject({ successBoolean: true, responseString: 'pong' });
-      } finally { release(); }
-    } finally { guest.mockRestore(); running.mockRestore(); host['port'] = port; rmSync(dir, { recursive: true, force: true }); }
   });
 });
