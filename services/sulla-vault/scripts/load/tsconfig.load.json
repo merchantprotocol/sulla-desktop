@@ -1,0 +1,11 @@
+{
+  "extends": "../../../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "target": "ES2022"
+  },
+  "include": ["./**/*.ts", "../../src/**/*.ts", "../../../../pkg/sulla-desktop/vault-broker/**/*.ts", "../../../../pkg/sulla-desktop/utils/**/*.ts", "../../../../pkg/sulla-desktop/main/vaultTls*.ts"]
+}
