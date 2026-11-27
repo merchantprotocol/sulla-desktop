@@ -23,13 +23,14 @@ class PerfLogReader {
   }
 
   parseLines(lines) {
-    const result = { turns: [], bridgeTimings: [], skippedLines: 0 };
+    const result = { turns: [], bridgeTimings: [], skippedLines: 0, ignoredLines: 0 };
 
     for (const line of lines) {
       if (!line.trim()) continue;
 
-      if (line.startsWith(TURN_PREFIX)) {
-        const turn = this.parseTurn(line.slice(TURN_PREFIX.length).trim());
+      const turnMarker = line.indexOf(TURN_PREFIX);
+      if (turnMarker >= 0) {
+        const turn = this.parseTurn(line.slice(turnMarker + TURN_PREFIX.length).trim());
         if (turn) result.turns.push(turn);
         else result.skippedLines += 1;
         continue;
@@ -42,7 +43,7 @@ class PerfLogReader {
         continue;
       }
 
-      result.skippedLines += 1;
+      result.ignoredLines += 1;
     }
 
     return result;
@@ -163,6 +164,7 @@ class TurnTimingAggregator {
 
     return {
       skippedLines: 0,
+      ignoredLines: 0,
       turnTiming: this.groupTurns(filteredTurns),
       bridgeTiming: this.groupBridgeTimings(filteredBridgeTimings),
       filteredBridgeWithoutTimestamp: bridgeWithoutTimestamp,
@@ -339,7 +341,7 @@ class TurnTimingAggregator {
 class ReportFormatter {
   format(report, asJson = false) {
     if (asJson) return `${JSON.stringify(report, null, 2)}\n`;
-    const lines = [`TurnTiming samples: ${report.turnTiming.reduce((sum, group) => sum + group.n, 0)}`, `BridgeTiming samples: ${report.bridgeTiming.reduce((sum, group) => sum + group.n, 0)}`, `Skipped lines: ${report.skippedLines}`];
+    const lines = [`TurnTiming samples: ${report.turnTiming.reduce((sum, group) => sum + group.n, 0)}`, `BridgeTiming samples: ${report.bridgeTiming.reduce((sum, group) => sum + group.n, 0)}`, `Skipped timing records: ${report.skippedLines}`, `Ignored non-timing lines: ${report.ignoredLines}`];
     if (report.filteredBridgeWithoutTimestamp > 0) lines.push(`BridgeTiming lines omitted by --since (no timestamp): ${report.filteredBridgeWithoutTimestamp}`);
     lines.push('TurnTiming by provider:');
     if (report.turnTiming.length === 0) lines.push('  no samples');
@@ -412,6 +414,7 @@ class PerfReportCli {
     }
     const report = this.aggregator.aggregate(parsed.turns, parsed.bridgeTimings, options);
     report.skippedLines = parsed.skippedLines;
+    report.ignoredLines = parsed.ignoredLines;
     this.write(this.formatter.format(report, options.json));
     return 0;
   }
