@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import type { WebContents } from 'electron';
 
-import type { AgentViewport, AgentViewportPolicy } from './AgentViewportPolicy';
+import type { AgentViewport } from './AgentViewportPolicy';
 
 export interface CaptureOptions {
   viewport?: AgentViewport;
@@ -13,7 +13,8 @@ export interface CaptureOptions {
 
 export interface CaptureMetadata {
   viewport:         AgentViewport;
-  displayDpr:       number | null;
+  liveHumanView:    boolean;
+  displayDpr:       number;
   devicePixelRatio: number;
   fullPage:         boolean;
   capped:           boolean;
@@ -28,8 +29,7 @@ export interface CapturedScreenshot {
 
 interface LayoutMetrics {
   cssContentSize:    { height: number };
-  cssVisualViewport: { pageX: number; pageY: number; scale: number };
-  cssLayoutViewport: { clientWidth: number };
+  cssVisualViewport: { pageX: number; pageY: number };
 }
 
 /** Optional page decorations run inside the same layout and lock as capture. */
@@ -38,17 +38,35 @@ export interface CaptureOverlays {
   remove(): Promise<void>;
 }
 
+/** Created inside the per-contents queue; only the view manager controls bounds. */
+export interface CapturePlacement {
+  parkedViewport?: AgentViewport;
+  resized: boolean;
+  displayDpr: number;
+  assertCurrent(): void;
+  release(): void;
+}
+export type BeginCapture = (once?: AgentViewport) => CapturePlacement;
+
 export class AgentScreenshotCapture {
   private readonly tails = new WeakMap<WebContents, Promise<void>>();
 
-  constructor(private readonly viewports: AgentViewportPolicy) {}
-
-  async capture(wc: WebContents, displayDpr: () => number | null, options: CaptureOptions = {}, overlays?: CaptureOverlays): Promise<CapturedScreenshot> {
-    const viewport = this.viewports.resolve(wc, options.viewport);
-    const scale = options.scale === undefined ? 1 : options.scale;
+  capture(wc: WebContents, begin: BeginCapture, options: CaptureOptions = {}, overlays?: CaptureOverlays): Promise<CapturedScreenshot> {
+    const scale = options.scale ?? 1;
     if (scale !== 1 && scale !== 2) throw new Error('scale must be 1 or 2');
+    return this.serialize(wc, async() => {
+      const placement = begin(options.viewport);
+      try {
+        return await this.captureOne(wc, placement, scale, options, overlays);
+      } finally {
+        placement.release();
+      }
+    });
+  }
+
+  async serialize<T>(wc: WebContents, run: () => Promise<T>): Promise<T> {
     const previous = this.tails.get(wc) ?? Promise.resolve();
-    const operation = previous.then(() => this.captureOne(wc, displayDpr(), viewport, scale, options, overlays));
+    const operation = previous.then(run);
     const tail = operation.then(() => {}, () => {});
     this.tails.set(wc, tail);
     try {
@@ -74,7 +92,7 @@ export class AgentScreenshotCapture {
     }
   }
 
-  private async captureOne(wc: WebContents, displayDpr: number | null, viewport: AgentViewport, devicePixelRatio: 1 | 2,
+  private async captureOne(wc: WebContents, placement: CapturePlacement, devicePixelRatio: 1 | 2,
     options: CaptureOptions, overlays?: CaptureOverlays): Promise<CapturedScreenshot> {
     if (wc.isDestroyed()) throw new Error('Cannot capture a closed browser tab');
     const dbg = wc.debugger;
@@ -88,7 +106,7 @@ export class AgentScreenshotCapture {
       }
     }
 
-    // If DevTools replaces our session mid-capture, never clear/detach the successor.
+    // If DevTools replaces our session mid-capture, never detach the successor.
     let detached = false;
     const onDetach = () => { detached = true };
     dbg.once('detach', onDetach);
@@ -97,21 +115,32 @@ export class AgentScreenshotCapture {
       if (detached || wc.isDestroyed()) throw new Error('Browser debugger disconnected');
       return this.until(dbg.sendCommand(name, params), until);
     };
-    let overrideAttempted = false;
+    const { displayDpr, parkedViewport } = placement;
+    const liveHumanView = !parkedViewport;
     let overlaysAttempted = false;
     try {
-      const metrics = { ...viewport, deviceScaleFactor: devicePixelRatio, mobile: viewport.width <= 480 };
-      overrideAttempted = true;
-      await command('Emulation.setDeviceMetricsOverride', metrics);
-      let layout: LayoutMetrics = await command('Page.getLayoutMetrics');
-      // Legacy pages without a viewport meta tag use a ~980px layout under
-      // mobile emulation. The caller requested CSS dimensions, not a zoomed-out
-      // desktop page on a phone. Keep responsive media queries at that width.
-      if (metrics.mobile && (layout.cssLayoutViewport.clientWidth > viewport.width || layout.cssVisualViewport.scale !== 1)) {
-        await command('Emulation.setDeviceMetricsOverride', { ...metrics, mobile: false });
-        layout = await command('Page.getLayoutMetrics');
+      const readViewport = (): Promise<AgentViewport> => this.until(
+        wc.executeJavaScript('({ width: window.innerWidth, height: window.innerHeight })'), deadline);
+      let viewport = await readViewport();
+      if (parkedViewport) {
+        // Native setBounds is synchronous in main, not in the guest renderer.
+        // Poll one frame at a time; a timeout leaves no page-side polling loop.
+        let needsFrame = placement.resized;
+        while (needsFrame || viewport.width !== parkedViewport.width || viewport.height !== parkedViewport.height) {
+          placement.assertCurrent();
+          needsFrame = viewport.width !== parkedViewport.width || viewport.height !== parkedViewport.height;
+          viewport = await this.until(wc.executeJavaScript(
+            'new Promise(resolve => requestAnimationFrame(() => resolve({ width: innerWidth, height: innerHeight })))'), deadline);
+          if (Date.now() >= deadline) throw new Error('Timed out capturing browser viewport');
+        }
       }
-      if (overlays) {
+      if (!Number.isInteger(viewport.width) || viewport.width < 1 || viewport.width * devicePixelRatio > 16384 ||
+          !Number.isInteger(viewport.height) || viewport.height < 1) throw new Error('Browser reported an unsupported live viewport');
+      placement.assertCurrent();
+      const layout: LayoutMetrics = await command('Page.getLayoutMetrics');
+      placement.assertCurrent();
+      // Even a grid would visibly modify the human's page.
+      if (overlays && !liveHumanView) {
         overlaysAttempted = true;
         await this.until(overlays.prepare(), deadline);
       }
@@ -123,29 +152,30 @@ export class AgentScreenshotCapture {
       const cssHeight = Math.min(requested, 16384 / devicePixelRatio,
         Math.floor(32 * 1024 * 1024 / (viewport.width * devicePixelRatio ** 2)));
       const format = options.format ?? 'jpeg';
+      placement.assertCurrent();
       const { data } = await command('Page.captureScreenshot', {
         format, ...(format === 'jpeg' ? { quality: options.quality ?? 80 } : {}),
         fromSurface: true, captureBeyondViewport: true,
         // Never let a 1x1 document/iframe host determine the visible frame.
         clip: { x: fullPage ? 0 : layout.cssVisualViewport.pageX, y: fullPage ? 0 : layout.cssVisualViewport.pageY,
-          width: viewport.width, height: cssHeight, scale: 1 },
+          width: viewport.width, height: cssHeight, scale: devicePixelRatio / displayDpr },
       });
+      placement.assertCurrent();
+      if (liveHumanView) {
+        const now = await readViewport();
+        placement.assertCurrent();
+        if (now.width !== viewport.width || now.height !== viewport.height) throw new Error('Human pane resized during capture');
+      }
       if (!data) throw new Error('Browser returned an empty screenshot');
       return { base64: data, mediaType: `image/${ format }`, metadata: {
-        viewport, displayDpr, devicePixelRatio, fullPage, capped: requested > cssHeight, cssHeight,
+        viewport, liveHumanView, displayDpr, devicePixelRatio, fullPage, capped: requested > cssHeight, cssHeight,
       } };
     } finally {
       try {
         if (overlaysAttempted) await this.until(overlays!.remove(), Date.now() + 1000);
       } finally {
-        try {
-          if (overrideAttempted && !detached && !wc.isDestroyed()) {
-            await command('Emulation.clearDeviceMetricsOverride', {}, Date.now() + 1000);
-          }
-        } finally {
-          dbg.removeListener('detach', onDetach);
-          if (ownsAttachment && !detached && !wc.isDestroyed() && dbg.isAttached()) dbg.detach();
-        }
+        dbg.removeListener('detach', onDetach);
+        if (ownsAttachment && !detached && !wc.isDestroyed() && dbg.isAttached()) dbg.detach();
       }
     }
   }

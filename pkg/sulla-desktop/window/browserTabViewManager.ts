@@ -8,7 +8,7 @@ import path from 'path';
 import Electron, { WebContentsView } from 'electron';
 
 import { SullaWebRequestFixer } from '@pkg/SullaWebRequestFixer';
-import { AgentScreenshotCapture } from '@pkg/main/browserTabs/AgentScreenshotCapture';
+import { AgentScreenshotCapture, type CapturePlacement } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import { AgentViewportPolicy, type AgentViewport } from '@pkg/main/browserTabs/AgentViewportPolicy';
 import { tabRegistry } from '@pkg/main/browserTabs/TabRegistry';
 import { BrowserPermissionPolicy, SitePermissionStore, originOf } from '@pkg/main/browserTabs/browserPermissions';
@@ -163,6 +163,7 @@ export class BrowserTabViewManager {
    * of re-bounding and re-ordering every open tab. Keyed by view object so
    * a wedge-recovery replacement view starts with no cached placement.
    */
+  private readonly captureBounds = new WeakMap<WebContentsView, AgentViewport>();
   private appliedPlacement = new WeakMap<WebContentsView, string>();
   private failedUrls = new Map<string, string>(); // tabId → original URL that failed
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -203,7 +204,7 @@ export class BrowserTabViewManager {
   static getInstance(): BrowserTabViewManager {
     if (!BrowserTabViewManager.instance) {
       const viewports = new AgentViewportPolicy();
-      BrowserTabViewManager.instance = new BrowserTabViewManager(viewports, new AgentScreenshotCapture(viewports));
+      BrowserTabViewManager.instance = new BrowserTabViewManager(viewports, new AgentScreenshotCapture());
     }
 
     return BrowserTabViewManager.instance;
@@ -509,6 +510,7 @@ export class BrowserTabViewManager {
       if (options.focus) this.setFocusedTab(tabId, undefined, undefined, targetWin);
       return true;
     }
+    this.captureBounds.delete(view);
     try { oldOwner.contentView.removeChildView(view) } catch { /* detached already */ }
     view.setBounds(this.agentViewports.parked(view.webContents));
     targetWin.contentView.addChildView(view, 0);
@@ -560,14 +562,73 @@ export class BrowserTabViewManager {
   // Layout
   // ---------------------------------------------------------------------------
 
+  /** A selected tab stays live even in a minimized window: restore/show has no
+   * synchronous placement handshake, so parking it could flash an agent layout. */
+  beginTabCapture(tabId: string, wc: Electron.WebContents, once?: AgentViewport): CapturePlacement {
+    const view = this.views.get(tabId);
+    const owner = this.ownerFor(tabId);
+    if (!view || view.webContents !== wc || !owner || this.shuttingDown) throw new Error('Browser tab unavailable');
+    const size = this.agentViewports.resolve(wc, once);
+    const displayDpr = this.displayDpr(owner);
+    if (!displayDpr) throw new Error('Browser display unavailable');
+    const isFocused = () => this.focusedFor(owner) === tabId;
+    const live = isFocused();
+    const assertCurrent = () => {
+      if (this.shuttingDown || this.views.get(tabId) !== view || this.ownerFor(tabId) !== owner || isFocused() !== live ||
+          (!live && this.captureBounds.get(view) !== size)) throw new Error('Browser tab placement changed during capture');
+    };
+    if (live) return { displayDpr, resized: false, assertCurrent, release: () => {} };
+
+    const persisted = this.agentViewports.resolve(wc);
+    const resized = size.width !== persisted.width || size.height !== persisted.height;
+    this.captureBounds.set(view, size);
+    const release = () => {
+      if (this.captureBounds.get(view) !== size) return; // focus/transfer already reconciled
+      this.captureBounds.delete(view);
+      if (!this.shuttingDown && this.views.get(tabId) === view && this.ownerFor(tabId) === owner && !isFocused()) {
+        this.reconcileVisibility(owner, tabId);
+      }
+    };
+    try {
+      if (resized) this.reconcileVisibility(owner, tabId);
+      return { displayDpr, parkedViewport: size, resized, assertCurrent, release };
+    } catch (error) {
+      this.appliedPlacement.delete(view);
+      release();
+      throw error;
+    }
+  }
+
+  /** Hidden views never become renderer tabs. ChromeApiService serializes their
+   * attach/close lifecycle; this manager owns their one-shot capture bounds. */
+  beginHiddenCapture(view: WebContentsView, owner: Electron.BrowserWindow, once?: AgentViewport): CapturePlacement {
+    const wc = view.webContents;
+    const displayDpr = this.displayDpr(owner);
+    if (!displayDpr || wc.isDestroyed()) throw new Error('Hidden tab unavailable');
+    const size = this.agentViewports.resolve(wc, once);
+    const persisted = this.agentViewports.resolve(wc);
+    const resized = size.width !== persisted.width || size.height !== persisted.height;
+    const release = () => {
+      if (resized && !wc.isDestroyed()) view.setBounds(this.agentViewports.parked(wc));
+    };
+    try {
+      if (resized) view.setBounds(this.agentViewports.parked(wc, size));
+      return { displayDpr, parkedViewport: size, resized, release, assertCurrent: () => {
+        if (owner.isDestroyed() || wc.isDestroyed()) throw new Error('Hidden tab unavailable');
+      } };
+    } catch (error) {
+      release();
+      throw error;
+    }
+  }
+
   setAgentViewport(tabId: string, viewport: AgentViewport): void {
     const view = this.views.get(tabId);
     if (!view) throw new Error('Cannot set viewport for a missing tab');
     this.agentViewports.set(view.webContents, viewport);
     const owner = this.ownerFor(tabId);
     if (owner && (this.focusedFor(owner) !== tabId || this.awaitingOwnerBounds.has(tabId))) {
-      view.setBounds(this.agentViewports.parked(view.webContents));
-      this.appliedPlacement.delete(view);
+      this.reconcileVisibility(owner, tabId);
     }
   }
 
@@ -669,7 +730,7 @@ export class BrowserTabViewManager {
    * This is the ONLY place in the codebase that mutates
    * contentView.addChildView / removeChildView / setBounds for tab views.
    */
-  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow): number {
+  private reconcileVisibility(ownerWindow?: Electron.BrowserWindow, onlyTabId?: string): number {
     if (this.shuttingDown) return 0;
     const windows = ownerWindow ? [ownerWindow] : [...new Set(this.owners.values())];
     if (!windows.length) { const active = this.activeAgentWindow(); if (active) windows.push(active); }
@@ -681,7 +742,8 @@ export class BrowserTabViewManager {
     let touched = 0;
 
     for (const [tabId, view] of this.views) {
-      if (this.owners.get(tabId) !== mainWindow) continue;
+      if ((onlyTabId !== undefined && onlyTabId !== tabId) || this.owners.get(tabId) !== mainWindow) continue;
+      if (tabId === focusedTabId) this.captureBounds.delete(view);
       if (tabId === focusedTabId && !this.awaitingOwnerBounds.has(tabId)) {
         // Explicitly clear any native hidden state before attaching/promoting
         // the focused view. Parked views remain drawable off-screen for agent
@@ -705,15 +767,15 @@ export class BrowserTabViewManager {
         // Park off-screen. Keep the view attached so its compositor stays
         // alive — detached WebContentsViews stop painting in Electron 40
         // even with stayHidden, which breaks capturePage.
-        const parked = this.agentViewports.parked(view.webContents);
+        const parked = this.agentViewports.parked(view.webContents, this.captureBounds.get(view));
         // Window id in the key: a recreated main window must re-attach every view.
         const placement = `${ mainWindow.id }:${ parked.x },${ parked.y },${ parked.width },${ parked.height }`;
         // Already parked here — re-bounding and re-ordering it again is pure
         // native churn on every switch.
         if (this.appliedPlacement.get(view) === placement) continue;
-        this.appliedPlacement.set(view, placement);
         touched++;
         view.setBounds(parked);
+        this.appliedPlacement.set(view, placement);
         try {
           // Ensure still attached (no-op if already attached). Index 0 puts
           // it at the bottom of z-order so focused tab overlays cleanly.

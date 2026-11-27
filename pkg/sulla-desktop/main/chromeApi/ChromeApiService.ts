@@ -576,7 +576,7 @@ export class ChromeApiService implements ChromeApi {
           this.hiddenLayout.prepare(view, window);
         }
         view.webContents.setBackgroundThrottling(false);
-        return await this.tabViewManager.agentScreenshots.capture(view.webContents, () => this.tabViewManager.displayDpr(window), options);
+        return await this.tabViewManager.agentScreenshots.capture(view.webContents, once => this.tabViewManager.beginHiddenCapture(view, window, once), options);
       } finally {
         if (!view.webContents.isDestroyed()) {
           view.webContents.setBackgroundThrottling(wasThrottled);

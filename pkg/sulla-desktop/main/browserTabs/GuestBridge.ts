@@ -18,7 +18,7 @@
 // CDP-based methods (screenshot, trusted mouse/keyboard events) use
 // `webContents` APIs directly — no guest-side code needed.
 
-import type { AgentScreenshotCapture, CaptureOptions, CaptureOverlays } from './AgentScreenshotCapture';
+import type { AgentScreenshotCapture, BeginCapture, CaptureOptions, CaptureOverlays } from './AgentScreenshotCapture';
 import { markSyntheticInput } from './syntheticInput';
 
 import type { WebContents } from 'electron';
@@ -29,7 +29,7 @@ function jsArg(value: unknown): string {
 
 export class GuestBridge {
   constructor(private readonly wc: WebContents, public readonly assetId: string,
-    private readonly screenshots: AgentScreenshotCapture, private readonly displayDpr: () => number | null) {}
+    private readonly screenshots: AgentScreenshotCapture, private readonly beginCapture: BeginCapture) {}
 
   /** Raw JS eval in the guest page. Used by execInPage tool + internal helpers. */
   async exec(code: string): Promise<unknown> {
@@ -195,7 +195,7 @@ export class GuestBridge {
 
   // ── Screenshot capture (Chrome DevTools Protocol) ────────────────
   captureScreenshot(options: CaptureOptions = {}, overlays?: CaptureOverlays) {
-    return this.screenshots.capture(this.wc, this.displayDpr, options, overlays);
+    return this.screenshots.capture(this.wc, this.beginCapture, options, overlays);
   }
 
   /** Agent input — stamped so the tab doesn't mistake it for the human. */

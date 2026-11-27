@@ -28,8 +28,8 @@ export class AgentViewportPolicy {
     return { ...(this.overrides.get(contents) ?? { width: 1440, height: 900 }) };
   }
 
-  parked(contents: WebContents): Electron.Rectangle {
-    const size = this.resolve(contents);
+  parked(contents: WebContents, once?: AgentViewport): Electron.Rectangle {
+    const size = this.resolve(contents, once);
     // Keep the entire surface outside the window, but near the tile cache.
     const PARK_MARGIN = 100;
     return { ...size, x: -(size.width + PARK_MARGIN), y: 0 };
