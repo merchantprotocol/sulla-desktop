@@ -159,6 +159,14 @@ export class ChatHeartbeatScheduler {
     runtime.taskIndex = target.taskIndex;
   }
 
+  /** Removes a stale task association when the thread is actually a plain chat. */
+  unbindJob(threadId: string): void {
+    const runtime = this.runtimes.get(threadId);
+    if (!runtime) return;
+    delete runtime.jobId;
+    delete runtime.taskIndex;
+  }
+
   unregister(threadId: string): void {
     const runtime = this.runtimes.get(threadId);
     if (runtime) this.clearRuntimeTimers(runtime);
