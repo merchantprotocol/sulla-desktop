@@ -11,17 +11,16 @@ describe('DurableAgentInboxReceiverResolver', () => {
     { jobId: 'job-b', createdAt: 1, parentAgentId: 'coding-manager', status: 'parked', parentThreadId: 'manager-b', tasks: [] },
   ] } as any;
 
-  it('refuses to guess among multiple same-channel manager instances and lists addresses', async () => { // risk: peer delivery to wrong manager
+  it('refuses to guess among multiple manager instances without labeling them with child jobs', async () => { // risk: parent instances inherit child job identities in roster/address errors
     const resolver = new DurableAgentInboxReceiverResolver(jobs, () => []);
-    await expect(resolver.resolve('coding-manager')).rejects.toMatchObject({
-      name: 'AmbiguousAgentInboxTargetError',
-      candidates: expect.arrayContaining([expect.objectContaining({ threadId: 'manager-a', jobId: 'job-a' }), expect.objectContaining({ threadId: 'manager-b', jobId: 'job-b' })]),
+    const error = await resolver.resolve('coding-manager').catch(reason => reason);
+    expect(error).toBeInstanceOf(AmbiguousAgentInboxTargetError);
+    expect(error).toMatchObject({
+      candidates: expect.arrayContaining([expect.objectContaining({ threadId: 'manager-a' }), expect.objectContaining({ threadId: 'manager-b' })]),
     });
-    try { await resolver.resolve('coding-manager'); } catch (error) {
-      expect(error).toBeInstanceOf(AmbiguousAgentInboxTargetError);
-      expect((error as Error).message).toContain('coding-manager#manager-a');
-      expect((error as Error).message).toContain('job job-b');
-    }
+    expect((error as Error).message).toContain('coding-manager#manager-a');
+    expect((error as Error).message).not.toContain('job job-');
+    expect((error as AmbiguousAgentInboxTargetError).candidates.every(candidate => candidate.jobId === undefined)).toBe(true);
   });
 
   it('honors an explicit parent thread even when the channel has multiple live sessions', async () => { // risk: cross-session message isolation
@@ -32,10 +31,10 @@ describe('DurableAgentInboxReceiverResolver', () => {
     await expect(resolver.resolve('sulla-desktop', 'session-a')).resolves.toEqual({ channel: 'sulla-desktop', threadId: 'session-a', agentId: 'sulla-desktop', label: 'chat' });
   });
 
-  it('routes exact job and thread selectors to their matching thread', async () => { // risk: delivery to the wrong manager instance
+  it('uses a parent thread selector but does not treat a child job selector as the manager identity', async () => { // risk: child job address accidentally binds the parent thread
     const resolver = new DurableAgentInboxReceiverResolver(jobs, () => []);
-    await expect(resolver.resolve('coding-manager', 'job-b')).resolves.toMatchObject({ threadId: 'manager-b', jobId: 'job-b' });
-    await expect(resolver.resolve('coding-manager', 'manager-a')).resolves.toMatchObject({ threadId: 'manager-a' });
+    await expect(resolver.resolve('coding-manager', 'job-b')).rejects.toBeInstanceOf(NoAgentInboxTargetError);
+    await expect(resolver.resolve('coding-manager', 'manager-b')).resolves.toMatchObject({ threadId: 'manager-b', jobId: undefined });
   });
 
   it('keeps legacy latest-thread routing for multiple idle cached chats', async () => { // risk: peer delivery availability
