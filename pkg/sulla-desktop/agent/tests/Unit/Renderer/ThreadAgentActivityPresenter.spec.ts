@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
+import { ThreadAgentActivityMapper } from '@pkg/pages/chat/composables/ThreadAgentActivityMapper';
+import { WorkerChartActivityBuckets } from '@pkg/pages/chat/components/workerChart/workerChartModel';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 class RowFactory {
@@ -14,7 +16,7 @@ class RowFactory {
       depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key,
       visibility: 'hidden', state: 'working', stateReason: null, killedByHuman: false,
       waitingOnChildren: 0, startedAt: null, endedAt: null,
-      lastActivityAt: '2026-11-23T17:00:00.000Z', lastCheckinAt: null,
+      lastActivityAt: '2026-11-23T17:00:00.000Z', actionCount: 0, lastCheckinAt: null,
       lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true,
     };
   }
@@ -108,6 +110,7 @@ describe('ThreadAgentActivityPresenter', () => {
     let projection = presenter.project(snapshot(1, [row]), 'root', at);
     for (let version = 2; version <= 40; version++) {
       row.lastActivityAt = new Date(at - (40 - version) * 1_000).toISOString();
+      row.actionCount = version;
       row.lastCheckinAt = row.lastActivityAt;
       row.lastCheckinSummary = `update ${version}`;
       row.state = version === 40 ? 'blocked' : 'working';
@@ -135,6 +138,29 @@ describe('ThreadAgentActivityPresenter', () => {
 
     expect(second.checkins).toEqual([{ at: row.lastCheckinAt, summary: 'earlier check-in' }]);
     expect(second.initials).toBe(first.initials);
+  });
+
+  it('bins all cumulative action deltas at each accepted sample time in the worker chart', () => {
+    // risk: activity bursts between snapshots must not collapse into one chart item
+    const row = new RowFactory().create('actions:0', 'root');
+    const presenter = new ThreadAgentActivityPresenter();
+    const mapper = new ThreadAgentActivityMapper({} as any);
+    const buckets = new WorkerChartActivityBuckets();
+    presenter.project(snapshot(1, [row]), 'root', at);
+
+    row.actionCount = 4;
+    presenter.project(snapshot(2, [row]), 'root', at + 6_000);
+    row.lastActivityAt = new Date(at + 7_000).toISOString();
+    const unchanged = presenter.project(snapshot(3, [row]), 'root', at + 7_000);
+    expect(unchanged.agents[0].activity).toHaveLength(1);
+    row.actionCount = 7;
+    const projection = presenter.project(snapshot(4, [row]), 'root', at + 10_500);
+    const chart = mapper.chartRoot(projection, 'root')!;
+    const values = buckets.values(chart.children?.[0].activity, at + 10_500);
+
+    expect(values[42]).toBe(4);
+    expect(values[43]).toBe(3);
+    expect(values.reduce((total, value) => total + value, 0)).toBe(7);
   });
 
   it('preserves every source state while prioritizing only blocked and failed rows', () => {
