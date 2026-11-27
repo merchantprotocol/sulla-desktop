@@ -66,7 +66,7 @@ import { trackHiddenAgentRun } from '../../services/HiddenAgentRuns';
 import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 import { budgetPolicyService } from '../../services/BudgetPolicyService';
 import { budgetWorkerAdmission, countBudgetWorkers } from '../../services/BudgetWorkerAdmission';
-import { SystemTurnTimingClock, TurnTiming } from '../../services/TurnTiming';
+import { SystemTurnTimingClock, TurnTiming, TurnTimingOutcomePolicy } from '../../services/TurnTiming';
 import { cliPinnedModelId } from '../../languagemodels/ModelTierResolver';
 import { workerModelRouting, installWorkerRoute } from '../../services/WorkerModelRouting';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
@@ -1070,7 +1070,7 @@ export class SpawnAgentWorker extends BaseTool {
           };
           return taskRunner.run(taskRun);
         });
-        outcome = result.status === 'error' ? 'error' : result.status === 'stopped' ? 'aborted' : 'ok';
+        outcome = TurnTimingOutcomePolicy.forDelegatedResult(result.status);
         return result;
       } catch (reason) {
         outcome = taskAbortSignals[index]?.aborted || (reason as any)?.name === 'AbortError' || (reason as any)?.runtimeInterrupted ? 'aborted' : 'error';
