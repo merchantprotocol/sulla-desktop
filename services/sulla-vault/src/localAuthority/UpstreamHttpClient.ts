@@ -22,8 +22,8 @@ import { BrokerHttpBody } from './BrokerHttpBody.js';
 import { ValidatedUpstreamResolver } from './ValidatedUpstreamResolver.js';
 
 /**
- * Pinned, SSRF-checked HTTPS to broker upstreams: DNS validation, connect-phase retries on a
- * fresh socket, and the buffered request/response path with redaction and size limits.
+ * Pinned, SSRF-checked HTTPS to broker upstreams: cached initial DNS validation, fresh DNS on
+ * connect-phase retries over a fresh socket, and the buffered request/response path with redaction and size limits.
  * Moved verbatim from LocalVaultAuthority (E9); in-flight requests and generation live on the host.
  */
 export class UpstreamHttpClient {
@@ -46,10 +46,10 @@ export class UpstreamHttpClient {
     });
   }
 
-  /** Resolve validated public pins, retrying transient DNS failures as before. */
-  private async resolvePinnedAddresses(hostname: string, attempt = 1): Promise<PinnedAddress[]> {
+  /** Resolve validated public pins, optionally bypassing the cache for connect retries. */
+  private async resolvePinnedAddresses(hostname: string, options: { fresh?: boolean } = {}, attempt = 1): Promise<PinnedAddress[]> {
     try {
-      return await this.upstreamResolver.resolve(hostname);
+      return await this.upstreamResolver.resolve(hostname, options);
     } catch (error) {
       if (error instanceof LocalVaultError) throw error;
       const detail = describeUpstreamError(error);
@@ -60,7 +60,7 @@ export class UpstreamHttpClient {
       }));
       if (willRetry) {
         await new Promise(resolve => setTimeout(resolve, UPSTREAM_RETRY_DELAYS_MS[attempt - 1]));
-        return this.resolvePinnedAddresses(hostname, attempt + 1);
+        return this.resolvePinnedAddresses(hostname, options, attempt + 1);
       }
       throw new LocalVaultError('upstream_failed', 502, 'Broker upstream DNS lookup failed', upstreamFailureReason('dns', detail.code));
     }
@@ -152,7 +152,8 @@ export class UpstreamHttpClient {
           hooks.onError(request, failure);
           return;
         }
-        this.resolvePinnedAddresses(target.hostname).then(fresh => {
+        // Initial validation may use the cache; after a connect failure, bypass it so a network change is observed immediately.
+        this.resolvePinnedAddresses(target.hostname, { fresh: true }).then(fresh => {
           if (!(hooks.canRetry?.() ?? true)) {
             hooks.onError(request, failure);
             return;

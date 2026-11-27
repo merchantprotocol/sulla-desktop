@@ -45,16 +45,20 @@ export class ValidatedUpstreamResolver {
     this.now = options.now ?? Date.now;
   }
 
-  async resolve(hostname: string): Promise<PinnedAddress[]> {
-    const cached = this.cache.get(hostname);
-    if (cached) {
-      if (cached.expiresAt <= this.now()) {
-        this.cache.delete(hostname);
-      } else {
-        const addresses = this.validateAddresses(cached.addresses);
-        this.cache.delete(hostname);
-        this.cache.set(hostname, { ...cached, addresses });
-        return addresses;
+  async resolve(hostname: string, options: { fresh?: boolean } = {}): Promise<PinnedAddress[]> {
+    if (options.fresh) this.cache.delete(hostname);
+
+    if (!options.fresh) {
+      const cached = this.cache.get(hostname);
+      if (cached) {
+        if (cached.expiresAt <= this.now()) {
+          this.cache.delete(hostname);
+        } else {
+          const addresses = this.validateAddresses(cached.addresses);
+          this.cache.delete(hostname);
+          this.cache.set(hostname, { ...cached, addresses });
+          return addresses;
+        }
       }
     }
 

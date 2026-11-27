@@ -99,4 +99,37 @@ describe('UpstreamHttpClient DNS resolution', () => {
       'first.example.test', 'second.example.test', 'third.example.test', 'second.example.test',
     ]);
   });
+
+  it('refreshes a cached pin once for a connect retry and replaces the cache', async() => {
+    // risk: availability — retries after a network change must not reuse the initial attempt's cached addresses.
+    const refreshedAddresses = [{ address: '93.184.216.35', family: 4 }];
+    const lookup = vi.fn()
+      .mockResolvedValueOnce(publicAddresses)
+      .mockResolvedValueOnce(refreshedAddresses);
+    const resolver = new ValidatedUpstreamResolver({ lookup });
+
+    await resolver.resolve('models.example.test');
+    await expect(resolver.resolve('models.example.test', { fresh: true })).resolves.toEqual(refreshedAddresses);
+    await expect(resolver.resolve('models.example.test')).resolves.toEqual(refreshedAddresses);
+
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a cached pin when a retry refresh resolves to a private address', async() => {
+    // risk: SSRF bypass — a failed refresh must not leave an obsolete public pin cached after policy rejection.
+    const nextAddresses = [{ address: '93.184.216.35', family: 4 }];
+    const privateAddress = [{ address: '127.0.0.1', family: 4 }];
+    const lookup = vi.fn()
+      .mockResolvedValueOnce(publicAddresses)
+      .mockResolvedValueOnce(privateAddress)
+      .mockResolvedValueOnce(nextAddresses);
+    const resolver = new ValidatedUpstreamResolver({ lookup });
+
+    await resolver.resolve('models.example.test');
+    await expect(resolver.resolve('models.example.test', { fresh: true }))
+      .rejects.toMatchObject({ code: 'destination_denied', status: 403 });
+    await expect(resolver.resolve('models.example.test')).resolves.toEqual(nextAddresses);
+
+    expect(lookup).toHaveBeenCalledTimes(3);
+  });
 });
