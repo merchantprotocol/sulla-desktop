@@ -67,7 +67,7 @@ export class ClickCoordinatesWorker extends BaseTool {
       const screenshot = await result.bridge.captureScreenshot({
         format:  'jpeg',
         quality: 80,
-      });
+      }).catch(() => null);
 
       // Don't remove the cursor — leave it visible on screen so the user
       // can see where the click happened. The next click_at call will
@@ -82,7 +82,7 @@ export class ClickCoordinatesWorker extends BaseTool {
       };
 
       if (screenshot) {
-        const ref = await saveScreenshot(screenshot.base64, screenshot.mediaType);
+        const ref = await saveScreenshot(screenshot);
         responseObj.screenshot = ref;
         responseObj.responseString += ` — screenshot at ${ ref.path } (${ ref.width }×${ ref.height }, ${ ref.bytes } bytes). Use Read on that path to inspect visually.`;
       }

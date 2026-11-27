@@ -76,7 +76,7 @@ export class BrowserTabWorker extends BaseTool {
 
     const title = typeof input.title === 'string' && input.title.trim().length > 0 ? input.title.trim() : 'Website';
 
-    tabRegistry.open({ assetId, url, title, origin: 'agent', owner: this.owner });
+    tabRegistry.open({ assetId, url, title, origin: 'agent', owner: this.owner, viewport: input.viewport });
 
     return await this.readPageState(assetId, title, url);
   }

@@ -17,6 +17,7 @@ import path from 'node:path';
 
 import { nativeImage } from 'electron';
 
+import type { CapturedScreenshot, CaptureMetadata } from '@pkg/main/browserTabs/AgentScreenshotCapture';
 import paths from '@pkg/utils/paths';
 
 const SCREENSHOT_DIR = path.join(paths.sullaHome, 'artifacts', 'screenshots');
@@ -24,7 +25,7 @@ const THUMBNAIL_WIDTH = 300;
 const THUMBNAIL_QUALITY = 60;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-export interface ScreenshotRef {
+export interface ScreenshotRef extends CaptureMetadata {
   assetId:       string;
   path:          string;
   thumbnailPath: string;
@@ -43,7 +44,7 @@ function newAssetId(): string {
   return `ss_${ crypto.randomBytes(8).toString('hex') }`;
 }
 
-export async function saveScreenshot(base64: string, mediaType: string): Promise<ScreenshotRef> {
+export async function saveScreenshot({ base64, mediaType, metadata }: CapturedScreenshot): Promise<ScreenshotRef> {
   ensureDir();
 
   const assetId = newAssetId();
@@ -52,17 +53,22 @@ export async function saveScreenshot(base64: string, mediaType: string): Promise
   const thumbPath = path.join(SCREENSHOT_DIR, `${ assetId }.thumb.jpg`);
 
   const buf = Buffer.from(base64, 'base64');
-  await fs.promises.writeFile(fullPath, buf);
 
   const img = nativeImage.createFromBuffer(buf);
   const { width, height } = img.getSize();
 
+  if (width !== metadata.viewport.width * metadata.devicePixelRatio || height !== metadata.cssHeight * metadata.devicePixelRatio) {
+    throw new Error(`Browser returned an unexpected screenshot size: ${ width }×${ height }`);
+  }
+
+  await fs.promises.writeFile(fullPath, buf);
   const thumbBuf = width > THUMBNAIL_WIDTH
     ? img.resize({ width: THUMBNAIL_WIDTH, quality: 'good' }).toJPEG(THUMBNAIL_QUALITY)
     : img.toJPEG(THUMBNAIL_QUALITY);
   await fs.promises.writeFile(thumbPath, thumbBuf);
 
   return {
+    ...metadata,
     assetId,
     path:          fullPath,
     thumbnailPath: thumbPath,

@@ -315,7 +315,7 @@ export class ExecInPageWorker extends BaseTool {
         try {
           const screenshotData = await result.bridge.captureScreenshot({ format: 'jpeg', quality: 80 });
           if (screenshotData?.base64) {
-            const ref = await saveScreenshot(screenshotData.base64, screenshotData.mediaType);
+            const ref = await saveScreenshot(screenshotData);
             responseObj.screenshot = ref;
           }
         } catch { /* screenshot is best-effort */ }
