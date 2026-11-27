@@ -199,12 +199,15 @@ export class PersonaAdapter {
           if (message.kind === 'streaming' || message.kind === 'thinking') this.lastRawSignature.delete(message.id);
         }
         this.messageSyncScheduler.flush();
+        // Only the backend's idle signal can distinguish a stale persisted
+        // tool card from a live call rehydrated by another renderer.
+        if (!running) this.controller.settleInterruptedToolSteps();
         if (opts.tabId) {
           window.dispatchEvent(new CustomEvent('sulla:chat-running', {
             detail: { tabId: opts.tabId, running },
           }));
         }
-      }),
+      }, { immediate: true }),
     );
 
     // showContinueButton goes high on max_loops — mirror into paused(limit).
@@ -1020,6 +1023,7 @@ export class PersonaAdapter {
         error:        b.toolCard.error ?? undefined,
         outputFormat: b.toolCard.outputFormat,
         // Keep the backend's safe timing contract on the durable transcript row.
+        // TODO(T3 step contract): type `meta` on the shared toolCard contract once T2 lands.
         meta:         (b.toolCard as typeof b.toolCard & { meta?: ToolMessage['meta'] }).meta,
       } satisfies ToolMessage;
     }
