@@ -1,5 +1,13 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 <template>
-  <InlineFileCard :file="file" :download-busy="downloadAction.state.busy" :download-error="downloadAction.state.error" @open-in-tab="openInTab" @show-in-files="showInFiles" @download="download">
+  <InlineFileCard
+    :file="file"
+    :download-busy="downloadAction.state.busy"
+    :download-error="downloadAction.state.error"
+    @open-in-tab="openInTab"
+    @show-in-files="showInFiles"
+    @download="download"
+  >
     <template #preview="{ file: previewFile }">
       <InlineTextPreview
         v-if="textKind"
@@ -18,14 +26,17 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { FileDownloadAction } from '@pkg/pages/files/FileDownloadAction';
-import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
+
 import InlineFileCard from './InlineFileCard.vue';
 import InlineTextPreview from './inline/InlineTextPreview.vue';
-import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
+
+import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
+import { FileDownloadAction } from '@pkg/pages/files/FileDownloadAction';
 import type { FilesSaveSuccess } from '@pkg/pages/files/types';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+
 import type { MarkdownSaveOutcome } from './inline/MarkdownEditSession';
+import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
 
 type Reference = { fileId: string; collectionId: string; toolCallId: string; threadId: string };
 

@@ -5,8 +5,15 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <div ref="host" class="html-builder-host" />
-  <Teleport v-if="toolbar" :to="toolbar"><slot name="download" /></Teleport>
+  <div class="html-builder-host">
+    <div ref="host" class="html-builder-mount" />
+    <Teleport
+      v-if="toolbar"
+      :to="toolbar"
+    >
+      <slot name="download" />
+    </Teleport>
+  </div>
 </template>
 <script setup lang="ts">
 import { html } from '@codemirror/lang-html';
@@ -28,8 +35,9 @@ function sourceEditorFactory(parent:HTMLElement,{value,readOnly,onChange}:{value
   let applying=false;const view=createEditor(parent,value,readOnly,false,next=>{if(!applying)onChange(next)},[html()],props.live);
   return{setValue(next:string){const before=view.state.doc.toString();if(before!==next){applying=true;view.dispatch({changes:textPatch(before,next)});applying=false}},getValue(){return view.state.doc.toString()},revealRange(from:number,to:number){view.dispatch({selection:{anchor:from,head:to},effects:EditorView.scrollIntoView(from,{y:'center'})});view.focus()},focus(){view.focus()},destroy(){view.destroy()}};
 }
-function mount(){if(!host.value)return;builder=globalThis.SullaHtmlBuilder.mount(host.value,{onToolbarChange:(element:HTMLElement)=>{toolbar.value=element},source:props.modelValue,savedSource:props.savedSource??props.modelValue,previewUrl:props.previewUrl,fileName:props.fileName,filePath:props.filePath,readOnly:props.readOnly,saveState:props.saveState,peers:props.peers,sourceEditorFactory,onChange:(value:string)=>emit('update:modelValue',value),onBack:props.onBack,onRename:props.onRename,onHistory:props.onHistory,onShare:props.onShare,onSave:props.onSave,onCreateBookmark:props.onCreateBookmark,assetBaseUrl:props.assetBaseUrl,onOpenInBrowser:props.onOpenInBrowser,onNavigate:props.onNavigate,onOpenExternal:props.onOpenExternal,canBack:props.canBack,canForward:props.canForward,onNavigateHistory:props.onNavigateHistory})}
+function setToolbar(element: HTMLElement) { toolbar.value = element }
+function mount(){if(!host.value)return;builder=globalThis.SullaHtmlBuilder.mount(host.value,{onToolbarChange: setToolbar, source:props.modelValue,savedSource:props.savedSource??props.modelValue,previewUrl:props.previewUrl,fileName:props.fileName,filePath:props.filePath,readOnly:props.readOnly,saveState:props.saveState,peers:props.peers,sourceEditorFactory,onChange:(value:string)=>emit('update:modelValue',value),onBack:props.onBack,onRename:props.onRename,onHistory:props.onHistory,onShare:props.onShare,onSave:props.onSave,onCreateBookmark:props.onCreateBookmark,assetBaseUrl:props.assetBaseUrl,onOpenInBrowser:props.onOpenInBrowser,onNavigate:props.onNavigate,onOpenExternal:props.onOpenExternal,canBack:props.canBack,canForward:props.canForward,onNavigateHistory:props.onNavigateHistory})}
 onMounted(mount);onBeforeUnmount(()=>builder?.destroy());
 watch(()=>props.modelValue,value=>builder?.setSource(value));watch(()=>props.savedSource,value=>builder?.setSavedSource(value??''));watch(()=>props.previewUrl,value=>builder?.setPreviewUrl(value??''));watch(()=>props.filePath,value=>builder?.setFilePath(value));watch(()=>props.readOnly,value=>builder?.setReadOnly(value));watch(()=>props.saveState,value=>builder?.setSaveState(value==='merged'?'saved':value||'saved'));watch(()=>props.peers,value=>builder?.setPeers(value||[]));watch(()=>[props.canBack,props.canForward],()=>builder?.setNavigationState(Boolean(props.canBack),Boolean(props.canForward)));
 </script>
-<style scoped>.html-builder-host{position:absolute;inset:0;min-height:0}</style>
+<style scoped>.html-builder-host,.html-builder-mount{position:absolute;inset:0;min-height:0}</style>

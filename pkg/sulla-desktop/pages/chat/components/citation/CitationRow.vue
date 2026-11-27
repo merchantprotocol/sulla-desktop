@@ -56,10 +56,10 @@
 </template>
 
 <script setup lang="ts">
-import ChatFileDownload from '../files/ChatFileDownload.vue';
 import { reactive } from 'vue';
 
 import { SupportingReportResolver } from '../../services/SupportingReportResolver';
+import ChatFileDownload from '../files/ChatFileDownload.vue';
 
 import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';

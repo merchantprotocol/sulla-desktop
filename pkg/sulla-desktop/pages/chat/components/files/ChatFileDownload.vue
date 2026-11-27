@@ -8,10 +8,18 @@
       :disabled="action.state.busy"
       @click.stop="action.download(name, versionId)"
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v11M7 11l5 5 5-5M4 19h16" /></svg>
+      <svg
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      ><path d="M12 5v11M7 11l5 5 5-5M4 19h16" /></svg>
       <span v-if="!iconOnly">Download</span>
     </button>
-    <span v-if="action.state.error" class="download-error" role="alert" @click.stop>{{ action.state.error }}</span>
+    <span
+      v-if="action.state.error"
+      class="download-error"
+      role="alert"
+      @click.stop
+    >{{ action.state.error }}</span>
   </span>
 </template>
 
