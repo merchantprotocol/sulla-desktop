@@ -25,6 +25,11 @@ export interface StatusRollupItem {
   readonly text: string;
   /** Unix epoch milliseconds. */
   readonly observedAt: number;
+  /** Persisted tool start/result timestamps; observation time may be later. */
+  readonly startedAt?: number;
+  readonly endedAt?: number;
+  /** Clears an agent's active tool step when its row becomes terminal. */
+  readonly agentTerminal?: boolean;
   /** A stable thought-key revision; update an active thought without replaying an expired one. */
   readonly updateOnly?: boolean;
   readonly urgency?: StatusRollupUrgency;
@@ -117,6 +122,9 @@ export class StatusRollupQueue {
       ...(item.correlationId ? { correlationId: item.correlationId } : {}),
       text,
       observedAt: Number.isFinite(item.observedAt) ? item.observedAt : now,
+      ...(Number.isFinite(item.startedAt) ? { startedAt: item.startedAt } : {}),
+      ...(Number.isFinite(item.endedAt) ? { endedAt: item.endedAt } : {}),
+      ...(item.agentTerminal ? { agentTerminal: true } : {}),
       ...(item.updateOnly ? { updateOnly: true } : {}),
       urgency: this.normalizeUrgency(item.urgency),
       role: this.normalizeRole(item.role),
