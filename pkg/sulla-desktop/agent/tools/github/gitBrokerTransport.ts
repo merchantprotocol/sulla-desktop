@@ -31,12 +31,31 @@ const HOP_BY_HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
-function brokerHeaders(headers: http.IncomingHttpHeaders | Headers): Record<string, string> {
-  const entries = headers instanceof Headers ? headers.entries() : Object.entries(headers);
-  return Object.fromEntries([...entries].flatMap(([name, value]) => {
-    if (HOP_BY_HOP_HEADERS.has(name.toLowerCase()) || typeof value !== 'string') return [];
-    return [[name, value]];
-  }));
+class GitBrokerHeaderAdapter {
+  toRecord(headers: http.IncomingHttpHeaders | Headers, bodyWasDecoded = false): Record<string, string> {
+    return Object.fromEntries(this.entries(headers).flatMap(([name, value]) => {
+      const normalizedName = name.toLowerCase();
+      // Fetch decodes response bodies before exposing Response.body; forwarding this
+      // stale label would make Git (or another downstream client) decode the bytes twice.
+      if (HOP_BY_HOP_HEADERS.has(normalizedName) || (bodyWasDecoded && normalizedName === 'content-encoding') || typeof value !== 'string') return [];
+      return [[name, value]];
+    }));
+  }
+
+  names(headers: http.IncomingHttpHeaders | Headers): string[] {
+    return this.entries(headers).map(([name]) => name.toLowerCase());
+  }
+
+  private entries(headers: http.IncomingHttpHeaders | Headers): Array<[string, unknown]> {
+    const fetchHeaders = headers as Headers & { forEach?: (callback: (value: string, name: string) => void) => void };
+    if (typeof fetchHeaders.entries === 'function') return [...fetchHeaders.entries()];
+    if (typeof fetchHeaders.forEach === 'function') {
+      const entries: Array<[string, unknown]> = [];
+      fetchHeaders.forEach((value, name) => entries.push([name, value]));
+      return entries;
+    }
+    return Object.entries(headers);
+  }
 }
 
 function githubRepositoryPath(remoteUrl: string): string {
@@ -103,6 +122,7 @@ export async function withGitHubBrokerRemote<T>(
   // remote first; narrow the already-verified caller context here from that URL.
   const brokerContext = scopeGitHubRepositoryContext(ctx, accountId, repository);
   const broker = configuredVaultBrokerProvider.requireConfiguredCredentialBroker();
+  const headerAdapter = new GitBrokerHeaderAdapter();
 
   const server = http.createServer(async(request, response) => {
     const requestId = crypto.randomUUID();
@@ -130,7 +150,7 @@ export async function withGitHubBrokerRemote<T>(
         response.writeHead(404).end();
         return;
       }
-      const headers = brokerHeaders(request.headers);
+      const headers = headerAdapter.toRecord(request.headers);
       const body = await readBody(request);
       const brokerRequest = broker.requestFor(brokerContext, {
         operation:    'github.git',
@@ -143,7 +163,13 @@ export async function withGitHubBrokerRemote<T>(
         responseType: 'binary-stream',
       });
       const upstream = await broker.executeStream(brokerRequest, abort.signal);
-      response.writeHead(upstream.status, brokerHeaders(upstream.headers));
+      logger.debug(JSON.stringify({
+        component: 'github.git.broker',
+        requestId,
+        status: upstream.status,
+        responseHeaderNames: headerAdapter.names(upstream.headers),
+      }));
+      response.writeHead(upstream.status, headerAdapter.toRecord(upstream.headers, true));
       if (upstream.body) {
         const counter = new Transform({ transform(chunk, _encoding, callback) { forwardedBytes += chunk.length; callback(null, chunk); } });
         await pipeline(Readable.fromWeb(upstream.body as any), counter, response);
