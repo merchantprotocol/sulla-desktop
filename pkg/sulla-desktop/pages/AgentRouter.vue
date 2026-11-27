@@ -615,14 +615,18 @@ function onAgentCommand(_event: any, args: any) {
     }
     // File Manager owns viewer selection for every other type. Feeding its
     // normal navigation input reaches the same navigateTo -> selectEntry/openPath
-    // path used by a click and keeps viewer behavior in one place.
+    // path used by a click and keeps viewer behavior in one place. A tab open
+    // is complete once that navigation is queued on the Files tab; waiting for
+    // the File Manager renderer to finish selecting the item can hang forever
+    // for a background tab (focus:false) because its isolated tab host is lazy.
     const filesNavigation = args.kind === 'folder'
-      ? { path: args.path, collectionId: args.collectionId, openRequestId: args.requestId, openKind: 'folder' as const }
-      : { fileId: args.fileId, path: args.path, collectionId: args.collectionId, openRequestId: args.requestId, openKind: 'file' as const };
+      ? { path: args.path, collectionId: args.collectionId, openKind: 'folder' as const }
+      : { fileId: args.fileId, path: args.path, collectionId: args.collectionId, openKind: 'file' as const };
     const existing = browserTabs.find(tab => tab.mode === 'files');
     const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager', filesNavigation });
     if (existing) updateTab(existing.id, { filesNavigation });
     if (args.focus !== false) router.push(`/Browser/${ tab.id }`);
+    reply({ opened: true, tabId: tab.id, path: args.path, how: 'file-manager-tab' });
     break;
   }
   case 'open-url': {
