@@ -6,12 +6,18 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { transformSync } from 'esbuild';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   FallbackThreadStateRepository, FileThreadCheckpointRepository, MemoryThreadStateRepository,
   RedisThreadStateRepository,
 } from '../../../app/Repositories/ThreadStateRepository';
+
+import { ConversationHistoryModel } from '../../../database/models/ConversationHistoryModel';
+import type { BaseThreadState } from '../../../nodes/Graph';
+
+const pg = vi.hoisted(() => ({ query: vi.fn(), transaction: vi.fn() }));
+vi.mock('../../../database/PostgresClient', () => ({ postgresClient: pg }));
 
 const root = process.cwd();
 const ref = <T>(value: T) => ({ value });
@@ -128,15 +134,16 @@ describe('miscellaneous screen error feedback', () => {
 });
 
 describe('history IPC acknowledgements', () => {
-  function captureHandlers(clearHistory = vi.fn().mockResolvedValue([]), repository?: FallbackThreadStateRepository) {
+  function captureHandlers(clearHistory: typeof ConversationHistoryModel.clearHistory = vi.fn().mockResolvedValue([]),
+    repository?: FallbackThreadStateRepository, unlink = fs.promises.unlink) {
     const handlers = new Map<string, (...args: any[]) => any>();
     const emit = vi.fn();
     const modules: Record<string, any> = {
       electron: { ipcMain: { on: vi.fn(), handle: (name: string, fn: any) => handlers.set(name, fn) } },
-      'node:fs': fs,
+      'node:fs': { promises: { unlink } },
       '@pkg/agent/app/Providers/ThreadStateServiceProvider': { threadStateProvider: { repository } },
       '@pkg/agent/database/PostgresClient': { postgresClient: {} },
-      '@pkg/agent/database/models/ConversationHistoryModel': { ConversationHistoryModel: { clearHistory } },
+      '@pkg/agent/database/models/ConversationHistoryModel': { ConversationHistoryModel: Object.assign(Object.create(ConversationHistoryModel), { clearHistory }) },
       '@pkg/main/DatabaseReadGuard': { getDatabaseReadGuard: () => ({ run: vi.fn().mockRejectedValue(new Error('invalid query')) }) },
       '@pkg/main/mainEvents': { emit, on: vi.fn() },
       '@pkg/main/sync/syncQueue': { enqueueSyncOp: vi.fn() },
@@ -155,40 +162,175 @@ describe('history IPC acknowledgements', () => {
     return { handlers, emit };
   }
 
-  it('permanently clears only removed checkpoints and rejects inaccessible checkpoint storage', async() => {
-    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'history-clear-'));
-    const files = new FileThreadCheckpointRepository(() => path.join(dir, 'checkpoints'));
-    const memory = new MemoryThreadStateRepository();
-    const client = { status: 'end', ping: vi.fn(), setex: vi.fn(), get: vi.fn(), del: vi.fn() };
-    const redis = new RedisThreadStateRepository({ getClient: () => client });
-    const repo = new FallbackThreadStateRepository(redis, memory, memory, console, files);
-    const records = [
-      { type: 'chat', id: 'tab', thread_id: 'removed' },
-      { type: 'chat', id: 'another-tab', thread_id: 'kept' },
-    ];
-    const clear = vi.fn(async(_cutoff, cleanup) => {
-      await cleanup?.(records, new Set(['kept']));
-
-      return records;
+  describe('checkpoint clear boundaries', () => {
+    let dir: string;
+    let store: string;
+    let now: number;
+    let rows: { id: string; thread_id: string; type: string; log_file: string }[];
+    let rejectCommit: boolean;
+    let boundary: (step: string) => Promise<void>;
+    const keys = new Map<string, { json: string; expires: number }>();
+    const client = {
+      status: 'ready',
+      ping: vi.fn(async() => 'PONG'),
+      get: async(key: string) => {
+        const entry = keys.get(key);
+        return entry && entry.expires > now ? entry.json : null;
+      },
+      setex: async(key: string, ttl: number, json: string) => {
+        keys.set(key, { json, expires: now + ttl * 1000 });
+      },
+      del: vi.fn(async(key: string) => {
+        await boundary('disk');
+        keys.delete(key);
+        await boundary('redis');
+      }),
+    };
+    const files = () => new FileThreadCheckpointRepository(() => store, () => now);
+    const boot = () => new FallbackThreadStateRepository(
+      new RedisThreadStateRepository({ getClient: () => client }), new MemoryThreadStateRepository(),
+      new MemoryThreadStateRepository(), console, files(), () => now,
+    );
+    const state = (threadId: string, content: string) => ({
+      metadata: { threadId }, messages: [{ role: 'user', content }],
+    } as BaseThreadState);
+    const big = 'x'.repeat(1024 * 1024);
+    const clear = (repo = boot(), cutoff?: string) => {
+      const { handlers } = captureHandlers(ConversationHistoryModel.clearHistory, repo, async(file) => {
+        await fs.promises.unlink(file);
+        await boundary('log');
+      });
+      return handlers.get('conversation-history:clear-confirmed')!({}, cutoff);
+    };
+    beforeEach(async() => {
+      dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'history-clear-'));
+      store = path.join(dir, 'checkpoints');
+      now = Date.now();
+      rows = [];
+      rejectCommit = false;
+      boundary = async() => {};
+      keys.clear();
+      const execute = (pending: typeof rows, sql: string, args: unknown[]) => {
+        if (/DELETE FROM/.test(sql)) {
+          const deleted = pending.filter(row => !args.length || row.id !== 'retained');
+          pending.splice(0, pending.length, ...pending.filter(row => !deleted.includes(row)));
+          return deleted;
+        }
+        if (/SELECT DISTINCT/.test(sql)) return pending.map(row => ({ thread: row.thread_id }));
+        throw new Error('Unexpected statement');
+      };
+      const commit = async(pending: typeof rows) => {
+        if (rejectCommit) throw new Error('commit rejected');
+        rows = pending;
+        await boundary('commit');
+      };
+      // Emulate both pg autocommit and an explicit transaction; SQL effects are
+      // invisible outside the connection until its commit succeeds.
+      pg.query.mockImplementation(async(sql, args = []) => {
+        const pending = [...rows];
+        const result = execute(pending, sql, args);
+        if (/DELETE FROM/.test(sql)) await commit(pending);
+        return result;
+      });
+      pg.transaction.mockImplementation(async(body) => {
+        const pending = [...rows];
+        const result = await body({ query: async(sql: string, args: unknown[] = []) => ({ rows: execute(pending, sql, args) }) });
+        await commit(pending);
+        return result;
+      });
     });
-    const { handlers, emit } = captureHandlers(clear, repo);
-    const invokeClear = () => handlers.get('conversation-history:clear-confirmed')!({}, '2026-01-01');
-    try {
-      for (const id of ['removed', 'kept']) {
-        await files.save(id, JSON.stringify({ messages: [{ content: 'x'.repeat(1024 * 1024) }] }));
-      }
-      await invokeClear();
-      expect(await repo.load('removed')).toBeNull();
-      expect(await files.exists('kept')).toBe(true);
-
-      await fs.promises.rename(path.join(dir, 'checkpoints'), path.join(dir, 'saved'));
-      await fs.promises.writeFile(path.join(dir, 'checkpoints'), '');
-      emit.mockClear();
-      await expect(invokeClear()).rejects.toMatchObject({ code: 'ENOTDIR' });
-      expect(emit).not.toHaveBeenCalled();
-    } finally {
+    afterEach(async() => {
       await fs.promises.rm(dir, { recursive: true, force: true });
+    });
+
+    async function seed(id: string, thread = id) {
+      const log = path.join(dir, id + '.jsonl');
+      await fs.promises.writeFile(log, 'transcript');
+      rows.push({ id, thread_id: thread, type: 'chat', log_file: log });
+      await boot().save(state(thread, big));
     }
+
+    it('R1: preserves both logs, checkpoints and rows when commit fails', async() => {
+      await seed('a');
+      await seed('b');
+      rejectCommit = true;
+      await clear().catch(() => {});
+      expect(rows.map(row => row.id)).toEqual(['a', 'b']);
+      for (const row of rows) {
+        expect(fs.existsSync(row.log_file)).toBe(true);
+        expect((await boot().load(row.id))?.messages[0].content.length).toBe(big.length);
+      }
+    });
+
+    it('preserves thread state referenced by a retained row of a partial clear', async() => {
+      await seed('gone');
+      await seed('removed-tab', 'shared');
+      await seed('retained', 'shared');
+      await clear(boot(), '2026-01-01');
+      expect(rows.map(row => row.id)).toEqual(['retained']);
+      expect(await boot().load('gone')).toBeNull();
+      expect(await files().exists('shared')).toBe(true);
+    });
+
+    it('R2: treats a non-directory checkpoint parent as a miss during clear, stat and load', async() => {
+      await seed('gone');
+      await fs.promises.rename(store, store + '-hidden');
+      await fs.promises.writeFile(store, '');
+      await expect(clear()).resolves.toEqual({ success: true });
+      expect(rows).toEqual([]);
+      expect(await files().exists('gone')).toBe(false);
+      expect(await files().load('gone')).toBeNull();
+    });
+
+    it('R3: newer Redis wins after restart and neither tier resurfaces after expiry', async() => {
+      const repo = boot();
+      await repo.save(state('thread', big));
+      await fs.promises.rename(store, store + '-hidden');
+      await fs.promises.writeFile(store, '');
+      await repo.save(state('thread', 'newer'));
+      await fs.promises.unlink(store);
+      await fs.promises.rename(store + '-hidden', store);
+      expect((await boot().load('thread'))?.messages[0].content === 'newer').toBe(true);
+      now += 3_601_000;
+      expect(await boot().load('thread')).toBeNull();
+      expect(await repo.load('thread')).toBeNull();
+      expect(await fs.promises.readdir(store)).toEqual([]);
+    });
+
+    it.each(['ping', 'del'] as const)('R4: a ready Redis with stuck %s cannot stall acknowledgement', async(method) => {
+      await seed('gone');
+      const hung = vi.spyOn(client, method).mockImplementation(() => new Promise<never>(() => {}));
+      try {
+        await expect(clear()).resolves.toEqual({ success: true });
+        expect(rows).toEqual([]);
+        expect(await files().exists('gone')).toBe(false);
+      } finally {
+        hung.mockRestore();
+      }
+    }, 1700);
+
+    it.each(['commit', 'log', 'disk', 'redis'])('crash after %s: fresh readers never restore expired state', async(step) => {
+      await seed('gone');
+      const key = 'sulla:threadstate:gone';
+      await client.setex(key, 3600, JSON.stringify(state('gone', 'legacy')));
+      let reached!: () => void;
+      const stopped = new Promise<void>(resolve => { reached = resolve });
+      boundary = async(current) => {
+        if (current !== step) return;
+        reached();
+        // Lose the reply/continuation after the real effect. Restart without
+        // unwinding or running subsequent cleanup on the abandoned instance.
+        await new Promise<never>(() => {});
+      };
+      void clear();
+      await stopped;
+      expect(rows).toEqual([]);
+      expect(fs.existsSync(path.join(dir, 'gone.jsonl'))).toBe(step === 'commit');
+      expect(await files().exists('gone')).toBe(['commit', 'log'].includes(step));
+      expect(keys.has(key)).toBe(step !== 'redis');
+      now += 3_601_000;
+      expect(await boot().load('gone')).toBeNull();
+    });
   });
 
   it('acknowledges clear only when storage succeeds', async() => {
