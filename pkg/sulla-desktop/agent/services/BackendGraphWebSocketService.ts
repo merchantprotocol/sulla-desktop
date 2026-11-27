@@ -66,7 +66,7 @@ import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPr
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import Logging from '@pkg/utils/logging';
-import { SystemTurnTimingClock, TurnTiming } from './TurnTiming';
+import { SystemTurnTimingClock, TurnTiming, TurnTimingDispatchContext, TurnTimingDispatchLifecycle } from './TurnTiming';
 import type { TurnTimingOutcome, TurnTimingProvider } from './TurnTiming';
 
 import type { CalendarEventData } from './CalendarClient';
@@ -1333,6 +1333,7 @@ export class BackendGraphWebSocketService {
     let state: AgentGraphState | undefined;
     let turnConsumedInput = false;
     let turnTiming: TurnTiming | undefined;
+    let turnTimingLifecycle: TurnTimingDispatchLifecycle | undefined;
     let turnOutcome: TurnTimingOutcome = 'ok';
     const abortKey = this.abortKey(channelId, threadId);
     let runAbort: AbortService | undefined;
@@ -1603,18 +1604,20 @@ export class BackendGraphWebSocketService {
         ? cliPinnedModelId(normalizedProvider, selectedModel) ?? null
         : typeof selectedModel === 'string' && selectedModel.trim() ? selectedModel.trim() : null;
       const runId = randomUUID();
+      const timingContext = new TurnTimingDispatchContext(state.metadata as any, channelId, triggerType, HEARTBEAT_CHANNEL_ID);
       turnTiming = new TurnTiming({
         clock: new SystemTurnTimingClock(),
         perfLog: Logging.perf,
         runId,
-        surface: channelId === HEARTBEAT_CHANNEL_ID || triggerType === 'heartbeat' ? 'heartbeat' : 'chat',
+        surface: timingContext.surface,
         provider: timingProvider,
         model,
         threadId,
-        jobId: typeof (state.metadata as any).delegatedJobId === 'string' ? (state.metadata as any).delegatedJobId : null,
-        taskIndex: Number.isInteger((state.metadata as any).delegatedTaskIndex) ? (state.metadata as any).delegatedTaskIndex : null,
+        jobId: timingContext.jobId,
+        taskIndex: timingContext.taskIndex,
         startedAtMs: Date.now(),
       });
+      turnTimingLifecycle = new TurnTimingDispatchLifecycle(turnTiming, state);
       (state.metadata as any).runId = runId;
       Object.defineProperty(state, '__turnTiming', { value: turnTiming, configurable: true, enumerable: false });
       // Only the claim-owned late-answer dispatch may attribute its reply.
@@ -1623,12 +1626,12 @@ export class BackendGraphWebSocketService {
         state.metadata.reportingDecisionFollowUp = { id: answerInputs[0].id, threadId };
       }
       if (runLocation === 'container') {
-        await this.runInConversationContainer(state, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
+        await turnTimingLifecycle.executeGraph(() => this.runInConversationContainer(state!, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
           content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
-        }), runAbort?.signal, assertDecisionOwner);
+        }), runAbort?.signal, assertDecisionOwner), runAbort?.signal);
       } else {
         assertDecisionOwner();
-        await graph.execute(state, startNode);
+        await turnTimingLifecycle.executeGraph(() => graph.execute(state, startNode), runAbort?.signal);
       }
       assertDecisionOwner();
       // Completion claims are acknowledged only after a successful graph turn actually consumed them.
@@ -1644,6 +1647,7 @@ export class BackendGraphWebSocketService {
       completionConsumption.confirmSeen();
     } catch (err: any) {
       turnOutcome = err?.name === 'AbortError' ? 'aborted' : 'error';
+      turnTimingLifecycle?.setOutcome(turnOutcome);
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
         // the shared thread state alone so the new run is not poisoned.
@@ -1678,8 +1682,7 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
-      try { turnTiming?.finish(turnOutcome) } catch { /* perf logging must not change turn settlement */ }
-      if (state && (state as any).__turnTiming === turnTiming) delete (state as any).__turnTiming;
+      try { turnTimingLifecycle?.finish() } catch { /* perf logging must not change turn settlement */ }
       if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
