@@ -22,6 +22,8 @@ type PageCommand = (name: string, params?: Record<string, unknown>) => Promise<a
 export interface CaptureMetadata {
   viewport:         AgentViewport;
   liveHumanView:    boolean;
+  viewportSettled?: boolean;
+  observedViewport?: AgentViewport | null;
   displayDpr:       number;
   devicePixelRatio: number;
   fullPage:         boolean;
@@ -55,6 +57,8 @@ export interface CapturePlacement {
   release(): void;
 }
 export type BeginCapture = (once?: AgentViewport) => CapturePlacement;
+
+class CaptureDeadlineExceeded extends Error {}
 
 export class AgentScreenshotCapture {
   private readonly tails = new WeakMap<WebContents, Promise<void>>();
@@ -113,7 +117,7 @@ export class AgentScreenshotCapture {
       return await Promise.race([
         operation,
         new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('Timed out capturing browser viewport')), Math.max(0, deadline - Date.now()));
+          timer = setTimeout(() => reject(new CaptureDeadlineExceeded('Timed out capturing browser viewport')), Math.max(0, deadline - Date.now()));
         }),
       ]);
     } finally {
@@ -138,7 +142,7 @@ export class AgentScreenshotCapture {
     let detached = false;
     const onDetach = () => { detached = true };
     dbg.once('detach', onDetach);
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + AgentScreenshotCapture.captureBudgetMs;
     const command = (name: string, params?: Record<string, unknown>) => {
       if (detached || wc.isDestroyed()) throw new Error('Browser debugger disconnected');
       return this.until(dbg.sendCommand(name, params), deadline);
@@ -151,38 +155,53 @@ export class AgentScreenshotCapture {
     }
   }
 
+  private static readonly captureBudgetMs = 10_000;
+  private static readonly settleBudgetMs = 3_000;
+
+  private async observeParkedViewport(wc: WebContents, placement: CapturePlacement, target: AgentViewport, deadline: number) {
+    let observed: AgentViewport | null = null;
+    let needsPaint = placement.resized;
+    while (Date.now() < deadline) {
+      placement.assertCurrent();
+      const script: string = observed === null ? '({ width: innerWidth, height: innerHeight })' :
+        'new Promise(resolve => requestAnimationFrame(() => resolve({ width: innerWidth, height: innerHeight })))';
+      try {
+        observed = await this.until<AgentViewport>(wc.executeJavaScript(script), deadline);
+      } catch (error) {
+        if (!(error instanceof CaptureDeadlineExceeded)) throw error;
+        break; // No renderer response (or no rAF); leave no guest-side polling loop.
+      }
+      const matches = observed.width === target.width && observed.height === target.height;
+      if (matches && !needsPaint) return { settled: true, observed };
+      needsPaint = !matches; // Wait one paint after a changed layout reaches the target.
+    }
+    return { settled: false, observed };
+  }
+
   private async captureOne(wc: WebContents, placement: CapturePlacement, devicePixelRatio: 1 | 2,
     options: CaptureOptions, command: PageCommand, deadline: number, overlays?: CaptureOverlays): Promise<CapturedScreenshot> {
     const { displayDpr, parkedViewport } = placement;
     const liveHumanView = !parkedViewport;
+    const readViewport = (): Promise<AgentViewport> => this.until(
+      wc.executeJavaScript('({ width: window.innerWidth, height: window.innerHeight })'), deadline);
+    const readiness = parkedViewport ? await this.observeParkedViewport(wc, placement, parkedViewport,
+      deadline - AgentScreenshotCapture.captureBudgetMs + AgentScreenshotCapture.settleBudgetMs) : undefined;
+    const fallback = readiness?.settled === false;
+    const viewport = parkedViewport ?? await readViewport();
     let overlaysAttempted = false;
     try {
-      const readViewport = (): Promise<AgentViewport> => this.until(
-        wc.executeJavaScript('({ width: window.innerWidth, height: window.innerHeight })'), deadline);
-      let viewport = await readViewport();
-      if (parkedViewport) {
-        // Native setBounds is synchronous in main, not in the guest renderer.
-        // Poll one frame at a time; a timeout leaves no page-side polling loop.
-        let needsFrame = placement.resized;
-        while (needsFrame || viewport.width !== parkedViewport.width || viewport.height !== parkedViewport.height) {
-          placement.assertCurrent();
-          needsFrame = viewport.width !== parkedViewport.width || viewport.height !== parkedViewport.height;
-          viewport = await this.until(wc.executeJavaScript(
-            'new Promise(resolve => requestAnimationFrame(() => resolve({ width: innerWidth, height: innerHeight })))'), deadline);
-          if (Date.now() >= deadline) throw new Error('Timed out capturing browser viewport');
-        }
-      }
       if (!Number.isInteger(viewport.width) || viewport.width < 1 || viewport.width * devicePixelRatio > 16384 ||
           !Number.isInteger(viewport.height) || viewport.height < 1) throw new Error('Browser reported an unsupported live viewport');
       placement.assertCurrent();
       const layout: LayoutMetrics = await command('Page.getLayoutMetrics');
       placement.assertCurrent();
       // Even a grid would visibly modify the human's page.
-      if (overlays && !liveHumanView) {
+      if (overlays && !liveHumanView && !fallback) {
         overlaysAttempted = true;
         await this.until(overlays.prepare(), deadline);
       }
-      const fullPage = options.fullPage === true;
+      // Without a settled layout, document height and element positions aren't reliable.
+      const fullPage = options.fullPage === true && !fallback;
       const contentHeight = fullPage ? Math.ceil(layout.cssContentSize.height) : viewport.height;
       if (!Number.isFinite(contentHeight)) throw new Error('Browser reported an invalid content height');
       const requested = Math.max(viewport.height, contentHeight);
@@ -193,7 +212,7 @@ export class AgentScreenshotCapture {
       placement.assertCurrent();
       const { data } = await command('Page.captureScreenshot', {
         format, ...(format === 'jpeg' ? { quality: options.quality ?? 80 } : {}),
-        fromSurface: true, captureBeyondViewport: true,
+        fromSurface: true, captureBeyondViewport: liveHumanView || fullPage || fallback,
         // Never let a 1x1 document/iframe host determine the visible frame.
         clip: { x: fullPage ? 0 : layout.cssVisualViewport.pageX, y: fullPage ? 0 : layout.cssVisualViewport.pageY,
           width: viewport.width, height: cssHeight, scale: devicePixelRatio / displayDpr },
@@ -206,8 +225,18 @@ export class AgentScreenshotCapture {
       }
       if (!data) throw new Error('Browser returned an empty screenshot');
       return { base64: data, mediaType: `image/${ format }`, metadata: {
+        ...(readiness && { viewportSettled: readiness.settled }),
+        ...(fallback && { observedViewport: readiness!.observed }),
         viewport, liveHumanView, displayDpr, devicePixelRatio, fullPage, capped: requested > cssHeight, cssHeight,
       } };
+    } catch (error) {
+      placement.assertCurrent(); // A lost lease isn't a layout failure.
+      if (fallback) {
+        const observed = readiness!.observed;
+        const reported = observed ? `${ observed.width }x${ observed.height }` : 'no size';
+        throw new Error(`Agent viewport did not settle: expected ${ viewport.width }x${ viewport.height }, page reports ${ reported }`);
+      }
+      throw error;
     } finally {
       if (overlaysAttempted) await this.until(overlays!.remove(), Date.now() + 1000);
     }

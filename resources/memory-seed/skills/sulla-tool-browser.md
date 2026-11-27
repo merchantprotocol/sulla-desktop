@@ -17,7 +17,7 @@ For a repeatable QA pass, use `sulla-test-a-web-app`. For post-deploy checks and
 3. Fill a field: `sulla browser/fill '{"handle":"@input-email","value":"person@example.com"}'`; submit by clicking the returned button handle.
 4. Pass the returned `assetId` to `browser/screenshot`. Parked tabs use their persisted viewport (default 1440×900 CSS pixels). For a one-shot narrow capture, add `"viewport":{"width":390,"height":844},"fullPage":true` to the screenshot call. The previous layout is restored afterward; persist the viewport on tab upsert or hidden open if subsequent clicks must use those coordinates.
    - A selected tab reports `liveHumanView:true` and the actual pane size, even if its window is minimized. No resize, grid or annotations. Open/keep agent tabs with `active:false` for agent-sized captures.
-   - `displayDpr` is the display scale; `devicePixelRatio` is the requested output scale (1 or 2). The returned `width` and `height` are decoded image pixels. Check `capped` on full-page captures.
+   - `displayDpr` is the display scale; `devicePixelRatio` is the requested output scale (1 or 2). The returned `width` and `height` are decoded image pixels. Check `capped` on full-page captures. If `viewportSettled:false`, the page did not confirm its viewport in time: the image is a single target-sized clip without overlays, not a full-page capture. `observedViewport` is the last size reported (null if none); don’t rely on element coordinates from that image.
 5. Work privately with `sulla browser/background_browse '{"action":"open","url":"https://example.com"}'`, then read/screenshot and close using its returned `tabId`: `sulla browser/background_browse '{"action":"close","tabId":"<tab-id>"}'`.
 
 **Tools:**
