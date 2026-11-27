@@ -27,11 +27,24 @@
       <header class="lightbox-header">
         <strong>{{ name }}</strong>
         <span class="lightbox-spacer" />
-        <button type="button" :aria-label="'Download ' + name" :disabled="downloadBusy" @click="emit('download')">Download</button>
+        <button
+          type="button"
+          :aria-label="'Download ' + name"
+          :disabled="downloadBusy"
+          @click="emit('download')"
+        >
+          Download
+        </button>
         <button type="button" @click="openInTab">Open in tab</button>
         <button type="button" aria-label="Close preview" @click="closeFullscreen">Close</button>
       </header>
-      <p v-if="downloadError" class="lightbox-error" role="alert">{{ downloadError }}</p>
+      <p
+        v-if="downloadError"
+        class="lightbox-error"
+        role="alert"
+      >
+        {{ downloadError }}
+      </p>
       <iframe
         v-if="fullscreenOpen"
         :srcdoc="srcdoc"
@@ -49,17 +62,17 @@ import { computed, ref } from 'vue';
 import { InlineHtmlPreviewPolicy, type InlineFileActionReference } from './inlineFilePreview';
 
 const props = defineProps<{
-  fileId: string;
-  downloadBusy?: boolean;
+  fileId:         string;
+  downloadBusy?:  boolean;
   downloadError?: string;
-  name: string;
-  path: string;
-  source: string;
-  view: 'desktop' | 'phone';
+  name:           string;
+  path:           string;
+  source:         string;
+  view:           'desktop' | 'phone';
 }>();
 
 const emit = defineEmits<{
-  download: [];
+  download:      [];
   'open-in-tab': [reference: InlineFileActionReference];
 }>();
 

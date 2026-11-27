@@ -39,15 +39,36 @@
     </header>
 
     <div class="drawer-scroll">
-      <section v-for="group in groups" :key="group.title">
+      <section
+        v-for="group in groups"
+        :key="group.title"
+      >
         <h3>{{ group.title }}</h3>
-        <div v-for="file in group.files" :key="`${file.fileId}:${file.versionId}`" class="file-row">
-          <button class="row-main" type="button" @click="openFile(file)" @contextmenu.stop.prevent="openMenu?.show($event, file)">
-            <FileGlyph :name="file.name" :mime="file.mime" />
+        <div
+          v-for="file in group.files"
+          :key="`${file.fileId}:${file.versionId}`"
+          class="file-row"
+        >
+          <button
+            class="row-main"
+            type="button"
+            @click="openFile(file)"
+            @contextmenu.stop.prevent="openMenu?.show($event, file)"
+          >
+            <FileGlyph
+              :name="file.name"
+              :mime="file.mime"
+            />
             <span class="file-meta"><b>{{ file.name }}</b><small>{{ file.subtitle }}</small></span>
             <FileStatusIcon />
           </button>
-          <ChatFileDownload v-if="file.mime !== 'inode/directory'" :file-id="file.fileId" :name="file.name" :version-id="file.versionId" icon-only />
+          <ChatFileDownload
+            v-if="file.mime !== 'inode/directory'"
+            :file-id="file.fileId"
+            :name="file.name"
+            :version-id="file.versionId"
+            icon-only
+          />
         </div>
       </section>
 
@@ -70,7 +91,13 @@
             />
             <span class="file-meta"><b>{{ file.name }}</b><small>{{ file.subtitle }}</small></span>
           </button>
-          <ChatFileDownload v-if="file.mime !== 'inode/directory'" :file-id="file.fileId" :name="file.name" :version-id="file.versionId" icon-only />
+          <ChatFileDownload
+            v-if="file.mime !== 'inode/directory'"
+            :file-id="file.fileId"
+            :name="file.name"
+            :version-id="file.versionId"
+            icon-only
+          />
           <button
             class="keep"
             type="button"
@@ -107,9 +134,9 @@
 </template>
 
 <script setup lang="ts">
-import ChatFileDownload from './ChatFileDownload.vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import ChatFileDownload from './ChatFileDownload.vue';
 import ChatFileOpenMenu from './ChatFileOpenMenu.vue';
 import FileGlyph from './FileGlyph.vue';
 import FileStatusIcon from './FileStatusIcon.vue';

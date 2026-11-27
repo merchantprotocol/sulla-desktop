@@ -13,14 +13,14 @@
   <h2>{{ artifact.name }}</h2>
   </div>
   <div class="spacer" />
-  <ChatFileDownload
-    v-if="artifact.filesFileId"
-    :key="artifact.filesFileId"
-    :file-id="artifact.filesFileId"
-    :name="artifact.filesPath?.split('/').at(-1) || artifact.name"
-    :version-id="artifact.filesVersionId ?? undefined"
-    icon-only
-  />
+    <ChatFileDownload
+      v-if="artifact.filesFileId"
+      :key="artifact.filesFileId"
+      :file-id="artifact.filesFileId"
+      :name="artifact.filesPath?.split('/').at(-1) || artifact.name"
+      :version-id="artifact.filesVersionId ?? undefined"
+      icon-only
+    />
   <span
     v-if="actionError || artifact.filesRegistrationStatus === 'error'"
     class="files-error"
@@ -96,10 +96,10 @@
 </template>
 
 <script setup lang="ts">
-import ChatFileDownload from '../files/ChatFileDownload.vue';
 import { computed, ref } from 'vue';
 import type { Artifact } from '../../models/Artifact';
 import { useChatController } from '../../controller/useChatController';
+import ChatFileDownload from '../files/ChatFileDownload.vue';
 
 import { openDocumentTab, useBrowserTabs } from '@pkg/composables/useBrowserTabs';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';

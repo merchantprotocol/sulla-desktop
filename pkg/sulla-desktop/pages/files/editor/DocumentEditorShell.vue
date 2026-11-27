@@ -11,8 +11,20 @@
       <div class="bar-spacer" />
       <span class="save-chip" :class="saveState"><i />{{ saveLabel }}</span>
       <div class="presence" aria-label="Present collaborators"><span v-for="peer in peers" :key="peer.id" :title="peer.name">{{ peer.kind==='user'?ownerInitial:peer.name.slice(0,1).toUpperCase() }}</span></div>
-      <span v-if="downloadAction.state.error" class="download-error" role="alert">{{ downloadAction.state.error }}</span>
-      <button class="icon-button" type="button" title="Download" :aria-label="'Download ' + fileName" :disabled="downloadAction.state.busy || loading" @click="download" v-html="icons.download" />
+      <span
+        v-if="downloadAction.state.error"
+        class="download-error"
+        role="alert"
+      >{{ downloadAction.state.error }}</span>
+      <button
+        class="icon-button"
+        type="button"
+        title="Download"
+        :aria-label="'Download ' + fileName"
+        :disabled="downloadAction.state.busy || loading"
+        @click="download"
+        v-html="downloadIcon"
+      />
       <button class="icon-button" type="button" title="History" :aria-pressed="drawer==='history'" @click="toggleDrawer('history')" v-html="icons.history" />
       <button class="icon-button" type="button" title="Share" @click="openShare" v-html="icons.share" />
       <div ref="moreMenu" class="more-wrap"><button class="icon-button" type="button" title="More" :aria-expanded="moreOpen" @click="moreOpen=!moreOpen" v-html="icons.more" /><div v-if="moreOpen" class="more-menu"><button type="button" @click="moreOpen=false;toggleDrawer('links')">Links</button></div></div>
@@ -35,9 +47,23 @@
           </div>
         </template>
         <component :is="editorType.component" ref="area" v-model="content" :read-only="readOnly" :live="liveBinding" :file-name="fileName" :file-path="props.item.path" :save-state="saveState" :saved-source="editorType.id==='html'?savedContent:undefined" :preview-url="editorType.id==='html'?previewUrl:undefined" :peers="htmlPeers" :on-back="htmlBack" :on-rename="renameHtml" :on-history="htmlHistory" :on-share="openShare" :on-save="saveNow" :on-create-bookmark="createFileBookmark" :on-navigate="requestFileNavigation" :on-open-external="openExternal" :can-back="props.canBack" :can-forward="props.canForward" :on-navigate-history="navigateHistory" @update:model-value="queueSave" @insert-menu="openInsertMenu">
-          <template #download>
-            <span v-if="downloadAction.state.error" class="download-error" role="alert">{{ downloadAction.state.error }}</span>
-            <button class="shb-wb-ib" type="button" title="Download" :aria-label="'Download ' + fileName" :disabled="downloadAction.state.busy" @click="download" v-html="icons.download" />
+          <template
+            #download
+          >
+            <span
+              v-if="downloadAction.state.error"
+              class="download-error"
+              role="alert"
+            >{{ downloadAction.state.error }}</span>
+            <button
+              class="shb-wb-ib"
+              type="button"
+              title="Download"
+              :aria-label="'Download ' + fileName"
+              :disabled="downloadAction.state.busy"
+              @click="download"
+              v-html="downloadIcon"
+            />
           </template>
         </component>
         <div v-if="slashOpen" ref="insertMenu" class="slash-menu" role="menu" tabindex="-1" aria-label="Insert block" @keydown="navigateMenu" :style="{left:`${menuPoint.x}px`,top:`${menuPoint.y}px`}">
@@ -127,7 +153,8 @@ const downloadAction = computed(() => {
 function download() {
   return downloadAction.value.download(fileName.value, liveBinding.value || loadError.value ? undefined : baseVersionId.value || undefined);
 }
-const icons={download:'<svg viewBox="0 0 24 24"><path d="M12 5v11M7 11l5 5 5-5M4 19h16"/></svg>',share:'<svg viewBox="0 0 24 24"><path d="M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg>',arrowLeft:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',history:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',link:'<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/></svg>',more:'<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',heading:'<svg viewBox="0 0 24 24"><path d="M5 4v16M19 4v16M5 12h14"/></svg>',list:'<svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',check:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 12 3 3 7-7"/></svg>',table:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>',toggle:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>'};
+const downloadIcon = '<svg viewBox="0 0 24 24"><path d="M12 5v11M7 11l5 5 5-5M4 19h16"/></svg>';
+const icons={share:'<svg viewBox="0 0 24 24"><path d="M12 16V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg>',arrowLeft:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',history:'<svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>',link:'<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/></svg>',more:'<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>',heading:'<svg viewBox="0 0 24 24"><path d="M5 4v16M19 4v16M5 12h14"/></svg>',list:'<svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',check:'<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 12 3 3 7-7"/></svg>',table:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>',toggle:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>'};
 const menuSections=[
  {label:'Components',entries:[{label:'Chart',description:'Bar, line or pie — data kept in the file',icon:icons.table,text:'',disabled:true},{label:'Checklist',description:'Tasks with owners',icon:icons.check,text:'- [ ] Task\n',disabled:false},{label:'Table',description:'Rows and columns',icon:icons.table,text:'| Column | Column |\n| --- | --- |\n|  |  |\n',disabled:false}]},
  {label:'Layout',entries:[{label:'Heading',description:'Section title',icon:icons.heading,text:'## Heading\n',disabled:false},{label:'List',description:'Bulleted list',icon:icons.list,text:'- List item\n',disabled:false},{label:'Toggle',description:'Collapsible section',icon:icons.toggle,text:'<details>\n<summary>Toggle</summary>\n\n</details>\n',disabled:false}]},
