@@ -14,6 +14,7 @@ import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import type { TurnTimingProviderRequestSink } from '../services/TurnTiming';
 
 const log = Logging.background;
 /** How often a bridge checks whether the `claude` process it serves is still alive. */
@@ -80,6 +81,10 @@ async function resolveAccount(): Promise<{
 export async function createGuestClaudeAuth(input: {
   conversationId: string;
   state?:         BaseThreadState;
+  runId?:         string;
+  turnTiming?:    TurnTimingProviderRequestSink;
+  getTimingContext?: () => { runId: string; turnTiming?: TurnTimingProviderRequestSink } | undefined;
+  logTiming?:     (message: string) => void;
 }): Promise<GuestClaudeAuth | null> {
   if (!usesContainerVaultAuthority()) return null;
 
@@ -94,6 +99,8 @@ export async function createGuestClaudeAuth(input: {
     orgId:           metadata.orgId,
   });
   const context = { ...base, device_id: await getDesktopDeviceId() };
+  const turnTiming = input.turnTiming ?? ((input.state as any)?.__turnTiming as TurnTimingProviderRequestSink | undefined);
+  const runId = input.runId || turnTiming?.runId || String((input.state?.metadata as any)?.runId || '') || crypto.randomUUID();
   const renewed = () => {
     const now = Math.floor(Date.now() / 1000);
     return { ...context, iat: now, exp: now + CONTEXT_TTL_S };
@@ -104,6 +111,14 @@ export async function createGuestClaudeAuth(input: {
     provider:       'claude-code',
     accountId,
     authMode,
+    runId,
+    turnTiming,
+    getTimingContext: input.getTimingContext ?? (() => {
+      const current = (input.state as any)?.__turnTiming as TurnTimingProviderRequestSink | undefined;
+      const currentRunId = String(current?.runId || (input.state?.metadata as any)?.runId || runId);
+      return { runId: currentRunId, turnTiming: current ?? (currentRunId === runId ? turnTiming : undefined) };
+    }),
+    logTiming:      input.logTiming ?? (message => Logging.perf.log(message)),
     advertisedHost: new URL(getMCPServerHost().getVmReachableUrl()).hostname,
     // Lifecycle is owned by the claude process (see bindLeaseToProcess); the
     // lease is revoked when it exits, so each request just renews its claims.
