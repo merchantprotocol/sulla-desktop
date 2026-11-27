@@ -2,9 +2,9 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { SafeToolLabel, TurnTiming } from '../../../services/TurnTiming';
+import { SafeToolLabel, TurnTiming, TurnTimingDispatchContext, TurnTimingDispatchLifecycle, TurnTimingOutcomePolicy } from '../../../services/TurnTiming';
 import type { TurnTimingOutcome } from '../../../services/TurnTiming';
 
 class ManualClock {
@@ -145,12 +145,145 @@ describe('TurnTiming', () => {
 });
 
 describe('SafeToolLabel', () => {
-  it('retains only a program name or safe Sulla tool route', () => {
-    // risk: timing/chat labels leak command arguments, file paths, or private tool input
-    expect(SafeToolLabel.from('/usr/bin/git -C /private/repo status --porcelain')).toBe('git');
-    expect(SafeToolLabel.from('sulla files/search {"query":"/Users/jonathon/private"}')).toBe('sulla files/search');
-    expect(SafeToolLabel.from('sulla ../private/secrets token')).toBe('sulla');
-    expect(SafeToolLabel.from('Read /private/secrets.txt')).toBe('Read');
+  it.each([
+    ['KEY=secret npx foo', 'shell', ['secret']],
+    ['OPENAI_API_KEY=sk-abc123 npx foo', 'shell', ['sk-abc123', 'abc123']],
+    ['git=secret', 'shell', ['secret']],
+    ['env KEY=secret npx foo', 'shell', ['secret']],
+    ['sudo git status', 'shell', []],
+    ['time git status', 'shell', []],
+    ['nohup git status', 'shell', []],
+    ['nice git status', 'shell', []],
+    ['command git status', 'shell', []],
+    ['exec git status', 'shell', []],
+    ['xargs git status', 'shell', []],
+    ['timeout 4 git status', 'shell', []],
+    ['doas git status', 'shell', []],
+    ['git status | cat secret', 'shell', ['secret']],
+    ['git status && cat sk-abc123', 'shell', ['sk-abc123']],
+    ['git status || cat secret', 'shell', ['secret']],
+    ['git status; echo secret', 'shell', ['secret']],
+    ['git > /tmp/sk-abc123', 'shell', ['sk-abc123']],
+    ['git < /tmp/secret', 'shell', ['secret']],
+    ['git $(echo secret)', 'shell', ['secret']],
+    ['git `echo sk-abc123`', 'shell', ['sk-abc123']],
+    ['git (secret)', 'shell', ['secret']],
+    ['git {secret}', 'shell', ['secret']],
+    ['$(echo secret) npx foo', 'shell', ['secret']],
+    ['`echo sk-abc123` npx foo', 'shell', ['sk-abc123']],
+    ['(git status)', 'shell', []],
+    ['{ git status; }', 'shell', []],
+    ['{git}', 'shell', []],
+    ["git 'secret'", 'shell', ['secret']],
+    ['git "secret"', 'shell', ['secret']],
+    ['./secret/bin/git status', 'shell', ['secret']],
+    ['/usr/bin/git -C /private/repo status', 'shell', []],
+    ['/tmp/sk-abc123', 'shell', ['sk-abc123']],
+    ['git status', 'git', []],
+    ['npx test', 'npx', []],
+    ['sulla files/search {"query":"/Users/example/private"}', 'sulla files/search', ['/Users/example/private']],
+    ['sulla ../private/secrets token', 'sulla', ['/private/secrets']],
+    ['Read /private/secrets.txt', 'Read', ['/private/secrets.txt']],
+  ] as Array<[string, string, string[]]>)('labels %s as %s without exposing sensitive values', (value, expected, sensitiveValues) => {
+    // risk: shell parsing leaks secrets from assignments/arguments into timing and chat logs
+    const label = SafeToolLabel.from(value);
+    expect(label).toBe(expected);
+    for (const sensitiveValue of sensitiveValues) expect(label).not.toContain(sensitiveValue);
+  });
+
+  it('uses a generic label for empty or non-string values', () => {
     expect(SafeToolLabel.from('   ')).toBe('tool');
+    expect(SafeToolLabel.from(undefined)).toBe('tool');
+  });
+});
+
+describe('turn dispatch lifecycle', () => {
+  function createLifecycle(signal: AbortSignal) {
+    const clock = new ManualClock(500);
+    const log = new RecordingPerfLog();
+    const timing = createTiming(clock, log, 'run-dispatch', 'thread-dispatch');
+    const state: { metadata: { options: { abort: { signal: AbortSignal } } }; __turnTiming?: TurnTiming } = {
+      metadata: { options: { abort: { signal } } },
+    };
+    Object.defineProperty(state, '__turnTiming', { value: timing, configurable: true, enumerable: false });
+    const lifecycle = new TurnTimingDispatchLifecycle(timing, state);
+    return { graph: { execute: async() => undefined as unknown }, lifecycle, log, state };
+  }
+
+  it('records one ok record and removes its runtime timing context after graph dispatch', async() => {
+    // risk: a successful dispatch loses or duplicates its per-turn timing record or leaves a stale sink attached
+    const controller = new AbortController();
+    const { graph, lifecycle, log, state } = createLifecycle(controller.signal);
+    const execute = vi.fn(async() => 'done');
+    graph.execute = execute;
+
+    await lifecycle.executeGraph(() => graph.execute(), controller.signal);
+    lifecycle.finish();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(log.lines).toHaveLength(1);
+    expect(log.record()).toMatchObject({ runId: 'run-dispatch', outcome: 'ok' });
+    expect(state.__turnTiming).toBeUndefined();
+  });
+
+  it('records one error record when graph dispatch throws and removes its runtime timing context', async() => {
+    // risk: a graph error is recorded as success or cleanup leaves a failed turn's timing sink attached
+    const controller = new AbortController();
+    const { graph, lifecycle, log, state } = createLifecycle(controller.signal);
+    const execute = vi.fn(async() => { throw new Error('synthetic graph failure'); });
+    graph.execute = execute;
+
+    await expect(lifecycle.executeGraph(() => graph.execute(), controller.signal)).rejects.toThrow('synthetic graph failure');
+    lifecycle.finish();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(log.lines).toHaveLength(1);
+    expect(log.record()).toMatchObject({ runId: 'run-dispatch', outcome: 'error' });
+    expect(state.__turnTiming).toBeUndefined();
+  });
+
+  it('records an abort when graph handles Stop and returns normally', async() => {
+    // risk: Graph.execute swallows AbortError, causing a user-stopped turn to be logged as ok
+    const controller = new AbortController();
+    const { graph, lifecycle, log, state } = createLifecycle(controller.signal);
+    const execute = vi.fn(async() => {
+      controller.abort(); // mirrors Graph.execute catching AbortError after Stop
+      return undefined;
+    });
+    graph.execute = execute;
+
+    await lifecycle.executeGraph(() => graph.execute(), controller.signal);
+    lifecycle.finish();
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(log.lines).toHaveLength(1);
+    expect(log.record()).toMatchObject({ runId: 'run-dispatch', outcome: 'aborted' });
+    expect(state.__turnTiming).toBeUndefined();
+  });
+
+  it('classifies workerModelTask dispatch metadata as delegated', () => {
+    // risk: tab-lead and resumed worker runs skew chat p50/p90 because the job id is dropped
+    const context = new TurnTimingDispatchContext({ workerModelTask: { jobId: 'job-tab-lead', taskIndex: 3 } }, 'sulla-desktop', 'sulla-desktop', 'heartbeat');
+    const log = new RecordingPerfLog();
+    new TurnTiming({
+      clock: new ManualClock(700),
+      perfLog: log,
+      runId: 'run-tab-lead',
+      surface: context.surface,
+      provider: 'codex',
+      model: null,
+      threadId: 'thread-tab-lead',
+      jobId: context.jobId,
+      taskIndex: context.taskIndex,
+    }).finish('ok');
+
+    expect(log.record()).toMatchObject({ surface: 'delegated', jobId: 'job-tab-lead', taskIndex: 3 });
+  });
+
+  it('records stopped delegated tasks as aborted rather than successful', () => {
+    // risk: stopped delegated work inflates successful turn counts
+    expect(TurnTimingOutcomePolicy.forDelegatedResult('stopped')).toBe('aborted');
+    expect(TurnTimingOutcomePolicy.forDelegatedResult('error')).toBe('error');
+    expect(TurnTimingOutcomePolicy.forDelegatedResult('completed')).toBe('ok');
   });
 });
