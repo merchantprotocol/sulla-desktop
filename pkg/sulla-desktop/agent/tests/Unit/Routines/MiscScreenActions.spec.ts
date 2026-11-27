@@ -279,6 +279,25 @@ describe('history IPC acknowledgements', () => {
       expect(await boot().load('gone')).toBeNull();
     });
 
+    it('expires the latest oversized save after ENOTDIR, even across an acknowledged clear', async() => {
+      const repo = boot();
+      const log = path.join(dir, 'thread.jsonl');
+
+      await fs.promises.writeFile(log, 'transcript');
+      rows.push({ id: 'tab', thread_id: 'thread', type: 'chat', log_file: log });
+      await repo.save(state('thread', 'inline'));
+      await fs.promises.writeFile(store, '');
+      await repo.save(state('thread', big));
+      expect.soft((await repo.load('thread'))?.messages[0].content === big).toBe(true);
+      expect.soft(await boot().load('thread') === null).toBe(true);
+      now += 3_601_000;
+      expect.soft(await repo.load('thread') === null).toBe(true);
+      await expect(clear(repo)).resolves.toEqual({ success: true });
+      expect(rows).toEqual([]);
+      expect(fs.existsSync(log)).toBe(false);
+      expect(await repo.load('thread') === null).toBe(true);
+    });
+
     it('R3: newer Redis wins after restart and neither tier resurfaces after expiry', async() => {
       const repo = boot();
       await repo.save(state('thread', big));

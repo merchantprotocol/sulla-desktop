@@ -51,10 +51,12 @@ export class MemoryThreadStateRepository extends Service implements ThreadStateR
 
 export class RedisThreadStateRepository extends Service implements ThreadStateRepository {
   private static readonly KEY_PREFIX = 'sulla:threadstate:';
+  private readonly memoryHeads = new Map<string, { id: string; state: BaseThreadState }>();
   constructor(
     private readonly clientSource: RedisThreadStateClientSource,
     private readonly ttlSeconds = THREAD_STATE_TTL_SECONDS,
     private readonly files?: FileThreadCheckpointRepository,
+    private readonly logger: ThreadStateLogger = console,
   ) { super() }
 
   async available(): Promise<boolean> {
@@ -73,19 +75,37 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
     const json = JSON.stringify(state);
     let id: string | undefined;
     if (Buffer.byteLength(json) > MAX_REDIS_CHECKPOINT_BYTES) {
-      if (!this.files) throw new Error('Thread checkpoint exceeds the Redis size limit');
-      id = await this.files.write(thread, json);
+      try {
+        if (!this.files) throw new Error('No checkpoint storage configured');
+        id = await this.files.write(thread, json);
+      } catch {
+        this.logger.error('[ThreadStateStore] Payload write failed; using an expiring memory checkpoint');
+        const memoryId = randomUUID();
+
+        await this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds, JSON.stringify({ sullaCheckpointMemory: 1, id: memoryId }));
+        this.memoryHeads.set(thread, { id: memoryId, state: JSON.parse(json) });
+        return;
+      }
     }
     // SETEX is the only publication point. Never discover a head from disk.
     await this.clientSource.getClient().setex(this.key(thread), this.ttlSeconds,
       id ? JSON.stringify({ sullaCheckpointFile: 1, id }) : json);
+    this.memoryHeads.delete(thread);
     await this.files?.published(thread, id);
   }
 
   async load(threadId: string): Promise<BaseThreadState | null> {
     const json = await this.clientSource.getClient().get(this.key(threadId));
+    const value = json && JSON.parse(json);
+    if (value?.sullaCheckpointMemory === 1) {
+      const head = this.memoryHeads.get(threadId);
+
+      if (head && head.id === value.id) return structuredClone(head.state);
+      this.memoryHeads.delete(threadId);
+      return null;
+    }
+    this.memoryHeads.delete(threadId);
     if (!json) return null;
-    const value = JSON.parse(json);
     if (value?.sullaCheckpointFile !== 1) return value;
     if (!this.files) throw new Error('No checkpoint storage configured');
     return this.files.read(threadId, value.id);
@@ -93,6 +113,7 @@ export class RedisThreadStateRepository extends Service implements ThreadStateRe
 
   async delete(threadId: string): Promise<void> {
     await this.clientSource.getClient().del(this.key(threadId));
+    this.memoryHeads.delete(threadId);
   }
 
   private key(threadId: string): string { return RedisThreadStateRepository.KEY_PREFIX + threadId }

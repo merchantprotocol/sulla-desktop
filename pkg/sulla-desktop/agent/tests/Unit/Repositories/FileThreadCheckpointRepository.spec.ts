@@ -116,16 +116,19 @@ describe('large thread checkpoints', () => {
     const file = path.join(directory, 'not-a-directory');
     await fs.promises.writeFile(file, '');
     const repo = new FallbackThreadStateRepository(
-      new RedisThreadStateRepository({ getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => file)),
+      new RedisThreadStateRepository({ getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => file), logger),
       new MemoryThreadStateRepository(), new MemoryThreadStateRepository(), logger,
     );
     await repo.save(state('small', 'inline'));
     const content = 'private-marker' + big;
     await repo.save(state('large', content));
+    expect((await repo.load('large'))?.messages[0].content === content).toBe(true);
+    expect(Buffer.byteLength(client.setex.mock.calls[1][2])).toBeLessThan(128);
     client.status = 'end';
     await repo.save(state('offline', content));
-    for (const id of ['large', 'offline']) expect((await repo.load(id))?.messages[0].content === content).toBe(true);
-    expect(client.setex).toHaveBeenCalledTimes(1);
+    expect(await repo.load('large')).toBeNull();
+    expect((await repo.load('offline'))?.messages[0].content === content).toBe(true);
+    expect(client.setex).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain('private-marker');
   });
 
