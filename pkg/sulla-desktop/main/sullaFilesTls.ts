@@ -7,20 +7,35 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import Electron from 'electron';
+import { Agent, fetch as undiciFetch } from 'undici';
 
-import { verifyVaultCertificate } from './vaultTlsVerifier';
+import { VaultTlsPinService, verifyVaultCertificate } from './vaultTls';
 
 import paths from '@pkg/utils/paths';
 import { loopbackOrigin } from '@pkg/utils/instance';
+import { PinnedNodeAgentFactory } from '@pkg/vault-broker/PinnedNodeAgentFactory';
 import { desktopFilesTransport, FilesTransportFailureClassifier, SullaFilesUnreachableError } from '../agent/files/desktopFilesTransport';
+import { FilesTransportConcurrencyMeter, type FilesTransportConcurrencySnapshot } from '../agent/files/FilesTransportConcurrencyMeter';
 
 export const FILES_HTTPS_ORIGIN = loopbackOrigin('https', 30124);
 const SESSION_PARTITION = 'sulla-files-service';
 const RETRY_TIMEOUT_MS = 1_500;
+const FILES_NODE_CONNECTIONS = 64;
+// Chromium's per-host HTTP socket group is capped at six. Keep this explicit in the rollback path
+// so its queue and wait measurements remain observable rather than hidden inside Electron.
+const ELECTRON_FILES_CONNECTIONS = 6;
 
 interface PinnedFilesSession {
   fetch(input:string, init?:RequestInit):Promise<Response>;
   closeAllConnections():Promise<void> | void;
+}
+
+export interface SullaFilesTlsDependencies {
+  createSession:() => Promise<PinnedFilesSession>;
+  readFingerprintFile:() => Promise<string>;
+  nodeFetch:typeof undiciFetch;
+  nodeAgentFactory:PinnedNodeAgentFactory;
+  nodeConnections:number;
 }
 
 /** Owns the single pinned Chromium session and recovers stale keep-alive pools. */
@@ -90,14 +105,35 @@ export class SullaFilesTlsService {
   private pinnedFingerprint?:Promise<string>;
   private readonly sessions = new Set<WeakRef<Electron.Session>>();
   private readonly registeredSessions = new WeakSet<Electron.Session>();
-  private readonly sessionPool = new SullaFilesSessionPool<Electron.Session>(async() => {
-    const session = Electron.session.fromPartition(SESSION_PARTITION, { cache: false });
-    await this.configure(session);
-    return session;
-  }, () => desktopFilesTransport.notifyReset());
+  private readonly sessionPool:SullaFilesSessionPool<PinnedFilesSession>;
+  private readonly certificatePins:VaultTlsPinService;
+  private readonly readFingerprintFile:() => Promise<string>;
+  private readonly nodeFetch:typeof undiciFetch;
+  private readonly nodeAgentFactory:PinnedNodeAgentFactory;
+  private readonly nodeConnections:number;
+  private nodeDispatcher?:Promise<Agent>;
+  private readonly concurrencyMeter = new FilesTransportConcurrencyMeter(FILES_NODE_CONNECTIONS);
+
+  constructor(dependencies:Partial<SullaFilesTlsDependencies> = {}) {
+    const readFingerprintFile = dependencies.readFingerprintFile ?? (() => fs.readFile(path.join(paths.appHome, 'files-tls-fingerprint'), 'utf8'));
+    this.readFingerprintFile = readFingerprintFile;
+    // Reuse the existing loopback pin policy with Files' own fingerprint source.
+    this.certificatePins = new VaultTlsPinService(readFingerprintFile);
+    this.nodeFetch = dependencies.nodeFetch ?? undiciFetch;
+    this.nodeAgentFactory = dependencies.nodeAgentFactory ?? new PinnedNodeAgentFactory();
+    this.nodeConnections = dependencies.nodeConnections ?? FILES_NODE_CONNECTIONS;
+    this.sessionPool = new SullaFilesSessionPool<PinnedFilesSession>(async() => {
+      const session = await (dependencies.createSession ?? (async() => {
+        const electronSession = Electron.session.fromPartition(SESSION_PARTITION, { cache: false });
+        await this.configure(electronSession);
+        return electronSession;
+      }))();
+      return session;
+    }, () => desktopFilesTransport.notifyReset());
+  }
 
   private async readFingerprint():Promise<string> {
-    const value = (await fs.readFile(path.join(paths.appHome, 'files-tls-fingerprint'), 'utf8')).replaceAll(':', '').trim().toLowerCase();
+    const value = (await this.readFingerprintFile()).replaceAll(':', '').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(value)) throw new Error('Files TLS fingerprint is missing or invalid');
     return value;
   }
@@ -124,19 +160,82 @@ export class SullaFilesTlsService {
     const session = reference.deref();
     if (session) updates.push(this.configure(session)); else this.sessions.delete(reference);
   }
-  await Promise.all([this.pinnedFingerprint, ...updates]);
+  await Promise.all([this.pinnedFingerprint, this.certificatePins.refresh(), ...updates]);
 }
 
   /** Dedicated pinned Electron transport for local Files requests. */
   async desktopFilesFetch(input:string | URL, init?:RequestInit):Promise<Response> {
     const url = new URL(input);
     if (url.origin !== FILES_HTTPS_ORIGIN) throw new Error('Pinned Files transport rejected a nonlocal destination');
-    return this.sessionPool.fetch(url.toString(), init);
+    // SULLA_FILES_TRANSPORT=electron is the reversible fallback to the previous session path.
+    const useElectron = process.env.SULLA_FILES_TRANSPORT === 'electron';
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const route = url.pathname.startsWith('/v1/') ? `/${ url.pathname.split('/').filter(Boolean).slice(0, 2).join('/') }` : '/other';
+    const operation = `${ useElectron ? 'electron' : 'node' } ${ method } ${ route }`;
+    const limit = useElectron ? ELECTRON_FILES_CONNECTIONS : this.nodeConnections;
+    return this.concurrencyMeter.run(operation, () => useElectron
+      ? this.sessionPool.fetch(url.toString(), init)
+      : this.fetchWithNode(input, init), init?.signal, limit);
+  }
+
+  getConcurrencyMetrics():Record<string, FilesTransportConcurrencySnapshot> {
+    return this.concurrencyMeter.snapshot();
   }
 
   /** Drop only Chromium's sockets; the session and certificate pin stay intact. */
   async resetConnections():Promise<void> {
     await this.sessionPool.resetConnections();
+    const dispatcherPromise = this.nodeDispatcher;
+    if (dispatcherPromise) await this.resetNodeDispatcher(dispatcherPromise);
+  }
+
+  private async fetchWithNode(input:string | URL, init?:RequestInit):Promise<Response> {
+    const dispatcherPromise = this.getNodeDispatcher();
+    try {
+      return await this.nodeFetch(input, { ...init, dispatcher: await dispatcherPromise } as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+    } catch (error) {
+      const failureReason = FilesTransportFailureClassifier.reason(error) ?? FilesTransportFailureClassifier.reason(init?.signal?.reason);
+      if (!failureReason) throw error;
+      await this.resetNodeDispatcher(dispatcherPromise);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') throw error;
+
+      const retrySignal = this.retrySignal(init?.signal);
+      try {
+        return await this.nodeFetch(input, { ...init, signal: retrySignal, dispatcher: await this.getNodeDispatcher() } as Parameters<typeof undiciFetch>[1]) as unknown as Response;
+      } catch (retryError) {
+        const reason = FilesTransportFailureClassifier.reason(retryError) ?? FilesTransportFailureClassifier.reason(retrySignal.reason);
+        if (reason) throw new SullaFilesUnreachableError(reason, retryError);
+        throw retryError;
+      }
+    }
+  }
+
+  private getNodeDispatcher():Promise<Agent> {
+    this.nodeDispatcher ??= Promise.resolve().then(() => this.nodeAgentFactory.create(
+      this.nodeConnections,
+      (hostname, certificatePem) => this.certificatePins.verifyPeer(hostname, certificatePem),
+      'Files TLS certificate pin verification failed',
+    )).catch((error) => {
+      this.nodeDispatcher = undefined;
+      throw error;
+    });
+    return this.nodeDispatcher;
+  }
+
+  private async resetNodeDispatcher(dispatcherPromise:Promise<Agent>):Promise<void> {
+    if (this.nodeDispatcher !== dispatcherPromise) return;
+    this.nodeDispatcher = undefined;
+    try {
+      await (await dispatcherPromise).destroy(new Error('Files transport connection reset'));
+    } finally {
+      desktopFilesTransport.notifyReset();
+    }
+  }
+
+  private retrySignal(signal?:AbortSignal | null):AbortSignal {
+    const deadline = AbortSignal.timeout(RETRY_TIMEOUT_MS);
+    return signal && !signal.aborted ? AbortSignal.any([signal, deadline]) : deadline;
   }
 }
 
