@@ -32,14 +32,14 @@ export class LoopProviderResolutionError extends Error {
 
 class LoopProviderStageTimeoutError extends Error {
   constructor(readonly stage: string) {
-    super();
+    super(`Loop provider resolution timed out at ${ stage }.`);
     this.name = 'LoopProviderStageTimeoutError';
   }
 }
 
 const DEFAULT_OPTIONS: Required<LoopProviderResolutionOptions> = {
-  timeoutMs: 30_000,
-  attemptTimeoutMs: 9_000,
+  timeoutMs: 91_000,
+  attemptTimeoutMs: 30_001,
   maxAttempts: 3,
   retryBackoffMs: [250, 500],
 };
@@ -144,8 +144,13 @@ export class LoopProviderResolution {
         );
       } catch (error) {
         if (isExpired() || externalSignal?.aborted) throw error;
-        lastStage = error instanceof LoopProviderStageTimeoutError ? error.stage : currentStage;
-        lastTimedOut = error instanceof LoopProviderStageTimeoutError;
+        const delegatedTimeoutStage = error instanceof Error
+          && (error as Error & { timedOut?: boolean; stage?: unknown }).timedOut === true
+          && typeof (error as Error & { stage?: unknown }).stage === 'string'
+          ? (error as Error & { stage: string }).stage
+          : undefined;
+        lastStage = error instanceof LoopProviderStageTimeoutError ? error.stage : delegatedTimeoutStage ?? currentStage;
+        lastTimedOut = error instanceof LoopProviderStageTimeoutError || delegatedTimeoutStage !== undefined;
         controller.abort();
 
         const remaining = deadline - this.monotonicNow();
