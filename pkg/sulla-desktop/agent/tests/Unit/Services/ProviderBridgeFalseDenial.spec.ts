@@ -17,6 +17,7 @@ import {
   type ProviderCliBridgeOptions,
 } from '../../../../vault-broker/providerCliBridge';
 import { providerBridgeActivity } from '../../../../vault-broker/ProviderBridgeActivity';
+import { SystemTurnTimingClock, TurnTiming } from '../../../services/TurnTiming';
 
 /**
  * Real ProviderCliBridgeService on a loopback port; only the vault broker
@@ -92,7 +93,7 @@ async function openBridge(overrides: Partial<ProviderCliBridgeOptions> & { broke
 }
 
 describe('provider bridge never falsely denies a healthy container job', () => {
-  it.each([429, 503])('logs only a bounded, redacted OpenAI error reason and retry-after for HTTP %i', async(status) => {
+  it.each([429, 503])('logs only safe bridge timing fields and retry-after for HTTP %i', async(status) => {
     // risk: provider error diagnostics accidentally persist bearer credentials or unbounded response content
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -115,9 +116,9 @@ describe('provider bridge never falsely denies a healthy container job', () => {
       expect(response.status).toBe(status);
       expect(timing).toContain(`status=${ status }`);
       expect(timing).toContain('retry_after=9s');
-      expect(timing).toContain('openai_reason=');
-      expect(timing).toContain('rate limit details');
-      expect(timing).toContain('…');
+      expect(timing).not.toContain('path=');
+      expect(timing).not.toContain('openai_reason=');
+      expect(timing).not.toContain('rate limit details');
       expect(timing).not.toContain(secret);
       expect(timing).not.toContain(`Bearer ${ secret }`);
       expect(timing).not.toContain(orgId);
@@ -128,6 +129,74 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     } finally {
       unsubscribe();
     }
+  });
+
+  it('correlates bridge request timings with the owning turn id without logging response text', async() => {
+    // risk: a bridge request cannot be joined to its turn or its streamed text leaks into perf.log
+    const turnLines: string[] = [];
+    const timing = new TurnTiming({
+      clock: new SystemTurnTimingClock(),
+      perfLog: { log: line => turnLines.push(line) },
+      runId: 'run-bridge-test',
+      surface: 'chat',
+      provider: 'codex',
+      model: null,
+      threadId: 'thread-bridge-test',
+    });
+    const output = 'synthetic-visible-output';
+    const sse = `event: response.output_text.delta\ndata: ${ JSON.stringify({ type: 'response.output_text.delta', delta: output }) }\n\n`;
+    const broker = new FakeBroker(async() => new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    const { send, timings } = await openBridge({ runId: timing.runId, turnTiming: timing, broker });
+    const response = await send();
+    expect(await response.text()).toBe(sse);
+    timing.finish('ok');
+
+    const bridgeLine = timings.at(-1)!;
+    const bridgeRequestId = bridgeLine.match(/bridgeRequestId=([0-9a-f-]+)/)?.[1];
+    expect(bridgeLine).toContain('runId=run-bridge-test');
+    expect(bridgeRequestId).toBeTruthy();
+    expect(bridgeLine).not.toContain(output);
+    expect(bridgeLine).not.toContain('openai_reason=');
+    const record = JSON.parse(turnLines[0].replace(/^\[TurnTiming\] /, ''));
+    expect(record.providerRequests).toMatchObject([{ bridgeRequestId, status: 200 }]);
+    expect(record.providerRequests[0].firstByteMs).not.toBeNull();
+    expect(record.providerRequests[0].firstTextMs).not.toBeNull();
+    expect(record.providerRequests[0].endMs).not.toBeNull();
+    expect(turnLines[0]).not.toContain(output);
+  });
+
+  it('refreshes run correlation on a reused bridge lease for each turn', async() => {
+    // risk: a persistent container attributes later provider requests to the first turn’s sink
+    const firstLines: string[] = [];
+    const secondLines: string[] = [];
+    const makeTiming = (runId: string, threadId: string, lines: string[]) => new TurnTiming({
+      clock: new SystemTurnTimingClock(),
+      perfLog: { log: line => lines.push(line) },
+      runId,
+      surface: 'chat',
+      provider: 'codex',
+      model: null,
+      threadId,
+    });
+    const first = makeTiming('run-first', 'thread-first', firstLines);
+    const second = makeTiming('run-second', 'thread-second', secondLines);
+    let current = { runId: first.runId, turnTiming: first };
+    const { send, timings } = await openBridge({ getTimingContext: () => current, broker: new FakeBroker() });
+
+    const firstResponse = await send();
+    await firstResponse.text();
+    current = { runId: second.runId, turnTiming: second };
+    const secondResponse = await send();
+    await secondResponse.text();
+    first.finish('ok');
+    second.finish('ok');
+
+    expect(timings[0]).toContain('runId=run-first');
+    expect(timings[1]).toContain('runId=run-second');
+    expect(JSON.parse(firstLines[0].replace(/^\[TurnTiming\] /, '')).providerRequests).toHaveLength(1);
+    expect(JSON.parse(secondLines[0].replace(/^\[TurnTiming\] /, '')).providerRequests).toHaveLength(1);
+    expect(firstLines[0]).toContain('thread-first');
+    expect(secondLines[0]).toContain('thread-second');
   });
 
   it('forwards the request when the early OAuth refresh fails instead of answering a terminal denial', async() => {
@@ -141,7 +210,8 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('data: ok\n\n');
     expect(broker.calls).toHaveLength(1);
-    expect(timings.at(-1)).toContain('upkeep=credential_upkeep_failed');
+    expect(timings.at(-1)).toContain('status=200');
+    expect(timings.at(-1)).not.toContain('upkeep=');
     expect(timings.at(-1)).not.toContain('provider_bridge_failed');
   });
 
@@ -191,7 +261,8 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(body.error.reason).toBe('container_not_registered');
     expect(isProviderBridgeDenial(new Error(body.error.message))).toBe(true);
     expect(lease.signal.aborted).toBe(true);
-    expect(timings.at(-1)).toContain('reason=container_not_registered');
+    expect(timings.at(-1)).toContain('status=403');
+    expect(timings.at(-1)).not.toContain('container_not_registered');
   });
 
   it('revokes when authorize throws an untyped error that only claims to be retryable', async() => {
@@ -234,10 +305,10 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     await reader.read();
     lifecycle.abort();
     await reader.read().catch(() => undefined);
-    await vi.waitFor(() => expect(timings.some(line => line.includes('path=/v1/responses'))).toBe(true));
+    await vi.waitFor(() => expect(timings.some(line => line.includes('status=499'))).toBe(true));
 
-    const line = timings.find(entry => entry.includes('path=/v1/responses'))!;
-    expect(line).toContain('failure=provider_bridge_cancelled reason=lifecycle_revoked');
+    const line = timings.find(entry => entry.includes('status=499'))!;
+    expect(line).toContain('bridgeRequestId=');
     expect(line).not.toContain('provider_bridge_failed');
     expect(error).not.toHaveBeenCalled();
   });
@@ -252,7 +323,7 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(body.error).toMatchObject({ type: 'invalid_provider_request', reason: 'invalid_json' });
   });
 
-  it('keeps an unknown failure as provider_bridge_failed but with the stage in the reason', async() => {
+  it('keeps unknown failure details out of the safe timing line', async() => {
     // risk: 42 identical provider_bridge_failed lines a day with no way to split them by cause
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -261,7 +332,9 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     const body = await response.json() as { error: { type: string; reason?: string } };
     expect(response.status).toBe(502);
     expect(body.error).toMatchObject({ type: 'provider_bridge_failed', reason: 'upstream_headers_RangeError' });
-    expect(timings.at(-1)).toContain('reason=upstream_headers_RangeError');
+    expect(timings.at(-1)).toContain('status=502');
+    expect(timings.at(-1)).not.toContain('upstream_headers_RangeError');
+    expect(timings.at(-1)).not.toContain('reason=');
   });
 
   it('treats a bare fetch failure reaching the vault as transient', async() => {
