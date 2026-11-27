@@ -395,6 +395,7 @@ export class AgentNode extends BaseNode {
         const alreadyStreamed = !!reply.metadata.streamingEmitted;
         if (!isDuplicate && !alreadyStreamed) {
           await this.wsChatMessage(state, userVisibleText, 'assistant', 'text', {
+            standaloneReply: true, // This provider call emitted no UI stream to reconcile.
             replyAttribution: this.recordedReplyAttribution(state, reply.metadata.model),
             agentReporting: this.replyReporting(reply.content),
           });

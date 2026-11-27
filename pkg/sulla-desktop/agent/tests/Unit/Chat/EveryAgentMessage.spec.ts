@@ -561,3 +561,21 @@ it('dispatches one final reply when a provider returns text without streaming to
   expect(fixture.emitted.filter(message => message.kind === 'text').map(message => message.content)).toEqual([finalReply]);
   expect(fixture.lastStateMessages.filter(message => message.role === 'assistant').map(message => message.content)).toEqual([finalReply]);
 });
+
+// risk: data accuracy — text from a fresh call must not be reconciled with earlier calls' sealed streams.
+it.each([
+  { scenario: 'extends a sealed reply with corrected spacing', streamed: ['Build  checks passed.'], final: 'Build checks passed. CI failed.' },
+])('keeps a fresh unstreamed reply when it $scenario', async({ streamed, final }) => {
+  const fixture = new TranscriptFixture();
+  for (const text of streamed) {
+    await fixture.replayAgentProvider(new ScriptedProvider([{ type: 'token', text }], text));
+  }
+  const sealed = fixture.context.messages.filter(message => message.kind === 'streaming' && (message as any)._completed);
+  expect(sealed.map(message => message.content)).toEqual(streamed);
+  expect(new Set(sealed.map(message => message.replyStreamId)).size).toBe(streamed.length);
+
+  await fixture.replayAgentProvider(new ScriptedProvider([], final));
+
+  expect(fixture.emitted.filter(message => message.kind === 'text').map(message => message.content)).toEqual([final]);
+  expect(fixture.replyTexts()).toEqual([...streamed, final]);
+});
