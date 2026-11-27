@@ -32,7 +32,7 @@
  * ```
  */
 
-import { app, ipcMain, BrowserWindow, systemPreferences } from 'electron';
+import { app, ipcMain, BrowserWindow, systemPreferences, type IpcMainInvokeEvent } from 'electron';
 import crypto from 'crypto';
 import { existsSync } from 'node:fs';
 import path from 'path';
@@ -55,6 +55,7 @@ import { ModelRepository } from '../voice/engine/ModelRepository';
 import voiceModelManifest from '../voice/models/voice-model-manifest.json';
 import { SpeakerEmbeddingRunner } from '../voice/inference/SpeakerEmbeddingRunner';
 import { VoiceIdentifier } from '../voice/inference/VoiceIdentifier';
+import { VoiceTranscriptDelivery } from './VoiceTranscriptDelivery';
 
 const rendererLog = createLogger('renderer');
 
@@ -555,7 +556,7 @@ function registerIpcHandlers(): void {
 
   // ── Local transcription (whisper.cpp powered) ───────────────────
 
-  ipcMain.handle('audio-driver:transcribe-start', async(_event: unknown, opts: {
+  ipcMain.handle('audio-driver:transcribe-start', async(event: IpcMainInvokeEvent, opts: {
     mode:      'conversation' | 'secretary';
     language?: string;
     model?:    string;
@@ -565,6 +566,8 @@ function registerIpcHandlers(): void {
     manualTurn?: boolean;
   }) => {
     log.info('IPC', 'transcribe-start', opts);
+    const source = event.sender;
+    const transcriptDelivery = new VoiceTranscriptDelivery(source);
 
     // Resolve the selected STT provider. Defaults to local whisper; when the user
     // picks Grok, use the keyless vault adapter. The key never enters Desktop.
@@ -680,7 +683,7 @@ function registerIpcHandlers(): void {
       sessionId:    opts.sessionId?.trim() || `transcription:${ crypto.randomUUID() }`,
       manualTurn:   !!opts.manualTurn,
       onTranscript: (event) => {
-        broadcast('gateway-transcript', event);
+        transcriptDelivery.deliver(event);
         // Feed the main-process teleprompter tracker (no-ops if not tracking)
         onWhisperTranscript(event);
       },
