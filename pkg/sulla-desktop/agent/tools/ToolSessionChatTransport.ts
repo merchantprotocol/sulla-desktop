@@ -39,6 +39,18 @@ export class ToolSessionChatTransport {
     tool.sendChatMessage = (content, kind = 'progress', extras) => this.send(tool, state, content, kind, extras);
   }
 
+  /** Attach only to the server-resolved live graph for a verified session thread; never accepts a thread from tool arguments. */
+  attachToVerifiedThread(tool: ChatCapableTool, verifiedThreadId: unknown, liveState: BaseThreadState | undefined): boolean {
+    const threadId = typeof verifiedThreadId === 'string' ? verifiedThreadId.trim() : '';
+    if (!threadId || !liveState || !this.supports(tool)) return false;
+
+    const metadata = liveState.metadata as Record<string, unknown> | undefined;
+    if (metadata?.threadId !== threadId) return false;
+
+    this.attach(tool, liveState);
+    return typeof tool.sendChatMessage === 'function';
+  }
+
   private async send(tool: ChatCapableTool, state: BaseThreadState, content: string, kind: string, extras?: Record<string, unknown>): Promise<boolean> {
     const toolPath = `${ String(tool.metadata?.category ?? '') }/${ String(tool.name ?? '') }`;
     const kindAllowed = ToolSessionChatTransport.SUPPORTED.has(toolPath) ||
