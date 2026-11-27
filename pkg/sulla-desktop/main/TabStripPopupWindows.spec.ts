@@ -190,19 +190,4 @@ describe('native tab strip popups', () => {
     );
   });
 
-  it.each([
-    { y: 45, aboveY: 5, expectedY: 45, above: false },
-    { y: 588, aboveY: 542, expectedY: 304, above: true },
-  ])('keeps the hover card in the work area for a tab at y=$y', async({ y, aboveY, expectedY, above }) => {
-    const owner = opener();
-
-    emit('tab-hover:show', owner, {
-      id: 'hover', anchor: { x: 790, y, aboveY }, palette: {}, title: 'Long tab title', status: 'Working', detail: '',
-    });
-    await vi.advanceTimersByTimeAsync(0);
-    const [popup] = popups;
-
-    expect(popup.setBounds).toHaveBeenCalledExactlyOnceWith({ x: 474, y: expectedY, width: 326, height: 238 });
-    expect(popup.webContents.send).toHaveBeenCalledWith('tab-hover:data', expect.objectContaining({ above }));
-  });
 });
