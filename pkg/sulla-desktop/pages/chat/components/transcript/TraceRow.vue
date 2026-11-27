@@ -19,7 +19,7 @@
         <code v-if="row.targetIsCode" class="dtr-tg">{{ row.target }}</code><span v-else class="dtr-tg">{{ row.target }}</span>
         <span v-if="row.keyArgs" class="dtr-args">{{ row.keyArgs }}</span>
       </div>
-      <span class="dtr-m"><span class="dtr-dur">{{ row.subagent ? duration : row.durationLabel }}</span><span class="dtr-st" :data-s="row.status">{{ row.status }}</span></span>
+      <span class="dtr-m"><span class="dtr-dur">{{ duration }}</span><span class="dtr-st" :data-s="row.status">{{ row.status }}</span></span>
       <button
         v-if="row.payload" type="button" class="dtr-x" :aria-expanded="open" :aria-controls="payloadId"
         :aria-label="`Raw payload for ${row.verb} ${row.target}`"
@@ -50,11 +50,12 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import type { AgentTraceHistoryData } from '@pkg/agent/app/Services/AgentTraceHistory';
 import type { OpenSubAgentConversation } from '../subagent/subAgentConversation';
 import { SubAgentTraceProjection } from './SubAgentTraceProjection';
+import { ToolStepClock, type ToolStepTraceRow } from './ToolStepClock';
 import type { TraceRow as TraceRowModel } from './traceTypes';
 import { TraceDisclosureController } from './traceDisclosure';
 import { TracePayloadSerializer } from './TracePayloadSerializer';
 
-const props = defineProps<{ row: TraceRowModel }>();
+const props = defineProps<{ row: ToolStepTraceRow }>();
 const disclosure = inject('chat:trace-disclosure', new TraceDisclosureController());
 const open = computed(() => disclosure.isOpen(props.row.id));
 // Static icon paths from the approved mockup; never built from row data.
@@ -77,7 +78,8 @@ const icon = computed(() => icons[props.row.icon]);
 const payloadId = computed(() => `dtr-raw-${props.row.id.replace(/[^\w-]/g, '_')}`);
 const openConversation = inject<OpenSubAgentConversation | undefined>('chat:open-subagent-conversation', undefined);
 const agentProjection = new SubAgentTraceProjection();
-const context = inject<{ backendThreadId: Ref<string | undefined> } | undefined>('chat:activity-context', undefined);
+const context = inject<{ backendThreadId: Ref<string | undefined>; toolStepClock?: ToolStepClock } | undefined>('chat:activity-context', undefined);
+const toolStepClock = context ? (context.toolStepClock ??= new ToolStepClock()) : new ToolStepClock();
 const history = shallowRef<AgentTraceHistoryData | null>(null);
 const historyError = ref(false);
 watch([() => context?.backendThreadId.value, () => props.row.subagent?.jobId, () => props.row.subagent?.taskIndex ?? 0], () => {
@@ -151,24 +153,31 @@ const agentMeta = computed(() => {
   return [agent.model, agent.runLocation ?? history.value?.runLocation, agent.jobId ? `job ${agent.jobId}` : undefined,
     agent.taskIndex !== undefined ? `task ${agent.taskIndex}` : undefined].filter(Boolean).join(' · ');
 });
-const rowNow = ref(Date.now());
+const rowNow = ref(toolStepClock.nowMs);
 const ticking = computed(() => {
   const agent = props.row.subagent;
+  if (props.row.kind === 'tool') return props.row.toolStep?.endedAt === undefined && props.row.toolStep !== undefined;
   // Time since launch for every unsettled state; total run time once it ends.
   return agent?.startedAt !== undefined && agent.endedAt === undefined &&
     !['returned', 'failed', 'stopped'].includes(props.row.status);
 });
 watch(ticking, (active, _, onCleanup) => {
-  rowNow.value = Date.now();
+  rowNow.value = toolStepClock.nowMs;
   if (!active) return;
-  const timer = setInterval(() => { rowNow.value = Date.now(); }, 1_000);
-  onCleanup(() => clearInterval(timer));
+  onCleanup(toolStepClock.subscribe(now => { rowNow.value = now; }));
 }, { immediate: true });
 const duration = computed(() => {
+  if (props.row.kind === 'tool') {
+    const step = props.row.toolStep;
+    if (step) {
+      return toolStepClock.durationLabel(toolStepClock.elapsedMs(step.startedAt, step.endedAt, rowNow.value));
+    }
+    return props.row.durationLabel ?? '';
+  }
   const agent = props.row.subagent;
   if (props.row.durationLabel) return props.row.durationLabel;
   if (agent?.startedAt === undefined) return '';
-  return agentProjection.duration((agent.endedAt ?? rowNow.value) - agent.startedAt);
+  return agentProjection.duration(toolStepClock.elapsedMs(agent.startedAt, agent.endedAt, rowNow.value));
 });
 function openAgent(): void {
   const agent = props.row.subagent;
