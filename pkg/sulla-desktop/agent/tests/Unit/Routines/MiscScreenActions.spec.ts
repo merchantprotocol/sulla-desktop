@@ -185,8 +185,8 @@ describe('history IPC acknowledgements', () => {
       del: async(key: string) => keys.delete(key),
     };
     const boot = () => new FallbackThreadStateRepository(
-      new RedisThreadStateRepository({ getClient: () => client }), new MemoryThreadStateRepository(),
-      new MemoryThreadStateRepository(), console, new FileThreadCheckpointRepository(() => store),
+      new RedisThreadStateRepository({ getClient: () => client }, 3600, new FileThreadCheckpointRepository(() => store)),
+      new MemoryThreadStateRepository(), new MemoryThreadStateRepository(), console,
     );
     const state = (threadId: string, content: string) => ({
       metadata: { threadId }, messages: [{ role: 'user', content }],

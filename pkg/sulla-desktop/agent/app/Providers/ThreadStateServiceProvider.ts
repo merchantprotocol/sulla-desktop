@@ -10,16 +10,16 @@ import { ConversationHistoryModel } from '../../database/models/ConversationHist
 import { resolveSullaHomeDir } from '../../utils/sullaPaths';
 import {
   FallbackThreadStateRepository, FileThreadCheckpointRepository, LogRecoveryThreadStateRepository,
-  MemoryThreadStateRepository, RedisThreadStateRepository,
+  MemoryThreadStateRepository, RedisThreadStateRepository, THREAD_STATE_TTL_SECONDS,
 } from '../Repositories/ThreadStateRepository';
 
 export class ThreadStateServiceProvider {
   readonly memory = new MemoryThreadStateRepository();
-  readonly redis = new RedisThreadStateRepository(redisClient);
+  private readonly files = new FileThreadCheckpointRepository(() => path.join(resolveSullaHomeDir(), 'thread-checkpoints'));
+  readonly redis = new RedisThreadStateRepository(redisClient, THREAD_STATE_TTL_SECONDS, this.files);
   readonly recovery = new LogRecoveryThreadStateRepository(ConversationHistoryModel);
   readonly repository = new FallbackThreadStateRepository(
     this.redis, this.memory, this.recovery, console,
-    new FileThreadCheckpointRepository(() => path.join(resolveSullaHomeDir(), 'thread-checkpoints')),
   );
 }
 export const threadStateProvider = new ThreadStateServiceProvider();
