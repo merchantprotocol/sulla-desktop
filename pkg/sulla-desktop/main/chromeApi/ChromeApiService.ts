@@ -23,6 +23,7 @@ import { EventEmitter } from 'events';
 
 import Electron, { WebContentsView } from 'electron';
 
+import { HiddenTabLayout } from './HiddenTabLayout';
 import { createChromeBookmarks } from './chromeBookmarks';
 import { ChromeEventImpl } from './chromeEvent';
 
@@ -81,7 +82,7 @@ import type {
 } from './types';
 
 const console = Logging.sulla;
-const HIDDEN_TAB_BOUNDS: Electron.Rectangle = { x: 0, y: 0, width: 1280, height: 800 };
+
 // ---------------------------------------------------------------------------
 // Storage implementation (backed by SullaSettingsModel)
 // ---------------------------------------------------------------------------
@@ -142,7 +143,7 @@ export class ChromeApiService implements ChromeApi {
 
   private tabViewManager: BrowserTabViewManager;
 
-  // Hidden (headless) views not attached to any window
+  // Hidden views are not registry tabs and can never be selected in the tab strip.
   private hiddenViews = new Map<string, WebContentsView>();
   /** Serializes capture and destruction for each service-owned hidden tab. */
   private hiddenTabOperationTails = new Map<string, Promise<void>>();
@@ -217,7 +218,7 @@ export class ChromeApiService implements ChromeApi {
   // Storage
   private localStorage = new SullaStorageArea('local');
 
-  private constructor(tabViewManager: BrowserTabViewManager) {
+  private constructor(tabViewManager: BrowserTabViewManager, private readonly hiddenLayout: HiddenTabLayout) {
     this.tabViewManager = tabViewManager;
     this.bindWebRequestFixer();
     // chrome.webNavigation events and chrome.history recording were defined
@@ -324,7 +325,7 @@ export class ChromeApiService implements ChromeApi {
       if (!tabViewManager) {
         throw new Error('[ChromeApiService] First call must provide tabViewManager');
       }
-      ChromeApiService.instance = new ChromeApiService(tabViewManager);
+      ChromeApiService.instance = new ChromeApiService(tabViewManager, new HiddenTabLayout(tabViewManager.agentViewports));
     }
 
     return ChromeApiService.instance;
@@ -395,7 +396,7 @@ export class ChromeApiService implements ChromeApi {
       const tabId = `chrome-tab-${ ++this.tabCounter }-${ Date.now() }`;
 
       if (props.hidden) {
-        // Create a detached WebContentsView — functional but not visible
+        if (props.viewport !== undefined) this.tabViewManager.agentViewports.validate(props.viewport);
         // Guarded function tabs get a private session so their blocking
         // webRequest handler cannot affect ordinary hidden or visible tabs.
         const browserSession = props.requestGuard
@@ -434,12 +435,15 @@ export class ChromeApiService implements ChromeApi {
           throw new Error('[ChromeApi] Hidden WebContentsView did not adopt the shared browser session');
         }
 
-        // Detached views otherwise start at 0x0, which makes responsive pages
-        // render their zero-width layout and leaves screenshots without a useful
-        // frame. This viewport does not attach the view to a window.
-        view.setBounds(HIDDEN_TAB_BOUNDS);
-
+        try {
+          // Capability-owned functions must also work without any UI window.
+          this.hiddenLayout.prepare(view, props.requestGuard ? null : this.ownerWindow(), props.viewport);
+        } catch (error) {
+          view.webContents.close();
+          throw error;
+        }
         this.hiddenViews.set(tabId, view);
+        view.webContents.once('destroyed', () => this.hiddenViews.delete(tabId));
         this.attachWebNavigationListeners(tabId, view.webContents);
         if (props.denyPopups) view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
@@ -452,7 +456,7 @@ export class ChromeApiService implements ChromeApi {
         // Go through the registry (not the view manager directly) so the tab
         // shows up in the tab strip, can be closed from the UI, and is
         // covered by the agent-tab cap. The registry creates the view.
-        tabRegistry.open({ assetId: tabId, url: props.url, origin: 'agent', ownerWindow: this.ownerWindow() ?? undefined });
+        tabRegistry.open({ assetId: tabId, url: props.url, origin: 'agent', ownerWindow: this.ownerWindow() ?? undefined, viewport: props.viewport });
 
         if (props.active !== false) {
           this.tabViewManager.setFocusedTab(tabId, undefined, undefined, this.tabViewManager.getOwnerWindow(tabId));
@@ -474,7 +478,7 @@ export class ChromeApiService implements ChromeApi {
           const view = this.hiddenViews.get(tabId);
 
           if (!view) return;
-          (view.webContents as any).close?.();
+          try { this.hiddenLayout.detach(view) } finally { view.webContents.close() }
           if (this.hiddenViews.get(tabId) === view) {
             this.hiddenViews.delete(tabId);
           }
@@ -556,54 +560,30 @@ export class ChromeApiService implements ChromeApi {
     onUpdated:  this.tabUpdatedEvent as ChromeEvent<[string, TabChangeInfo, ChromeTab]>,
   };
 
-  /**
-   * Capture a service-owned hidden tab. Electron needs the view in a live
-   * compositor, so it is attached outside the visible window bounds only for
-   * the duration of this serialized operation and always detached afterward.
-   */
+  /** Keep capture and close atomic. Ordinary background browsing needs no
+   * reparenting; only a tab opened windowless needs a temporary compositor. */
   async captureHiddenTabScreenshot(tabId: string): Promise<{ base64: string; mediaType: string } | null> {
     return this.withHiddenTabOperation(tabId, async() => {
       const view = this.hiddenViews.get(tabId);
-
-      if (!view || view.webContents.isDestroyed()) {
-        throw new Error(`[ChromeApi] Hidden tab not found: ${ tabId }`);
-      }
-
-      const mainWindow = this.ownerWindow(tabId);
-
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        throw new Error('[ChromeApi] Cannot capture hidden tab without the main window');
-      }
-
-      const previousBounds = view.getBounds();
+      if (!view || view.webContents.isDestroyed()) throw new Error('Hidden tab not found');
+      const parkedOwner = this.hiddenLayout.owner(view);
+      const window = parkedOwner ?? this.ownerWindow();
+      if (!window || window.isDestroyed()) throw new Error('Cannot capture without a browser window');
       const wasThrottled = view.webContents.getBackgroundThrottling();
-      const captureBounds: Electron.Rectangle = {
-        x:      -(HIDDEN_TAB_BOUNDS.width + 100),
-        y:      0,
-        width:  HIDDEN_TAB_BOUNDS.width,
-        height: HIDDEN_TAB_BOUNDS.height,
-      };
-      let attached = false;
-
       try {
-        view.setBounds(captureBounds);
-        view.webContents.setBackgroundThrottling(false);
-        // Mark before the native call so a partial attach is still cleaned up
-        // if Electron throws after mutating the view tree.
-        attached = true;
-        mainWindow.contentView.addChildView(view, 0);
-
-        return await new GuestBridge(view.webContents, tabId).captureScreenshot({
-          format:  'jpeg',
-          quality: 80,
-        });
-      } finally {
-        if (attached && !mainWindow.isDestroyed()) {
-          try { mainWindow.contentView.removeChildView(view) } catch { /* already detached */ }
+        if (!parkedOwner) {
+          view.webContents.disableDeviceEmulation();
+          this.hiddenLayout.prepare(view, window);
         }
+        view.webContents.setBackgroundThrottling(false);
+        return await new GuestBridge(view.webContents, tabId).captureScreenshot();
+      } finally {
         if (!view.webContents.isDestroyed()) {
-          view.setBounds(previousBounds);
           view.webContents.setBackgroundThrottling(wasThrottled);
+          if (!parkedOwner) {
+            this.hiddenLayout.detach(view);
+            this.hiddenLayout.prepare(view, null);
+          }
         }
       }
     });
@@ -1505,7 +1485,7 @@ export class ChromeApiService implements ChromeApi {
           if (mainWindow) {
             try { mainWindow.contentView.removeChildView(view) } catch { /* */ }
           }
-          (view.webContents as any).close?.();
+          try { this.hiddenLayout.detach(view) } finally { view.webContents.close() }
         }
 
         this.sidePanelViews.clear();

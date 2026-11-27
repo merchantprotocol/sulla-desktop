@@ -16,6 +16,8 @@
 
 export type EventListener<T extends unknown[]> = (...args: T) => void;
 
+import type { AgentViewport } from '../browserTabs/AgentViewportPolicy';
+
 export interface ChromeEvent<T extends unknown[]> {
   addListener(callback: EventListener<T>): void;
   removeListener(callback: EventListener<T>): void;
@@ -44,9 +46,10 @@ export interface TabQueryInfo {
 }
 
 export interface TabCreateProperties {
+  viewport?: AgentViewport;
   url:     string;
   active?: boolean;
-  /** Create the WebContentsView without attaching it to any parent window. */
+  /** Keep the page out of the visible tab strip and off screen. */
   hidden?: boolean;
   /** Internal request-layer guard installed before the first hidden-tab load. */
   requestGuard?: (url: string) => Promise<void>;
