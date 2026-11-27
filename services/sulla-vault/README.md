@@ -57,3 +57,49 @@ installed Desktops have already recorded them, and removing them would break the
 The Desktop API is the local authority contract in [`LOCAL_DESKTOP_AUTHORITY.md`](LOCAL_DESKTOP_AUTHORITY.md):
 `/healthz`, the `/v1/desktop/*`, `/v1/human/*`, `/v1/broker/*` and cloud-sync routes registered in
 `src/app.ts`, and the local vault UI under `/vault/`. Any other `/v1` path returns 404.
+
+## Bounded synthetic broker load harness
+
+`scripts/load/test-load.ts` runs a disposable local vault API over a fresh PGlite directory and a
+generated self-signed TLS certificate. Its only provider endpoint is an HTTPS synthetic upstream
+bound to `127.0.0.1`; the test-only composition injects an `UpstreamHttpClient` subclass that permits
+only the generated `https://api.openai.com:<ephemeral-port>` origin and trusts the run's generated
+CA. That exception is not an environment/config switch: production composition still constructs the
+default `UpstreamHttpClient`, `ValidatedUpstreamResolver`, address policy, DNS lookup, and system CA
+path. Outbound requests still use the real `https.request`/TLS-pin path. Stream requests use the
+real `DesktopVaultTransport.fetchStream` Node/undici path; an Electron session stub throws if used.
+The vault binds only to test port `40135` and does not contact the real vault, a real provider, or
+the installed vault container/data.
+
+Run from the repository root when the repo/vault dependencies and `openssl` are already available:
+
+```sh
+services/sulla-vault/node_modules/.bin/tsx \
+  --tsconfig services/sulla-vault/scripts/load/tsconfig.load.json \
+  services/sulla-vault/scripts/load/test-load.ts
+```
+
+Defaults: 300 concurrent streams, 30-second upstream hold, 350 KB (350,000 byte) synthetic JSON
+provider body, 100 cancellations, then a recovery wave. It refuses to start below 4 GiB
+`MemAvailable`, caps concurrency/cancellations at 1,000, and prints one secret-free JSON summary.
+The summary includes upstream maximum concurrency, p50/p95 headers against a single-call baseline,
+credential lookup / buffered broker execute / health p50/p95 and failures while streams are open,
+request-received-to-upstream-TLS-connect delay, 1-second vault RSS/heap and client RSS/CPU samples,
+heap-OOM detection, and before/after file-descriptor/socket counts. `--duration 300` enables the
+five-minute resource soak; the default run is under three minutes.
+
+Flags: `--concurrency N` (default 300, range 1–1,000), `--hold-seconds N` (30, range 1–300),
+`--body-kb N` (350, range 1–1,024; decimal KB, with a 128 MiB combined in-flight body budget), `--duration N` (0 by default, range 0–300;
+`--duration 300` is the five-minute soak), and `--cancel N` (100, range 0–1,000; `--cancel 0`
+disables cancellation). A bare `--cancel` also selects 100.
+
+The test child uses `NODE_OPTIONS="--max-old-space-size=256 --max-semi-space-size=2"` and reports
+heap use and RSS against the Desktop-generated Compose `mem_limit: 768m`. `pkg/sulla-desktop/backend/sullaRuntimeBackend.ts`
+sets those Node flags and the 768 MiB container limit; the packaged `services/sulla-vault/Dockerfile`
+uses Node 24 and `UV_THREADPOOL_SIZE=16`. The test process mirrors the flags but runs under the host
+Node runtime and does not run in a 768 MiB cgroup, so RSS is observed against (not enforced by) that
+limit. Its test resolver performs local `localhost` DNS only and
+pins IPv4 loopback, never resolving or connecting to a provider hostname. The production code
+configures a PostgreSQL pool with max 10; this disposable API uses the service's PGlite test strategy
+(no `pg.Pool`), so receive-to-connect timing measures request parsing, test DB lookup, local resolver
+and TLS connect but cannot isolate the production pool.
