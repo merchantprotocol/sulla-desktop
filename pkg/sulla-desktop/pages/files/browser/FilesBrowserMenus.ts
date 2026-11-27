@@ -7,6 +7,7 @@ import { nextTick, ref } from 'vue';
 
 import type { FilesBrowserController } from './FilesBrowserController';
 import type { DisplayEntry, FilesMenuPoint } from './FilesBrowserTypes';
+import { FilesOpenDestinationRouter } from '../FilesOpenDestinationRouter';
 
 /** The row action menu and the folder-background menu: placement, focus, keyboard and dismissal. */
 export class FilesBrowserMenus {
@@ -18,7 +19,7 @@ export class FilesBrowserMenus {
   readonly backgroundMenu = ref<FilesMenuPoint | null>(null);
   private menuTrigger:HTMLElement | null = null;
 
-  constructor(private readonly browser:FilesBrowserController) {}
+  constructor(private readonly browser:FilesBrowserController, private readonly openDestinationRouter = new FilesOpenDestinationRouter()) {}
 
   readonly closeActions = (restoreFocus = true):void => { this.actionTarget.value = null; if (restoreFocus) this.menuTrigger?.focus() };
 
@@ -70,5 +71,12 @@ export class FilesBrowserMenus {
   /** Window resize closes every menu and ends any pointer gesture. */
   readonly closeMenuOnResize = ():void => { this.browser.creation.closeNewMenu(); this.closeActions(false); this.closeBackgroundActions(); this.browser.gestures.stopPointerGesture?.() };
 
-  readonly openWithApplication = async(application?:string):Promise<void> => { const state = this.browser.state; const target = this.actionTarget.value; if (!target || target.folder || !state.props.dataSource.openFileWithApp) return; this.closeActions(); await this.browser.refresher.runMutation(async() => { const result = await state.props.dataSource.openFileWithApp!(target.id, target.currentVersionId, application); this.recentApplications.value = result.recentApplications }, false) };
+  readonly openWithApplication = async(application?:string):Promise<void> => {
+    const state = this.browser.state; const target = this.actionTarget.value;
+    if (!target || target.folder) return;
+    this.closeActions();
+    if (this.openDestinationRouter.isHtmlPath(target.path)) { this.browser.navigation.openInSulla(target); return }
+    if (!state.props.dataSource.openFileWithApp) return;
+    await this.browser.refresher.runMutation(async() => { const result = await state.props.dataSource.openFileWithApp!(target.id, target.currentVersionId, application); this.recentApplications.value = result.recentApplications }, false);
+  };
 }
