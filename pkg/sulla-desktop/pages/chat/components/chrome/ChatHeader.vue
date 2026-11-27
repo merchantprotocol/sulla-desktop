@@ -140,7 +140,7 @@ function cancelTitle(): void {
   box-sizing: border-box; height: 48px; padding-block: 10px;
   /* Recover space when a wide dock leaves a narrow chat pane. */
   padding-inline: clamp(6px, calc(10% - 15px), 16px);
-  background: var(--bg-surface);
+  background: transparent;
   font-family: var(--font-body);
 }
 .ch-left { display: flex; flex: 0 1 auto; min-width: 0; max-width: 32%; }
