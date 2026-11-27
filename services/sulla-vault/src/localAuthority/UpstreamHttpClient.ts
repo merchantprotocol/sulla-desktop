@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-import { promises as dns } from 'node:dns';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
 
@@ -18,17 +17,20 @@ import {
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { MAX_RESPONSE_BYTES } from './LocalAuthorityLimits.js';
 import { LocalVaultError } from './LocalVaultError.js';
-import { BrokerAddressPolicy } from './BrokerAddressPolicy.js';
 import { BrokerCredentialFields } from './BrokerCredentialFields.js';
 import { BrokerHttpBody } from './BrokerHttpBody.js';
+import { ValidatedUpstreamResolver } from './ValidatedUpstreamResolver.js';
 
 /**
- * Pinned, SSRF-checked HTTPS to broker upstreams: DNS validation, connect-phase retries on a
- * fresh socket, and the buffered request/response path with redaction and size limits.
+ * Pinned, SSRF-checked HTTPS to broker upstreams: cached initial DNS validation, fresh DNS on
+ * connect-phase retries over a fresh socket, and the buffered request/response path with redaction and size limits.
  * Moved verbatim from LocalVaultAuthority (E9); in-flight requests and generation live on the host.
  */
 export class UpstreamHttpClient {
-  constructor(private readonly host: LocalAuthorityHost) {}
+  constructor(
+    private readonly host: LocalAuthorityHost,
+    private readonly upstreamResolver = new ValidatedUpstreamResolver(),
+  ) {}
 
   async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
     let url: URL;
@@ -44,16 +46,12 @@ export class UpstreamHttpClient {
     });
   }
 
-  /**
-   * Resolve and validate public addresses. Called per request (and again for
-   * a connect retry); nothing is cached across requests, so a network change
-   * never leaves a stale pin behind.
-   */
-  private async resolvePinnedAddresses(hostname: string, attempt = 1): Promise<PinnedAddress[]> {
-    let addresses: Array<{ address: string; family: number }>;
+  /** Resolve validated public pins, optionally bypassing the cache for connect retries. */
+  private async resolvePinnedAddresses(hostname: string, options: { fresh?: boolean } = {}, attempt = 1): Promise<PinnedAddress[]> {
     try {
-      addresses = await dns.lookup(hostname, { all: true, verbatim: true });
+      return await this.upstreamResolver.resolve(hostname, options);
     } catch (error) {
+      if (error instanceof LocalVaultError) throw error;
       const detail = describeUpstreamError(error);
       const willRetry = detail.code === 'EAI_AGAIN' && attempt < UPSTREAM_MAX_ATTEMPTS;
       console.warn(formatUpstreamFailureLog({
@@ -62,14 +60,10 @@ export class UpstreamHttpClient {
       }));
       if (willRetry) {
         await new Promise(resolve => setTimeout(resolve, UPSTREAM_RETRY_DELAYS_MS[attempt - 1]));
-        return this.resolvePinnedAddresses(hostname, attempt + 1);
+        return this.resolvePinnedAddresses(hostname, options, attempt + 1);
       }
       throw new LocalVaultError('upstream_failed', 502, 'Broker upstream DNS lookup failed', upstreamFailureReason('dns', detail.code));
     }
-    if (!addresses.length || addresses.some(candidate => BrokerAddressPolicy.privateAddress(candidate.address))) {
-      throw new LocalVaultError('destination_denied', 403, 'Destination resolved to a private, local, or invalid address');
-    }
-    return addresses.map(candidate => ({ address: candidate.address, family: candidate.family as 4 | 6 }));
   }
 
   /**
@@ -158,7 +152,8 @@ export class UpstreamHttpClient {
           hooks.onError(request, failure);
           return;
         }
-        this.resolvePinnedAddresses(target.hostname).then(fresh => {
+        // Initial validation may use the cache; after a connect failure, bypass it so a network change is observed immediately.
+        this.resolvePinnedAddresses(target.hostname, { fresh: true }).then(fresh => {
           if (!(hooks.canRetry?.() ?? true)) {
             hooks.onError(request, failure);
             return;
