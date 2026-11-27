@@ -65,6 +65,7 @@ function transportHarness(expectedPin:string) {
     readFingerprintFile: async() => expectedPin,
     nodeFetch: nodeFetch as never,
     nodeAgentFactory,
+    logConcurrency: () => undefined,
   });
   return { service, agentOptions, tlsConnect, socket, electronFetch, nodeFetch };
 }
@@ -141,7 +142,7 @@ describe('Desktop Files pinned undici transport', () => {
     await expect(response.text()).resolves.toBe('electron');
     expect(harness.electronFetch).toHaveBeenCalledTimes(1);
     expect(harness.nodeFetch).not.toHaveBeenCalled();
-    expect(harness.service.getConcurrencyMetrics()['electron GET /v1/local']).toMatchObject({ active:0, pending:0, maxActive:1 });
+    expect(harness.service.getConcurrencyMetrics()['electron GET /v1/local']).toMatchObject({ active:0, bodyOpen:0, maxActive:1, count:1 });
   });
 
   it('uses the bounded pinned Node Agent by default and records its configured capacity', async() => {
@@ -152,10 +153,10 @@ describe('Desktop Files pinned undici transport', () => {
     await expect(response.text()).resolves.toBe('node');
     expect(harness.nodeFetch).toHaveBeenCalledTimes(1);
     expect(harness.agentOptions[0]?.connections).toBe(64);
-    expect(harness.service.getConcurrencyMetrics()['node GET /v1/local']).toMatchObject({ active:0, pending:0, maxActive:1 });
+    expect(harness.service.getConcurrencyMetrics()['node GET /v1/local']).toMatchObject({ active:0, bodyOpen:0, maxActive:1, count:1 });
   });
 
-  it('dispatches 20 mixed Desktop reads and writes together through the shared transport', async() => {
+  it('dispatches 20 concurrent mixed Desktop requests to the Node fetch stub at once', async() => {
     // risk: availability — concurrent UI and agent work must escape the old six-connection session ceiling.
     const harness = transportHarness(matchingPin);
     const releaseRequests = deferred();
@@ -175,14 +176,20 @@ describe('Desktop Files pinned undici transport', () => {
     await new Promise(resolve => setImmediate(resolve));
     const measuredMaxActive = maxActive;
     const metricsBeforeRelease = harness.service.getConcurrencyMetrics();
-    releaseRequests.resolve();
+    const stubCallsBeforeRelease = harness.nodeFetch.mock.calls.length;
+    try {
+      expect(measuredMaxActive).toBe(20);
+      expect(stubCallsBeforeRelease).toBe(20);
+    } finally {
+      releaseRequests.resolve();
+    }
     const completed = await responses;
 
-    expect(measuredMaxActive).toBe(20);
     expect(metricsBeforeRelease).toMatchObject({
-      'node GET /v1/files': { active:10, pending:0, maxActive:10 },
-      'node PUT /v1/files': { active:10, pending:0, maxActive:10 },
+      'node GET /v1/files': { active:10, bodyOpen:0, maxActive:10, count:0 },
+      'node PUT /v1/files': { active:10, bodyOpen:0, maxActive:10, count:0 },
     });
     expect(completed).toHaveLength(20);
+    expect(Object.keys(harness.service.getConcurrencyMetrics()).sort()).toEqual(['node GET /v1/files', 'node PUT /v1/files']);
   });
 });
