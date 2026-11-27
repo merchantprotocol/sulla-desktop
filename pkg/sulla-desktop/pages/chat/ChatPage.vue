@@ -79,7 +79,6 @@
         <ChatFilesDrawer
           :open="chatFilesOpen"
           @close="setChatFilesOpen(false)"
-          @open-files="openFiles"
         />
       </template>
       <SideDock
@@ -90,7 +89,6 @@
           <ChatFilesDrawer
             :open="true"
             @close="sideDock?.selectTab('sulla')"
-            @open-files="openFiles"
           />
         </template>
         <template #artifacts>
@@ -120,7 +118,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
+import { findAgentBySlug } from '@pkg/shared/agentJobNames';
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, provide, ref, toRef, watch } from 'vue';
 
 import ArtifactSidebar   from './components/artifact/ArtifactSidebar.vue';
 import Canvas             from './components/chrome/Canvas.vue';
@@ -380,7 +379,7 @@ const modelSelector   = new AgentModelSelectorController({
     controller.selectForChat(selected, providerId || null, agentId);
   },
 });
-controller.agentModelOf = agentId => modelSelector.agentOptions.value.find(agent => agent.slug === agentId)?.model;
+controller.agentModelOf = agentId => findAgentBySlug(modelSelector.agentOptions.value, agentId)?.model;
 /** Point the selector at this chat's own saved pin (provider, exact model, agent). */
 function restoreSelectorFromThread(): void {
   const { providerId, agentId } = controller.thread.value;
@@ -466,7 +465,11 @@ watch(artifactCollapsed, artifact => {
 const subAgentTarget = ref<SubAgentConversationTarget | null>(null);
 const subAgentParentThreadId = computed(() => adapter.backendThreadId);
 // The composer's activity line reads this thread's agents and reports its state to the tab strip.
-provide('chat:activity-context', { tabId: props.tabId, backendThreadId: subAgentParentThreadId });
+provide('chat:activity-context', {
+  tabId: props.tabId,
+  backendThreadId: subAgentParentThreadId,
+  modelPicker: computed(() => ({ ...adapter.chatModelPickerSelection, chatThreadId: controller.thread.value.id })),
+});
 const mainDecisionTranscript = computed(() => !props.agentTabContractId && !props.agentTabThreadId &&
   !props.initialAgentId && !props.supportSessionId && !controller.thread.value.agentId);
 const transcriptDecisionIds = computed(() => controller.messages.value.flatMap(message => {
@@ -826,9 +829,15 @@ const { createTab, tabs, updateTab } = useBrowserTabs();
 const chatFilesOpen = ref(false);
 
 // ─── Dock position: bottom of the chat, or the right-hand side column ───
-const { position: dockPosition, sideRatio } = DockPositions.use();
+const { position: dockPosition, setPosition, sideRatio } = DockPositions.use();
 const dockSide = computed(() => dockPosition.value === 'side');
 const sideDock = ref<InstanceType<typeof SideDock> | null>(null);
+// A transcript link reveals the same scoped decision in the dock, even when the drawer is closed.
+watch(chatDecisionStore.openVersion, async() => {
+  setPosition('side');
+  await nextTick();
+  sideDock.value?.selectTab('decisions');
+});
 // The right drawer (side dock) holds the agent lanes, results, decisions and files.
 // It never takes the message box: that stays at the bottom of the chat.
 // Find chat (⌘P): past chats, pins, and this chat's decisions and results.
@@ -868,12 +877,6 @@ function setChatFilesOpen(open:boolean):void {
 function onToggleChatFiles():void {
   if (props.isActive === false) return;
   setChatFilesOpen(!chatFilesOpen.value);
-}
-
-function openFiles():void {
-  const existing = tabs.find(tab => tab.mode === 'files');
-  const tab = existing ?? createTab('about:blank', { mode: 'files', title: 'File Manager' });
-  window.dispatchEvent(new CustomEvent('sulla:navigate-tab', { detail: { tabId: tab.id } }));
 }
 
 // Keep this chat tab's label in sync with the active conversation's title.
@@ -959,6 +962,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-body);
 }
 .shell {
+  --chat-header-height: 52px;
   position: absolute; inset: 0; z-index: 5;
   --scroller-pad-b: 240px;
 }

@@ -10,5 +10,5 @@ export type WorkspaceFilesSection = 'detail' | 'versions' | 'share-review';
 
 export type WorkspaceTabRequest =
   | { mode: 'paper'; documentFile: WorkspaceFile }
-  | { mode: 'files'; title: string; filesNavigation: WorkspaceFile & { section: WorkspaceFilesSection; versionId?: string } }
+  | { mode: 'files'; title: string; filesNavigation?: WorkspaceFile & { section: WorkspaceFilesSection; versionId?: string } }
   | { mode: 'chat'; title: string; initialAgentId: string };

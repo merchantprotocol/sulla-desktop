@@ -162,6 +162,31 @@
         box-shadow: none !important;
         -webkit-focus-ring-color: transparent !important;
       }
+      .menu.attention {
+        min-width: 0; max-height: 100vh; overflow-y: auto;
+        padding: 5px;
+        background: var(--strip-bg-elevated, Canvas);
+        border-color: var(--strip-border-default, ButtonBorder);
+        box-shadow: var(--strip-elev-raised, none);
+        font: 12px/1.35 system-ui, sans-serif;
+        animation: none;
+      }
+
+      .attention-heading { padding: 7px 8px; font-weight: 600; color: var(--strip-text-muted, GrayText); }
+      .attention .menu-item { height: 49px; padding: 6px 8px; border-radius: 8px; color: var(--strip-text-primary, CanvasText); }
+      .attention .menu-item:is(:hover, :focus-visible) { background: var(--strip-bg-surface-hover, ButtonFace); }
+      .attention .menu-icon { opacity: 1; }
+      .attention-dot { flex: 0 0 8px; height: 8px; border-radius: 50%; background: var(--strip-status-warning, currentColor); }
+      .attention-dot.stalled { background: var(--strip-status-error, currentColor); }
+      .attention-copy { min-width: 0; }
+      .attention-title, .attention-reason { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .attention-title { font-weight: 600; }
+      .attention-reason { color: var(--strip-text-muted, GrayText); font-size: 12px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .menu { animation: none; }
+        .menu-item { transition: none; }
+      }
     </style>
   </head>
   <body>
@@ -257,9 +282,57 @@
         },
       };
 
-      function buildMenu(items) {
+      let renderedRequestId;
+
+      function attentionRow(row, requestId) {
+        const btn = document.createElement("button");
+        const dot = document.createElement("span");
+        const copy = document.createElement("span");
+        const title = document.createElement("span");
+        const reason = document.createElement("span");
+        btn.className = "menu-item";
+        btn.dataset.action = "attention:" + row.id;
+        dot.className = row.state === "stalled" ? "attention-dot stalled" : "attention-dot";
+        dot.setAttribute("aria-hidden", "true");
+        copy.className = "attention-copy";
+        title.className = "attention-title";
+        title.dir = "auto";
+        title.textContent = row.title;
+        reason.className = "attention-reason";
+        reason.textContent = row.reason;
+        copy.append(title, reason);
+        if (row.iconPath) {
+          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          const path = document.createElementNS(svg.namespaceURI, "path");
+          svg.setAttribute("viewBox", "0 0 24 24");
+          svg.setAttribute("class", "menu-icon");
+          svg.setAttribute("aria-hidden", "true");
+          path.setAttribute("d", row.iconPath);
+          svg.appendChild(path);
+          btn.appendChild(svg);
+        } else {
+          btn.appendChild(dot);
+        }
+        btn.appendChild(copy);
+        btn.addEventListener("click", () => ipcRenderer.send("tab-context-menu:action", requestId, btn.dataset.action));
+        return btn;
+      }
+
+      function buildMenu(items, attention, requestId) {
         const menu = document.getElementById("menu");
-        menu.innerHTML = "";
+        const focused = document.activeElement?.dataset.action;
+        const scrollTop = menu.scrollTop;
+        menu.replaceChildren();
+        menu.classList.toggle("attention", Boolean(attention));
+        if (attention) {
+          for (const token of ["bg-elevated", "bg-surface-hover", "border-default", "elev-raised", "text-primary", "text-muted", "status-warning", "status-error"]) {
+            menu.style.setProperty("--strip-" + token, attention.palette?.[token] || "");
+          }
+          const heading = document.createElement("div");
+          heading.className = "attention-heading";
+          heading.textContent = attention.title || "Waiting on you";
+          menu.appendChild(heading);
+        }
 
         items.forEach((entry) => {
           if (entry === "---") {
@@ -269,6 +342,11 @@
             return;
           }
 
+          if (attention && typeof entry === "object" && entry) {
+            menu.appendChild(attentionRow(entry, requestId));
+            return;
+          }
+          if (typeof entry !== "string" || !Object.hasOwn(ALL_ITEMS, entry)) return;
           const def = ALL_ITEMS[entry];
           if (!def) return;
 
@@ -280,14 +358,20 @@
             "</svg>" +
             def.label;
           btn.addEventListener("click", () => {
-            ipcRenderer.send("tab-context-menu:action", entry);
+            ipcRenderer.send("tab-context-menu:action", requestId, entry);
           });
           menu.appendChild(btn);
         });
+        if (attention) {
+          menu.scrollTop = scrollTop;
+          const previous = Array.from(menu.querySelectorAll("button")).find(button => button.dataset.action === focused);
+          previous?.focus({ preventScroll: true });
+        }
       }
 
       ipcRenderer.on("tab-context-menu:data", (_event, data) => {
-        buildMenu(data.items || []);
+        buildMenu(data.items || [], data.attention, data.requestId);
+        renderedRequestId = data.requestId;
         [...document.documentElement.classList]
           .filter((name) => name.startsWith("theme-"))
           .forEach((name) => document.documentElement.classList.remove(name));
@@ -302,7 +386,14 @@
       // Dismiss on Escape
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape") {
-          ipcRenderer.send("tab-context-menu:dismiss");
+          if (renderedRequestId) ipcRenderer.send("tab-context-menu:dismiss", renderedRequestId);
+        } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && document.querySelector(".attention")) {
+          const rows = [...document.querySelectorAll(".attention button")];
+          const current = rows.indexOf(document.activeElement);
+          const next = current < 0 ? (e.key === "ArrowDown" ? 0 : rows.length - 1)
+            : (current + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length;
+          e.preventDefault();
+          rows[next]?.focus();
         }
       });
     </script>

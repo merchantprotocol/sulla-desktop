@@ -5,8 +5,9 @@
 import Electron from 'electron';
 
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
-import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 import { InternalTabViewManager } from '@pkg/window/internalTabViewManager';
+
+import type { MainProcessIpcContext, MainProcessIpcStep } from './MainProcessIpcContext';
 
 /** IPC boundary for isolated internal-tab renderers. */
 export class InternalTabViewIpc implements MainProcessIpcStep {
@@ -28,8 +29,9 @@ export class InternalTabViewIpc implements MainProcessIpcStep {
     ipc.handle('internal-tab-view:open-workspace-tab', (event: Electron.IpcMainInvokeEvent, request: unknown) => {
       manager.openWorkspaceTab(event.sender, request);
     });
-    Electron.ipcMain.on('internal-tab-view:chat-running', (event: Electron.IpcMainEvent, tabId: string, running: boolean) => {
-      if (typeof running === 'boolean') manager.notifyChatRunning(event.sender, tabId, running);
+    Electron.ipcMain.on('internal-tab-view:chat-running', (event: Electron.IpcMainEvent, tabId: string, running: boolean, activity?: unknown) => {
+      if (event.senderFrame !== event.sender.mainFrame) return;
+      if (typeof running === 'boolean') manager.notifyChatRunning(event.sender, tabId, running, activity);
     });
     // One-way renderer updates need ipcMain.on; the proxy registrar only guarantees handle().
     // A host renderer reads its own tab synchronously at boot, before it builds its tab list.

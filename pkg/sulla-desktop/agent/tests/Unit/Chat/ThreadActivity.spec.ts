@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { activityAge, deriveThreadActivity, parkedActivity } from '@pkg/pages/chat/messages/threadActivity';
+import { activityAge, deriveThreadActivity, hasActiveChatWork, parkedActivity } from '@pkg/pages/chat/messages/threadActivity';
 
 const row = (state: string, extra: Record<string, unknown> = {}) => ({
   key:                `job:${ state }`,
@@ -33,6 +33,12 @@ describe('a chat thread always says what it is doing', () => {
     const a = deriveThreadActivity({ ...base, agents: [row('working'), row('done')] });
     expect(a.state).toBe('working');
     expect(a.parts[0]).toBe('1 agent running');
+  });
+
+  it('animates for active workers even when a chat lead is idle', () => {
+    expect(hasActiveChatWork(false, [row('parked'), row('working')])).toBe(true);
+    expect(hasActiveChatWork(false, [row('quiet', { runtimeAlive: true })])).toBe(true);
+    expect(hasActiveChatWork(false, [row('quiet', { runtimeAlive: false }), row('parked')])).toBe(false);
   });
 
   it('counts parked agents and a heartbeat as waiting, not idle', () => {
@@ -84,13 +90,13 @@ describe('a chat thread always says what it is doing', () => {
   });
 
   it('flags a silent agent as stalled ahead of other work', () => {
-    const a = deriveThreadActivity({ ...base, running: true, agents: [row('quiet'), row('working')] });
+    const a = deriveThreadActivity({ ...base, running: true, agents: [row('quiet', { runtimeAlive: false }), row('working')] });
     expect(a.state).toBe('stalled');
   });
 
   // risk: one silent agent turned the whole line into "it may have stopped" while others worked
   it('says what else is still working when one agent goes silent', () => {
-    const a = deriveThreadActivity({ ...base, agents: [row('quiet'), row('working', { key: 'job:w1' }), row('working', { key: 'job:w2' })] });
+    const a = deriveThreadActivity({ ...base, agents: [row('quiet', { runtimeAlive: false }), row('working', { key: 'job:w1' }), row('working', { key: 'job:w2' })] });
     expect(a).toMatchObject({ state: 'stalled', parts: ['1 agent stopped responding', '2 agents still working'] });
   });
 
@@ -100,6 +106,9 @@ describe('a chat thread always says what it is doing', () => {
     const a = deriveThreadActivity({ ...base, agents: [row('quiet', { runtimeAlive: true, lastActivityAt })] });
     expect(a).toMatchObject({ state: 'quiet', lead: 'Quiet', parts: ['1 agent quiet', 'still running'] });
     expect(a.items[0].detail).toBe('quiet 6m · still running');
+    const unknown = deriveThreadActivity({ ...base, agents: [row('quiet', { runtimeAlive: null, lastActivityAt })] });
+    expect(unknown).toMatchObject({ state: 'stalled', lead: 'No progress', parts: ['1 agent stopped responding'] });
+    expect(unknown.items[0].detail).toBe('no output for 6m');
     const gone = deriveThreadActivity({ ...base, agents: [row('quiet', { runtimeAlive: false, lastActivityAt })] });
     expect(gone).toMatchObject({ state: 'stalled', parts: ['1 agent stopped responding'] });
     expect(gone.items[0].detail).toBe('no output for 6m · container gone');

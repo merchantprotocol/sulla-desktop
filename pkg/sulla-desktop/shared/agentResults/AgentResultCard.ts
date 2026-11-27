@@ -82,6 +82,12 @@ export interface AgentResultItem extends ResultTracking {
   report:        string;
 }
 
+/** The report may come from the transcript or the worker's recorded completion. */
+export interface SavedOutcomeReport {
+  item: AgentResultItem;
+  messageId?: string;
+}
+
 export interface AgentResultCardData {
   items: AgentResultItem[];
 }

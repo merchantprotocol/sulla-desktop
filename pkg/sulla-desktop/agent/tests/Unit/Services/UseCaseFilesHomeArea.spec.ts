@@ -29,11 +29,12 @@ vi.mock('@pkg/main/marketplace/databaseArtifacts', () => ({ readDatabaseArtifact
 vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
   assertReusablePublicationMapping: vi.fn(async() => undefined),
   pendingPublicationBindings: vi.fn(async() => []),
-  initializeBindingForPublishedPackage: vi.fn(async(...args: unknown[]) => { f.routes.push(args); return { created: true, binding: { editToken: 'token', revision: 1 } } }),
+  reconcilePublishedPackageBinding: vi.fn(async(...args: unknown[]) => { if (!args[2]) return { outcome: 'unchanged' }; f.routes.push(args); return { outcome: 'written', written: { editToken: 'token', revision: 1 } } }),
   clearPendingPublication: vi.fn(async() => undefined),
   removeBindingForDefinition: vi.fn(async() => undefined),
 } }));
 
+import { up as renameBuiltins } from '@pkg/agent/database/migrations/0174_builtin_agent_identities';
 import { SullaUseCaseFiles } from '@pkg/main/sullaUseCaseFiles';
 
 const OWNER = 'owner-principal';
@@ -59,7 +60,7 @@ const APP_SCHEMA = `
     soul_content TEXT NOT NULL DEFAULT '', allowed_tools TEXT[] NOT NULL DEFAULT '{}', skill_refs TEXT[] NOT NULL DEFAULT '{}', routine_refs TEXT[] NOT NULL DEFAULT '{}',
     model_priority JSONB NOT NULL DEFAULT '[]'::jsonb, version TEXT, status TEXT NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT TRUE,
     config JSONB NOT NULL DEFAULT '{}'::jsonb, prompt_content TEXT NOT NULL DEFAULT '', goals_content TEXT NOT NULL DEFAULT '', prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb,
-    provider TEXT, model TEXT, model_slot TEXT, source_kind TEXT NOT NULL DEFAULT 'local', when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '',
+    provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB, agent_awareness BOOLEAN NOT NULL DEFAULT TRUE, source_kind TEXT NOT NULL DEFAULT 'local', when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '',
     send TEXT NOT NULL DEFAULT '', returns TEXT NOT NULL DEFAULT '', cost_tier TEXT, can_call TEXT[] NOT NULL DEFAULT '{}', front_door BOOLEAN,
     use_case_file_id UUID, use_case_version_id UUID, updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
@@ -94,8 +95,171 @@ beforeAll(async() => { filesDb = new PGlite(); f.app = new PGlite() }, 60_000);
 afterAll(async() => { await filesDb?.close(); await f.app?.close() });
 beforeEach(async() => {
   await filesDb.exec('DROP TABLE IF EXISTS collections, file_roots, collection_acl;'); await filesDb.exec(FILES_SCHEMA);
-  await f.app.exec('DROP TABLE IF EXISTS use_case_files_state, agent_definitions;'); await f.app.exec(APP_SCHEMA);
+  await f.app.exec('DROP TABLE IF EXISTS use_case_files_state, agent_definitions, agent_builtin_seed_ledger, sulla_settings, skill_definitions, workflows, function_definitions, recipe_definitions;'); await f.app.exec(APP_SCHEMA);
   calls = []; areas = []; f.routes = [];
+});
+
+async function migratedPackage(completed: boolean) {
+  await f.app.exec(`
+    ALTER TABLE agent_definitions ADD COLUMN is_builtin boolean DEFAULT false, ADD COLUMN builtin_hash text;
+    CREATE TABLE agent_builtin_seed_ledger(slug text PRIMARY KEY);
+    CREATE TABLE sulla_settings(property text PRIMARY KEY,value text);
+    CREATE TABLE skill_definitions(slug text, enabled boolean, deleted_at timestamptz, updated_at timestamptz, use_case_file_id uuid, use_case_version_id uuid, frontmatter jsonb);
+    CREATE TABLE workflows(id text,enabled boolean,status text,updated_at timestamptz,use_case_file_id uuid);
+    CREATE TABLE function_definitions(slug text,enabled boolean,updated_at timestamptz,use_case_file_id uuid,use_case_version_id uuid);
+    CREATE TABLE recipe_definitions(LIKE function_definitions);
+  `);
+  if (completed) await f.app.exec('UPDATE use_case_files_state SET initial_export_completed_at=now()');
+  await f.app.query(`INSERT INTO agent_definitions(id,slug,name,is_builtin,use_case_file_id,use_case_version_id,status,system_prompt)
+    VALUES ('original','opus-worker','Opus Worker',true,$1,$2,'production','original prompt')`, [FILE, V1]);
+  await f.app.transaction((tx: import('pg').PoolClient) => renameBuiltins(tx));
+}
+
+const JSON_FILE = '00000000-0000-4000-8000-000000000003';
+const V2 = '00000000-0000-4000-8000-000000000002';
+const folder = 'Use Cases/agents/opus-worker/';
+const yamlRoot = { id: FILE, path: folder + 'agent.yaml', published_version_id: V1 };
+const jsonRoot = { id: JSON_FILE, path: folder + 'agent.json', published_version_id: V2 };
+const winner = JSON.stringify({ apiVersion: 'sulla/v3', kind: 'Agent', metadata: { slug: 'opus-worker', title: 'Opus Worker' }, spec: { prompt: 'JSON prompt' } });
+const readRows = async() => (await f.app.query('SELECT id,slug,system_prompt,use_case_file_id,use_case_version_id,status,enabled FROM agent_definitions ORDER BY id')).rows;
+const original = { id: 'original', slug: 'advisor', system_prompt: 'original prompt', use_case_file_id: FILE, use_case_version_id: V1, status: 'production', enabled: true };
+interface Root { id: string; path: string; published_version_id: string | null; deleted_at?: string }
+
+function publication(rows: Root[] = [yamlRoot, jsonRoot], content = winner) {
+  const announce = vi.fn();
+  const audits: any[] = [];
+  const response = (endpoint: string, init?: RequestInit) => {
+    if (endpoint === '/v1/local/system-areas') return Response.json([{ id: HOME, systemArea: 'sulla' }]);
+    if (endpoint.startsWith('/v1/files?')) return Response.json(rows);
+    if (endpoint.startsWith('/v1/files/publish-requests?')) return Response.json({ requests: [{ file_id: JSON_FILE, version_id: V2, path: jsonRoot.path, status: 'approved' }] });
+    if (endpoint === '/v1/local/system-areas/audit') { audits.push(JSON.parse(String(init?.body))); return Response.json({ ok: true }) }
+    const row = rows.find(r => endpoint.startsWith('/v1/files/' + r.id));
+    if (!row) throw new Error(endpoint);
+    if (endpoint.includes('/preview?')) return new Response(row.id === JSON_FILE ? content : 'slug: opus-worker\nname: Opus Worker\nsystemPrompt: YAML prompt');
+    return Response.json(row);
+  };
+  const scanner = () => new SullaUseCaseFiles((endpoint, init) => Promise.resolve(response(endpoint, init)), { announce });
+  return { scan: () => scanner().scan(), scanner, announce, audits };
+}
+
+describe('publication ownership after the identity migration', () => {
+  it('defers a new approved winner beside the owned root while export is pending', async() => {
+    await migratedPackage(false);
+    const { scan, announce } = publication();
+    for (let pass = 0; pass < 2; pass++) {
+      await scan();
+      expect(await readRows()).toEqual([original]);
+      expect((await f.app.query('SELECT initial_export_completed_at FROM use_case_files_state')).rows[0].initial_export_completed_at).toBeNull();
+    }
+    expect(f.routes).toEqual([]);
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it('projects the new winner onto the original ID after export is completed', async() => {
+    await migratedPackage(true);
+    const { scan, announce } = publication();
+    for (let pass = 0; pass < 2; pass++) {
+      await scan();
+      expect(await readRows()).toEqual([{ ...original, system_prompt: 'JSON prompt', use_case_file_id: JSON_FILE, use_case_version_id: V2 }]);
+      expect(announce).not.toHaveBeenCalledWith(expect.objectContaining({ change: 'deleted' }));
+    }
+  });
+
+  it('audits the invalid winner without archiving the last good row', async() => {
+    await migratedPackage(true);
+    const { scan, announce, audits } = publication(undefined, '{');
+    await expect(scan()).rejects.toThrow(/retry/);
+    expect(await readRows()).toEqual([original]);
+    expect(audits).toContainEqual(expect.objectContaining({ fileId: JSON_FILE, versionId: V2 }));
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('does not resurrect an editor-removed owner (completed: %s)', async(completed) => {
+    await migratedPackage(completed);
+    await f.app.exec(`UPDATE agent_definitions SET config='{"removedFromEditor":true}',status='archive',enabled=false`);
+    const { scan, announce } = publication();
+    await scan();
+    expect(await readRows()).toEqual([{ ...original, status: 'archive', enabled: false }]);
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('defers a secondary-root match if the legacy row owns the winner (completed: %s)', async(completed) => {
+    await migratedPackage(completed);
+    await f.app.query(`INSERT INTO agent_definitions(id,slug,name,use_case_file_id,use_case_version_id,status,enabled)
+      VALUES ('second','opus-worker','Other',$1,$2,'archive',false)`, [JSON_FILE, V2]);
+    const before = await readRows();
+    const { scan, announce } = publication();
+    if (completed) await expect(scan()).rejects.toThrow(/retry/);
+    else await scan();
+    expect(await readRows()).toEqual(before);
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it('projects the sole owner’s updated YAML when the loader skips an unclaimed empty JSON root', async() => {
+    await migratedPackage(true);
+    const updatedYaml = { ...yamlRoot, published_version_id: '00000000-0000-4000-8000-000000000005' };
+    const { scan, audits } = publication([updatedYaml, jsonRoot], '');
+
+    await scan();
+    expect(await readRows()).toEqual([{ ...original, system_prompt: 'YAML prompt', use_case_version_id: updatedYaml.published_version_id }]);
+    expect(audits).toEqual([]);
+    expect((await f.app.query('SELECT last_error FROM use_case_files_state')).rows[0].last_error).toBeNull();
+  });
+
+  it('preserves both published rows when the loader skips the checked root', async() => {
+    await migratedPackage(true);
+    const yml = { ...yamlRoot, path: folder + 'agent.yml' };
+    const yaml = { ...yamlRoot, id: '00000000-0000-4000-8000-000000000004', published_version_id: V2 };
+    await f.app.query(`INSERT INTO agent_definitions(id,slug,name,use_case_file_id,use_case_version_id,status,enabled,system_prompt)
+      VALUES ('second','opus-worker','Other',$1,$2,'production',true,'second prompt')`, [yaml.id, V2]);
+    const before = await readRows();
+    const { scanner, announce, audits } = publication([yml, yaml, jsonRoot], '');
+    const first = scanner();
+    for (const service of [first, first, scanner()]) {
+      await expect(service.scan()).rejects.toThrow('Use Case activation will retry for: agents/opus-worker');
+      expect(await readRows()).toEqual(before);
+      expect(announce).not.toHaveBeenCalled();
+      expect(audits).toEqual([expect.objectContaining({ action: 'use-case-index-error', fileId: yaml.id, versionId: V2 })]);
+    }
+  });
+
+  it('preserves both owners when the loader selects canonical YAML and the folder row owns YML', async() => {
+    await migratedPackage(true);
+    const yaml = { ...yamlRoot, published_version_id: '00000000-0000-4000-8000-000000000005' };
+    const yml = { ...yamlRoot, id: '00000000-0000-4000-8000-000000000004', path: folder + 'agent.yml' };
+    await f.app.query(`INSERT INTO agent_definitions(id,slug,name,use_case_file_id,use_case_version_id,status,enabled,system_prompt)
+      VALUES ('second','opus-worker','Other',$1,$2,'production',true,'second prompt')`, [yml.id, yml.published_version_id]);
+    const { scan, announce } = publication([yaml, yml, jsonRoot], '');
+
+    await expect(scan()).rejects.toThrow('Use Case activation will retry for: agents/opus-worker');
+    expect(await readRows()).toEqual([original, {
+      id: 'second', slug: 'opus-worker', system_prompt: 'second prompt', use_case_file_id: yml.id,
+      use_case_version_id: yml.published_version_id, status: 'production', enabled: true,
+    }]);
+    expect(announce).not.toHaveBeenCalledWith(expect.objectContaining({ change: 'deleted' }));
+  });
+
+  it.each([
+    { label: 'unrelated root', row: { ...yamlRoot, id: HOME } },
+    { label: 'nested decoy', row: { ...yamlRoot, path: folder + 'nested/agent.yaml' } },
+    { label: 'draft', row: { ...yamlRoot, published_version_id: null } },
+    { label: 'deleted root', row: { ...yamlRoot, deleted_at: '2026-01-01' } },
+  ])('keeps ordinary folder behavior without an owned live root: $label', async({ row }) => {
+    await migratedPackage(true);
+    await publication([row, jsonRoot]).scan();
+    const rows = await readRows();
+    expect(rows).toHaveLength(2);
+    expect(rows).toContainEqual({ ...original, enabled: false, status: 'archive' });
+    expect(rows).toContainEqual(expect.objectContaining({ slug: 'opus-worker', enabled: true, use_case_file_id: JSON_FILE, system_prompt: 'JSON prompt' }));
+  });
+
+  it('archives the original when its package is genuinely gone', async() => {
+    await migratedPackage(true);
+    const { scan, announce } = publication([]);
+    await scan();
+    expect(await readRows()).toEqual([{ ...original, enabled: false, status: 'archive' }]);
+    expect(announce).toHaveBeenCalledWith({ type: 'agent', slug: 'advisor', change: 'deleted' });
+  });
 });
 
 describe('Use Cases home collection from the Files system-areas producer', () => {
@@ -109,6 +273,24 @@ describe('Use Cases home collection from the Files system-areas producer', () =>
     expect(calls.some(call => call.startsWith('GET /v1/files?') && call.includes(`collectionId=${ HOME }`))).toBe(true);
     expect(await agents()).toEqual([{ slug: SLUG, use_case_file_id: FILE }]);
     expect(f.routes).toHaveLength(1);
+  });
+
+  it('keeps the migrated built-in active across a scan and a legacy-path republish', async() => {
+    await migratedPackage(true);
+    let version = V1;
+    const scanner = new SullaUseCaseFiles(async(endpoint) => {
+      const row = { id:FILE, path:'Use Cases/agents/opus-worker/agent.yaml', published_version_id:version };
+      if (endpoint === '/v1/local/system-areas') return Response.json([{ id:HOME, systemArea:'sulla' }]);
+      if (endpoint.startsWith('/v1/files?')) return Response.json([row]);
+      if (endpoint.startsWith(`/v1/files/${ FILE }/preview`)) return new Response(`slug: opus-worker\nname: Opus Worker\nsystemPrompt: ${ version }\n`);
+      if (endpoint === `/v1/files/${ FILE }`) return Response.json(row);
+      throw new Error(endpoint);
+    });
+    for (version of [V1, '00000000-0000-4000-8000-000000000002']) {
+      await scanner.scan();
+      expect((await f.app.query('SELECT id,slug,name,enabled,status,system_prompt FROM agent_definitions')).rows)
+        .toEqual([{ id:'original',slug:'advisor',name:'Advisor',enabled:true,status:'production',system_prompt:version }]);
+    }
   });
 
   it.each([

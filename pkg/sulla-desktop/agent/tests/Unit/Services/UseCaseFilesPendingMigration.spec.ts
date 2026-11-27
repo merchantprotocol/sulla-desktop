@@ -46,14 +46,16 @@ vi.mock('@pkg/agent/database/repositories/UseCaseRemovalRepository', () => ({ Us
 vi.mock('@pkg/main/marketplace/databaseArtifacts', () => ({ readDatabaseArtifact: vi.fn(async() => { f.exportReads++; throw new Error('legacy export must not run') }) }));
 // Owner mapping store with the real ownership rule: a different agent's mapping is preserved.
 vi.mock('@pkg/agent/services/WorkerModelRouting', () => ({ workerModelRouting: {
-  initializeBindingForPublishedPackage: vi.fn(async(slug: string, agentId: string, candidates: unknown[], pendingPublication?: { fileId: string; versionId: string }) => {
-    f.routes.push([slug, agentId, candidates]);
+  reconcilePublishedPackageBinding: vi.fn(async(slug: string, agentId: string, declared: { candidates: unknown[] } | undefined, publication: { fileId: string; versionId: string }, options: { pending?: boolean; project?: (client: any) => Promise<void> } = {}) => {
+    if (!declared) return { outcome: 'unchanged' };
+    f.routes.push([slug, agentId, declared.candidates]);
     const owner = f.owned.get(slug);
     if (owner && owner.agentId !== agentId) throw new Error('A different agent already owns this worker mapping; it was preserved.');
-    if (owner) return { created: false };
+    if (owner) return { outcome: 'unchanged' };
     const binding = { editToken: `token-${ agentId }`, revision: 1 };
-    f.owned.set(slug, { agentId, editToken: binding.editToken, ...(pendingPublication ? { pendingPublication } : {}) });
-    return { created: true, binding };
+    if (options.project) await f.db.transaction(options.project);
+    f.owned.set(slug, { agentId, editToken: binding.editToken, ...(options.pending ? { pendingPublication: publication } : {}) });
+    return { outcome: 'written', written: binding };
   }),
   assertReusablePublicationMapping: vi.fn(async(slug: string, agentId: string, requested: { fileId: string; versionId: string }) => {
     const marker = f.owned.get(slug)?.agentId === agentId ? f.owned.get(slug)?.pendingPublication : undefined;
@@ -83,7 +85,7 @@ const SCHEMA = `
     soul_content TEXT NOT NULL DEFAULT '', allowed_tools TEXT[] NOT NULL DEFAULT '{}', skill_refs TEXT[] NOT NULL DEFAULT '{}', routine_refs TEXT[] NOT NULL DEFAULT '{}',
     model_priority JSONB NOT NULL DEFAULT '[]'::jsonb, version TEXT, status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','production','archive')),
     enabled BOOLEAN NOT NULL DEFAULT TRUE, config JSONB NOT NULL DEFAULT '{}'::jsonb, prompt_content TEXT NOT NULL DEFAULT '', goals_content TEXT NOT NULL DEFAULT '',
-    prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb, provider TEXT, model TEXT, model_slot TEXT,
+    prompt_files JSONB NOT NULL DEFAULT '{}'::jsonb, provider TEXT, model TEXT, model_slot TEXT, model_choice JSONB, agent_awareness BOOLEAN NOT NULL DEFAULT TRUE,
     source_kind TEXT NOT NULL DEFAULT 'local' CHECK (source_kind IN ('local','filesystem-import','marketplace')),
     when_to_call TEXT NOT NULL DEFAULT '', when_not_to_call TEXT NOT NULL DEFAULT '', send TEXT NOT NULL DEFAULT '', returns TEXT NOT NULL DEFAULT '',
     cost_tier TEXT CHECK (cost_tier IS NULL OR cost_tier IN ('low','medium','high')), can_call TEXT[] NOT NULL DEFAULT '{}', front_door BOOLEAN,

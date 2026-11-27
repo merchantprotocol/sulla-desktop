@@ -139,6 +139,23 @@ describe('ThemeStore', () => {
     expect(ThemeStore.migrateLegacyTheme('nord-dark')).toBeNull();
   });
 
+  it.each(['ocean-dark', 'nord-light', 'invalid'])('applies the cached theme %s before consulting settings', (cached) => {
+    const classes = new Set(['theme-noir-dark', 'dark']);
+    vi.stubGlobal('document', { documentElement: { classList: { add: (name: string) => classes.add(name), remove: (name: string) => classes.delete(name) } } });
+    vi.stubGlobal('localStorage', { getItem: () => cached });
+    try {
+      const settings = { get: vi.fn(), set: vi.fn() };
+      const store = new ThemeStore(settings);
+      store.applyCachedTheme();
+      const expected = cached === 'invalid' ? DEFAULT_THEME : cached;
+      expect(classes.has(`theme-${ expected }`)).toBe(true);
+      expect(classes.has('dark')).toBe(expected.endsWith('-dark'));
+      expect(settings.get).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('loads a saved theme, migrating a legacy value, and falls back to the default', async() => {
     const storage = new Map<string, string>();
     vi.stubGlobal('localStorage', { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => storage.set(k, v) });

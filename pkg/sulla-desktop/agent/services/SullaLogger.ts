@@ -36,7 +36,7 @@ import { autoTitleAfterMessages } from './ConversationTitleService';
 import { TitleMessageBuffer } from './TitleMessageBuffer';
 import { FileConversationEventAppender, type ConversationEventAppender } from './ConversationEventAppender';
 import { ToolCallLogWriter } from './ToolCallLogWriter';
-import { ConversationHistoryModel } from '../database/models/ConversationHistoryModel';
+import { ConversationHistoryModel, type GraphHistoryOrigin } from '../database/models/ConversationHistoryModel';
 import { resolveSullaLogsDir } from '../utils/sullaPaths';
 
 // ── Types ──
@@ -461,7 +461,7 @@ class SullaLogger extends EventEmitter {
   }
 
   /** Start a new conversation — writes an entry to the index. */
-  start(meta: ConversationMeta): void {
+  start(meta: ConversationMeta, graphOrigin?: GraphHistoryOrigin): void {
     // Subconscious agents (memory-recall, V7 memory writer, summarizer,
     // tool-result digester) run as ephemeral `subconscious_*` conversations.
     // They are internal machinery, never user-facing history — never record
@@ -477,6 +477,7 @@ class SullaLogger extends EventEmitter {
       // Record to conversation history DB (fire-and-forget)
       const logFile = this.resolveJsonlPath(meta.id);
       ConversationHistoryModel.recordConversation({
+        graphOrigin,
         id:         meta.id,
         type:       meta.type,
         title:      meta.name,
@@ -582,7 +583,7 @@ class SullaLogger extends EventEmitter {
     });
   }
 
-  logGraphStarted(conversationId: string, agentName: string, opts?: { agentId?: string; channel?: string; parentId?: string }): void {
+  logGraphStarted(conversationId: string, agentName: string, opts?: { agentId?: string; channel?: string; parentId?: string; graphOrigin?: GraphHistoryOrigin }): void {
     this.start({
       id:        conversationId,
       type:      'graph',
@@ -592,7 +593,7 @@ class SullaLogger extends EventEmitter {
       parentId:  opts?.parentId,
       startedAt: new Date().toISOString(),
       status:    'running',
-    });
+    }, opts?.graphOrigin);
     this.log(conversationId, {
       ts:      new Date().toISOString(),
       type:    'graph_started',

@@ -13,6 +13,8 @@
  * - Listens for state-changed broadcasts to keep the UI in sync
  */
 
+import { findAgentBySlug } from '@pkg/shared/agentJobNames';
+
 import { computed, ref } from 'vue';
 
 import { MODEL_DEFAULTS_CHANGED, MODEL_DEFAULTS_IPC, type ModelDefaultsState } from '@pkg/agent/languagemodels/modelDefaultsTypes';
@@ -45,6 +47,7 @@ export interface AgentOption {
   id:          string;
   slug:        string;
   name:        string;
+  isBuiltin?:  boolean;
   description: string;
   provider:    string | null;
   model:       string | null;
@@ -90,7 +93,7 @@ export class AgentModelSelectorController {
     onSelectForChat?: (selection: { providerId: string; modelId: string; agentId: string | null; label: string }) => void;
   }) {
     this.activeModelLabel = computed(() => {
-      const agent = this.agentOptions.value.find(item => item.slug === this.activeAgentId.value);
+      const agent = findAgentBySlug(this.agentOptions.value, this.activeAgentId.value);
       if (agent) return agent.name;
       const provider = this.activePrimaryProvider.value;
       const model = this.activeModelId.value;
