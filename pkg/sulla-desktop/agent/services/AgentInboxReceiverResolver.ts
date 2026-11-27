@@ -60,13 +60,17 @@ export class DurableAgentInboxReceiverResolver implements AgentInboxReceiverReso
     // otherwise (the waker was a different channel) fall through to normal bare-name routing.
     const replyMatch = replyToThreadId ? unique.find(candidate => candidate.threadId === replyToThreadId) : undefined;
     if (replyMatch) return { channel, threadId: replyMatch.threadId, agentId: channel, jobId: replyMatch.jobId, label: replyMatch.label };
-    const active = unique.filter(candidate => candidate.jobId || candidate.executing || candidate.manager);
-    if (active.length > 1) throw new AmbiguousAgentInboxTargetError(channel, active);
-    if (active.length === 1) return { channel, threadId: active[0].threadId, agentId: channel, jobId: active[0].jobId, label: active[0].label };
-    if (unique.length > 0) {
+    const bound = unique.filter(candidate => candidate.jobId || candidate.manager);
+    const executing = unique.filter(candidate => candidate.executing);
+    const ambiguous = bound.length > 1 ? bound : executing.length > 1 ? executing : [];
+    if (ambiguous.length > 1) throw new AmbiguousAgentInboxTargetError(channel, ambiguous);
+    const preferred = bound.length ? bound : executing;
+    if (preferred.length === 1) return { channel, threadId: preferred[0].threadId, agentId: channel, jobId: preferred[0].jobId, label: preferred[0].label };
+    if (!bound.length && !executing.length && unique.length > 0) {
       const latest = unique[unique.length - 1];
       return { channel, threadId: latest.threadId, agentId: channel, jobId: latest.jobId, label: latest.label };
     }
+    if (unique.length === 1) return { channel, threadId: unique[0].threadId, agentId: channel };
     return { channel, agentId: channel };
   }
 }
