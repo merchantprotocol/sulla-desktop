@@ -24,6 +24,8 @@ RUN cd packages/vault-crypto && npm prune --omit=dev \
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
+# DNS, crypto and filesystem work share the libuv thread pool.
+ENV UV_THREADPOOL_SIZE=16
 WORKDIR /app/services/sulla-vault
 RUN apk add --no-cache su-exec
 COPY --from=build /app/services/sulla-vault/package.json ./package.json
