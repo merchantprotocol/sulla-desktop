@@ -21,6 +21,15 @@ describe('ToolStepClock', () => {
     expect(clock.durationLabel(clock.elapsedMs(1_000))).toBe('1m 00s');
   });
 
+  it('uses the persisted tool start instead of a later observation timestamp', () => {
+    // risk: data accuracy — late renderer observation must not under-report tool elapsed time.
+    const clock = new ToolStepClock(() => 61_000);
+    const observedLate = toolEvent({ observedAt: 45_000, startedAt: 1_000 });
+
+    expect(clock.elapsed(observedLate, 61_000)).toBe(60_000);
+    expect(clock.durationLabel(clock.elapsed(observedLate, 61_000))).toBe('1m 00s');
+  });
+
   it('keeps legacy fallback labels to tool names and Sulla tool identifiers', () => {
     // risk: privacy — old rows without meta.step must never turn a path, URL, or command into a visible label.
     const clock = new ToolStepClock();
@@ -65,7 +74,7 @@ describe('ToolStepClock', () => {
 
   it('selects the latest unfinished root or sub-agent tool step and clears it on its result', () => {
     // risk: user-visible silence — the status line must prefer the newest still-running step across the whole thread tree.
-    const clock = new ToolStepClock();
+    const clock = new ToolStepClock(() => 5_000);
     const parentStart = toolEvent({ key: 'parent-start', correlationId: 'parent-step', observedAt: 1_000 });
     const workerStart = toolEvent({ key: 'worker-start', threadId: 'parent', agentId: 'job-1:0', agentName: 'Worker',
       correlationId: 'worker-step', observedAt: 2_000, role: 'worker' });
@@ -82,5 +91,32 @@ describe('ToolStepClock', () => {
     const workerResult = { ...workerStart, key: 'worker-result', phase: 'result' as const, observedAt: 4_000 };
     clock.observe([workerResult]);
     expect(clock.currentStep('parent')).toBeNull();
+  });
+
+  it('clears active steps when an agent row becomes terminal', () => {
+    // risk: false status — stopped workers and lost results must not leave an eternal running indicator.
+    const clock = new ToolStepClock(() => 2_000);
+    const start = toolEvent({ startedAt: 1_000 });
+    clock.observe([start]);
+    expect(clock.currentStep('parent')).toEqual(start);
+
+    clock.observe([toolEvent({ key: 'worker-terminal', agentTerminal: true, phase: undefined, correlationId: undefined, observedAt: 1_500 })]);
+    expect(clock.currentStep('parent')).toBeNull();
+  });
+
+  it('expires active steps past the safety ceiling', () => {
+    // risk: false status — a missing/coalesced result must not leave an eternal running indicator.
+    const expiredClock = new ToolStepClock(() => ToolStepClock.maximumRunningMs + 1_001);
+    expiredClock.observe([toolEvent({ startedAt: 1_000 })]);
+    expect(expiredClock.currentStep('parent')).toBeNull();
+  });
+
+  it('lets needs-you or failed urgency supersede a running tool step', () => {
+    // risk: blocked work — a live tool timer must not hide a user decision or a failed-agent alert.
+    const clock = new ToolStepClock(() => 2_000);
+    clock.observe([toolEvent({ startedAt: 1_000 })]);
+    const urgent = toolEvent({ key: 'needs-human', phase: undefined, correlationId: undefined, urgency: 'needs-you', text: 'Choose an option' });
+
+    expect(clock.selectDisplayItem('parent', urgent, null)).toEqual({ item: urgent, toolStep: false, urgent: true });
   });
 });
