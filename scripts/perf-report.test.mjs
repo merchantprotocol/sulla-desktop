@@ -5,11 +5,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { PerfLogReader, TurnTimingAggregator } from './perf-report.mjs';
+import { PerfLogReader, PerfReportCli, TurnTimingAggregator } from './perf-report.mjs';
 
 const fixturePath = fileURLToPath(new URL('./fixtures/perf-report.log', import.meta.url));
 const reader = new PerfLogReader();
-const parsed = reader.parseLines(readFileSync(fixturePath, 'utf8').split(/\r?\n/));
+const fixtureText = readFileSync(fixturePath, 'utf8');
+const parsed = reader.parseLines(fixtureText.split(/\r?\n/));
 const aggregator = new TurnTimingAggregator();
 const report = aggregator.aggregate(parsed.turns, parsed.bridgeTimings);
 
@@ -30,10 +31,25 @@ test('records group by provider and then by surface; filters keep the selected s
   assert.deepEqual(filtered.turnTiming.map(group => [group.provider, group.n]), [['codex', 2]]);
 });
 
-test('malformed timing and unrelated lines are skipped without entering the sample count', () => {
-  // risk: data accuracy — partial/corrupt lines must not contaminate aggregate counts.
-  assert.equal(parsed.skippedLines, 3);
+test('malformed timing records are skipped while unrelated log lines are counted separately', () => {
+  // risk: data accuracy — malformed records must be excluded without treating ordinary log traffic as corruption.
+  assert.equal(parsed.skippedLines, 2);
+  assert.equal(parsed.ignoredLines, 1);
   assert.equal(report.turnTiming.reduce((total, group) => total + group.n, 0), 3);
+});
+
+test('JSON report exposes ignored lines separately from malformed timing records', async () => {
+  // risk: data accuracy — readers need to distinguish bad records from unrelated log volume.
+  let output = '';
+  const cli = new PerfReportCli({
+    reader: new PerfLogReader({ readFile: () => fixtureText }),
+    write: text => { output += text; },
+  });
+
+  assert.equal(await cli.run(['--json']), 0);
+  const jsonReport = JSON.parse(output);
+  assert.equal(jsonReport.skippedLines, 2);
+  assert.equal(jsonReport.ignoredLines, 1);
 });
 
 test('request and tool durations use turn-relative timestamps, not absolute offsets', () => {
