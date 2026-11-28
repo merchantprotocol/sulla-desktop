@@ -118,11 +118,12 @@ export class PersonaAdapter {
   constructor(
     private readonly controller: ChatController,
     opts: PersonaAdapterOptions = {},
+    chatInterface?: ChatInterface,
   ) {
     this.tabId = opts.tabId;
     this.supportOptions = { ...opts };
     this.optimisticSendFeedback = new OptimisticSendFeedback(this.controller);
-    this.ci = new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
+    this.ci = chatInterface ?? new ChatInterface(opts.channelId ?? 'sulla-desktop', opts.tabId);
     this.persistentArtifacts = new Set(
       this.controller.artifacts.value.list.filter(artifact => artifact.persistent).map(artifact => artifact.id),
     );
@@ -192,16 +193,21 @@ export class PersonaAdapter {
     // this fires at most twice per turn, and the run-state/UI should not
     // wait a frame behind it.
     this.stopWatchers.push(
-      watch(() => this.ci.graphRunning.value, (running) => {
+      watch(() => this.ci.graphRunning.value, (running, previous) => {
         this.syncRunState(running);
         // Only transient streaming/thinking projections depend on run state.
         for (const message of this.ci.messages.value) {
           if (message.kind === 'streaming' || message.kind === 'thinking') this.lastRawSignature.delete(message.id);
         }
         this.messageSyncScheduler.flush();
-        // Only the backend's idle signal can distinguish a stale persisted
-        // tool card from a live call rehydrated by another renderer.
-        if (!running) this.controller.settleInterruptedToolSteps();
+        // graphRunning starts false in each renderer, so its immediate value
+        // cannot distinguish a stale card from a call still live in another
+        // renderer. Settle only on a real backend true→false transition.
+        if (previous === true && !running) {
+          this.controller.settleInterruptedToolSteps();
+          const threadId = this.ci.threadId.value;
+          if (threadId) window.dispatchEvent(new CustomEvent('sulla:chat-run-ended', { detail: { threadId } }));
+        }
         if (opts.tabId) {
           window.dispatchEvent(new CustomEvent('sulla:chat-running', {
             detail: { tabId: opts.tabId, running },
