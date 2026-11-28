@@ -185,8 +185,8 @@ describe('DetailedTraceProjection', () => {
     expect(row).toMatchObject({ kind: 'activity', target: 'shell' });
     expect(row.target).not.toContain(command);
   });
-  it('uses terminal card status instead of keeping a step running from incomplete timing metadata', () => {
-    // risk: false status — an aborted or failed card must not keep ticking when endedAt was never persisted.
+  it('uses the card status without a step result and the persisted outcome when it exists', () => {
+    // risk: false status — incomplete step metadata must not tick, while a persisted result remains authoritative.
     const interrupted = { kind: 'tool', id: 'step-card-error', createdAt: 1, recordedToolName: 'exec', tool: 'Bash',
       desc: 'Running command', status: 'error', input: '{"command":"git status"}',
       meta: { step: { stepId: 'step-2', runId: 'run-1', provider: 'codex', source: 'codex_cli', safeLabel: 'git', startedAt: 1_000 } } } as const;
@@ -196,8 +196,19 @@ describe('DetailedTraceProjection', () => {
     const rows = new DetailedTraceProjection().project([interrupted, staleResult] as never, []).flatMap(turn => turn.rows);
 
     expect(rows).toHaveLength(2);
-    expect(rows.map(row => row.status)).toEqual(['failed', 'failed']);
+    expect(rows.map(row => row.status)).toEqual(['failed', 'ok']);
     expect(rows.map(row => row.at)).toEqual([1_000, 1_000]);
+  });
+  it('uses the persisted step result when a running card already has an end timestamp', () => {
+    // risk: false status — a completed step must not keep ticking because its card still says running.
+    const tool = (id: string, ok: boolean) => ({
+      kind: 'tool', id, createdAt: 1, recordedToolName: 'exec', tool: 'Bash', desc: 'Running command', status: 'running',
+      meta: { step: { stepId: id, runId: 'run-1', provider: 'codex', source: 'codex_cli', safeLabel: 'git',
+        startedAt: 1_000, endedAt: 2_000, durationMs: 1_000, ok } },
+    } as const);
+    const rows = new DetailedTraceProjection().projectRows([tool('ended-ok', true), tool('ended-failed', false)] as never, []);
+
+    expect(rows.map(row => row.status)).toEqual(['ok', 'failed']);
   });
   it('reads the exit code exechost writes into its output', () => {
     // risk: a failed host command shown without the code it exited with.
