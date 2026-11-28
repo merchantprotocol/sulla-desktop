@@ -36,6 +36,7 @@ import { resolveCodexExecutionAuth, type CodexExecutionAuth } from './codexExecu
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { RecallDedupe } from '../utils/recallDedupe';
 import { markSteerDelivered, markSteerPending, onSteer } from '../utils/steerChannel';
+import { UsageRecorder } from './UsageRecorder';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -149,6 +150,7 @@ const STEER_RESUME_NOTE = '[Steering message] The user sent the message below wh
 export class CodexService extends BaseLanguageModel {
   private readonly toolEventEmitter = new CodexToolEventEmitter();
   private readonly agentAwarenessPolicy: AgentAwarenessPolicy;
+  private readonly usageRecorder = new UsageRecorder(line => perf.log(line));
   override managesOwnLoop(): boolean {
     return true;
   }
@@ -550,6 +552,26 @@ export class CodexService extends BaseLanguageModel {
    * twice.
    */
   private serializeFullTranscript(messages: ChatMessage[], stage?: ImageStager): string {
+    const MAX_TOOL_PAYLOAD_BYTES = 16 * 1024;
+    const TOOL_PAYLOAD_HEAD_BYTES = 8 * 1024;
+
+    const pointerFor = (payload: unknown): string | undefined => {
+      const serialized = typeof payload === 'string' ? payload : JSON.stringify(payload ?? '');
+      const pointer = serialized.match(/(?:sulla-file:\/\/|sulla-artifact:\/\/|conversation-log:\/\/)[^\s<>"']+/)?.[0];
+      return pointer && Buffer.byteLength(pointer, 'utf8') <= 1024 ? pointer : undefined;
+    };
+
+    const truncateToolPayload = (payload: string, source: unknown): string => {
+      const payloadBytes = Buffer.from(payload, 'utf8');
+      if (payloadBytes.byteLength <= MAX_TOOL_PAYLOAD_BYTES) return payload;
+
+      let head = payloadBytes.subarray(0, TOOL_PAYLOAD_HEAD_BYTES).toString('utf8');
+      while (Buffer.byteLength(head, 'utf8') > TOOL_PAYLOAD_HEAD_BYTES) head = head.slice(0, -1);
+      const pointer = pointerFor(source);
+      const reference = pointer ? ` reference=${ pointer }` : '';
+      return `${ head }\n[truncated originalBytes=${ payloadBytes.byteLength }${ reference }]`;
+    };
+
     const blockToText = (b: any): string => {
       if (typeof b === 'string') return b;
       if (!b || typeof b !== 'object') return '';
@@ -561,11 +583,14 @@ export class CodexService extends BaseLanguageModel {
       if (b.type === 'tool_use') {
         const name = b.name ?? 'tool';
         const input = b.input ? JSON.stringify(b.input) : '';
-        return `[tool_use ${ name }${ input ? ` ${ input }` : '' }]`;
+        return `[tool_use ${ name }${ input ? ` ${ truncateToolPayload(input, b.input) }` : '' }]`;
       }
       if (b.type === 'tool_result') {
-        if (typeof b.content === 'string') return `[tool_result] ${ b.content }`;
-        if (Array.isArray(b.content)) return `[tool_result] ${ b.content.map(blockToText).filter(Boolean).join('\n') }`;
+        if (typeof b.content === 'string') return `[tool_result] ${ truncateToolPayload(b.content, b) }`;
+        if (Array.isArray(b.content)) {
+          const content = b.content.map(blockToText).filter(Boolean).join('\n');
+          return `[tool_result] ${ truncateToolPayload(content, b) }`;
+        }
       }
       return '';
     };
@@ -1208,9 +1233,17 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             assistantMessages.finishPendingMessage();
             sawTerminalResult = true;
             outcome.recordCompletion();
-            // Recorded once on close — codex can emit several usage events
-            // per run (one per model call) and each carries cumulative totals.
+            // Keep the last snapshot for the usage registry; Codex can emit
+            // several cumulative usage events (one per model call) per run.
             lastUsage = parsed.usage;
+            this.usageRecorder.recordCodex(lastUsage, {
+              runId:      options.state?.metadata?.turnRunId,
+              convId,
+              threadId:   capturedSessionId ?? existingSession,
+              model:      this.launchModel() || this.getModel(),
+              effort:     this.getEffort(),
+              sessionMode: retryWithoutSession ? 'reseed' : existingSession ? 'resume' : 'new',
+            });
             return;
           }
           if (parsed.type === 'turn.failed') {
@@ -1507,7 +1540,9 @@ async function recordUsage(usage: any, model: string): Promise<void> {
   await recordCliUsage('codex', {
     input_tokens:        typeof usage.input_tokens === 'number' ? usage.input_tokens : undefined,
     output_tokens:       typeof usage.output_tokens === 'number' ? usage.output_tokens : undefined,
-    cached_input_tokens: typeof usage.cached_input_tokens === 'number' ? usage.cached_input_tokens : undefined,
+    cached_input_tokens: typeof usage.cached_input_tokens === 'number'
+      ? usage.cached_input_tokens
+      : typeof usage.input_tokens_details?.cached_tokens === 'number' ? usage.input_tokens_details.cached_tokens : undefined,
     model,
   });
 }
