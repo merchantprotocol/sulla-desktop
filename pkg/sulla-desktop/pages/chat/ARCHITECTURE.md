@@ -178,3 +178,41 @@ Feature flag: `useNewChatUI` (setting). Old path untouched until phase 5.
 2. HTML artifact sandboxing — iframe + CSP, reusing `HtmlMessageRenderer.vue`.
 3. Workflow artifact live updates — need a dedicated WebSocket channel for routine execution events.
 4. History rail virtualization kicks in at ~50 threads.
+
+## Browser chat preview (Sulla VM only)
+
+The preview uses the renderer's Webpack dev server with its own web target and
+entry point (like the Files and theme previews). It mounts the real ChatPage,
+Transcript, and Composer with synthetic data. Preview-only aliases replace
+Electron IPC, settings, the legacy persona runtime, and live workflow events.
+No Electron, Lima, Playwright, browser downloads, or app postinstall are needed.
+
+From the repository root **inside the VM**, using Node 22:
+
+```sh
+npm ci --prefix scripts/chat-preview --ignore-scripts --cache /tmp/sulla-chat-preview-npm
+npm --prefix scripts/chat-preview start
+```
+
+Open `http://127.0.0.1:8888/chat-preview.html?theme=default-light&fixture=agent`.
+Use the toolbar or the `theme`, `fixture` (`long` or `agent`), and `dock`
+(`bottom` or `side`) query parameters. Reloading resets the selected fixture.
+Source links use reserved placeholder URLs; sending and other live services are
+not available. Stop the foreground server with Ctrl-C.
+
+To open the preview in the Sulla browser from a bounded agent container,
+run it as a VM Docker service after the same install. Bind-mount the repo
+read-only; Sulla forwards the published loopback port to its browser:
+
+```sh
+docker run --rm -d --name sulla-chat-preview -p 127.0.0.1:18889:8888 \
+  --read-only --user "$(id -u):$(id -g)" -e CHAT_PREVIEW_HOST=0.0.0.0 \
+  -v "$PWD:/preview:ro" --entrypoint node \
+  ghcr.io/merchantprotocol/sulla-node-runtime:latest /preview/scripts/chat-preview/serve.cjs
+```
+
+Open the same URL on port `18889`. Stop it with `docker stop sulla-chat-preview`.
+After a VM restart, rerun the launch command (and the dependency install if
+`scripts/chat-preview/node_modules` is missing). Use distinct container names
+and published ports to compare two worktrees. From an agent without the Docker
+binary, use the Sulla `docker/run` and `docker/stop` tools with the same options.
