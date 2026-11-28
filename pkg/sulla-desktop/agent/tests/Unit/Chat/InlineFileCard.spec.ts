@@ -26,9 +26,12 @@ const htmlFile: InlineFileCardViewModel = {
   status: 'ready',
   preview: {
     kind: 'html',
-    source: '<!doctype html><html><head><title>Static preview</title><meta http-equiv="refresh" content="1; url=https://example.invalid/"></head><body><h1>Benign fixture</h1><p>Static content only.</p><a href="https://example.invalid/preview">External example link</a></body></html>',
+    assetBaseUrl: 'sulla-files-preview://fixture-token/Projects/synthetic/sample-preview.html',
+    source: '<!doctype html><html><head><title>Scripted preview</title><style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")} .hero{background-image:url("../images/hero.png")}</style></head><body><h1 class="hero" style="color: rebeccapurple">Scripted content</h1><img src="../images/hero.png" alt="Preview hero"><script>document.documentElement.dataset.previewRan = "yes";</script></body></html>',
   },
 };
+const htmlSource = htmlFile.preview?.kind === 'html' ? htmlFile.preview.source : '';
+const htmlBaseUrl = htmlFile.preview?.kind === 'html' ? htmlFile.preview.assetBaseUrl : '';
 
 const actionReference: InlineFileActionReference = {
   fileId: htmlFile.fileId,
@@ -37,24 +40,25 @@ const actionReference: InlineFileActionReference = {
 };
 
 describe('InlineFileCard', () => {
-  it('keeps the static HTML preview inside empty-sandbox srcdoc frames with a deny-by-default CSP', () => {
-    // risk: renderer isolation — preview content must never gain app, script, or same-origin capabilities.
+  it('passes HTML through unchanged into a Files-base iframe that runs scripts without same-origin access', () => {
+    // risk: data integrity and renderer isolation — page scripts/styles/assets must survive while the app stays in a separate opaque-origin frame.
     const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
-    const frames = wrapper.findAll('iframe');
+    const frame = wrapper.get('iframe');
 
-    expect(frames).toHaveLength(1);
-    for (const frame of frames) {
-      expect(frame.attributes('sandbox')).toBe('');
-      expect(frame.attributes('allow')).toBeUndefined();
-      expect(frame.attributes('src')).toBeUndefined();
-      const document = frame.attributes('srcdoc') ?? '';
-      expect(document).toContain("default-src 'none'");
-      expect(document).toContain("script-src 'none'");
-      expect(document).toContain("form-action 'none'");
-      expect(document).not.toMatch(/<script\b|<form\b|<iframe\b|<object\b|<meta[^>]+refresh/i);
-      expect(document).not.toContain('https://example.invalid');
-      expect(document).toContain('Benign fixture');
-    }
+    expect(wrapper.findAll('iframe')).toHaveLength(1);
+    expect(frame.attributes('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-modals');
+    expect(frame.attributes('allow')).toBeUndefined();
+    expect(frame.attributes('src')).toBeUndefined();
+    const srcdoc = frame.attributes('srcdoc') ?? '';
+    const baseTag = `<base href="${htmlBaseUrl}">`;
+
+    expect(srcdoc).toContain(baseTag);
+    expect(srcdoc.replace(baseTag, '')).toBe(htmlSource);
+    expect(srcdoc).toContain('<script>document.documentElement.dataset.previewRan = "yes";</script>');
+    expect(srcdoc).toContain('<style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")} .hero{background-image:url("../images/hero.png")}</style>');
+    expect(srcdoc).toContain('<img src="../images/hero.png" alt="Preview hero">');
+    expect(srcdoc).toContain('style="color: rebeccapurple"');
+    expect(srcdoc).not.toContain('Content-Security-Policy');
 
     wrapper.unmount();
   });
@@ -71,8 +75,9 @@ describe('InlineFileCard', () => {
     expect((dialog.element as HTMLDialogElement).open).toBe(true);
     expect(wrapper.findAll('iframe')).toHaveLength(2);
     for (const frame of wrapper.findAll('iframe')) {
-      expect(frame.attributes('sandbox')).toBe('');
-      expect(frame.attributes('srcdoc')).toContain("default-src 'none'");
+      expect(frame.attributes('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-modals');
+      const srcdoc = frame.attributes('srcdoc') ?? '';
+      expect(srcdoc.replace(`<base href="${htmlBaseUrl}">`, '')).toBe(htmlSource);
     }
 
     const nativeDialog = dialog.element as HTMLDialogElement;
