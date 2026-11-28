@@ -165,7 +165,7 @@ describe('ThreadAgentActivityPresenter', () => {
     expect(buckets.scale(5, 503)).toBeGreaterThan(0);
     expect(buckets.scale(5, 503)).toBeLessThan(1);
     expect(buckets.scale(503, 503)).toBe(1);
-    expect(buckets.scale(0, 503)).toBe(0);
+    expect(buckets.scale(0, 503)).toBe(0.04);
   });
 
   it('uses the live snapshot count and exact last-action label, then goes quiet when idle', () => {
@@ -182,6 +182,24 @@ describe('ThreadAgentActivityPresenter', () => {
     const idleRow = { ...row, state: 'parked' as const };
     const idle = presenter.project(snapshot(2, [idleRow]), 'root', at + 1_000);
     expect(mapper.runningActionStatus(idle)).toEqual({ running: false, count: 0, label: null });
+  });
+
+  it('keeps finished child actions in the running thread count until the remaining worker finishes', () => {
+    // risk: the visible current-run count must never drop as individual children finish
+    const factory = new RowFactory();
+    const manager = factory.create('manager:0', 'root');
+    const child = factory.create('child:0', 'root', manager.key);
+    manager.actionCount = 2;
+    child.actionCount = 5;
+    child.lastAction = { kind: 'tool', label: 'Bash', at: new Date(at).toISOString() };
+    const presenter = new ThreadAgentActivityPresenter();
+    const mapper = new ThreadAgentActivityMapper({} as any);
+    const first = presenter.project(snapshot(1, [manager, child]), 'root', at);
+    expect(mapper.runningActionStatus(first).count).toBe(7);
+
+    const childFinished = { ...child, state: 'done' as const };
+    const second = presenter.project(snapshot(2, [manager, childFinished]), 'root', at + 1_000);
+    expect(mapper.runningActionStatus(second)).toMatchObject({ running: true, count: 7 });
   });
 
   it('coalesces working snapshots to one-second updates without dropping cumulative counts', () => {
@@ -222,14 +240,15 @@ describe('ThreadAgentActivityPresenter', () => {
       expect(snapshotPublishes).toBe(3);
       expect(vi.getTimerCount()).toBe(1);
       vi.advanceTimersByTime(50_000);
-      expect(vi.getTimerCount()).toBe(0);
+      expect(vi.getTimerCount()).toBe(1);
       const idleClock = clock;
       const unrelated = new RowFactory().create('unrelated:0', 'another-root');
       scheduler.observe(snapshot(5, [...idle.rows.map(row => ({ ...row })), unrelated]), 'root');
       vi.advanceTimersByTime(2_000);
       expect(shown.version).toBe(4);
-      expect(clock).toBe(idleClock);
+      expect(clock).toBeGreaterThan(idleClock);
       scheduler.dispose();
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
@@ -241,12 +260,15 @@ describe('ThreadAgentActivityPresenter', () => {
     try {
       const factory = new RowFactory();
       const working = factory.create('active:0', 'root');
+      const stopping = factory.create('stopping:0', 'root');
       const idle = factory.create('idle:0', 'root');
+      stopping.actionCount = 0;
       idle.state = 'parked';
-      const initial = snapshot(1, [working, idle]);
+      const initial = snapshot(1, [working, stopping, idle]);
       const blips: string[] = [];
+      let shown = initial;
       const scheduler = new ThreadAgentActivitySnapshotScheduler(initial, {
-        publish: () => undefined,
+        publish: next => { shown = next; },
         actionBlips: agentKeys => blips.push(...agentKeys),
       });
 
@@ -254,15 +276,23 @@ describe('ThreadAgentActivityPresenter', () => {
       vi.advanceTimersByTime(500);
       expect(blips).toEqual([]);
 
-      const burst = snapshot(2, initial.rows.map(row => row.key === 'active:0' ? { ...row, actionCount: 5 } : row));
+      const burst = snapshot(2, initial.rows.map(row => row.key === 'active:0'
+        ? { ...row, actionCount: 10_000 }
+        : row.key === 'stopping:0' ? { ...row, actionCount: 100 } : row));
       scheduler.observe(burst, 'root');
-      vi.advanceTimersByTime(500);
-      expect(blips).toEqual(['active:0', 'active:0', 'active:0', 'active:0', 'active:0']);
+      vi.advanceTimersByTime(100);
+      const stopped = snapshot(3, burst.rows.map(row => row.key === 'stopping:0' ? { ...row, state: 'done' as const } : row));
+      scheduler.observe(stopped, 'root');
+      vi.advanceTimersByTime(900);
+      expect(blips.filter(key => key === 'active:0')).toHaveLength(10);
+      expect(blips.filter(key => key === 'stopping:0')).toHaveLength(1);
+      expect(blips.filter(key => key === 'idle:0')).toHaveLength(0);
+      expect(shown.rows.find(row => row.key === 'active:0')?.actionCount).toBe(10_000);
+      expect(shown.rows.find(row => row.key === 'stopping:0')?.actionCount).toBe(100);
 
-      const unchangedIdle = snapshot(3, burst.rows.map(row => ({ ...row })));
-      scheduler.observe(unchangedIdle, 'root');
-      vi.advanceTimersByTime(1_000);
-      expect(blips).toHaveLength(5);
+      vi.advanceTimersByTime(5_000);
+      expect(blips.filter(key => key === 'active:0')).toHaveLength(10);
+      expect(blips.filter(key => key === 'stopping:0')).toHaveLength(1);
       scheduler.dispose();
     } finally {
       vi.useRealTimers();
