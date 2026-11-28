@@ -59,17 +59,26 @@ Sulla Desktop tools are ALWAYS preferred over generic Claude Code tools. When Su
 - ✅ ALWAYS: \`sulla browser/tab\` with \`action: "upsert"\` (open/navigate) or \`action: "remove"\` (close)
 - ❌ NEVER: \`action: "open"\` (invalid), \`sulla browser/search\`, \`sulla playwright/search\` (don't exist)
 
-**Asking the User a Question:**
-- ✅ ALWAYS: \`ask_user_question\` (or the \`mcp__sulla-native__ask_user_question\` MCP tool under Claude Code) when you need the user to pick between options or supply a detail — it renders an interactive card and BLOCKS for a real answer
-- ✅ ALWAYS: when the user must DO something you cannot (run a command on their Mac, set a secret, sign in, approve outside Sulla), ask with \`task: true\`, a short \`header\`, one sentence in \`question\` and the exact \`command\` if there is one. It renders a task card with Done, and it is the only way the request shows under Waiting on you
-- ❌ NEVER: your native AskUserQuestion tool (disabled), or asking in plain text and assuming an answer
-- ❌ NEVER: put a request for the user to act inside a normal reply ("From you: run this and reply done"); it is easy to miss
-
 **Host Command Execution (rare — host MUST be required):**
 - ✅ DEFAULT: regular \`exec\` in the Sulla VM for everyday work (search, read, edit, install, build, test, sulla CLI)
 - ✅ ONLY when the host is truly required: \`sulla meta/exechost '{"command":"...","cwd":"..."}'\` — silent, output returned inline, full login-shell PATH
 - ❌ NEVER use \`exechost\` for routine tasks that work inside the VM
 - ❌ NEVER: \`sulla applescript/applescript_execute\` with \`target_app: "Terminal"\` — it pops visible Terminal windows`;
+
+/** Keep the logical question tool consistent while making its recipient explicit. */
+function questionGuidance(isSubAgent: boolean): string {
+  const recipient = isSubAgent
+    ? 'As a delegated agent, a plain question is routed to your parent first and arrives there as a \`[Decision from <agent> (decision <id>)]\` card. The human may answer if it escalates; do not describe every question as waiting on the human.'
+    : 'In a top-level chat there is no agent parent, so a plain question is routed to the human as a persistent card.';
+
+  return `**Questions and decisions:**
+- Use the Sulla \`ask_user_question\` tool for a genuine choice or missing detail. It saves a durable card and returns a receipt immediately; it does not block.
+- \`ask_user_question\` is the one logical tool name. Under Claude Code its MCP name is \`mcp__sulla-native__ask_user_question\`; the same action is listed in \`browse_tools\` as \`sulla meta/ask_user_question\`.
+- ${ recipient }
+- Wait for the saved answer before decision-dependent work; continue independent work. Never guess an answer or assume consent.
+- For an action only the human can perform (run a command on their Mac, set a secret, sign in) or for human-only approval/consent, use \`task: true\` with a short \`header\`, one-sentence \`question\`, and exact \`command\` when there is one. Do not route these to an agent parent.
+- Never use Claude's built-in \`AskUserQuestion\` or ask in plain text as if the card were saved.`;
+}
 
 export function buildToolingSection(ctx: PromptBuildContext): PromptSection | null {
   const toolCategories = ctx.templateVars['{{tool_categories}}'] || '';
@@ -91,6 +100,8 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'
 \`\`\`
 
 Make parallel tool calls when possible.
+
+${ questionGuidance(ctx.isSubAgent) }
 
 ${ FILES_AND_PROJECTS }
 
@@ -126,7 +137,8 @@ sulla <account_id>/mcp/<tool> '{"param":"value"}'                       # MCP to
 **Rules:**
 - ❌ NEVER invent tool names or sulla commands — browse_tools first when unsure
 - ❌ NEVER use \`execute_workflow\` for CLI commands — it only runs named Sulla workflows
-- Use \`ask_user_question\` whenever you need a real answer from the user — to pick between options, confirm an assumption, or get a yes/no go-ahead before a risky or destructive action outside the VM (offer Approve / Deny options). It renders an interactive card and BLOCKS until they answer. Your native AskUserQuestion is disabled; under Claude Code call the \`mcp__sulla-native__ask_user_question\` MCP tool instead. Never just ask in plain text when you need a real answer. When the user must DO something you cannot (run a command on their Mac, set a secret, sign in), ask with \`task: true\` and the exact \`command\`: it renders a task card with Done and lists it under Waiting on you; never bury such a request in a normal reply.
+
+${ questionGuidance(ctx.isSubAgent) }
 
 Make parallel tool calls when possible.
 
@@ -179,6 +191,8 @@ Make parallel tool calls when possible.
 ${ FILES_AND_PROJECTS }
 
 ${ SULLA_KNOWLEDGE }
+
+${ questionGuidance(ctx.isSubAgent) }
 
 ${ TOOL_USAGE_RULES }`;
 
