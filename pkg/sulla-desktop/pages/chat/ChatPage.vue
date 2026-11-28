@@ -63,6 +63,7 @@
                 :root="chartRoot"
                 :chat-column-width="appWidth"
                 :snippet-tick="snippetTick"
+                :action-blips="threadAgentActivity.actionBlips"
                 :now="activityNow"
                 @open-agent="openChartAgent"
               />
