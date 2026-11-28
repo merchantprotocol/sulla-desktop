@@ -62,7 +62,7 @@ export interface ToolResult {
   success:     boolean;
   result?:     unknown;
   error?:      string;
-  errorCode?:  'invalid_tool_input' | 'task_inactive';
+  errorCode?:  'invalid_tool_input' | 'task_inactive' | 'decision_publish_failed';
   toolCallId?: string;
 }
 
