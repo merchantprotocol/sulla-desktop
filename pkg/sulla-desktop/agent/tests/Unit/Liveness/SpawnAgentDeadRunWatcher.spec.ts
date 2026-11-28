@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@pkg/main/SleepPreventionService', () => ({ acquireChatActivity: vi.fn(), releaseChatActivity: vi.fn() }));
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
+vi.mock('../../../services/WebSocketClientService', () => ({ getWebSocketClientService: () => ({ send: async() => true }) }));
 vi.mock('../../../database/models/SullaSettingsModel', () => ({
   SullaSettingsModel: { get: vi.fn(async() => 1) },
 }));
@@ -213,7 +214,8 @@ function providerTurn(activityKeys: string[], script: (callbacks: ProviderCallba
   vi.spyOn(node as any, 'wsChatMessage').mockResolvedValue(undefined);
   const state = { metadata: { threadId: `t-${ activityKeys.at(-1) }`, agentId: 'probe', activityKeys, options: {} }, messages: [{ role: 'user', content: 'work' }] } as any;
   const provider = {
-    getModel:   () => 'test',
+    getModel: () => 'test',
+    getProviderName: () => 'liveness-probe',
     chatStream: async(_messages: unknown, callbacks: ProviderCallbacks) => {
       await script(callbacks);
       return { content: 'done', metadata: {} };

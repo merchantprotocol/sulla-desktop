@@ -35,7 +35,7 @@ class PromptContextNode extends BaseNode {
 }
 
 const specs = getBuiltinAgentSpecs();
-const worker = specs.find(agent => agent.slug === 'codex-luna-worker')!;
+const worker = specs.find(agent => agent.slug === 'quick-fixer')!;
 const manager = specs.find(agent => agent.slug === 'coding-manager')!;
 const agentNetworkDirective = new AgentAwarenessPolicy().agentNetworkDirective({ agent_awareness: true });
 const legacySoulContentWithoutNetworkDirective = `${ SOUL_CONTENT }\n\nUser-edited soul note.\n\n\nAdditional user-edited instruction.`;
@@ -132,11 +132,11 @@ describe('per-agent prompt awareness', () => {
     expect(enabled.text).toContain(`${ legacySoulContentWithoutNetworkDirective }\n\n${ agentNetworkDirective }`);
   });
 
-  it('builds a shorter real codex-luna-worker prompt when disabled, retaining time, presence and task identity', async() => {
+  it('builds a shorter real quick-fixer prompt when disabled, retaining time, presence and task identity', async() => {
     // risk: worker prompts expose other jobs or lose the context needed to do and return their own task.
     const before = await builtPrompt(worker, true);
     const after = await builtPrompt(worker, false);
-    console.info(`[AgentAwarenessMeasure] codex-luna-worker before=${ before.length } after=${ after.length }`);
+    console.info(`[AgentAwarenessMeasure] quick-fixer before=${ before.length } after=${ after.length }`);
     expect(after.length).toBeLessThan(before.length);
     expect(before).toContain('agents: sibling@worker');
     expect(before).toContain('live multi-agent network');

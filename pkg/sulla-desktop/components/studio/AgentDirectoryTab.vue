@@ -13,7 +13,7 @@
       </div>
       <div class="ad-grid" aria-live="polite">
         <template v-if="loading"><div v-for="n in 6" :key="n" class="ad-skel"><i /><i /><i /><i /></div></template>
-        <div v-else-if="filteredList.length === 0" class="ad-empty"><b>No agents match “{{ search || currentFilterLabel }}”.</b><span>Try a slug like <code>codex-luna-worker</code> or a job like “mockup”.</span><button class="btn sm" @click="clearAll">Clear search and filters</button></div>
+        <div v-else-if="filteredList.length === 0" class="ad-empty"><b>No agents match “{{ search || currentFilterLabel }}”.</b><span>Try a slug like <code>quick-fixer</code> or a job like “mockup”.</span><button class="btn sm" @click="clearAll">Clear search and filters</button></div>
         <template v-else><template v-for="group in groups" :key="group.title ?? 'flat'">
           <div v-if="group.title" class="ad-group">{{ group.title }} <span>{{ group.agents.length }} · {{ group.hint }}</span></div>
           <button v-for="agent in group.agents" :key="agent.slug" class="ad-card" :class="{ 'ad-off': !agent.enabled }" :aria-label="`Open ${ agent.name }`" @click="openDetail(agent.slug)">
@@ -28,9 +28,44 @@
       <button class="ad-back" @click="closeDetail"><UseCaseIcon name="back" /> Back to Agents</button>
       <header class="ad-dhead"><span class="ad-ico ad-lg" :class="{ 'ad-mgr': isManager(selectedAgent) }"><UseCaseIcon :name="isManager(selectedAgent) ? 'manager' : 'agent'" /></span><div class="ad-tt"><h1>{{ selectedAgent.name }}</h1><span class="ad-slug">{{ selectedAgent.slug }}</span><div class="ad-pbadges"><span v-if="selectedAgent.isBuiltin" class="ad-tag">Built-in</span><span v-else class="ad-tag ad-custom">Custom</span><span class="ad-tag">{{ isManager(selectedAgent) ? 'Manager' : 'Worker' }}</span><span v-if="selectedAgent.frontDoor" class="ad-tag ad-door">First agent</span><span v-if="!selectedAgent.enabled" class="ad-tag ad-dis">Disabled</span><span class="ad-tag ad-state"><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" />{{ selectedAgent.enabled ? 'Enabled' : 'Disabled' }}</span></div><p>{{ selectedAgent.description }}</p></div><button class="btn pri" @click="editSelected">Edit</button></header>
       <div v-if="!hasRoutingCard(selectedAgent)" class="ad-warn ad-detail-warn"><UseCaseIcon name="warn" /><span>No routing card yet: managers only see the description. Fill in <b>When to call</b>, <b>When NOT to call</b>, <b>What to send</b> and <b>What it returns</b> so they route work here correctly.</span></div>
+      <div class="ad-config-title">
+        <div><h2>Full configuration</h2><p>The saved definition that will be used for new work.</p></div>
+        <span>Read-only · Edit to change</span>
+      </div>
       <div class="ad-detail-grid">
-        <section class="ad-main-sections"><div class="ad-sec"><h2>When to call</h2><p v-if="selectedAgent.whenToCall">{{ selectedAgent.whenToCall }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>When NOT to call</h2><p v-if="selectedAgent.whenNotToCall">{{ selectedAgent.whenNotToCall }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>What to send it</h2><p v-if="selectedAgent.send">{{ selectedAgent.send }}</p><p v-else class="ad-none">Not written yet.</p></div><div class="ad-sec"><h2>What it returns</h2><p v-if="selectedAgent.returns">{{ selectedAgent.returns }}</p><p v-else class="ad-none">Not written yet.</p></div></section>
-        <aside class="ad-details-card"><h2>Details</h2><dl class="ad-kv"><dt>Cost tier</dt><dd class="ad-cost-row"><span class="ad-cost" :data-t="selectedAgent.costTier || ''"><i /><i /><i /></span>{{ costLabel(selectedAgent.costTier) }}</dd><dt>Model</dt><dd class="ad-mono">{{ displayModelLabel(selectedAgent) }}<span v-if="!modelLabels?.[selectedAgent.slug] && (!selectedAgent.modelChoice || selectedAgent.modelChoice.mode === 'list')" class="ad-slotnote"> · set in Preferences</span></dd><dt>Status</dt><dd><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" /> {{ selectedAgent.enabled ? 'Enabled' : 'Disabled — managers can’t launch it' }}</dd><dt>Source</dt><dd>{{ selectedAgent.isBuiltin ? 'Built-in · ships with Sulla' : 'Custom · made on this install' }}</dd><dt>Updated</dt><dd>{{ updatedLabel || 'Not available' }}</dd></dl><div class="ad-rel"><h3>Can call</h3><span v-if="selectedAgent.canCall.includes('*')">Everyone</span><span v-else-if="!selectedAgent.canCall.length" class="ad-dimtext">{{ teamScopeLabel(selectedAgent.canCall) }}</span><span v-else class="ad-links"><button v-for="s in selectedAgent.canCall" :key="s" class="ad-link" :disabled="!agentBySlug.has(s)" @click="openDetail(s)">{{ s }}</button></span></div><div class="ad-rel"><h3>Called by</h3><span v-if="!calledBySelected.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="a in calledBySelected" :key="a.slug" class="ad-link" @click="openDetail(a.slug)">{{ a.slug }}</button></span></div><small class="ad-note">{{ selectedAgent.isBuiltin ? 'Your edits are kept when Sulla updates.' : '' }}</small></aside>
+        <section class="ad-main-sections">
+          <div class="ad-section-heading"><h2>Routing</h2><span>When this agent is selected and what crosses the handoff.</span></div>
+          <div class="ad-routing-grid">
+            <div class="ad-sec"><h3>When to call</h3><p v-if="selectedAgent.whenToCall">{{ selectedAgent.whenToCall }}</p><p v-else class="ad-none">Not written yet.</p></div>
+            <div class="ad-sec"><h3>When NOT to call</h3><p v-if="selectedAgent.whenNotToCall">{{ selectedAgent.whenNotToCall }}</p><p v-else class="ad-none">Not written yet.</p></div>
+            <div class="ad-sec"><h3>What to send it</h3><p v-if="selectedAgent.send">{{ selectedAgent.send }}</p><p v-else class="ad-none">Not written yet.</p></div>
+            <div class="ad-sec"><h3>What it returns</h3><p v-if="selectedAgent.returns">{{ selectedAgent.returns }}</p><p v-else class="ad-none">Not written yet.</p></div>
+          </div>
+          <div class="ad-config-section">
+            <div class="ad-section-heading"><h2>Team</h2><span>Agents this definition may hand work to.</span></div>
+            <p v-if="!teamMembers.length" class="ad-none">{{ teamScopeLabel(selectedAgent.canCall) }}</p>
+            <div v-else class="ad-team-list">
+              <button v-for="member in teamMembers" :key="member.agent.slug" type="button" class="ad-team-member" @click="openDetail(member.agent.slug)">
+                <span><b>{{ member.agent.name }}</b><small>{{ member.agent.slug }} · {{ member.via }}</small></span>
+                <span class="ad-team-route"><small v-for="line in routesFor(member.agent)" :key="line">{{ line }}</small></span>
+              </button>
+            </div>
+          </div>
+          <div class="ad-config-section">
+            <div class="ad-section-heading"><h2>Prompt</h2><span>The system instructions loaded when this agent starts.</span></div>
+            <pre v-if="selectedAgent.prompt" class="ad-prompt">{{ selectedAgent.prompt }}</pre>
+            <p v-else class="ad-none">No system prompt saved.</p>
+          </div>
+          <div class="ad-config-section">
+            <div class="ad-section-heading"><h2>Capabilities</h2><span>Explicit tools, skills, and workflow references.</span></div>
+            <div class="ad-cap-grid">
+              <div><h3>Tools</h3><span v-if="!selectedAgent.allowedTools.length" class="ad-none">Default tools</span><span v-else class="ad-ref-list"><code v-for="item in selectedAgent.allowedTools" :key="item">{{ item }}</code></span></div>
+              <div><h3>Skills</h3><span v-if="!selectedAgent.skillRefs.length" class="ad-none">No explicit skills</span><span v-else class="ad-ref-list"><code v-for="item in selectedAgent.skillRefs" :key="item">{{ item }}</code></span></div>
+              <div><h3>Workflows</h3><span v-if="!selectedAgent.routineRefs.length" class="ad-none">No workflow references</span><span v-else class="ad-ref-list"><code v-for="item in selectedAgent.routineRefs" :key="item">{{ item }}</code></span></div>
+            </div>
+          </div>
+        </section>
+        <aside class="ad-details-card"><h2>Profile</h2><dl class="ad-kv"><dt>Cost tier</dt><dd class="ad-cost-row"><span class="ad-cost" :data-t="selectedAgent.costTier || ''"><i /><i /><i /></span>{{ costLabel(selectedAgent.costTier) }}</dd><dt>Model</dt><dd class="ad-mono">{{ displayModelLabel(selectedAgent) }}<span v-if="!modelLabels?.[selectedAgent.slug] && (!selectedAgent.modelChoice || selectedAgent.modelChoice.mode === 'list')" class="ad-slotnote"> · set in Preferences</span></dd><dt>Status</dt><dd><i class="ad-dot" :class="{ 'ad-dot-off': !selectedAgent.enabled }" /> {{ selectedAgent.enabled ? 'Enabled' : 'Disabled — managers can’t launch it' }}</dd><dt>Location</dt><dd>{{ selectedAgent.runLocation === 'container' ? 'Isolated container' : 'Sulla VM' }}</dd><dt>Source</dt><dd>{{ selectedAgent.isBuiltin ? 'Built-in · ships with Sulla' : 'Custom · made on this install' }}</dd><dt>Updated</dt><dd>{{ updatedLabel || 'Not available' }}</dd></dl><div class="ad-rel"><h3>Model tiers and fallbacks</h3><span class="ad-route-list"><small v-for="line in routesFor(selectedAgent)" :key="line">{{ line }}</small></span></div><div class="ad-rel"><h3>Can call</h3><span v-if="selectedAgent.canCall.includes('*')">Everyone</span><span v-else-if="!selectedAgent.canCall.length" class="ad-dimtext">{{ teamScopeLabel(selectedAgent.canCall) }}</span><span v-else class="ad-links"><button v-for="s in selectedAgent.canCall" :key="s" class="ad-link" :disabled="!agentBySlug.has(s)" @click="openDetail(s)">{{ s }}</button></span></div><div class="ad-rel"><h3>Called by</h3><span v-if="!calledBySelected.length" class="ad-dimtext">No one</span><span v-else class="ad-links"><button v-for="a in calledBySelected" :key="a.slug" class="ad-link" @click="openDetail(a.slug)">{{ a.slug }}</button></span></div><small class="ad-note">{{ selectedAgent.isBuiltin ? 'Your edits are kept when Sulla updates.' : '' }}</small></aside>
       </div>
     </article>
   </div>
@@ -48,7 +83,7 @@ import {
 } from './agentDirectory';
 
 type DirectoryResponse = AgentDefinitionResponse & { modelChoice?: AgentModelChoice };
-const props = defineProps<{ agents: DirectoryResponse[]; modelLabels?: Record<string, string>; loading: boolean; search: string }>();
+const props = defineProps<{ agents: DirectoryResponse[]; modelLabels?: Record<string, string>; modelRoutes?: Record<string, string[]>; loading: boolean; search: string }>();
 const emit = defineEmits<{ (e: 'edit', agent: DirectoryResponse): void; (e: 'detail-change', agent: AgentDefinitionResponse | null): void; (e: 'update:search', value: string): void }>();
 
 function displayModelLabel(agent: DirectoryResponse) { return props.modelLabels?.[agent.slug] ?? modelLabel(agent); }
@@ -66,7 +101,30 @@ const filteredList = computed(() => filterAgents(props.agents, filter.value, pro
 const groups = computed(() => groupAgents(filteredList.value, filter.value, props.search, missingOnly.value));
 const selectedAgent = computed(() => (selected.value ? agentBySlug.value.get(selected.value) ?? null : null));
 const calledBySelected = computed(() => (selectedAgent.value ? calledBy(props.agents, selectedAgent.value.slug) : []));
+const teamMembers = computed(() => {
+  const owner = selectedAgent.value;
+  if (!owner) return [];
+  const active = props.agents.filter(agent => agent.slug !== owner.slug && agent.enabled && agent.status !== 'archive');
+  const direct = (agent: DirectoryResponse) => !agent.canCall.length || agent.canCall.includes('*')
+    ? active.filter(candidate => candidate.slug !== agent.slug)
+    : agent.canCall.map(slug => agentBySlug.value.get(slug)).filter((candidate): candidate is DirectoryResponse => !!candidate && candidate.enabled && candidate.status !== 'archive');
+  const rows: { agent: DirectoryResponse; via: string }[] = [];
+  const seen = new Set([owner.slug]);
+  const queue = direct(owner).map(agent => ({ agent, via: 'Direct' }));
+  while (queue.length) {
+    const item = queue.shift()!;
+    if (seen.has(item.agent.slug)) continue;
+    seen.add(item.agent.slug);
+    rows.push(item);
+    for (const child of direct(item.agent)) queue.push({ agent: child, via: `via ${ item.agent.name }` });
+  }
+  return rows;
+});
 const updatedLabel = computed(() => formatUpdated(selectedAgent.value?.updatedAt));
+
+function routesFor(agent: DirectoryResponse): string[] {
+  return props.modelRoutes?.[agent.slug]?.length ? props.modelRoutes[agent.slug] : [displayModelLabel(agent)];
+}
 
 function scrollHost() { return document.querySelector<HTMLElement>('.studio-content'); }
 function openDetail(slug: string) {
@@ -167,14 +225,36 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
 .ad-state { gap: 6px; }
 .ad-state .ad-dot { width: 6px; height: 6px; }
 .ad-detail-warn { margin-top: 14px; padding: 12px 14px; }
+.ad-config-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin: 22px 2px 10px; }
+.ad-config-title h2 { margin: 0; color: var(--uc-text); font-size: 15px; font-weight: 600; }
+.ad-config-title p, .ad-config-title > span { margin: 3px 0 0; color: var(--uc-dim); font-size: 11.5px; }
 .ad-detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); align-items: start; gap: 16px; margin-top: 16px; }
 .ad-main-sections, .ad-details-card { border: 1px solid var(--uc-line); border-radius: 14px; background: var(--uc-card); box-shadow: var(--uc-shadow); }
-.ad-main-sections { padding: 4px 22px; }
-.ad-sec { padding: 18px 0; border-bottom: 1px solid var(--uc-line); }
-.ad-sec:last-child { border-bottom: 0; }
-.ad-sec h2, .ad-details-card > h2 { margin: 0 0 7px; color: var(--uc-dim); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.ad-main-sections { padding: 22px; }
+.ad-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ad-section-heading h2 { margin: 0; color: var(--uc-text); font-size: 13px; font-weight: 600; }
+.ad-section-heading span { color: var(--uc-dim); font-size: 11.5px; text-align: right; }
+.ad-routing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 22px; }
+.ad-sec { min-width: 0; padding: 18px 0; border-bottom: 1px solid var(--uc-line); }
+.ad-sec h3, .ad-details-card > h2, .ad-cap-grid h3 { margin: 0 0 7px; color: var(--uc-dim); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .ad-sec p { margin: 0; color: var(--uc-text); font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; }
-.ad-sec p.ad-none { color: var(--uc-dim); font-style: italic; }
+.ad-none { color: var(--uc-dim); font-style: italic; }
+.ad-config-section { padding: 20px 0 0; margin-top: 2px; border-top: 1px solid var(--uc-line); }
+.ad-team-list { display: grid; gap: 8px; margin-top: 13px; }
+.ad-team-member { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; width: 100%; padding: 10px 12px; border: 1px solid var(--uc-line); border-radius: 10px; background: var(--uc-paper); color: var(--uc-text); text-align: left; font: inherit; cursor: pointer; }
+.ad-team-member:hover { border-color: var(--uc-accent-line); background: var(--uc-accent-soft); }
+.ad-team-member > span:first-child { min-width: 130px; }
+.ad-team-member b, .ad-team-member small { display: block; }
+.ad-team-member b { font-size: 12.5px; }
+.ad-team-member small { margin-top: 2px; color: var(--uc-dim); font: 10.5px var(--font-mono); }
+.ad-team-route { min-width: 0; text-align: right; }
+.ad-team-route small { overflow-wrap: anywhere; }
+.ad-prompt { max-height: 320px; margin: 13px 0 0; padding: 13px 14px; overflow: auto; border: 1px solid var(--uc-line); border-radius: 10px; background: var(--uc-paper); color: var(--uc-text); font: 11.5px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ad-cap-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 13px; }
+.ad-cap-grid > div { min-width: 0; padding: 12px; border: 1px solid var(--uc-line); border-radius: 10px; background: var(--uc-paper); }
+.ad-ref-list, .ad-route-list { display: grid; gap: 5px; }
+.ad-ref-list code { display: block; padding: 4px 6px; border-radius: 6px; background: var(--uc-card); color: var(--uc-text); font: 10.5px var(--font-mono); overflow-wrap: anywhere; }
+.ad-route-list small { color: var(--uc-text); font: 10.5px/1.5 var(--font-mono); overflow-wrap: anywhere; }
 .ad-details-card { padding: 20px; }
 .ad-kv { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px 12px; margin: 0; font-size: 12.5px; }
 .ad-kv dt { color: var(--uc-dim); }
@@ -197,6 +277,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown));
   .ad-bar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
   .ad-bar .ad-sum { display: none; }
   .ad-detail-grid { grid-template-columns: 1fr; }
+  .ad-routing-grid, .ad-cap-grid { grid-template-columns: 1fr; }
+  .ad-section-heading, .ad-team-member { align-items: flex-start; flex-direction: column; }
+  .ad-section-heading span, .ad-team-route { text-align: left; }
   .ad-dhead { padding: 18px; }
   .ad-dhead .ad-lg { display: none; }
 }

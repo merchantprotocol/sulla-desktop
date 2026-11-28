@@ -440,7 +440,7 @@ const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
   waiting: 'Waiting on agents or a schedule',
   you:     'Needs you',
   stalled: 'No progress: an agent has gone quiet',
-  quiet:   'Quiet',
+  quiet:   'Agent activity is quiet',
   idle:    'Idle',
 };
 const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
@@ -1136,9 +1136,8 @@ const allTabsById = computed(() => {
     const id = `browser-${ bt.id }`;
     const isPill = pillModes.has(bt.mode);
     const pinned = isTabPinned(id);
-    const { working, snapshot } = bt.mode === 'chat' ? windowTabStrip.readActivity(bt.id) : { working: false, snapshot: undefined };
-    const activity = snapshot?.state ?? (working ? 'working' : undefined);
-    const statusLine = bt.mode === 'chat' ? snapshot?.detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
+    const { working, activity, detail } = windowTabStrip.readHeaderActivity(bt);
+    const statusLine = bt.mode === 'chat' ? detail ?? '' : bt.url === 'about:blank' ? bt.mode : bt.url;
 
     map.set(id, {
       id,

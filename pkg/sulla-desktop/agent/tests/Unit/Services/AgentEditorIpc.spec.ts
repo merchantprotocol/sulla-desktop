@@ -135,3 +135,31 @@ describe('agent editor IPC contract', () => {
     expect(() => validateAgentDefinitionId('')).toThrow('required');
   });
 });
+
+describe('grouped model routes on create', () => {
+  const request = { slug: 'tier-test', name: 'Tier test', prompt: '', modelChoice: { mode: 'class', class: 'fast' } };
+  const config = {
+    version: 1,
+    tiers: Array.from({ length: 10 }, (_, tier) => ({
+      pick: 'first',
+      candidates: Array.from({ length: 10 }, (_, row) => ({ provider: 'codex', model: `model-${ tier }-${ row }` })),
+    })),
+    allowLaunchOverride: 'never',
+    crossCompanyFallback: false,
+  };
+
+  it('retains all ten groups and ten models per group with the selected policies', () => {
+    const parsed = validateAgentEditorCreateInput({ ...request, modelTiers: config });
+    expect(parsed.modelTiers).toEqual(config);
+    expect(parsed.modelChoice).toEqual(request.modelChoice);
+  });
+
+  it('rejects contradictory, oversized and duplicate grouped routes before any write', () => {
+    expect(() => validateAgentEditorCreateInput({ ...request, modelTiers: config, modelFallbacks: [] })).toThrow('cannot be combined');
+    expect(() => validateAgentEditorCreateInput({ ...request, modelTiers: config, modelChoice: complete.modelChoice })).toThrow('cannot be combined');
+    expect(() => validateAgentEditorCreateInput({ ...request, modelTiers: { ...config, tiers: [...config.tiers, config.tiers[0]] } })).toThrow('one to ten model tiers');
+    expect(() => validateAgentEditorCreateInput({ ...request, modelTiers: { ...config, tiers: [{ candidates: [...config.tiers[0].candidates, { provider: 'codex', model: 'extra' }] }] } })).toThrow('one to ten models');
+    expect(() => validateAgentEditorCreateInput({ ...request, modelTiers: { ...config, tiers: [config.tiers[0], config.tiers[0]] } })).toThrow('already appears');
+    expect(() => validateAgentEditorPatch({ modelTiers: config })).toThrow('unsupported field');
+  });
+});
