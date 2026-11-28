@@ -4,16 +4,47 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const harness = vi.hoisted(() => ({
-  containerRequest: vi.fn(),
-  activeWindow: undefined as any,
-  replyListener: undefined as any,
-}));
+const harness = vi.hoisted(() => {
+  const listeners = new Map<string, Set<any>>();
+  const replyInvocationCounts = new Map<string, number>();
+  return {
+    containerRequest: vi.fn(),
+    activeWindow: undefined as any,
+    listeners,
+    addOnce(channel:string, listener:any) {
+      const wrapper = (...args:any[]) => {
+        listeners.get(channel)?.delete(wrapper);
+        if (listeners.get(channel)?.size === 0) listeners.delete(channel);
+        replyInvocationCounts.set(channel, (replyInvocationCounts.get(channel) ?? 0) + 1);
+        listener(...args);
+      };
+      wrapper.listener = listener;
+      const channelListeners = listeners.get(channel) ?? new Set<any>();
+      channelListeners.add(wrapper);
+      listeners.set(channel, channelListeners);
+    },
+    removeListener(channel:string, listener:any) {
+      const channelListeners = listeners.get(channel);
+      if (!channelListeners) return;
+      for (const candidate of channelListeners) {
+        if (candidate === listener || candidate.listener === listener) channelListeners.delete(candidate);
+      }
+      if (channelListeners.size === 0) listeners.delete(channel);
+    },
+    emit(channel:string, ...args:any[]) {
+      for (const listener of [...(listeners.get(channel) ?? [])]) listener(...args);
+    },
+    listenerCount(channel:string) { return listeners.get(channel)?.size ?? 0; },
+    replyInvocationCount(channel:string) { return replyInvocationCounts.get(channel) ?? 0; },
+    clearListeners() { listeners.clear(); replyInvocationCounts.clear(); },
+  };
+});
 
 vi.mock('../../../files/containerClient', () => ({ filesContainerRequest: harness.containerRequest }));
 vi.mock('electron', () => ({
   ipcMain: {
-    once: vi.fn((_channel: string, listener: typeof harness.replyListener) => { harness.replyListener = listener; }),
+    once: vi.fn((channel: string, listener: any) => harness.addOnce(channel, listener)),
+    removeListener: vi.fn((channel: string, listener: any) => harness.removeListener(channel, listener)),
     removeAllListeners: vi.fn(),
   },
 }));
@@ -21,6 +52,7 @@ vi.mock('@pkg/window/agentWindows', () => ({ getActiveAgentWindow: () => harness
 vi.mock('@pkg/window/agentWindowTrust', () => ({ agentWindowFromSender: () => null }));
 
 import { FilesOpenWorker } from '../../../tools/files/open';
+import { FilesOpenCallBudget } from '../../../tools/files/FilesOpenCallBudget';
 import { filesToolManifests } from '../../../tools/files/manifests';
 import { toolDecisionPort, UnavailableToolDecisionPort } from '../../../tools/toolDecisionPort';
 import { RecentFileOpenRegistry } from '../../../tools/files/RecentFileOpenRegistry';
@@ -34,6 +66,7 @@ class UncachedRecentFileOpenRegistry implements RecentFileOpenCoordinator {
 const openManifest = filesToolManifests.find(manifest => manifest.name === 'open')!;
 const fileResponse = { file: { id: 'file-1', collection_id: 'collection-1', path: 'Projects/example/file.md' } };
 const resolvedFile = { collectionId: 'collection-1', fileId: 'file-1', folderPath: 'Projects/example', kind: 'file' };
+const shortOpenBudget = () => new FilesOpenCallBudget(500);
 
 function response(body: unknown) {
   return { status: 200, json: async() => body } as Response;
@@ -42,8 +75,9 @@ function response(body: unknown) {
 function worker(
   metadata: Record<string, unknown> = { threadId: 'thread-1', desktopChatVisible: true },
   recentOpenRegistry:RecentFileOpenCoordinator = new UncachedRecentFileOpenRegistry(),
+  openBudgetFactory:() => FilesOpenCallBudget = () => new FilesOpenCallBudget(),
 ) {
-  const instance = new FilesOpenWorker(undefined, undefined, undefined, recentOpenRegistry);
+  const instance = new FilesOpenWorker(undefined, undefined, undefined, recentOpenRegistry, openBudgetFactory);
   instance.schemaDef = openManifest.schemaDef;
   instance.name = openManifest.name;
   instance.metadata.category = 'files';
@@ -53,25 +87,43 @@ function worker(
   return { instance, state, invoke: (input: unknown) => instance.invoke(input, state) };
 }
 
-function installFileManagerWindow(opened = true) {
+function installFileManagerWindow(opened = true, acknowledgement:'microtask' | 'sync' | 'duplicate' | 'manual' = 'microtask') {
   const webContents:any = {
     isLoading: () => false,
     once: vi.fn(),
+    removeListener: vi.fn(),
     send: vi.fn((_channel: string, payload: any) => {
-      queueMicrotask(() => harness.replyListener?.({ sender: webContents }, {
+      const channel = `agent-command-result:${ payload.requestId }`;
+      const reply = {
         opened, tabId: 'files-tab-1', path: payload.path, how: 'file-manager-viewer',
-      }));
+      };
+      if (acknowledgement === 'sync' || acknowledgement === 'duplicate') harness.emit(channel, { sender: webContents }, reply);
+      if (acknowledgement === 'duplicate') harness.emit(channel, { sender: webContents }, { opened: false, error: 'duplicate acknowledgement' });
+      if (acknowledgement === 'microtask') queueMicrotask(() => harness.emit(channel, { sender: webContents }, reply));
     }),
   };
   harness.activeWindow = { webContents, focus: vi.fn() };
   return harness.activeWindow;
 }
 
+async function flushRendererReplies():Promise<void> {
+  await new Promise<void>(resolve => setImmediate(resolve));
+}
+
+async function settleBeforeFakeDeadline<T>(pending:Promise<T>, deadlineMs:number):Promise<{ timedOut:false; result:T } | { timedOut:true }> {
+  const outcome = Promise.race([
+    pending.then(result => ({ timedOut: false as const, result })),
+    new Promise<{ timedOut:true }>(resolve => setTimeout(() => resolve({ timedOut: true }), deadlineMs)),
+  ]);
+  await vi.advanceTimersByTimeAsync(deadlineMs);
+  return outcome;
+}
+
 describe('files/open clear results', () => {
   beforeEach(() => {
     toolDecisionPort.register({ requiresApproval: async() => false, request: async() => { throw new Error('not expected in this test') } });
     harness.containerRequest.mockReset();
-    harness.replyListener = undefined;
+    harness.clearListeners();
     harness.activeWindow = undefined;
     harness.containerRequest.mockImplementation(async(path: string) => {
       if (path.startsWith('/v1/files/resolve?')) return response(resolvedFile);
@@ -80,7 +132,11 @@ describe('files/open clear results', () => {
     });
   });
 
-  afterEach(() => toolDecisionPort.register(new UnavailableToolDecisionPort()));
+  afterEach(() => {
+    vi.useRealTimers();
+    harness.clearListeners();
+    toolDecisionPort.register(new UnavailableToolDecisionPort());
+  });
 
   it('uses the real default route to post one inline card for a visible chat, including file_id lookup', async() => {
     // risk: file access — an id lookup must resolve to and disclose only the requested file in the originating visible chat.
@@ -104,6 +160,152 @@ describe('files/open clear results', () => {
     expect(JSON.parse(result.result as string)).toMatchObject({ opened: true, tabId: 'files-tab-1', how: 'file-manager-viewer' });
     expect(activeWindow.webContents.send).toHaveBeenCalledWith('agent-command', expect.objectContaining({ command: 'open-files-item', fileId: 'file-1' }));
     expect(call.instance.sendChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('catches a same-tick tab acknowledgement and ignores a duplicate without leaking the reply listener', async() => {
+    // risk: IPC reliability — the renderer may acknowledge synchronously during dispatch, then emit a delayed selection ack.
+    const activeWindow = installFileManagerWindow(true, 'duplicate');
+    const unhandled:unknown[] = [];
+    const onUnhandled = (reason:unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    let result;
+    let replyChannel = '';
+    try {
+      result = await worker({ threadId: 'same-tick', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), shortOpenBudget)
+        .invoke({ path: 'Projects/example/file.md', placement: 'tab' });
+      const request = activeWindow.webContents.send.mock.calls[0]?.[1];
+      replyChannel = `agent-command-result:${ request.requestId }`;
+      await flushRendererReplies();
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled);
+    }
+
+    expect(result.success).toBe(true);
+    expect(JSON.parse(result.result as string)).toMatchObject({ opened: true, tabId: 'files-tab-1' });
+    expect(harness.listenerCount(replyChannel)).toBe(0);
+    expect(harness.replyInvocationCount(replyChannel)).toBe(1);
+    expect(unhandled).toEqual([]);
+    expect(activeWindow.webContents.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an untrusted acknowledgement and ignores later trusted duplicates without a leaked listener', async() => {
+    // risk: trust — a foreign renderer must never satisfy an open request or leave its IPC listener behind.
+    const activeWindow = installFileManagerWindow(true, 'manual');
+    const pending = worker({ threadId: 'untrusted', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), shortOpenBudget)
+      .invoke({ path: 'Projects/example/file.md', placement: 'tab' });
+    await flushRendererReplies();
+    const request = activeWindow.webContents.send.mock.calls[0]?.[1];
+    const replyChannel = `agent-command-result:${ request.requestId }`;
+    const unhandled:unknown[] = [];
+    const onUnhandled = (reason:unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+
+    let result;
+    try {
+      harness.emit(replyChannel, { sender: { id: 'foreign-renderer' } }, { opened: true, tabId: 'foreign' });
+      result = await pending;
+      harness.emit(replyChannel, { sender: activeWindow.webContents }, { opened: true, tabId: 'files-tab-1' });
+      await flushRendererReplies();
+    } finally {
+      process.removeListener('unhandledRejection', onUnhandled);
+    }
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/untrusted file open acknowledgement/i);
+    expect(harness.listenerCount(replyChannel)).toBe(0);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('uses per-request reply channels so one concurrent open cannot remove another listener', async() => {
+    // risk: concurrency — timing out or resolving one file open must not orphan a different in-flight request.
+    const activeWindow = installFileManagerWindow(true, 'manual');
+    const first = worker({ threadId: 'concurrent-a', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), shortOpenBudget)
+      .invoke({ path: 'Projects/example/file.md', placement: 'tab' });
+    const second = worker({ threadId: 'concurrent-b', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), shortOpenBudget)
+      .invoke({ path: 'Projects/example/file.md', placement: 'tab' });
+    await flushRendererReplies();
+    const requests = activeWindow.webContents.send.mock.calls.map((call:any[]) => call[1]);
+    const firstChannel = `agent-command-result:${ requests[0].requestId }`;
+    const secondChannel = `agent-command-result:${ requests[1].requestId }`;
+
+    expect(firstChannel).not.toBe(secondChannel);
+    expect(harness.listenerCount(firstChannel)).toBe(1);
+    expect(harness.listenerCount(secondChannel)).toBe(1);
+    harness.emit(firstChannel, { sender: activeWindow.webContents }, { opened: true, tabId: 'files-1', path: requests[0].path, how: 'file-manager-tab' });
+    await expect(first).resolves.toMatchObject({ success: true });
+    expect(harness.listenerCount(firstChannel)).toBe(0);
+    expect(harness.listenerCount(secondChannel)).toBe(1);
+
+    harness.emit(secondChannel, { sender: activeWindow.webContents }, { opened: true, tabId: 'files-2', path: requests[1].path, how: 'file-manager-tab' });
+    await expect(second).resolves.toMatchObject({ success: true });
+    expect(harness.listenerCount(secondChannel)).toBe(0);
+  });
+
+  it('returns a bounded, specific error and aborts a stalled Files path lookup', async() => {
+    // risk: latency — a stalled Files fetch must not consume the CLI's entire response deadline.
+    vi.useFakeTimers();
+    let requestSignal:AbortSignal | undefined;
+    harness.containerRequest.mockImplementationOnce((_path:string, _context:unknown, init:RequestInit) => new Promise<Response>(() => {
+      requestSignal = init.signal as AbortSignal;
+    }));
+    const pending = worker({ threadId: 'stalled-resolve', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), () => new FilesOpenCallBudget(40))
+      .invoke({ path: 'Projects/example/file.md', placement: 'tab' });
+
+    const outcome = await settleBeforeFakeDeadline(pending, 60);
+    expect(outcome.timedOut).toBe(false);
+    if (outcome.timedOut) return;
+    const result = outcome.result;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/exceeded its 40ms response budget while resolving the requested file path/i);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(harness.activeWindow).toBeUndefined();
+  });
+
+  it('applies the same deadline and abort signal to the file_id metadata fetch', async() => {
+    // risk: latency — file_id resolution uses a distinct endpoint and must share the same open-call budget.
+    vi.useFakeTimers();
+    let requestedPath = '';
+    let requestSignal:AbortSignal | undefined;
+    harness.containerRequest.mockImplementationOnce((path:string, _context:unknown, init:RequestInit) => {
+      requestedPath = path;
+      return new Promise<Response>(() => {
+        requestSignal = init.signal as AbortSignal;
+      });
+    });
+    const pending = worker({ threadId: 'stalled-id', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), () => new FilesOpenCallBudget(40))
+      .invoke({ file_id: 'file-1', placement: 'tab' });
+
+    const outcome = await settleBeforeFakeDeadline(pending, 60);
+    expect(outcome.timedOut).toBe(false);
+    if (outcome.timedOut) return;
+    const result = outcome.result;
+
+    expect(requestedPath).toBe('/v1/agent-files/file-1');
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/exceeded its 40ms response budget while fetching the requested file metadata/i);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(harness.activeWindow).toBeUndefined();
+  });
+
+  it('removes its per-request listener on timeout and ignores a late acknowledgement', async() => {
+    // risk: cleanup — a renderer reply after the budget expires cannot resolve the already-failed tool or leak handlers.
+    vi.useFakeTimers();
+    const activeWindow = installFileManagerWindow(true, 'manual');
+    const pending = worker({ threadId: 'late-ack', desktopChatVisible: false }, new UncachedRecentFileOpenRegistry(), () => new FilesOpenCallBudget(40))
+      .invoke({ path: 'Projects/example/file.md', placement: 'tab' });
+    const outcome = await settleBeforeFakeDeadline(pending, 60);
+    expect(outcome.timedOut).toBe(false);
+    if (outcome.timedOut) return;
+    const result = outcome.result;
+    const request = activeWindow.webContents.send.mock.calls[0]?.[1];
+    const replyChannel = `agent-command-result:${ request.requestId }`;
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/exceeded its 40ms response budget while waiting for the Desktop to acknowledge the Files tab/i);
+    expect(harness.listenerCount(replyChannel)).toBe(0);
+    harness.emit(replyChannel, { sender: activeWindow.webContents }, { opened: true, tabId: 'files-tab-1' });
+    expect(harness.listenerCount(replyChannel)).toBe(0);
   });
 
   it('accepts an explicit /mnt/sulla-files path and resolves it under the Sulla Files root', async() => {
