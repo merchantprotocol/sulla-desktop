@@ -12,9 +12,12 @@ import { ReturnResultWorker } from '../../../tools/agents/return_result';
 import { CheckAgentJobsWorker } from '../../../tools/agents/check_agent_jobs';
 import { buildSubagentDirectoryContext } from '../../../services/SubagentDirectory';
 
-const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
+const { wakeParkedAgent, steerOrchestratorMessageIfBusy } = vi.hoisted(() => ({
+  wakeParkedAgent: vi.fn(async() => undefined),
+  steerOrchestratorMessageIfBusy: vi.fn(() => false),
+}));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
-  getBackendGraphWebSocketService: () => ({ wakeParkedAgent }),
+  getBackendGraphWebSocketService: () => ({ wakeParkedAgent, steerOrchestratorMessageIfBusy }),
 }));
 
 class CheckAgentJobsHarness extends CheckAgentJobsWorker {
