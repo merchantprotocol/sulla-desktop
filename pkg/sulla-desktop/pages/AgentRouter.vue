@@ -126,12 +126,14 @@ import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
 import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
 import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
+import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
+import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
+import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
-import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId, type BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
+import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import { FilesOpenDestinationRouter } from '@pkg/pages/files/FilesOpenDestinationRouter';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
-import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
-import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const BrowserTab = lazyScreen(() => import('./BrowserTab.vue'), 'BrowserTab');
@@ -148,14 +150,15 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
-
+const filesOpenDestinationRouter = new FilesOpenDestinationRouter();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
+const { tabGroupModel, isTabPinned } = useBrowserTabs();
+const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const windowTabStrip = new WindowTabStripState(window, ipcRenderer);
 
 provide(windowTabStripKey, windowTabStrip);
 windowTabStrip.connect();
 onUnmounted(() => windowTabStrip.dispose());
-const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabGroupModel, isTabPinned } = useBrowserTabs();
-const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
   statusResolved: vaultStatusResolved.value,
   loggedIn: vaultLoggedIn.value,
@@ -637,7 +640,7 @@ function onAgentCommand(_event: any, args: any) {
       reply({ error: 'The resolved Files item is incomplete.' });
       break;
     }
-    if (args.kind === 'file' && args.mode !== 'view' && supportsDocumentEditor(args.path)) {
+    if (args.kind === 'file' && filesOpenDestinationRouter.resolve(args.path, args.mode).destination === 'document-editor') {
       const tab = openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId }, args.focus !== false);
       reply({ opened: true, tabId: tab.id, path: args.path, how: 'document-editor' });
       break;
