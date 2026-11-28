@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Additive quarantine audit. Old ciphertext is retained at its recorded blob reference.
 CREATE TABLE IF NOT EXISTS file_chunk_quarantine (
   id BIGSERIAL PRIMARY KEY,
