@@ -12,7 +12,7 @@ import {
   type InlinePdfDocumentLoader,
   type InlinePdfRuntime,
   type InlinePdfWorkerFactory,
-} from './inlinePdfPreview';
+} from './inlinePdfPreviewController';
 
 class PdfJsWorkerFactory implements InlinePdfWorkerFactory {
   create(): InstanceType<typeof pdfjs.PDFWorker> {

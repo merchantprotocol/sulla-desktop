@@ -17,7 +17,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
-import { InlinePdfPreviewController, type InlinePdfDocumentLoader, type InlinePdfPreviewState } from './inlinePdfPreview';
+import { InlinePdfPreviewController, type InlinePdfDocumentLoader, type InlinePdfPreviewState } from './inlinePdfPreviewController';
 
 const props = defineProps<{ bytes: Uint8Array; documentLoader: InlinePdfDocumentLoader }>();
 const emit = defineEmits<{ 'state-change': [state: InlinePdfPreviewState] }>();

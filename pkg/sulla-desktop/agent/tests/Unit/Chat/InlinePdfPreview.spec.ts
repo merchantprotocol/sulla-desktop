@@ -21,7 +21,7 @@ import {
   type InlinePdfRenderTask,
   type InlinePdfRuntime,
   type InlinePdfWorker,
-} from '../../../../pages/chat/components/files/inlinePdfPreview';
+} from '../../../../pages/chat/components/files/inlinePdfPreviewController';
 
 const fixture = new Uint8Array(readFileSync(path.join(process.cwd(), 'pkg/sulla-desktop/agent/tests/Unit/Files/fixtures/inline-pdf-fixture.pdf')));
 

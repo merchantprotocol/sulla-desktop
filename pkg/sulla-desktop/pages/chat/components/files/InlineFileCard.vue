@@ -176,7 +176,7 @@ import InlineArchivePreview from './InlineArchivePreview.vue';
 import InlineHtmlPreview from './InlineHtmlPreview.vue';
 import InlineImagePreview from './InlineImagePreview.vue';
 import InlinePdfPreview from './InlinePdfPreview.vue';
-import type { InlinePdfDocumentLoader, InlinePdfPreviewState } from './inlinePdfPreview';
+import type { InlinePdfDocumentLoader, InlinePdfPreviewState } from './inlinePdfPreviewController';
 import {
   MAX_INLINE_HTML_SOURCE_CHARACTERS,
   type InlineFileActionReference,
