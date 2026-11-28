@@ -382,20 +382,17 @@ export class MCPServerHost {
       },
     );
 
-    // ask_user_question — the bridge for Claude Code's interactive "ask the
-    // user" need. Claude's own native AskUserQuestion is disallowed on the
-    // CLI (see ClaudeCodeService), so when Claude wants to ask the user it
-    // reciprocates through THIS tool. The handler runs in the main process,
-    // emits the same `tool_question` card the in-process tool does, and
-    // BLOCKS on the same ApprovalService promise — the MCP HTTP request stays
-    // open until the user answers, so the round-trip works even though the
-    // CLI itself is headless.
+    // ask_user_question — the session-bound Sulla decision tool. Claude's own
+    // native AskUserQuestion is disabled, but this MCP tool uses the calling
+    // graph state and the same parent-first route as the in-process/CLI tool:
+    // a delegated child's plain question reaches its parent first. The saved
+    // card is durable and this handler returns its receipt immediately.
     server.registerTool(
       'ask_user_question',
       {
         description: [
-          'Save one or more persistent multiple-choice questions in For You. Returns a saved-question receipt immediately; the user answers later in the original chat.',
-          'The card stays until answered or dismissed. The saved answer arrives through the durable chat mailbox. End the current turn; do not infer a choice or repeat the question.',
+          'Save one or more persistent multiple-choice questions as a decision card. A delegated agent\'s plain question is routed to its parent first; the human can answer if it escalates. Task questions require the human.',
+          'Returns a saved-question receipt immediately. The answer arrives later through the durable chat mailbox. End the current turn; do not infer a choice or repeat the question.',
           'Use this whenever the next step requires the user to choose. Continue decision-dependent work only after their saved answer arrives; independent work can continue separately.',
         ].join(' '),
         inputSchema: {
@@ -409,18 +406,18 @@ export class MCPServerHost {
               label:       z.string().describe('The option text the user selects.'),
               description: z.string().optional().describe('Optional one-line explanation of this option.'),
             })).optional().describe('2–4 distinct options the user can choose from. Optional for a task (defaults to Done).'),
-          })).describe('1–4 questions to ask the user.'),
+          })).describe('1–4 questions to save as decision cards. Plain delegated questions route to the parent first; tasks require the human.'),
           timeoutMs: z.number().optional().describe('Legacy compatibility field. Questions no longer expire while waiting for the user.'),
         },
       },
       async ({ questions }, extra: { signal?: AbortSignal }) => {
         // The claude-code MCP path bypasses BaseNode's in-loop tool filtering,
-        // so honor the calling agent's allowlist here. Restricted background
-        // agents (heartbeat, subconscious) carry an explicit allowedToolNames
-        // that omits ask_user_question — they run on channels with no human to
-        // answer, so a card would only deadlock. Refuse rather than hang.
+        // so honor the calling agent's allowlist here. `exec` grants the full
+        // CLI catalog (including meta/ask_user_question), so an equivalent
+        // session-bound MCP invocation is allowed too. Narrow background
+        // agents without either capability must fail closed.
         const allow = (session.state.metadata as any).allowedToolNames;
-        if (Array.isArray(allow) && allow.length > 0 && !allow.includes('ask_user_question')) {
+        if (Array.isArray(allow) && allow.length > 0 && !allow.includes('ask_user_question') && !allow.includes('exec')) {
           return {
             content: [{ type: 'text' as const, text: 'ask_user_question is unavailable to this agent — it runs autonomously with no interactive chat attached. Proceed with your best judgment.' }],
             isError: true,
@@ -505,7 +502,7 @@ export class MCPServerHost {
             'shelling out to the `sulla` CLI (sandboxed runs cannot reach the CLI bridge at all).',
             'Pass the bare tool name and its JSON arguments.',
             graphToolSurface.includes('exec')
-              ? 'You have the full Sulla tool catalog (git, github, project, …) — every tool browse_tools lists, except ask_user_question.'
+              ? 'You have the full Sulla tool catalog (git, github, project, …) — every tool browse_tools lists, including the same persistent ask_user_question action.'
               : `Allowed tools: ${ graphToolSurface.join(', ') }.`,
             'Use browse_tools to discover each tool\'s parameter JSON, then invoke it here.',
           ].join(' '),

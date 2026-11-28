@@ -54,6 +54,16 @@ describe('browse_tools exact discovery', () => {
     const result = await browse(buildWorker(idSource(new Set())), { query: 'stop agent job' });
     expect(firstCommand(result)).toContain('sulla agents/stop_agent_job ');
   });
+
+  it('lists the persistent question command to a delegated child with CLI catalog access', async() => {
+    // risk: operability — a delegated worker needs a discoverable parent-first decision path rather than an unavailable Claude-only alias.
+    const worker = buildWorker(idSource(new Set()));
+    worker.setState({ metadata: { threadId: 'delegated-child-thread', isSubAgent: true, allowedToolNames: ['exec'] } } as any);
+
+    const result = await browse(worker, { query: 'ask_user_question' });
+
+    expect(result).toContain('sulla meta/ask_user_question ');
+  });
 });
 
 describe('browse_tools never blocks on credentials', () => {
