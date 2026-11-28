@@ -76,6 +76,8 @@ export interface ChatMessage {
 export interface StreamCallbacks {
   /** Called for each text token/delta as it arrives from the LLM. */
   onToken:      (token: string) => void;
+  /** Called at each visible outbound provider-request boundary. */
+  onModelRequestStart?: () => void;
   /**
    * Called for non-text status events from the underlying provider —
    * e.g. "Running Bash…", "Thinking…", "Reading /etc/hosts". Lets the UI
@@ -345,6 +347,7 @@ export abstract class BaseLanguageModel {
       profileId?:        string;
       usageEventId?:     string;
       executionContext?: ToolExecutionContext;
+      onModelRequestStart?: () => void;
     } = {},
   ): Promise<NormalizedResponse | null> {
     const startTime = performance.now();
@@ -469,6 +472,7 @@ export abstract class BaseLanguageModel {
       profileId?:        string;
       usageEventId?:     string;
       executionContext?: ToolExecutionContext;
+      onModelRequestStart?: () => void;
       /** Calling graph state. Used by ClaudeCodeService to mint an MCP
        *  session so the in-VM CLI can call back into native tools that
        *  mutate state.metadata on this exact graph instance. Ignored by
@@ -506,6 +510,7 @@ export abstract class BaseLanguageModel {
       const streamResponse = await this.sendStreamRequest(messages, {
         ...options,
         model: effectiveModel,
+        onModelRequestStart: callbacks.onModelRequestStart,
       });
 
       if (streamResponse?.body) {
@@ -551,7 +556,7 @@ export abstract class BaseLanguageModel {
       }
 
       // Provider does not support streaming — fall back to chat()
-      const response = await this.chat(messages, options);
+      const response = await this.chat(messages, { ...options, onModelRequestStart: callbacks.onModelRequestStart });
 
       if (response?.content) {
         callbacks.onToken(response.content);

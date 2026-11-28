@@ -97,6 +97,7 @@ export class AnthropicService extends BaseLanguageModel {
 
         const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
         const fetchOpts = this.buildFetchOptions(body, signal);
+        options?.onModelRequestStart?.();
         const res = await providerFetch('anthropic', url, fetchOpts, options?.executionContext, {
           streaming:  false,
           injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],
@@ -389,6 +390,7 @@ export class AnthropicService extends BaseLanguageModel {
 
         const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
         const fetchOpts = this.buildFetchOptions(body, signal);
+        options?.onModelRequestStart?.();
         const res = await providerFetch('anthropic', url, fetchOpts, options?.executionContext, {
           streaming:  true,
           injections: [{ field: 'api_key', target: 'header', name: 'x-api-key', scheme: 'raw' }],

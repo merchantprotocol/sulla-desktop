@@ -1589,6 +1589,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
           const ev = parsed?.event;
           if (ev) {
             if (ev.type === 'message_start') {
+              callbacks.onModelRequestStart?.();
               assistantMessages.onStreamEvent(ev.type);
               if (!firstStreamAt) firstStreamAt = Date.now();
             }
