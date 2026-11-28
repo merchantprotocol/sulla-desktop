@@ -66,56 +66,13 @@ jobs:
       - uses: actions/setup-node@v4
         id: setup-node
         with:
-          node-version-file: package.json
+          node-version: 22.22.0
           cache: yarn
-      - name: Report typecheck toolchain versions
-        id: yarn-preflight
-        run: |
-          node_version=$(node --version)
-          if ! command -v yarn >/dev/null 2>&1; then
-            echo "::error title=Typecheck toolchain::yarn is unavailable; node=$node_version"
-            exit 1
-          fi
-          yarn_version=$(yarn --version)
-          echo "::notice title=Typecheck toolchain::node=$node_version yarn=$yarn_version"
       - name: Install dependencies (no lifecycle scripts, no Electron download)
         id: dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: |
-          install_log="$RUNNER_TEMP/typecheck-yarn-install.log"
-          if yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000 >"$install_log" 2>&1; then
-            echo "Dependency install succeeded."
-            exit 0
-          else
-            status=$?
-          fi
-
-          # Only emit stable error classes; raw package-manager output can
-          # contain private registry URLs or credentials.
-          category=$(node -e '
-            const fs = require("node:fs");
-            const text = fs.readFileSync(process.argv[1], "utf8");
-            const markers = [
-              ["missing-tool", /command not found|corepack.*(?:not found|error)/i],
-              ["disk", /ENOSPC/i],
-              ["memory", /ENOMEM|out of memory/i],
-              ["network-timeout", /ETIMEDOUT|ESOCKETTIMEDOUT|network timeout|socket hang up/i],
-              ["dns", /EAI_AGAIN|ENOTFOUND/i],
-              ["tls", /CERT_HAS_EXPIRED|SELF_SIGNED_CERT|certificate/i],
-              ["auth-http", /E401|\b401\b|\b403\b|unauthorized|forbidden/i],
-              ["registry-http", /\b400\b|\b404\b|\b408\b|\b429\b|\b5\d\d\b/],
-              ["node-engine", /engine|unsupported.*(?:node|engine)/i],
-              ["lockfile", /frozen.?lockfile|lockfile.*(?:update|sync)|integrity check failed/i],
-              ["permission", /EACCES|EPERM/i],
-              ["resolution", /couldn.t find (?:any versions|package)|no matching version/i],
-              ["missing-file", /ENOENT|no such file or directory/i],
-            ];
-            const matches = markers.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
-            process.stdout.write(matches.join(",") || "unclassified");
-          ' "$install_log")
-          echo "::error title=Dependency install diagnosis::exit=$status category=$category"
-          exit "$status"
+        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
       - name: Type-check agent runtime graph
         id: typecheck-agent
         if: env.WRITE_BASELINE == 'false'
@@ -307,7 +264,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: package.json
+          node-version: 22.22.0
           cache: yarn
       - name: Restore exact dependency tree
         id: dependency-cache
@@ -315,8 +272,6 @@ jobs:
         with:
           path: node_modules
           key: agent-tests-${{ runner.os }}-node-${{ hashFiles('yarn.lock') }}
-      - name: Report agent-test dependency cache outcome
-        run: echo "::notice title=Agent-test dependency cache::hit=${{ steps.dependency-cache.outputs.cache-hit || 'false' }}"
       - name: Install dependencies on cache miss
         if: steps.dependency-cache.outputs.cache-hit != 'true'
         env:
@@ -446,7 +401,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: package.json
+          node-version: 22.22.0
           cache: yarn
       - name: Restore exact dependency tree
         id: dependency-cache
@@ -454,8 +409,6 @@ jobs:
         with:
           path: node_modules
           key: agent-tests-${{ runner.os }}-node-${{ hashFiles('yarn.lock') }}
-      - name: Report main agent-test dependency cache outcome
-        run: echo "::notice title=Main agent-test dependency cache::hit=${{ steps.dependency-cache.outputs.cache-hit || 'false' }}"
       - name: Install dependencies on cache miss
         if: steps.dependency-cache.outputs.cache-hit != 'true'
         env:
