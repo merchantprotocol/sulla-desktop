@@ -3,14 +3,16 @@
  * Copyright (c) 2025-2026 Merchant Protocol LLC.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
 import InlineFileCard from '../../../../pages/chat/components/files/InlineFileCard.vue';
 import InlineFileCardFixture from './fixtures/InlineFileCardFixture.vue';
+import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
 import {
   MAX_INLINE_HTML_SOURCE_CHARACTERS,
+  InlineHtmlPreviewDocument,
   InlineImagePreviewSource,
   MAX_INLINE_IMAGE_BYTES,
   type InlineFileActionReference,
@@ -26,9 +28,12 @@ const htmlFile: InlineFileCardViewModel = {
   status: 'ready',
   preview: {
     kind: 'html',
-    source: '<!doctype html><html><head><title>Static preview</title><meta http-equiv="refresh" content="1; url=https://example.invalid/"></head><body><h1>Benign fixture</h1><p>Static content only.</p><a href="https://example.invalid/preview">External example link</a></body></html>',
+    assetBaseUrl: 'sulla-files-preview://fixture-token/Projects/synthetic/sample-preview.html',
+    source: '<!doctype html><html><head><title>Scripted preview</title><style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")} .hero{background-image:url("../images/hero.png")}</style></head><body><h1 class="hero" style="color: rebeccapurple">Scripted content</h1><img src="../images/hero.png" alt="Preview hero"><script>document.documentElement.dataset.previewRan = "yes";</script></body></html>',
   },
 };
+const htmlSource = htmlFile.preview?.kind === 'html' ? htmlFile.preview.source : '';
+const htmlBaseUrl = htmlFile.preview?.kind === 'html' ? htmlFile.preview.assetBaseUrl : '';
 
 const actionReference: InlineFileActionReference = {
   fileId: htmlFile.fileId,
@@ -36,32 +41,90 @@ const actionReference: InlineFileActionReference = {
   path: htmlFile.path,
 };
 
-describe('InlineFileCard', () => {
-  it('keeps the static HTML preview inside empty-sandbox srcdoc frames with a deny-by-default CSP', () => {
-    // risk: renderer isolation — preview content must never gain app, script, or same-origin capabilities.
-    const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
-    const frames = wrapper.findAll('iframe');
+class TestIntersectionObserver {
+  static current: TestIntersectionObserver | undefined;
+  private target?: Element;
 
-    expect(frames).toHaveLength(1);
-    for (const frame of frames) {
-      expect(frame.attributes('sandbox')).toBe('');
-      expect(frame.attributes('allow')).toBeUndefined();
-      expect(frame.attributes('src')).toBeUndefined();
-      const document = frame.attributes('srcdoc') ?? '';
-      expect(document).toContain("default-src 'none'");
-      expect(document).toContain("script-src 'none'");
-      expect(document).toContain("form-action 'none'");
-      expect(document).not.toMatch(/<script\b|<form\b|<iframe\b|<object\b|<meta[^>]+refresh/i);
-      expect(document).not.toContain('https://example.invalid');
-      expect(document).toContain('Benign fixture');
-    }
+  constructor(private readonly callback: IntersectionObserverCallback) { TestIntersectionObserver.current = this; }
+  observe(target: Element): void { this.target = target; }
+  intersect(): void {
+    if (!this.target) throw new Error('Preview root was not observed.');
+    this.callback([{ isIntersecting: true, target: this.target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+  disconnect(): void {}
+  unobserve(): void {}
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+}
+
+const originalGlobalObserver = globalThis.IntersectionObserver;
+const originalWindowObserver = window.IntersectionObserver;
+
+function assignObserver(target: object, observer: unknown): void {
+  if (observer === undefined) Reflect.deleteProperty(target, 'IntersectionObserver');
+  else Object.defineProperty(target, 'IntersectionObserver', { configurable: true, writable: true, value: observer });
+}
+
+beforeEach(() => {
+  TestIntersectionObserver.current = undefined;
+  assignObserver(globalThis, TestIntersectionObserver);
+  assignObserver(window, TestIntersectionObserver);
+});
+afterEach(() => {
+  assignObserver(globalThis, originalGlobalObserver);
+  assignObserver(window, originalWindowObserver);
+});
+
+describe('InlineFileCard', () => {
+  it('renders HTML in the isolated guest partition with its Files base after the doctype', async() => {
+    // risk: data integrity and renderer isolation — scripts stay intact in a separate guest process, without giving HTML a chat-renderer iframe.
+    const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
+    const guest = wrapper.get('webview');
+
+    expect(wrapper.findAll('iframe')).toHaveLength(0);
+    expect(wrapper.findAll('webview')).toHaveLength(1);
+    expect(guest.attributes('partition')).toBe(INLINE_HTML_PREVIEW_PARTITION);
+    expect(guest.attributes('webpreferences')).toBe('nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no');
+    expect(guest.attributes('allowpopups')).toBeUndefined();
+    const previewUrl = guest.attributes('src') ?? '';
+    expect(previewUrl.startsWith('data:text/html;charset=utf-8,')).toBe(true);
+    const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
+    const baseTag = `<base href="${htmlBaseUrl}">`;
+
+    expect(document).toContain(baseTag);
+    expect(document.replace(baseTag, '')).toBe(htmlSource);
+    expect(document.startsWith('<!doctype html>')).toBe(true);
+    expect(document).toContain('<script>document.documentElement.dataset.previewRan = "yes";</script>');
+    expect(document).toContain('<style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")} .hero{background-image:url("../images/hero.png")}</style>');
+    expect(document).toContain('<img src="../images/hero.png" alt="Preview hero">');
+    expect(document).toContain('style="color: rebeccapurple"');
 
     wrapper.unmount();
   });
 
-  it('uses the same sandboxed frame when Full screen opens and restores focus after the native dialog closes', async() => {
+  it('does not move the doctype when a page has no head element', async() => {
+    const source = '<!doctype html><html lang="en"><body><script>window.ran = true;</script></body></html>';
+    const file: InlineFileCardViewModel = {
+      ...htmlFile,
+      preview: { kind: 'html', source, assetBaseUrl: htmlBaseUrl },
+    };
+    const wrapper = mount(InlineFileCard, { props: { file } });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
+    const encoded = wrapper.get('webview').attributes('src') ?? '';
+    const document = decodeURIComponent(encoded.slice('data:text/html;charset=utf-8,'.length));
+
+    expect(document.startsWith('<!doctype html><html lang="en"><base')).toBe(true);
+    expect(document).toContain('<script>window.ran = true;</script>');
+    wrapper.unmount();
+  });
+
+  it('uses the same isolated guest when Full screen opens and restores focus after the native dialog closes', async() => {
     // risk: renderer isolation — expanding a preview must not weaken iframe policy or strand keyboard focus.
     const wrapper = mount(InlineFileCard, { props: { file: htmlFile }, attachTo: document.body });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
     const fullScreenButton = wrapper.get('[title="Full screen"]');
     expect(document.body.contains(fullScreenButton.element)).toBe(true);
     await fullScreenButton.trigger('click');
@@ -69,10 +132,14 @@ describe('InlineFileCard', () => {
 
     const dialog = wrapper.get('dialog');
     expect((dialog.element as HTMLDialogElement).open).toBe(true);
-    expect(wrapper.findAll('iframe')).toHaveLength(2);
-    for (const frame of wrapper.findAll('iframe')) {
-      expect(frame.attributes('sandbox')).toBe('');
-      expect(frame.attributes('srcdoc')).toContain("default-src 'none'");
+    expect(wrapper.findAll('iframe')).toHaveLength(0);
+    expect(wrapper.findAll('webview')).toHaveLength(2);
+    for (const guest of wrapper.findAll('webview')) {
+      expect(guest.attributes('partition')).toBe(INLINE_HTML_PREVIEW_PARTITION);
+      expect(guest.attributes('webpreferences')).toContain('sandbox=yes');
+      const previewUrl = guest.attributes('src') ?? '';
+      const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
+      expect(document.replace(`<base href="${htmlBaseUrl}">`, '')).toBe(htmlSource);
     }
 
     const nativeDialog = dialog.element as HTMLDialogElement;
@@ -101,19 +168,55 @@ describe('InlineFileCard', () => {
     wrapper.unmount();
   });
 
-  it('limits oversized HTML to the preview cap and exposes the full-file action', () => {
+  it('limits oversized HTML to the preview cap and exposes the full-file action', async() => {
     // risk: resource limits — a large authorized HTML file must not be sanitized or rendered unbounded in the chat renderer.
     const oversizedFile: InlineFileCardViewModel = {
       ...htmlFile,
       preview: { kind: 'html', source: 'x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS) + 'tail-marker' },
     };
     const wrapper = mount(InlineFileCard, { props: { file: oversizedFile } });
-    const srcdoc = wrapper.get('iframe').attributes('srcdoc') ?? '';
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
+    const previewUrl = wrapper.get('webview').attributes('src') ?? '';
+    const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
 
     expect(wrapper.find('.file-cap').exists()).toBe(true);
     expect(wrapper.get('.file-cap button').exists()).toBe(true);
-    expect(srcdoc.length).toBeLessThan(MAX_INLINE_HTML_SOURCE_CHARACTERS + 1024);
-    expect(srcdoc).not.toContain('tail-marker');
+    expect(document.length).toBe(MAX_INLINE_HTML_SOURCE_CHARACTERS);
+    expect(document).not.toContain('tail-marker');
+    wrapper.unmount();
+  });
+
+  // risk: content integrity — a source cap must not leave an unmatched high surrogate at the end of the HTML document.
+  it('backs the HTML source cap off a split UTF-16 surrogate pair', () => {
+    const source = 'x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS - 1) + '\uD83D\uDE00';
+    const html = new InlineHtmlPreviewDocument().toHtml(source);
+
+    expect(html).toBe('x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS - 1));
+    expect(html.charCodeAt(html.length - 1)).not.toBeGreaterThanOrEqual(0xD800);
+  });
+
+  // risk: chat availability — expensive preview guests start only near the viewport and a dead/unresponsive guest can be recovered without restarting chat.
+  it.each([
+    ['render-process-gone', 'stopped unexpectedly'],
+    ['unresponsive', 'not responding'],
+  ])('mounts on intersection and offers Reload after %s', async(eventName, errorText) => {
+    const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
+    expect(wrapper.find('webview').exists()).toBe(false);
+
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
+    expect(wrapper.find('webview').exists()).toBe(true);
+
+    const firstGuest = wrapper.get('webview').element;
+    await wrapper.get('webview').trigger(eventName);
+    expect(wrapper.get('[role="alert"]').text()).toContain(errorText);
+    expect(wrapper.find('webview').exists()).toBe(false);
+    expect(wrapper.get('.preview-error button').exists()).toBe(true);
+    await wrapper.get('.preview-error button').trigger('click');
+
+    expect(wrapper.get('webview').element).not.toBe(firstGuest);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
