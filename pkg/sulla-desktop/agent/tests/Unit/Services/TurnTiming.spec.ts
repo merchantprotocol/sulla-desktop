@@ -178,6 +178,10 @@ describe('SafeToolLabel', () => {
     ['git "secret"', 'shell', ['secret']],
     ['./secret/bin/git status', 'shell', ['secret']],
     ['/usr/bin/git -C /private/repo status', 'shell', []],
+    ['./x', 'shell', []],
+    ['/usr/bin/x', 'shell', []],
+    ['scripts/deploy.sh arg', 'shell', []],
+    ['a/b c', 'shell', []],
     ['/tmp/sk-abc123', 'shell', ['sk-abc123']],
     ['git status', 'git', []],
     ['npx test', 'npx', []],
@@ -194,6 +198,18 @@ describe('SafeToolLabel', () => {
   it('uses a generic label for empty or non-string values', () => {
     expect(SafeToolLabel.from('   ')).toBe('tool');
     expect(SafeToolLabel.from(undefined)).toBe('tool');
+  });
+
+  it.each([
+    ['sulla-native/browse_tools', 'sulla-native/browse_tools'],
+    ['browse_tools', 'browse_tools'],
+    ['sulla-native/browse_tools args', 'tool'],
+    ['../private/secret', 'tool'],
+    ['sulla-native/tool;secret', 'tool'],
+    [undefined, 'tool'],
+  ])('accepts only explicit named-tool tokens: %s', (value, expected) => {
+    // risk: a named MCP tool is mislabeled as shell or a free-text argument leaks into the label
+    expect(SafeToolLabel.forNamedTool(value)).toBe(expected);
   });
 });
 
@@ -259,6 +275,20 @@ describe('turn dispatch lifecycle', () => {
     expect(log.lines).toHaveLength(1);
     expect(log.record()).toMatchObject({ runId: 'run-dispatch', outcome: 'aborted' });
     expect(state.__turnTiming).toBeUndefined();
+  });
+
+  it('does not let a newer run abort signal change an already-completed turn outcome', async() => {
+    // risk: a later run on the same thread retroactively changes the completed run’s timing outcome
+    const firstController = new AbortController();
+    const { graph, lifecycle, log, state } = createLifecycle(firstController.signal);
+    await lifecycle.executeGraph(() => graph.execute(), firstController.signal);
+
+    const nextController = new AbortController();
+    state.metadata.options.abort = { signal: nextController.signal };
+    nextController.abort();
+    lifecycle.finish();
+
+    expect(log.record()).toMatchObject({ runId: 'run-dispatch', outcome: 'ok' });
   });
 
   it('classifies workerModelTask dispatch metadata as delegated', () => {
