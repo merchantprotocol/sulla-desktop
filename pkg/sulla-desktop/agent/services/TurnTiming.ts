@@ -71,6 +71,12 @@ export class SafeToolLabel {
     'env', 'sudo', 'time', 'nohup', 'nice', 'command', 'exec', 'xargs', 'timeout', 'doas',
   ]);
 
+  static forNamedTool(value: unknown): string {
+    if (typeof value !== 'string') return 'tool';
+    if (/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,40}\/[A-Za-z0-9_][A-Za-z0-9_.-]{0,80}$/.test(value)) return value;
+    return /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,80}$/.test(value) ? value : 'tool';
+  }
+
   static from(value: unknown): string {
     if (typeof value !== 'string') return 'tool';
     const input = value.trim();
@@ -310,13 +316,18 @@ export class TurnTiming implements TurnTimingProviderRequestSink {
 export class TurnTimingDispatchLifecycle {
   private outcome: TurnTimingOutcome = 'ok';
   private finished = false;
+  private runAbortSignal?: AbortSignal;
 
-  constructor(private readonly timing: TurnTiming, private readonly state: object) {}
+  constructor(private readonly timing: TurnTiming, private readonly state: object) {
+    const stateWithMetadata = state as { metadata?: { options?: { abort?: { signal?: AbortSignal } } } };
+    this.runAbortSignal = stateWithMetadata.metadata?.options?.abort?.signal;
+  }
 
   async executeGraph<T>(dispatch: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    this.runAbortSignal ??= signal;
     try {
       const result = await dispatch();
-      if (this.isAborted(signal)) this.outcome = 'aborted';
+      if (this.isAborted()) this.outcome = 'aborted';
       return result;
     } catch (error) {
       this.setOutcome((error as { name?: string } | null)?.name === 'AbortError' ? 'aborted' : 'error');
@@ -340,9 +351,8 @@ export class TurnTimingDispatchLifecycle {
     }
   }
 
-  private isAborted(signal?: AbortSignal): boolean {
-    const state = this.state as { metadata?: { options?: { abort?: { signal?: AbortSignal } } } };
-    return !!signal?.aborted || !!state.metadata?.options?.abort?.signal?.aborted;
+  private isAborted(): boolean {
+    return !!this.runAbortSignal?.aborted;
   }
 }
 
