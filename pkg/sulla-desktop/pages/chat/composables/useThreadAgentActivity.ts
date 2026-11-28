@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { computed, getCurrentScope, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, readonly, ref, shallowRef, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -13,8 +13,10 @@ import type { StatusRollupItem, StatusRollupShownEvent } from '../components/com
 import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
 import type { Message } from '../models/Message';
 import type { WorkerChartSnippetTick, WorkerChartAgent } from '../components/workerChart/WorkerChartController';
-import { ThreadAgentActivityMapper } from './ThreadAgentActivityMapper';
+import { ActivityTrail } from '../messages/sideDock';
+import { ThreadAgentActivityMapper, type ThreadAgentRunningActionStatus } from './ThreadAgentActivityMapper';
 import { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor } from './ThreadAgentActivityEvents';
+import { ThreadAgentActivitySnapshotScheduler } from './ThreadAgentActivitySnapshotScheduler';
 
 export { ThreadAgentEventBuffer, ThreadAgentEventProjectionDiff, ThreadAgentHistoryCursor } from './ThreadAgentActivityEvents';
 
@@ -34,6 +36,13 @@ export interface ThreadAgentActivitySources {
 /** Reactive view-model shared by ChatPage, the composer status line, and WorkerChart. */
 export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
+  /** One chat-scoped clock for the worker-chart popup; row views only update when their snapshot data changes. */
+  readonly clock: Readonly<Ref<number>>;
+  /** Snapshot clock shared by row views without per-second rerenders. */
+  readonly snapshotClock: Readonly<Ref<number>>;
+  readonly actionStatus: ComputedRef<ThreadAgentRunningActionStatus>;
+  /** Shared cumulative action deltas so opening a surface does not reset its meter history. */
+  readonly activityTrail: ActivityTrail;
   /** Undelivered events for this chat's own transcript and proven sub-agent tree, oldest first. */
   readonly checkIns: ComputedRef<StatusRollupItem[]>;
   /** Authorized full check-in history for each scoped task, shared with Detailed's inline trace. */
@@ -58,12 +67,27 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const eventPresenter = new ThreadAgentActivityPresenter();
   const mapper = new ThreadAgentActivityMapper(new DetailedTraceProjection());
   const now = sources.now ?? Date.now;
+  const scheduledSnapshot = shallowRef(sources.snapshot.value);
+  const scheduledClock = ref(now());
+  const snapshotClockValue = ref(scheduledClock.value);
+  const snapshotScheduler = new ThreadAgentActivitySnapshotScheduler(sources.snapshot.value, {
+    publish: (snapshot, at) => {
+      scheduledSnapshot.value = snapshot;
+      scheduledClock.value = at;
+      snapshotClockValue.value = at;
+    },
+    tick: at => { scheduledClock.value = at; },
+  }, now);
+  const clock = readonly(scheduledClock);
+  const snapshotClock = readonly(snapshotClockValue);
+  const activityTrail = new ActivityTrail();
   const projection = computed(() => presenter.project(
-    sources.snapshot.value,
+    scheduledSnapshot.value,
     sources.threadId.value,
-    now(),
+    snapshotClockValue.value,
     sources.decisions?.value ?? [],
   ));
+  const actionStatus = computed(() => mapper.runningActionStatus(projection.value));
   const eventBuffer = new ThreadAgentEventBuffer();
   const eventItems = eventBuffer.items;
   const previousRows = new Map<string, PresentedThreadAgent>();
@@ -86,6 +110,13 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   let snippetSequence = 0;
   const snippetTick = ref<WorkerChartSnippetTick | null>(null);
 
+  watch(() => [sources.threadId.value, sources.snapshot.value] as const, ([threadId, snapshot]) => {
+    snapshotScheduler.observe(snapshot, threadId);
+  }, { immediate: true, flush: 'sync' });
+  watch(() => projection.value, current => {
+    activityTrail.record(current.agents.map(agent => agent.row), snapshotClockValue.value);
+  }, { immediate: true, flush: 'sync' });
+
   const resetThread = (threadId: string | undefined): void => {
     if (activeThreadId === threadId) return;
     if (historyTimer !== undefined) clearInterval(historyTimer);
@@ -100,6 +131,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     snapshotCheckinDiffs.clear();
     historyCursors.clear();
     traceHistoryData.value = new Map();
+    activityTrail.clear();
     historyPrimed.clear();
     historyAvailable.clear();
     historyPending.clear();
@@ -318,6 +350,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   }, { immediate: true, flush: 'pre' });
 
   if (getCurrentScope()) onScopeDispose(() => {
+    snapshotScheduler.dispose();
     if (historyTimer !== undefined) clearInterval(historyTimer);
     historyTimer = undefined;
     if (transcriptTimer !== undefined) clearTimeout(transcriptTimer);
@@ -327,6 +360,10 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
 
   return {
     projection,
+    clock,
+    snapshotClock,
+    actionStatus,
+    activityTrail,
     checkIns: computed(() => eventItems.value),
     traceHistories,
     attachConsumer: () => { consumerAttached = true; },
@@ -335,7 +372,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
       eventBuffer.retainNewest();
     },
     consumeCheckIns: () => eventBuffer.consume(),
-    rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, now())),
+    rootFallback: computed(() => mapper.rootFallback(projection.value, sources.threadId.value, snapshotClockValue.value)),
     chartRoot: computed(() => mapper.chartRoot(projection.value, sources.threadId.value)),
     snippetTick,
     statusItemShown: (event: StatusRollupShownEvent) => {
