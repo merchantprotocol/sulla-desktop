@@ -84,7 +84,7 @@ export class AgentStateProjector {
         ? latestByJob[job.jobId]?.[taskIndex] ?? null
         : await this.telemetry.latest(job.jobId, taskIndex);
       const live = this.states.isLive(job, task);
-      const { lastActivityAt, state, runtimeAlive } = this.taskActivity(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null, now);
+      const { lastActivityAt, actionCount, state, runtimeAlive, lastAction } = this.taskActivity(job, task, taskIndex, checkin, answeredByJob?.[job.jobId]?.[taskIndex] ?? null, now);
       const stoppedBy = task.stoppedBy ?? job.stoppedBy;
       const stopReason = task.stopReason ?? job.stopReason;
       const waitingOnChildren = task.threadId ? waitingByThread.get(task.threadId) ?? 0 : 0;
@@ -104,6 +104,8 @@ export class AgentStateProjector {
         stoppedBy, stopReason, killedByHuman: stoppedBy === 'human', waitingOnChildren,
         startedAt: this.iso(task.startedAt ?? job.createdAt), endedAt: this.iso(endedAt),
         lastActivityAt: new Date(lastActivityAt).toISOString(),
+        actionCount,
+        ...(lastAction !== undefined ? { lastAction } : {}),
         lastCheckinAt: this.iso(checkin?.createdAt), lastCheckinSummary: checkin?.summary ?? null,
         toolInFlight: this.toolView(state, this.activity.toolInFlight(job.jobId, taskIndex)),
         runtimeAlive,
@@ -113,12 +115,12 @@ export class AgentStateProjector {
   }
 
   taskActivity(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin: AgentTaskCheckin | null, answeredAt: number | null, now = this.clock()) {
-    const { state: projected, lastActivityAt } = this.activity.project(job, task, taskIndex, checkin, answeredAt);
+    const { state: projected, lastActivityAt, actionCount, lastAction } = this.activity.project(job, task, taskIndex, checkin, answeredAt);
     // The same boot grace and probe freshness apply to the UI and parent notices.
     const state = (projected === 'quiet' && now - Math.max(lastActivityAt, this.observedSince) < this.config.quietAfterMs
       ? 'working' : projected) as AgentViewStatus;
     const tool = this.activity.toolInFlight(job.jobId, taskIndex);
-    return { state, lastActivityAt, runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null,
+    return { state, lastActivityAt, actionCount, lastAction, runtimeAlive: state === 'quiet' ? this.runtime?.alive(task.threadId) ?? null : null,
       // Only a tool past the ceiling can sit under a quiet task: name it so alerts say "tool still running", not "dead".
       hungTool: state === 'quiet' && tool ? describeHungTool(tool, now) : null };
   }
