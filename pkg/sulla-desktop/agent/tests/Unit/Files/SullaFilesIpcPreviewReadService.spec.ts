@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('@pkg/window/agentWindowTrust', () => ({ isAgentWindowSender: vi.fn() }));
+vi.mock('../../../../main/sullaFilesClient', () => ({ FilesApiError: class FilesApiError extends Error { constructor(message:string, readonly status:number) { super(message) } } }));
 
 import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
 import { SullaFilesIpcPreviewReadService, SullaFilesPreviewContentClassifier, type SullaFilesPreviewReadCaps } from '@pkg/main/SullaFilesIpcPreviewReadService';
@@ -11,6 +12,21 @@ const clientFor = (metadataValue:unknown = metadata(), stream = vi.fn(async() =>
 const serviceFor = (client:any) => new SullaFilesIpcPreviewReadService({ client } as never, new SullaFilesPreviewContentClassifier(CAPS));
 
 describe('bounded Files preview read', () => {
+  it('returns a full HTML source unchanged, including scripts, inline CSS, and relative asset references', async() => {
+    // risk: data integrity — HTML preview reads must not strip scripts, styles, or image/font URLs.
+    const source = '<!doctype html><html><head><style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")}</style></head><body style="color:rebeccapurple"><img src="../images/hero.png"><script>window.previewRan = true;</script></body></html>';
+    const file = metadata({ path:'Projects/preview/page.html', mime:'text/html', size:source.length, version:{ id:'v', size:source.length } });
+    const client = clientFor(file, vi.fn(async() => new Response(source)));
+    const service = new SullaFilesIpcPreviewReadService(
+      { client } as never,
+      new SullaFilesPreviewContentClassifier({ ...CAPS, html:source.length }),
+    );
+
+    const result = await service.read('f');
+
+    expect(result).toMatchObject({ state:'ready', kind:'html', truncated:false, content:source });
+  });
+
   it('discards bytes when trusted Files identity changes between metadata and body', async() => {
     const principal = vi.fn().mockResolvedValueOnce('account-a').mockResolvedValueOnce('account-a').mockResolvedValueOnce('account-b');
     const client = clientFor(metadata(), vi.fn(async() => new Response('abc')), principal);
