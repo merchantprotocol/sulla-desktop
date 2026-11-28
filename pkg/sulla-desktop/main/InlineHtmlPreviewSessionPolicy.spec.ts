@@ -4,7 +4,8 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { InlineHtmlPreviewSessionPolicy } from './InlineHtmlPreviewSessionPolicy';
 
-class FakeSession {
+class FakeSession extends EventEmitter {
+  constructor() { super(); }
   beforeRequest?: (details: { url: string }, callback: (response: { cancel: boolean }) => void) => void;
   permissionRequestHandler?: (...args: any[]) => void;
   permissionCheckHandler?: (...args: any[]) => boolean;
@@ -12,14 +13,17 @@ class FakeSession {
     onBeforeRequest: vi.fn((_filter: unknown, listener: typeof this.beforeRequest) => { this.beforeRequest = listener; }),
   };
   readonly resolveHost = vi.fn(async() => ({ endpoints: [{ address: '93.184.216.34', family: 'ipv4' as const }] }));
+  readonly setWebRTCIPHandlingPolicy = vi.fn();
   readonly setPermissionRequestHandler = vi.fn((handler: typeof this.permissionRequestHandler) => { this.permissionRequestHandler = handler; });
   readonly setPermissionCheckHandler = vi.fn((handler: typeof this.permissionCheckHandler) => { this.permissionCheckHandler = handler; });
 }
 
 class FakeWebContents extends EventEmitter {
   openHandler?: (details: { url: string }) => { action: string };
-  constructor(readonly session: FakeSession) { super(); }
+  readonly stop = vi.fn();
+  constructor(readonly session: FakeSession, private readonly type = 'window') { super(); }
   setWindowOpenHandler(handler: typeof this.openHandler): void { this.openHandler = handler; }
+  getType(): string { return this.type; }
 }
 
 function createPolicy(now: () => number = () => 1_000): {
@@ -55,17 +59,24 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
     let now = 1_000;
     const { guest, openUrl } = createPolicy(() => now);
 
+    guest.emit('input-event', {}, { type: 'mouseUp' });
     expect(guest.openHandler!({ url: 'https://example.com/docs' })).toEqual({ action: 'deny' });
     await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith('https://example.com/docs'));
+    guest.emit('input-event', {}, { type: 'mouseUp' });
     expect(guest.openHandler!({ url: 'app://./index.html' })).toEqual({ action: 'deny' });
+    guest.emit('input-event', {}, { type: 'mouseUp' });
     expect(guest.openHandler!({ url: 'file:///Users/example/secret.txt' })).toEqual({ action: 'deny' });
     expect(openUrl).toHaveBeenCalledTimes(1);
 
-    for (let index = 0; index < 6; index++) guest.openHandler!({ url: `https://example.com/${index}` });
+    for (let index = 0; index < 6; index++) {
+      guest.emit('input-event', {}, { type: 'mouseUp' });
+      guest.openHandler!({ url: `https://example.com/${index}` });
+    }
     await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(5));
     expect(openUrl).not.toHaveBeenCalledWith('https://example.com/5');
 
     now += 60_001;
+    guest.emit('input-event', {}, { type: 'mouseUp' });
     guest.openHandler!({ url: 'http://example.org/' });
     await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith('http://example.org/'));
   });
@@ -79,9 +90,38 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
     expect(openUrl).not.toHaveBeenCalled();
 
     const externalPreventDefault = vi.fn();
+    guest.emit('input-event', {}, { type: 'mouseUp' });
     guest.emit('will-navigate', { preventDefault: externalPreventDefault }, 'https://example.com/page');
     expect(externalPreventDefault).toHaveBeenCalledOnce();
     await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith('https://example.com/page'));
+  });
+
+  // risk: unsolicited external navigation — onload redirects and timer-driven popups must not open tabs; one real click routes at most once.
+  it('drops onload and timer link attempts, then routes a click-initiated external navigation only once', async() => {
+    let now = 1_000;
+    const { guest, openUrl } = createPolicy(() => now);
+    const onloadPreventDefault = vi.fn();
+    guest.emit('will-navigate', { preventDefault: onloadPreventDefault }, 'https://example.com/onload-redirect');
+    expect(onloadPreventDefault).toHaveBeenCalledOnce();
+    for (let index = 0; index < 8; index++) guest.openHandler!({ url: `https://example.com/timer-${index}` });
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    expect(openUrl).not.toHaveBeenCalled();
+
+    guest.emit('input-event', {}, { type: 'mouseUp' });
+    now += 1_001;
+    guest.emit('will-navigate', { preventDefault: vi.fn() }, 'https://example.com/stale-click');
+    guest.emit('input-event', {}, { type: 'mouseUp' });
+    const clickNavigationPreventDefault = vi.fn();
+    guest.emit('will-navigate', { preventDefault: clickNavigationPreventDefault }, 'https://example.com/click');
+    guest.openHandler!({ url: 'https://example.com/click' });
+    expect(clickNavigationPreventDefault).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+    expect(openUrl).toHaveBeenCalledWith('https://example.com/click');
+
+    guest.emit('input-event', {}, { type: 'keyDown' });
+    guest.emit('will-navigate', { preventDefault: vi.fn() }, 'https://example.com/keyboard');
+    await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(2));
+    expect(openUrl).toHaveBeenLastCalledWith('https://example.com/keyboard');
   });
 
   // risk: permission escalation — every permission request and permission check in the guest session is refused.
@@ -91,6 +131,17 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
     session.permissionRequestHandler!(guest, 'geolocation', callback, {});
     expect(callback).toHaveBeenCalledWith(false);
     expect(session.permissionCheckHandler!(guest, 'media', '', {})).toBe(false);
+  });
+
+  // risk: chat availability and network privacy — HTML cannot spawn downloads or expose non-proxied WebRTC UDP addresses.
+  it('cancels session downloads and disables non-proxied WebRTC UDP', () => {
+    const { session, guest } = createPolicy();
+    const preventDefault = vi.fn();
+
+    session.emit('will-download', { preventDefault }, {}, guest);
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(session.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith('disable_non_proxied_udp');
   });
 
   // risk: local service and file access — requests to private, loopback, link-local, app and file targets are blocked; only active Files capability origins are allowed.
@@ -110,6 +161,26 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
     expect(await request(session, 'sulla-files-preview://valid-token/Projects/synthetic/style.css')).toEqual({ cancel: false });
     expect(await request(session, 'sulla-files-preview://expired-token/Projects/synthetic/style.css')).toEqual({ cancel: true });
     expect(await request(session, 'https://example.com/style.css')).toEqual({ cancel: false });
+  });
+
+  // risk: local service access — loopback, unspecified, RFC1918, unique-local and link-local destinations are denied for HTTP and WebSocket requests.
+  it('blocks private IPv4, IPv6, localhost, ws, and wss destinations', async() => {
+    const { session } = createPolicy();
+    const blockedUrls = [
+      'http://[::1]:4312/',
+      'http://0.0.0.0:4312/',
+      'http://10.255.255.255:4312/',
+      'http://172.16.0.1:4312/',
+      'http://172.31.255.254:4312/',
+      'http://[fc00::1]:4312/',
+      'http://[fe80::1]:4312/',
+      'http://localhost:4312/',
+      'ws://localhost:4312/socket',
+      'wss://[::1]:4312/socket',
+    ];
+
+    for (const url of blockedUrls) expect(await request(session, url), url).toEqual({ cancel: true });
+    expect(await request(session, 'http://172.32.0.1:4312/')).toEqual({ cancel: false });
   });
 
   // risk: guest renderer compromise — a weakened webview cannot attach, and an accepted guest gets dialogs disabled with no preload or popup privilege.
@@ -192,6 +263,24 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
     expect(prevented).toHaveBeenCalledOnce();
   });
 
+  // risk: renderer isolation — direct data SVG/XHTML and Files capability sources cannot attach to a non-preview partition.
+  it('treats active preview URL schemes and executable data document types as preview intents at attach', () => {
+    const { app, session } = createPolicy();
+    const host = new FakeWebContents(session);
+    app.emit('web-contents-created', {}, host);
+
+    for (const src of [
+      'data:image/svg+xml,<svg></svg>',
+      'data:image/svg+xml;charset=utf-8,<svg></svg>',
+      'data:application/xhtml+xml,<html></html>',
+      'sulla-files-preview://valid-token/Projects/x.html',
+    ]) {
+      const preventDefault = vi.fn();
+      host.emit('will-attach-webview', { preventDefault }, {}, { partition: 'persist:default', src });
+      expect(preventDefault, src).toHaveBeenCalledOnce();
+    }
+  });
+
   // risk: app webview regression — the preview policy must not disable or rewrite unrelated trusted app guests.
   it('leaves unrelated app webviews outside the preview partition untouched', () => {
     const { app, session } = createPolicy();
@@ -206,5 +295,29 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
     expect(prevented).not.toHaveBeenCalled();
     expect(preferences).toEqual({ nodeIntegration: true, contextIsolation: false, webSecurity: false });
     expect(params).toEqual({ partition: 'persist:agent-assets', src: 'https://assets.example.test/preview' });
+  });
+
+  // risk: renderer isolation — a reused unrelated guest cannot navigate itself into a Files capability or executable data document.
+  it('blocks an unrelated webview navigating to a preview intent before and after navigation starts', () => {
+    const { app, session } = createPolicy();
+    const otherSession = new FakeSession();
+    const guest = new FakeWebContents(otherSession, 'webview');
+    app.emit('web-contents-created', {}, guest);
+
+    for (const url of [
+      'data:text/html,<script>escape()</script>',
+      'data:image/svg+xml,<svg></svg>',
+      'data:application/xhtml+xml,<html></html>',
+      'sulla-files-preview://valid-token/index.html',
+    ]) {
+      const preventDefault = vi.fn();
+      guest.emit('will-navigate', { preventDefault }, url);
+      expect(preventDefault).toHaveBeenCalledOnce();
+      guest.emit('did-start-navigation', {}, url, false, true);
+    }
+
+    expect(guest.stop).toHaveBeenCalledTimes(4);
+    guest.emit('did-start-navigation', {}, 'https://example.com/', false, true);
+    expect(guest.stop).toHaveBeenCalledTimes(4);
   });
 });
