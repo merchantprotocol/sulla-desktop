@@ -176,16 +176,7 @@ export class AgentNode extends BaseNode {
     if (!isToolCallLoop) {
       perf.log(`[PreModelTiming] threadId=${ (state.metadata as any).threadId } totalMs=${ Date.now() - turnReceivedAt } handoffAtMs=${ Date.now() - turnReceivedAt } phases=[${ Object.entries(preModelPhases).map(([name, ms]) => `${ name }=${ ms }ms`).join(', ') }] enrichPrompt.sections=[${ (promptSectionTimings || []).map(({ id, durationMs }) => `${ id }=${ durationMs }ms`).join(', ') }]`);
     }
-    const executeStart = Date.now();
     const agentResult = await this.executeAgent(enrichedPrompt, state);
-    const executeMs = Date.now() - executeStart;
-
-    // Perf: split the user-visible turn into the blocking subconscious prelude
-    // vs the main agent execution. Only log on fresh turns (not tool-call loop
-    // iterations) so the numbers map to one user message.
-    if (!isToolCallLoop) {
-      perf.log(`[TurnTiming] threadId=${ (state.metadata as any).threadId } subconsciousMs=${ subconsciousMs } executeMs=${ executeMs } totalMs=${ subconsciousMs + executeMs } msgs=${ state.messages.length }`);
-    }
 
     // If aborted while the LLM was responding, stop immediately —
     // don't process the result or let the graph loop back.
