@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ default: { app: { getPath: () => '/ud', getVersion: () => '0.0.0' }, net: { fetch: vi.fn() } } }));
