@@ -3,7 +3,7 @@
  * Copyright (c) 2025-2026 Merchant Protocol LLC.
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
@@ -12,6 +12,7 @@ import InlineFileCardFixture from './fixtures/InlineFileCardFixture.vue';
 import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
 import {
   MAX_INLINE_HTML_SOURCE_CHARACTERS,
+  InlineHtmlPreviewDocument,
   InlineImagePreviewSource,
   MAX_INLINE_IMAGE_BYTES,
   type InlineFileActionReference,
@@ -40,10 +41,45 @@ const actionReference: InlineFileActionReference = {
   path: htmlFile.path,
 };
 
+class TestIntersectionObserver {
+  static current: TestIntersectionObserver | undefined;
+  private target?: Element;
+
+  constructor(private readonly callback: IntersectionObserverCallback) { TestIntersectionObserver.current = this; }
+  observe(target: Element): void { this.target = target; }
+  intersect(): void {
+    if (!this.target) throw new Error('Preview root was not observed.');
+    this.callback([{ isIntersecting: true, target: this.target } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+  disconnect(): void {}
+  unobserve(): void {}
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+}
+
+const originalGlobalObserver = globalThis.IntersectionObserver;
+const originalWindowObserver = window.IntersectionObserver;
+
+function assignObserver(target: object, observer: unknown): void {
+  if (observer === undefined) Reflect.deleteProperty(target, 'IntersectionObserver');
+  else Object.defineProperty(target, 'IntersectionObserver', { configurable: true, writable: true, value: observer });
+}
+
+beforeEach(() => {
+  TestIntersectionObserver.current = undefined;
+  assignObserver(globalThis, TestIntersectionObserver);
+  assignObserver(window, TestIntersectionObserver);
+});
+afterEach(() => {
+  assignObserver(globalThis, originalGlobalObserver);
+  assignObserver(window, originalWindowObserver);
+});
+
 describe('InlineFileCard', () => {
-  it('renders HTML in the isolated guest partition with its Files base after the doctype', () => {
+  it('renders HTML in the isolated guest partition with its Files base after the doctype', async() => {
     // risk: data integrity and renderer isolation — scripts stay intact in a separate guest process, without giving HTML a chat-renderer iframe.
     const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
     const guest = wrapper.get('webview');
 
     expect(wrapper.findAll('iframe')).toHaveLength(0);
@@ -67,13 +103,15 @@ describe('InlineFileCard', () => {
     wrapper.unmount();
   });
 
-  it('does not move the doctype when a page has no head element', () => {
+  it('does not move the doctype when a page has no head element', async() => {
     const source = '<!doctype html><html lang="en"><body><script>window.ran = true;</script></body></html>';
     const file: InlineFileCardViewModel = {
       ...htmlFile,
       preview: { kind: 'html', source, assetBaseUrl: htmlBaseUrl },
     };
     const wrapper = mount(InlineFileCard, { props: { file } });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
     const encoded = wrapper.get('webview').attributes('src') ?? '';
     const document = decodeURIComponent(encoded.slice('data:text/html;charset=utf-8,'.length));
 
@@ -85,6 +123,8 @@ describe('InlineFileCard', () => {
   it('uses the same isolated guest when Full screen opens and restores focus after the native dialog closes', async() => {
     // risk: renderer isolation — expanding a preview must not weaken iframe policy or strand keyboard focus.
     const wrapper = mount(InlineFileCard, { props: { file: htmlFile }, attachTo: document.body });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
     const fullScreenButton = wrapper.get('[title="Full screen"]');
     expect(document.body.contains(fullScreenButton.element)).toBe(true);
     await fullScreenButton.trigger('click');
@@ -128,13 +168,15 @@ describe('InlineFileCard', () => {
     wrapper.unmount();
   });
 
-  it('limits oversized HTML to the preview cap and exposes the full-file action', () => {
+  it('limits oversized HTML to the preview cap and exposes the full-file action', async() => {
     // risk: resource limits — a large authorized HTML file must not be sanitized or rendered unbounded in the chat renderer.
     const oversizedFile: InlineFileCardViewModel = {
       ...htmlFile,
       preview: { kind: 'html', source: 'x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS) + 'tail-marker' },
     };
     const wrapper = mount(InlineFileCard, { props: { file: oversizedFile } });
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
     const previewUrl = wrapper.get('webview').attributes('src') ?? '';
     const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
 
@@ -142,6 +184,39 @@ describe('InlineFileCard', () => {
     expect(wrapper.get('.file-cap button').exists()).toBe(true);
     expect(document.length).toBe(MAX_INLINE_HTML_SOURCE_CHARACTERS);
     expect(document).not.toContain('tail-marker');
+    wrapper.unmount();
+  });
+
+  // risk: content integrity — a source cap must not leave an unmatched high surrogate at the end of the HTML document.
+  it('backs the HTML source cap off a split UTF-16 surrogate pair', () => {
+    const source = 'x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS - 1) + '\uD83D\uDE00';
+    const html = new InlineHtmlPreviewDocument().toHtml(source);
+
+    expect(html).toBe('x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS - 1));
+    expect(html.charCodeAt(html.length - 1)).not.toBeGreaterThanOrEqual(0xD800);
+  });
+
+  // risk: chat availability — expensive preview guests start only near the viewport and a dead/unresponsive guest can be recovered without restarting chat.
+  it.each([
+    ['render-process-gone', 'stopped unexpectedly'],
+    ['unresponsive', 'not responding'],
+  ])('mounts on intersection and offers Reload after %s', async(eventName, errorText) => {
+    const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
+    expect(wrapper.find('webview').exists()).toBe(false);
+
+    TestIntersectionObserver.current?.intersect();
+    await nextTick();
+    expect(wrapper.find('webview').exists()).toBe(true);
+
+    const firstGuest = wrapper.get('webview').element;
+    await wrapper.get('webview').trigger(eventName);
+    expect(wrapper.get('[role="alert"]').text()).toContain(errorText);
+    expect(wrapper.find('webview').exists()).toBe(false);
+    expect(wrapper.get('.preview-error button').exists()).toBe(true);
+    await wrapper.get('.preview-error button').trigger('click');
+
+    expect(wrapper.get('webview').element).not.toBe(firstGuest);
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
