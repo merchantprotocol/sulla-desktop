@@ -17,6 +17,8 @@ import { touchChatStorageScope } from './ChatStorageGc';
 
 import type { SpeakListener } from '@pkg/agent/database/models/MessageDispatcher';
 import { MessageWindow } from '../chat/messages/MessageWindow';
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { newHumanSendId, type HumanSendDispatch, type HumanSendPath, type HumanSendReceipt, type HumanSendRoute } from '@pkg/shared/HumanSend';
 
 export type ChatMessage = RegistryChatMessage;
 
@@ -38,9 +40,13 @@ export class ChatInterface {
   /** Unique key for this tab's localStorage — scoped by tabId when provided */
   private readonly storageScope:       string;
   private readonly messagesStorageKey: string;
+  private readonly queueStorageKey: string;
   private readonly messageQueue:       ChatMessageQueue;
   private readonly onTabClosed:        (event: Event) => void;
+  private readonly stopHumanSendReceipt: () => void;
   private readonly messageWindow = new MessageWindow();
+  private queueDrainSuspended = false;
+  private pendingSteerDispatch: Promise<void> = Promise.resolve();
 
   readonly query = ref('');
   readonly transcriptEl = ref<HTMLElement | null>(null);
@@ -63,6 +69,7 @@ export class ChatInterface {
     this.storageScope = tabId ? `${ channelId }_${ tabId }` : channelId;
     touchChatStorageScope(this.storageScope);
     this.messagesStorageKey = `chat_messages_${ this.storageScope }`;
+    this.queueStorageKey = `chat_pending_messages_${ this.storageScope }`;
     this.currentAgentId = computed(() => this.channelId);
     this.hasSentMessageKey = `chat_has_sent_message_${ this.storageScope }`;
     this.hasSentMessage = ref(localStorage.getItem(this.hasSentMessageKey) === 'true');
@@ -77,7 +84,9 @@ export class ChatInterface {
     this.messagesRevision = computed(() => this.persona.messagesRevision.value);
 
     // Initialize message queue
-    this.messageQueue = createMessageQueue();
+    this.messageQueue = createMessageQueue(messages => this.persistQueuedMessages(messages));
+    this.restoreQueuedMessages();
+    this.stopHumanSendReceipt = this.persona.onHumanSendReceipt(receipt => this.handleHumanSendReceipt(receipt));
 
     // Restore threadId from localStorage so the next message reuses the same backend thread.
     // If none exists, generate one immediately so thread-ID filtering works from the start
@@ -103,7 +112,8 @@ export class ChatInterface {
 
     // Watch graphRunning to process next queued message when current one completes
     watch(() => this.persona.graphRunning.value, (isRunning) => {
-      if (!isRunning && this.messageQueue.hasPendingMessages.value) {
+      if (isRunning) this.resumePendingSteer();
+      if (!this.queueDrainSuspended && !isRunning && this.messageQueue.hasPendingMessages.value) {
         console.log('[ChatInterface] Graph finished, processing next queued message');
         this.processNextQueuedMessage();
       }
@@ -111,13 +121,15 @@ export class ChatInterface {
 
     // Also watch loading state - when model finishes initializing, process queue
     watch(() => this.loading.value, (isLoading) => {
-      if (!isLoading && !this.persona.graphRunning.value && this.messageQueue.hasPendingMessages.value) {
+      if (!isLoading && this.persona.graphRunning.value) this.resumePendingSteer();
+      if (!this.queueDrainSuspended && !isLoading && !this.persona.graphRunning.value && this.messageQueue.hasPendingMessages.value) {
         console.log('[ChatInterface] Model ready, processing next queued message');
         this.processNextQueuedMessage();
       }
     });
 
     this.messages.value = this.persona.messages;
+    if (this.persona.graphRunning.value) this.resumePendingSteer();
   }
 
   private trimMessages(): void {
@@ -162,6 +174,24 @@ export class ChatInterface {
       });
       localStorage.setItem(this.messagesStorageKey, JSON.stringify(toStore));
     } catch { /* storage full — silently degrade */ }
+  }
+
+  private persistQueuedMessages(messages: readonly QueuedMessage[]): void {
+    try {
+      if (!messages.length) localStorage.removeItem(this.queueStorageKey);
+      else localStorage.setItem(this.queueStorageKey, JSON.stringify(messages));
+    } catch (error) {
+      console.warn('[ChatInterface] could not persist pending messages; keeping them in the live queue:', error);
+    }
+  }
+
+  private restoreQueuedMessages(): void {
+    try {
+      const raw = localStorage.getItem(this.queueStorageKey);
+      if (raw) this.messageQueue.restore(JSON.parse(raw));
+    } catch (error) {
+      console.warn('[ChatInterface] could not restore pending messages:', error);
+    }
   }
 
   private restoreMessages(): void {
@@ -254,6 +284,7 @@ export class ChatInterface {
 
   dispose(): void {
     window.removeEventListener('sulla:chat-tab-closed', this.onTabClosed);
+    this.stopHumanSendReceipt();
     // Flush any debounce-pending persist so the tail of the last response
     // isn't lost when the tab/component goes away inside the 500ms window.
     if (this.persistTimer) {
@@ -264,11 +295,23 @@ export class ChatInterface {
     this.persona.stopListening();
   }
 
-  stop(): void {
+  stop(cancelSendIds: string[] = []): void {
     const threadId = this.persona.getThreadId();
     console.log(`[ChatInterface:stop] channelId=${ this.channelId }, tabId=${ this.tabId ?? '(none)' }, threadId=${ threadId ?? '(none)' }, graphRunning was ${ this.persona.graphRunning.value }`);
+    this.queueDrainSuspended = true;
     if (threadId) {
-      this.persona.emitStopSignal(this.channelId);
+      const pendingMessages = this.messageQueue.pendingMessages.value;
+      const queuedSendIds = pendingMessages
+        .filter(message => message.metadata?.deliveryStatus === 'delivering')
+        .flatMap(message => [message.metadata?.sendId, ...(Array.isArray(message.metadata?.coalescedSendIds) ? message.metadata.coalescedSendIds : [])])
+        .filter((sendId): sendId is string => typeof sendId === 'string' && !!sendId);
+      const sendIds = [...new Set([...cancelSendIds, ...queuedSendIds])];
+      for (const message of pendingMessages) {
+        const sendId = message.metadata?.sendId;
+        if (typeof sendId === 'string') this.updateLegacyQueuedSend(sendId, { deliveryStatus: 'pending', cancelledByStop: true });
+      }
+      const cancel = this.persona.cancelHumanSends(sendIds);
+      void cancel.finally(() => this.persona.emitStopSignal(this.channelId));
     } else {
       // Never emit an unscoped stop. Multiple tabs intentionally share one
       // channel, so a missing thread id must fail closed instead of risking a
@@ -276,9 +319,7 @@ export class ChatInterface {
       console.warn(`[ChatInterface:stop] ignored unscoped stop for channelId=${ this.channelId }, tabId=${ this.tabId ?? '(none)' }`);
     }
     this.persona.graphRunning.value = false;
-    // Clear the queue when stopping
-    this.messageQueue.clear();
-    console.log(`[ChatInterface:stop] graphRunning now ${ this.persona.graphRunning.value }, queue cleared`);
+    console.log(`[ChatInterface:stop] graphRunning now ${ this.persona.graphRunning.value }, queued messages retained for explicit retry`);
   }
 
   continueRun(): void {
@@ -294,30 +335,77 @@ export class ChatInterface {
   }
 
   /**
-   * Send a message. If the graph is currently running, the message will be
-   * queued and sent automatically when the current processing completes.
+   * Send a message. Running graphs accept ordinary input through the existing steer path.
+   * A visible legacy queue row remains until the backend receipt confirms acceptance.
    */
-  async send(metadata?: Record<string, unknown>, attachments?: { mediaType: string; base64: string }[]): Promise<void> {
-    if (!this.query.value.trim() && !attachments?.length) return;
+  async send(metadata?: Record<string, unknown>, attachments?: { mediaType: string; base64: string }[], humanSend?: HumanSendDispatch): Promise<HumanSendPath | undefined> {
+    if (!this.query.value.trim() && !attachments?.length && !(Array.isArray(metadata?.fileReferences) && metadata.fileReferences.length)) return undefined;
 
     const text = this.query.value;
-
-    // If the graph for THIS tab is running, queue. We intentionally don't
-    // also gate on `this.loading.value` — `loading` lives on the shared
-    // registry agent entry (per channel, not per tab), so two tabs on the
-    // same channel would block each other: tab 2's first send silently
-    // queues until tab 1's reply arrives. `graphRunning` is per-tab (ref
-    // on AgentPersonaService, keyed per channel+tab), so this gate alone
-    // keeps per-tab queuing correct without cross-tab bleed.
-    if (this.persona.graphRunning.value) {
-      console.log(`[ChatInterface:send] Graph running, queuing message: ${ text.slice(0, 50) }...`);
-      this.messageQueue.enqueue(text, attachments as PendingAttachment[], metadata);
-      this.query.value = '';
-      return;
+    const running = this.persona.graphRunning.value;
+    // CLI live-steer transports accept text only. Keep any binary attachment
+    // in the visible fresh-turn queue so it reaches a provider that can read it.
+    const routeChanging = !!(metadata?.agentId || metadata?.workflowId || metadata?.useCaseIntent || metadata?.inputSource === 'voice' || (attachments?.length ?? 0) > 0);
+    const route: HumanSendRoute = running ? routeChanging ? 'new_turn' : 'steer' : 'idle';
+    const path: HumanSendPath = running ? routeChanging ? 'queued' : 'injected' : 'sent_fresh';
+    const delivery: HumanSendDispatch = {
+      sendId: humanSend?.sendId ?? newHumanSendId(),
+      ...(humanSend?.coalescedSendIds?.length ? { coalescedSendIds: [...humanSend.coalescedSendIds] } : {}),
+      route,
+      enqueuedAtMs: humanSend?.enqueuedAtMs ?? Date.now(),
+      path,
+    };
+    this.query.value = '';
+    this.recordHumanSendEnqueued(delivery);
+    this.queueDrainSuspended = false;
+    // Keep a route-changing fresh send recoverable if the renderer's running
+    // flag lagged the backend and the backend asks us to wait for its active
+    // run. It stays hidden while delivery is in flight, then becomes a visible
+    // waiting row only if the backend rejects it as queued.
+    if (routeChanging && path === 'sent_fresh') {
+      this.messageQueue.enqueue(text, attachments?.map((attachment, index) => ({
+        name: `Attachment ${ index + 1 }`, mediaType: attachment.mediaType, base64: attachment.base64, preview: '',
+      })), { ...metadata, ...delivery, deliveryStatus: 'delivering', cancelledByStop: false });
     }
 
-    // Send immediately
-    await this.sendMessageInternal(text, metadata, attachments);
+    if (path === 'queued') {
+      this.messageQueue.enqueue(text, attachments?.map((attachment, index) => ({
+        name: `Attachment ${ index + 1 }`, mediaType: attachment.mediaType, base64: attachment.base64, preview: '',
+      })), {
+        ...metadata, ...delivery, deliveryStatus: 'pending', cancelledByStop: false,
+      });
+      if (!humanSend) this.recordSendHop(path);
+      return path;
+    }
+
+    if (path === 'injected') {
+      this.messageQueue.enqueue(text, attachments?.map((attachment, index) => ({
+        name: `Attachment ${ index + 1 }`, mediaType: attachment.mediaType, base64: attachment.base64, preview: '',
+      })), {
+        ...metadata, ...delivery, deliveryStatus: 'delivering', cancelledByStop: false,
+      });
+      let actualPath: HumanSendPath = 'injected';
+      this.pendingSteerDispatch = this.pendingSteerDispatch.catch(() => undefined).then(async() => {
+        actualPath = await this.injectMessage(text, attachments, metadata, delivery, false);
+      });
+      try {
+        await this.pendingSteerDispatch;
+      } catch (error) {
+        this.updateLegacyQueuedSend(delivery.sendId, { deliveryStatus: 'pending' });
+        throw error;
+      }
+      if (!humanSend) this.recordSendHop(actualPath);
+      return actualPath;
+    }
+
+    try {
+      await this.sendMessageInternal(text, metadata, attachments, delivery);
+    } catch (error) {
+      if (routeChanging) this.updateLegacyQueuedSend(delivery.sendId, { deliveryStatus: 'pending' });
+      throw error;
+    }
+    if (!humanSend) this.recordSendHop(path);
+    return path;
   }
 
   /**
@@ -327,6 +415,7 @@ export class ChatInterface {
     text: string,
     metadata?: Record<string, unknown>,
     attachments?: { mediaType: string; base64: string }[],
+    humanSend?: HumanSendDispatch,
   ): Promise<void> {
     this.query.value = '';
 
@@ -347,17 +436,25 @@ export class ChatInterface {
       ? { ...metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
       : metadata;
 
-    await this.persona.addUserMessage('', text, sendMetadata);
+    if (humanSend) this.skipNextTranscriptTrim = true;
+    if (!await this.persona.addUserMessage('', text, sendMetadata, humanSend)) throw new Error('Message could not be delivered.');
+    this.schedulePersist();
   }
 
   /**
    * Process the next queued message when graph finishes
    */
   private async processNextQueuedMessage(): Promise<void> {
+    const firstMessage = this.messageQueue.peek();
+    if (firstMessage?.metadata?.deliveryStatus === 'delivering' || firstMessage?.metadata?.cancelledByStop === true) return;
+    if (this.persona.graphRunning.value || !firstMessage) return;
     const nextMessage = this.messageQueue.shift();
     if (!nextMessage) return;
 
     let content = nextMessage.content;
+    const coalescedSendIds: string[] = Array.isArray(nextMessage.metadata?.coalescedSendIds)
+      ? nextMessage.metadata.coalescedSendIds.filter((id): id is string => typeof id === 'string')
+      : [];
 
     // Voice backstop: fixed end-of-turn detection should already deliver a whole
     // utterance as one message, but if any voice fragments still slip into the queue,
@@ -367,19 +464,42 @@ export class ChatInterface {
     if (nextMessage.metadata?.inputSource === 'voice' && !nextMessage.attachments?.length) {
       let peek = this.messageQueue.peek();
       while (peek && peek.metadata?.inputSource === 'voice' && !peek.attachments?.length) {
-        content += ` ${ this.messageQueue.shift()!.content }`;
+        const fragment = this.messageQueue.shift()!;
+        content += ` ${ fragment.content }`;
+        const fragmentSendId = fragment.metadata?.sendId;
+        if (typeof fragmentSendId === 'string') coalescedSendIds.push(fragmentSendId);
+        if (Array.isArray(fragment.metadata?.coalescedSendIds)) {
+          coalescedSendIds.push(...fragment.metadata.coalescedSendIds.filter((id): id is string => typeof id === 'string'));
+        }
         peek = this.messageQueue.peek();
       }
     }
 
-    console.log(`[ChatInterface:processNextQueuedMessage] Sending queued message: ${ content.slice(0, 50) }...`);
+    console.log('[ChatInterface:processNextQueuedMessage] Dispatching queued message');
 
     const attachments = nextMessage.attachments?.map(a => ({
       mediaType: a.mediaType,
       base64:    a.base64,
     }));
-
-    await this.sendMessageInternal(content, nextMessage.metadata, attachments);
+    const existingSendId = nextMessage.metadata?.sendId;
+    const humanSend: HumanSendDispatch = {
+      sendId: typeof existingSendId === 'string' && nextMessage.metadata?.cancelledByStop !== true ? existingSendId : newHumanSendId(),
+      ...(coalescedSendIds.length ? { coalescedSendIds: [...new Set(coalescedSendIds.filter(id => id !== existingSendId))] } : {}),
+      route: 'idle', path: 'sent_fresh',
+      enqueuedAtMs: typeof nextMessage.metadata?.enqueuedAtMs === 'number' ? nextMessage.metadata.enqueuedAtMs : Date.now(),
+    };
+    const pending = this.messageQueue.enqueue(content, nextMessage.attachments, {
+      ...nextMessage.metadata, ...humanSend, deliveryStatus: 'delivering', cancelledByStop: false,
+    });
+    if (typeof existingSendId !== 'string') this.recordHumanSendEnqueued(humanSend);
+    try {
+      await this.sendMessageInternal(content, nextMessage.metadata, attachments, humanSend);
+      this.recordSendHop('sent_fresh');
+    } catch (error) {
+      this.updateLegacyQueuedSend(humanSend.sendId, { deliveryStatus: 'pending' });
+      console.warn(`[ChatInterface] queued send ${ pending.id } was not accepted; keeping it visible for retry`);
+      throw error;
+    }
   }
 
   // ─── Queue Management ───────────────────────────────────────────
@@ -391,11 +511,22 @@ export class ChatInterface {
 
   /** Remove a specific message from the queue */
   removeQueuedMessage(messageId: string): boolean {
+    const queued = this.messageQueue.getById(messageId);
+    const sendId = queued?.metadata?.sendId;
+    const related = queued?.metadata?.coalescedSendIds;
+    if (typeof sendId === 'string') void this.persona.cancelHumanSends([
+      sendId, ...(Array.isArray(related) ? related.filter((id): id is string => typeof id === 'string') : []),
+    ]);
     return this.messageQueue.dequeue(messageId);
   }
 
   /** Clear all pending messages */
   clearQueue(): void {
+    const sendIds = this.messageQueue.pendingMessages.value
+      .filter(message => message.metadata?.deliveryStatus === 'delivering')
+      .flatMap(message => [message.metadata?.sendId, ...(Array.isArray(message.metadata?.coalescedSendIds) ? message.metadata.coalescedSendIds : [])])
+      .filter((sendId): sendId is string => typeof sendId === 'string');
+    if (sendIds.length) void this.persona.cancelHumanSends(sendIds);
     this.messageQueue.clear();
   }
 
@@ -417,28 +548,82 @@ export class ChatInterface {
    */
   async injectQueuedMessage(messageId: string): Promise<void> {
     const msg = this.messageQueue.getById(messageId);
-    if (!msg) return;
+    if (!msg || msg.metadata?.deliveryStatus === 'delivering') return;
 
-    this.messageQueue.dequeue(messageId);
+    const attachments = msg.attachments?.map(a => ({ mediaType: a.mediaType, base64: a.base64 }));
+    const metadata: Record<string, unknown> = { ...msg.metadata };
+    const routeChanging = !!(metadata.agentId || metadata.workflowId || metadata.useCaseIntent || metadata.inputSource === 'voice' || (msg.attachments?.length ?? 0) > 0);
+    const running = this.persona.graphRunning.value;
+    if (running && routeChanging) return;
+    const sendId = typeof metadata.sendId === 'string' && metadata.cancelledByStop !== true ? metadata.sendId : newHumanSendId();
+    const oldCoalescedSendIds = Array.isArray(metadata.coalescedSendIds)
+      ? metadata.coalescedSendIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    const humanSend: HumanSendDispatch = {
+      sendId,
+      ...(oldCoalescedSendIds.length ? {
+        coalescedSendIds: metadata.cancelledByStop === true ? oldCoalescedSendIds.map(() => newHumanSendId()) : oldCoalescedSendIds,
+      } : {}),
+      route: running ? 'steer' : 'idle',
+      path: running ? 'injected' : 'sent_fresh',
+      enqueuedAtMs: typeof metadata.enqueuedAtMs === 'number' && metadata.cancelledByStop !== true ? metadata.enqueuedAtMs : Date.now(),
+    };
+    Object.assign(metadata, humanSend, { deliveryStatus: 'delivering', cancelledByStop: false });
+    this.queueDrainSuspended = false;
+    this.messageQueue.updateMetadataById(msg.id, { ...humanSend, deliveryStatus: 'delivering', cancelledByStop: false });
+    this.recordHumanSendEnqueued(humanSend);
 
-    const attachments = msg.attachments?.map(a => ({
-      mediaType: a.mediaType,
-      base64:    a.base64,
-    }));
-
-    const metadata = attachments?.length
-      ? { ...msg.metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
-      : msg.metadata;
-
-    if (this.persona.graphRunning.value) {
-      // Graph still running — inject without triggering execution
-      console.log(`[ChatInterface:injectQueuedMessage] Injecting into running graph: ${ msg.content.slice(0, 50) }...`);
-      await this.persona.injectMessage(msg.content, metadata);
-    } else {
-      // Graph already finished (race condition) — fall back to normal send
-      console.log(`[ChatInterface:injectQueuedMessage] Graph not running, falling back to normal send: ${ msg.content.slice(0, 50) }...`);
-      await this.sendMessageInternal(msg.content, metadata, attachments);
+    const sendMetadata = attachments?.length
+      ? { ...metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
+      : metadata;
+    try {
+      if (running && humanSend.route === 'steer') {
+        await this.injectMessage(msg.content, attachments, sendMetadata, humanSend, false);
+      } else {
+        await this.sendMessageInternal(msg.content, sendMetadata, attachments, humanSend);
+      }
+      this.recordSendHop(humanSend.path ?? (running ? 'injected' : 'sent_fresh'));
+    } catch (error) {
+      this.updateLegacyQueuedSend(humanSend.sendId, { deliveryStatus: 'pending' });
+      throw error;
     }
+  }
+
+  private handleHumanSendReceipt(receipt: HumanSendReceipt): void {
+    const queued = this.messageQueue.pendingMessages.value.find(message => message.metadata?.sendId === receipt.sendId);
+    if (!queued) {
+      if (receipt.status !== 'accepted') this.persona.removeOptimisticHumanMessage(receipt.sendId);
+      return;
+    }
+    if (receipt.status === 'accepted') {
+      this.messageQueue.dequeue(queued.id);
+      if (!this.queueDrainSuspended && !this.persona.graphRunning.value && this.messageQueue.hasPendingMessages.value) {
+        void this.processNextQueuedMessage();
+      }
+      return;
+    }
+    if (receipt.status === 'rejected' && receipt.route === 'new_turn') {
+      this.persona.removeOptimisticHumanMessage(receipt.sendId);
+      this.updateLegacyQueuedSend(receipt.sendId, { deliveryStatus: 'pending', cancelledByStop: false, route: 'new_turn', path: 'queued' });
+      return;
+    }
+    this.persona.removeOptimisticHumanMessage(receipt.sendId);
+    this.updateLegacyQueuedSend(receipt.sendId, { deliveryStatus: 'pending', cancelledByStop: true });
+  }
+
+  private updateLegacyQueuedSend(sendId: string, patch: Record<string, unknown>): void {
+    this.messageQueue.updateMetadataBySendId(sendId, patch);
+  }
+
+  /** A refreshed renderer retries an unacknowledged plain-text steer against the same backend id. */
+  private resumePendingSteer(): void {
+    if (this.queueDrainSuspended || !this.persona.graphRunning.value) return;
+    const queued = this.messageQueue.peek();
+    if (!queued || queued.metadata?.deliveryStatus === 'delivering' || queued.metadata?.cancelledByStop === true) return;
+    const metadata = queued.metadata ?? {};
+    const routeChanging = !!(metadata.agentId || metadata.workflowId || metadata.useCaseIntent || metadata.inputSource === 'voice' || queued.attachments.length);
+    if (routeChanging || metadata.route === 'new_turn') return;
+    void this.injectQueuedMessage(queued.id).catch(error => console.warn('[ChatInterface] recovered steer could not be retried:', error));
   }
 
   /**
@@ -456,20 +641,61 @@ export class ChatInterface {
     text: string,
     attachments?: { mediaType: string; base64: string }[],
     metadata?: Record<string, unknown>,
-  ): Promise<void> {
-    if (!text.trim() && !attachments?.length) return;
+    humanSend?: HumanSendDispatch,
+    recordEnqueued = true,
+  ): Promise<HumanSendPath> {
+    if (!text.trim() && !attachments?.length && !(Array.isArray(metadata?.fileReferences) && metadata.fileReferences.length)) return 'sent_fresh';
+
+    const running = this.persona.graphRunning.value;
+    const actualSend: HumanSendDispatch | undefined = humanSend ? {
+      ...humanSend,
+      route: running ? 'steer' : 'idle',
+      path: running ? 'injected' : 'sent_fresh',
+    } : undefined;
+    if (actualSend && recordEnqueued) this.recordHumanSendEnqueued(actualSend);
 
     const fullMetadata = attachments?.length
       ? { ...metadata, attachments: attachments.map(a => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: a.mediaType, data: a.base64 } })) }
       : metadata;
 
-    if (this.persona.graphRunning.value) {
-      console.log(`[ChatInterface:injectMessage] Injecting into running graph: ${ text.slice(0, 50) }...`);
-      await this.persona.injectMessage(text, fullMetadata);
+    this.query.value = '';
+    if (running) {
+      console.log('[ChatInterface:injectMessage] Injecting into running graph');
+      if (!await this.persona.injectMessage(text, fullMetadata, actualSend)) throw new Error('Message could not be delivered.');
+      this.schedulePersist();
+      return 'injected';
     } else {
-      console.log(`[ChatInterface:injectMessage] Graph idle, sending normally: ${ text.slice(0, 50) }...`);
-      await this.sendMessageInternal(text, fullMetadata, attachments);
+      console.log('[ChatInterface:injectMessage] Graph idle, sending normally');
+      await this.sendMessageInternal(text, fullMetadata, attachments, actualSend);
+      return 'sent_fresh';
     }
+  }
+
+  private recordHumanSendEnqueued(send: HumanSendDispatch): void {
+    const threadId = this.persona.getThreadId();
+    if (!threadId) return;
+    for (const sendId of [send.sendId, ...(send.coalescedSendIds ?? [])]) {
+      ipcRenderer.send('human-send-wait:enqueued', { ...send, sendId, coalescedSendIds: undefined, threadId });
+    }
+  }
+
+  private recordSendHop(route: HumanSendPath): void {
+    const threadId = this.persona.getThreadId();
+    if (!threadId) return;
+    ipcRenderer.send('send-hop:log', {
+      threadId,
+      messageCount: this.persona.messages.length,
+      route,
+      marks: {},
+    });
+  }
+
+  onHumanSendReceipt(listener: (receipt: import('@pkg/shared/HumanSend').HumanSendReceipt) => void): () => void {
+    return this.persona.onHumanSendReceipt(listener);
+  }
+
+  cancelHumanSends(sendIds: string[]): Promise<boolean> {
+    return this.persona.cancelHumanSends(sendIds);
   }
 
   /**

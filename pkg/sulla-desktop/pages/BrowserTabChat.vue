@@ -130,6 +130,7 @@
                         type="button"
                         class="p-1 rounded text-content-muted browser-action-success transition-colors"
                         title="Send now (inject into running conversation)"
+                        :disabled="Boolean(graphRunning && (msg.attachments?.length || msg.metadata?.agentId || msg.metadata?.workflowId || msg.metadata?.useCaseIntent || msg.metadata?.inputSource === 'voice'))"
                         @click="injectQueuedMessage(msg.id)"
                       >
                         <svg
@@ -468,9 +469,9 @@ const showContinueButton = chatController.showContinueButton;
 
 // ─── Message Queue ─────────────────────────────────────────────
 const messageQueue = chatController.getQueue();
-const queuedMessages = messageQueue.pendingMessages;
-const hasQueuedMessages = messageQueue.hasPendingMessages;
-const queuedMessageCount = messageQueue.queueLength;
+const queuedMessages = messageQueue.visiblePendingMessages;
+const hasQueuedMessages = messageQueue.hasVisiblePendingMessages;
+const queuedMessageCount = messageQueue.visibleQueueLength;
 
 const removeQueuedMessage = (messageId: string) => {
   chatController.removeQueuedMessage(messageId);

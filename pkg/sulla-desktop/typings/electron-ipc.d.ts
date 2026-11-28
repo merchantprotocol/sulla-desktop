@@ -201,7 +201,8 @@ export interface IpcMainEvents {
   // #region IPC Message Bus
   'message-bus:send': (channelId: string, message: any) => void;
   /** Content-free renderer send timing. */
-  'send-hop:log': (payload: { threadId: string; messageCount: number; marks: Record<string, number> }) => void;
+  'send-hop:log': (payload: { threadId: string; messageCount: number; route?: 'injected' | 'queued' | 'sent_fresh'; marks: Record<string, number> }) => void;
+  'human-send-wait:enqueued': (payload: { sendId: string; threadId: string; route: 'steer' | 'new_turn' | 'idle'; path?: 'injected' | 'queued' | 'sent_fresh'; enqueuedAtMs: number }) => void;
   // #endregion
 
   // #region Routine menu context (renderer → main)
