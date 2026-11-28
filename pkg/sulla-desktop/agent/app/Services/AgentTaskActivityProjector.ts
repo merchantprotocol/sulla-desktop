@@ -15,7 +15,11 @@ export interface AgentTaskActivityReader {
   toolInFlight?(key: string): { name: string; startedAt: number } | undefined;
 }
 export interface AgentTaskActivityCheckin { createdAt: number; blockers?: string[] }
-export interface AgentTaskActivityProjection { lastActivityAt: number; actionCount: number; state: string; lastAction?: { kind: 'model' | 'tool'; label: string; at: string } | null }
+export interface AgentTaskActivityProjection { lastActivityAt: number; state: string }
+export interface AgentTaskActionProjection extends AgentTaskActivityProjection {
+  actionCount: number;
+  lastAction?: { kind: 'model' | 'tool'; label: string; at: string } | null;
+}
 
 /** One task-scoped activity and presentation-state policy shared by every fleet surface. */
 export class AgentTaskActivityProjector {
@@ -34,30 +38,40 @@ export class AgentTaskActivityProjector {
     return ['queued', 'working', 'quiet', 'parked', 'blocked'].includes(state);
   }
 
+  /** Adds task-scoped model/tool telemetry without changing the shared lifecycle projection. */
+  projectWithActions(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null,
+    openBlockerDecision?: boolean): AgentTaskActionProjection {
+    const projection = this.project(job, task, taskIndex, checkin, answeredAt, openBlockerDecision);
+    const activityKey = `${ job.jobId }#${ taskIndex }`;
+    const lastAction = this.activity.lastAction?.(activityKey);
+    return {
+      ...projection,
+      actionCount: this.activity.actionCount?.(activityKey) ?? 0,
+      ...(lastAction !== undefined ? { lastAction } : {}),
+    };
+  }
+
   /** The oldest command this task is still running, if any. */
   toolInFlight(jobId: string, taskIndex: number): { name: string; startedAt: number } | undefined {
     return this.activity.toolInFlight?.(`${ jobId }#${ taskIndex }`);
   }
 
   /** `answeredAt` is the latest orchestrator-message delivery to this task, used to resolve its blocker. */
-  project(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null): AgentTaskActivityProjection {
+  project(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null,
+    openBlockerDecision?: boolean): AgentTaskActivityProjection {
     const startedAt = task.startedAt ?? job.createdAt;
-    const activityKey = `${ job.jobId }#${ taskIndex }`;
     const tool = this.toolInFlight(job.jobId, taskIndex);
     const lastActivityAt = Math.max(
       startedAt,
       checkin?.createdAt ?? 0,
-      this.activity.lastActivityAt(activityKey) ?? 0,
+      this.activity.lastActivityAt(`${ job.jobId }#${ taskIndex }`) ?? 0,
       task.finishedAt ?? 0,
       task.returnedAt ?? 0,
       // A tool still running is activity right now (up to the ceiling), so every
       // reader of lastActivityAt (directory "stalled", alerts) sees a busy agent.
       task.status === 'running' && this.isBusy(tool) ? this.now() : 0,
     );
-    const lastAction = this.activity.lastAction?.(activityKey);
-    return { lastActivityAt, actionCount: this.activity.actionCount?.(activityKey) ?? 0,
-      state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, tool),
-      ...(lastAction !== undefined ? { lastAction } : {}) };
+    return { lastActivityAt, state: this.state(job, task, checkin ?? null, lastActivityAt, answeredAt ?? null, tool, openBlockerDecision) };
   }
 
   /** A tool call still running and still under the hung-tool ceiling, or waiting on the human. */
@@ -65,8 +79,12 @@ export class AgentTaskActivityProjector {
     return toolHoldsRunAlive(tool && { name: tool.name ?? '', startedAt: tool.startedAt }, this.now(), this.longCommandMs);
   }
 
-  /** Derived from the task's own lifecycle only. The job's status is never inherited. */
-  private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null, tool?: { name?: string; startedAt: number }): string {
+  /** Derived from the task's lifecycle and its explicit decision obligation, never the job's status. */
+  private state(job: AgentJob, task: AgentJobTask, checkin: AgentTaskActivityCheckin | null, lastActivityAt: number, answeredAt: number | null,
+    tool?: { name?: string; startedAt: number }, openBlockerDecision?: boolean): string {
+    // The open decision is authoritative even if the worker returns immediately
+    // after raising it; the unanswered obligation remains visible until settled.
+    if (openBlockerDecision === true) return 'blocked';
     if (task.status === 'stopped') return 'stopped';
     // A stale task error can outlive a successfully delivered completion result.
     // Match AgentStateService's derived job status while keeping genuine errors terminal.
@@ -75,7 +93,7 @@ export class AgentTaskActivityProjector {
     if (task.status === 'lost') return 'lost';
     if (task.status === 'completed') return 'done';
     if (!this.liveness.isLive(task)) return 'done';
-    const unresolved = this.blockers.unresolvedCount({ task, checkin, answeredAt, startedAt: task.startedAt ?? job.createdAt });
+    const unresolved = this.blockers.unresolvedCount({ task, checkin, answeredAt, startedAt: task.startedAt ?? job.createdAt, openDecision: openBlockerDecision });
     if (unresolved > 0) return 'blocked';
     if (task.status === 'parked' || (task.wakeAt !== undefined && task.wakeAt > this.now())) return 'parked';
     if (task.status === 'queued') return 'queued';
