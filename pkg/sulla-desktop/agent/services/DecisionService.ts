@@ -128,13 +128,16 @@ export class DecisionService {
       return;
     }
 
-    // An unchanged report never creates a new obligation. Only retry the first
-    // handoff for the exact decision already persisted by the original report.
+    // Retry publication when a prior report persisted its check-in but failed
+    // before its decision row was saved. A matching answered decision is still
+    // terminal: retries must not reopen a question the parent already answered.
     if (!input.blockersChanged) {
-      if (latest?.payload?.blockerText === text && isOpen && latest.route?.authority === 'any' && latest.route.deliveredAt == null) {
-        await this.escalation.start(latest);
+      if (latest?.payload?.blockerText === text) {
+        if (isOpen && latest.route?.authority === 'any' && latest.route.deliveredAt == null) {
+          await this.escalation.start(latest);
+        }
+        return;
       }
-      return;
     }
 
     // A changed blocker replaces the old obligation with a fresh decision id.
@@ -149,7 +152,7 @@ export class DecisionService {
       channel: input.channel,
       title,
       questions: [{
-        question: `${ input.label } reported a blocker for job ${ input.jobId }, task ${ input.taskIndex }: ${ text }`,
+        question: `${ input.label } reported a blocker for job ${ input.jobId }, task ${ input.taskIndex }: ${ text }\n\nReply with agents/answer_decision; any selected text, including free text, is delivered to the worker.`,
         header: 'Worker blocker',
         options: [{ label: 'Acknowledged; continue' }],
       }],
