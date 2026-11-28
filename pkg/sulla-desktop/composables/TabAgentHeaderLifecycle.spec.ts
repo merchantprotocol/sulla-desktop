@@ -118,27 +118,45 @@ describe('window tab state with real AgentHeaders', () => {
     expect(replacement?.tab).toMatchObject({ working: false, activity: 'you' });
   });
 
-  it('keeps the selected tab expanded when Welcome becomes Chat without navigation', async() => {
-    vi.stubGlobal('ResizeObserver', class {
-      observe(element: HTMLElement) {
-        Object.defineProperty(element, 'clientWidth', { configurable: true, value: 440 });
-        element.scrollTo = vi.fn();
-      }
-
-      disconnect() {}
-    });
+  it('does not assign a group when a tab changes page mode', async() => {
+    // risk: data integrity — a page mode change must not silently create membership.
     const selected = store.createTab('about:blank', { mode: 'welcome' });
-    const browser = store.createTab('https://example.test');
-    const { router, state, tabProps } = await mountShell();
+    const { router, tabProps } = await mountShell();
 
-    expect(state.activeGroup.value).toBe('tools');
+    expect(store.tabGroupModel.groups).toEqual([]);
     store.updateTab(selected.id, { mode: 'chat', title: 'New Chat' });
     await nextTick();
 
     expect(router.currentRoute.value.params.id).toBe(selected.id);
-    expect(state.activeGroup.value).toBe('chats');
-    expect(tabProps.get(`browser-${ selected.id }`)).toMatchObject({ tab: { mode: 'chat', isActive: true }, compact: false, iconOnly: false });
-    expect(tabProps.get(`browser-${ browser.id }`)?.compact).toBe(true);
+    expect(tabProps.get(`browser-${ selected.id }`)?.tab).toMatchObject({ mode: 'chat', isActive: true });
+    expect(store.tabGroupModel.getGroupIdForTab(`browser-${ selected.id }`)).toBeUndefined();
+    expect(store.tabGroupModel.groups).toEqual([]);
+  });
+
+  it('deleting a group ungroups its tabs without closing them', () => {
+    // risk: side effects — deleting organization metadata must never close browser tabs.
+    const first = store.createTab('https://first.test');
+    const second = store.createTab('https://second.test');
+    const group = store.tabGroupModel.createGroup('Research', 'accent', [`browser-${ first.id }`]);
+
+    expect(store.tabGroupModel.deleteGroup(group.id)).toBe(true);
+    expect(store.tabs.map(tab => tab.id)).toContain(first.id);
+    expect(store.tabs.map(tab => tab.id)).toContain(second.id);
+    expect(store.tabGroupModel.getGroupIdForTab(`browser-${ first.id }`)).toBeUndefined();
+    expect(store.tabGroupModel.groupTabs(store.tabs.map(tab => ({ id: `browser-${ tab.id }` }))).ungrouped)
+      .toContainEqual({ id: `browser-${ first.id }` });
+  });
+
+  it('removes the last-tab group when a grouped browser tab closes', async() => {
+    // risk: data integrity — closing one tab must prune its membership without touching siblings.
+    const selected = store.createTab('https://selected.test');
+    const sibling = store.createTab('https://sibling.test');
+    const group = store.tabGroupModel.createGroup('Temporary', 'status-success', [`browser-${ selected.id }`]);
+
+    expect(await store.closeTab(selected.id)).toBe(true);
+    expect(store.tabs.map(tab => tab.id)).not.toContain(selected.id);
+    expect(store.tabs.map(tab => tab.id)).toContain(sibling.id);
+    expect(store.tabGroupModel.groups.some(candidate => candidate.id === group.id)).toBe(false);
   });
 
   it('duplicates exactly once with two mounted headers and a repeated menu reply', async() => {
@@ -161,9 +179,6 @@ describe('window tab state with real AgentHeaders', () => {
     const chat = store.createTab('about:blank', { mode: 'chat' });
     const { root, router } = await mountShell(2);
     const push = vi.spyOn(router, 'push');
-    const tab = root.querySelector<HTMLElement>(`[data-tab-id="browser-${ chat.id }"]`)!;
-
-    tab.scrollIntoView = vi.fn();
 
     ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, false, { state: 'stalled' });
     await nextTick();
@@ -186,7 +201,6 @@ describe('window tab state with real AgentHeaders', () => {
     await push.mock.results[0].value;
     await nextTick();
     expect(router.currentRoute.value.params.id).toBe(chat.id);
-    expect(tab.scrollIntoView).toHaveBeenCalledOnce();
     ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, false);
   });
 
