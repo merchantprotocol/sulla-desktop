@@ -166,6 +166,9 @@ class TypecheckBaselineGate {
     this.reporter.beforeTypecheck();
     const result = this.runTsc();
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+    if (process.env.TYPECHECK_DIAGNOSTIC_CAPTURE_PATH) {
+      writeFileSync(process.env.TYPECHECK_DIAGNOSTIC_CAPTURE_PATH, output);
+    }
     process.stdout.write(output);
 
     const diagnostics = output
