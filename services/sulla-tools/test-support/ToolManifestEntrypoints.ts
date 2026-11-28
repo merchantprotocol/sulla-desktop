@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { executionTargetFor } from '../../../packages/runtime-protocol/src/executionTargets';
