@@ -123,8 +123,7 @@ export class FilesOpenWorker extends FilesTool {
       isChatMuted:          !!metadata?._muteWsChat,
       isSubconsciousSilent: !!metadata?.subconsciousSilent,
     };
-    const htmlFile = fileKind === 'file' && this.openDestinationRouter.isHtmlPath(resolvedPath);
-    let decision = this.routePolicy.route(htmlFile ? 'tab' : input.placement, context);
+    let decision = this.routePolicy.route(input.placement, context);
     if (fileKind === 'folder' && input.placement !== 'tab' && decision.kind === 'inline') {
       decision = this.routePolicy.route('tab', context);
     }
