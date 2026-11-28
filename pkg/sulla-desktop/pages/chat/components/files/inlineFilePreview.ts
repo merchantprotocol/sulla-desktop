@@ -51,22 +51,36 @@ export interface InlineFileActionReference {
 
 export const MAX_INLINE_HTML_SOURCE_CHARACTERS = 256 * 1024;
 
-/** Keeps an HTML page intact for an isolated srcdoc iframe and gives relative
+/** Keeps an HTML page intact for an isolated Electron guest and gives relative
  * resources the same Files preview URL base as the HTML editor. */
 export class InlineHtmlPreviewDocument {
   constructor(private readonly maxCharacters = MAX_INLINE_HTML_SOURCE_CHARACTERS) {}
 
-  toSrcdoc(source: string, assetBaseUrl?: string): string {
+  toHtml(source: string, assetBaseUrl?: string): string {
     const documentSource = source.slice(0, this.maxCharacters);
     if (!assetBaseUrl) return documentSource;
 
     // Match the Files HTML builder: insert its capability URL after an existing
-    // head start, or prepend it when the source has no head element.
+    // head start. If no head exists, keep the doctype and html start tag in
+    // front so adding the base element cannot switch a standards document to
+    // quirks mode.
     const baseTag = '<base href="' + this.escapeAttribute(assetBaseUrl) + '">';
     const head = /<head(?:\s[^>]*)?>/i.exec(documentSource);
-    return head
-      ? documentSource.slice(0, head.index + head[0].length) + baseTag + documentSource.slice(head.index + head[0].length)
-      : baseTag + documentSource;
+    if (head) {
+      return documentSource.slice(0, head.index + head[0].length) + baseTag + documentSource.slice(head.index + head[0].length);
+    }
+
+    const doctype = /<!doctype\b[^>]*>/i.exec(documentSource);
+    const html = /<html(?:\s[^>]*)?>/i.exec(documentSource);
+    const insertionIndex = Math.max(
+      doctype ? doctype.index + doctype[0].length : 0,
+      html ? html.index + html[0].length : 0,
+    );
+    return documentSource.slice(0, insertionIndex) + baseTag + documentSource.slice(insertionIndex);
+  }
+
+  toDataUrl(source: string, assetBaseUrl?: string): string {
+    return 'data:text/html;charset=utf-8,' + encodeURIComponent(this.toHtml(source, assetBaseUrl));
   }
 
   private escapeAttribute(value: string): string {
