@@ -1,89 +1,105 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+
 import { describe, expect, it } from 'vitest';
 
 import { TabGroupModel } from './TabGroupModel';
 import { TabGroupReveal } from './TabGroupReveal';
-import { TabStripLayoutRepository } from './TabStripLayoutRepository';
+import { TabStripLayoutRepository, type TabStripStorage } from './TabStripLayoutRepository';
 
-class MemoryStorage implements Pick<Storage, 'getItem' | 'setItem'> {
-  private readonly values = new Map<string, string>();
-  getItem(key: string) { return this.values.get(key) ?? null }
-  setItem(key: string, value: string) { this.values.set(key, value) }
+class MemoryStorage implements TabStripStorage {
+  private readonly entries = new Map<string, string>();
+
+  constructor(seed: Record<string, string> = {}) {
+    for (const [key, value] of Object.entries(seed)) this.entries.set(key, value);
+  }
+
+  getItem(key: string): string | null { return this.entries.get(key) ?? null; }
+  setItem(key: string, value: string): void { this.entries.set(key, value); }
 }
 
 describe('TabStripLayoutRepository', () => {
-  it('reveals only a changed unpinned selection, preserving a restored or manually folded active group', () => {
+  it('starts with no groups for a new window and isolates storage by per-window key', () => {
+    // risk: data isolation — groups from one window must not leak into another.
     const storage = new MemoryStorage();
-    const layout = new TabStripLayoutRepository(storage, 'window');
-    const chat = { id: 'chat', mode: 'chat' };
-    const browser = { id: 'first-browser', mode: 'browser' };
-    const reveal = new TabGroupReveal(new TabGroupModel(), layout, chat);
+    const main = new TabStripLayoutRepository(storage, 'window-main');
+    const otherWindow = new TabStripLayoutRepository(storage, 'window-other');
 
-    layout.setFoldedGroups(['chats', 'browser', 'tools']);
-    reveal.select(chat);
-    expect(layout.foldedGroups.value).toEqual(['chats', 'browser', 'tools']);
-    reveal.select(browser);
-    expect(layout.foldedGroups.value).toEqual(['chats', 'tools']);
+    expect(main.state.value).toEqual({ version: 2, groups: [], membership: {} });
+    expect(otherWindow.state.value).toEqual({ version: 2, groups: [], membership: {} });
 
-    layout.setFoldedGroups(['chats', 'browser', 'tools']);
-    reveal.select({ ...browser }); // The native browser header replaces the shell header.
-    expect(layout.foldedGroups.value).toContain('browser');
-    reveal.select({ id: 'pinned-tool', mode: 'vault', pinned: true });
-    expect(layout.foldedGroups.value).toContain('tools');
-    reveal.select(browser);
-    expect(layout.foldedGroups.value).not.toContain('browser');
+    new TabGroupModel(main, () => 'group-main').createGroup('Main tabs', 'accent', ['tab-a']);
+    expect(main.state.value.groups).toHaveLength(1);
+    expect(otherWindow.state.value.groups).toEqual([]);
   });
 
-  it('reveals the same active id after unpin or group change, but keeps an explicit fold in the same placement', () => {
-    const layout = new TabStripLayoutRepository(new MemoryStorage(), 'window');
-    const reveal = new TabGroupReveal(new TabGroupModel(), layout);
-    const tool = { id: 'active', mode: 'calendar' };
+  it('round-trips group names, theme-token colors, collapse state, order, and membership after restart', () => {
+    // risk: durability — a restart must preserve the user's complete layout.
+    const firstStorage = new MemoryStorage();
+    const firstRepository = new TabStripLayoutRepository(firstStorage, 'window-key');
+    const model = new TabGroupModel(firstRepository, (() => {
+      let id = 0;
+      return () => `group-${ ++id }`;
+    })());
+    const first = model.createGroup('  Work 🧭  ', 'status-warning', ['tab-a', 'tab-b']);
+    const second = model.createGroup('Personal', 'text-accent', ['tab-c']);
+    model.setCollapsed(first.id, true);
+    model.reorder(second.id, 0);
 
-    layout.setFoldedGroups(['chats', 'browser', 'tools']);
-    reveal.select({ ...tool, pinned: true });
-    expect(layout.foldedGroups.value).toContain('tools');
-    reveal.select({ ...tool, pinned: false });
-    expect(layout.foldedGroups.value).not.toContain('tools');
+    const saved = firstStorage.getItem('window-key');
+    expect(saved).not.toBeNull();
+    expect(JSON.parse(saved!)).toEqual({
+      version: 2,
+      groups: [
+        { id: second.id, name: 'Personal', colorToken: 'text-accent', order: 0, collapsed: false },
+        { id: first.id, name: 'Work 🧭', colorToken: 'status-warning', order: 1, collapsed: true },
+      ],
+      membership: { 'tab-a': first.id, 'tab-b': first.id, 'tab-c': second.id },
+    });
 
-    layout.setFoldedGroups(['chats', 'browser', 'tools']);
-    reveal.select({ ...tool, mode: 'vault' });
-    expect(layout.foldedGroups.value).toContain('tools');
-    reveal.select({ ...tool, mode: 'browser' });
-    expect(layout.foldedGroups.value).toEqual(['chats', 'tools']);
+    const restartedStorage = new MemoryStorage({ 'window-key': saved! });
+    const restarted = new TabStripLayoutRepository(restartedStorage, 'window-key');
+
+    expect(restarted.state.value).toEqual(firstRepository.state.value);
   });
 
-  it('defaults only Tools to folded on a fresh profile', () => {
-    const storage = new MemoryStorage();
-    expect(new TabStripLayoutRepository(storage, 'sulla:win:main:tab-strip-layout').loadFoldedGroups()).toEqual(['tools']);
+  it('reveals a collapsed user group when its tab becomes active', () => {
+    // risk: data accuracy — a selected tab must not remain hidden in a collapsed group.
+    const repository = new TabStripLayoutRepository(new MemoryStorage(), 'window-key');
+    const model = new TabGroupModel(repository, () => 'active-group');
+    const group = model.createGroup('Selected', 'accent', ['browser-tab']);
+    const reveal = new TabGroupReveal(model);
+
+    model.setCollapsed(group.id, true);
+    reveal.select({ id: 'browser-tab' });
+
+    expect(model.groups[0].collapsed).toBe(false);
   });
 
-  it('round-trips folded groups through the per-window storage key', () => {
-    const storage = new MemoryStorage();
-    const key = 'sulla:win:window-2:tab-strip-layout';
-    const writer = new TabStripLayoutRepository(storage, key);
-    writer.saveFoldedGroups(['browser', 'chats', 'browser', 'invalid']);
+  it('loads legacy folded-ID arrays as no groups and ignores malformed or unsupported data', () => {
+    // risk: durability — legacy and corrupt storage must not break startup.
+    const legacy = new TabStripLayoutRepository(new MemoryStorage({ legacy: '["tools"]' }), 'legacy');
+    const malformed = new TabStripLayoutRepository(new MemoryStorage({ malformed: '{' }), 'malformed');
+    const unsupported = new TabStripLayoutRepository(new MemoryStorage({ unsupported: '{"version":1,"groups":[],"membership":{}}' }), 'unsupported');
 
-    expect(new TabStripLayoutRepository(storage, key).loadFoldedGroups()).toEqual(['browser', 'chats']);
-    expect(storage.getItem(key)).toBe('["browser","chats"]');
+    expect(legacy.state.value).toEqual({ version: 2, groups: [], membership: {} });
+    expect(malformed.state.value).toEqual({ version: 2, groups: [], membership: {} });
+    expect(unsupported.state.value).toEqual({ version: 2, groups: [], membership: {} });
   });
 
-  it('shares a reactive fold owner only for repositories on the same window key', () => {
-    const storage = new MemoryStorage();
-    const key = 'sulla:win:window-3:tab-strip-layout';
-    const first = new TabStripLayoutRepository(storage, key);
-    const second = new TabStripLayoutRepository(storage, key);
-    const otherWindow = new TabStripLayoutRepository(storage, 'sulla:win:window-4:tab-strip-layout');
+  it('sanitizes invalid groups and stale group membership without throwing', () => {
+    // risk: data integrity — invalid persisted identifiers and colors must be discarded.
+    const raw = JSON.stringify({
+      version: 2,
+      groups: [
+        { id: 'usable', name: '  Valid  ', colorToken: 'status-error', order: 4, collapsed: true },
+        { id: 'empty-name', name: ' ', colorToken: 'accent', order: 1, collapsed: false },
+        { id: 'unknown-color', name: 'Invalid', colorToken: '#ff00ff', order: 2, collapsed: false },
+      ],
+      membership: { 'live-tab': 'usable', 'stale-group': 'absent', 'invalid-group': 'empty-name' },
+    });
+    const repository = new TabStripLayoutRepository(new MemoryStorage({ state: raw }), 'state');
 
-    first.setFoldedGroups(['browser']);
-
-    expect(second.foldedGroups).toBe(first.foldedGroups);
-    expect(second.foldedGroups.value).toEqual(['browser']);
-    expect(otherWindow.foldedGroups.value).toEqual(['tools']);
-  });
-
-  it('recovers safely from malformed stored layout', () => {
-    const storage = new MemoryStorage();
-    storage.setItem('layout', '{broken');
-    expect(new TabStripLayoutRepository(storage, 'layout').loadFoldedGroups()).toEqual(['tools']);
+    expect(repository.state.value.groups).toEqual([{ id: 'usable', name: 'Valid', colorToken: 'status-error', order: 0, collapsed: true }]);
+    expect(repository.state.value.membership).toEqual({ 'live-tab': 'usable' });
   });
 });
