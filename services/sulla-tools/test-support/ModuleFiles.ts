@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
