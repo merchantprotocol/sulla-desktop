@@ -151,7 +151,8 @@
               ><i
                 v-for="(count, index) in bins(node.row.key)"
                 :key="index"
-                :style="{ height: `${count ? Math.min(12, 3 + count * 3) : 1}px` }"
+                :title="`${count} actions`"
+                :style="{ height: `${activityBinProjector.height(count, maxBin(node.row.key))}px` }"
               /></span>
             </div>
             <dl
@@ -246,10 +247,11 @@
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
 
 import { ChatDecisions } from '../../composables/useChatDecisions';
+import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
 import { useChatController } from '../../controller/useChatController';
 import { AgentWorkTree } from '../../messages/AgentWorkTree';
 import { LineTimes } from '../../messages/lineTime';
-import { ActivityTrail, activityBins, laneStep, shortenHashes } from '../../messages/sideDock';
+import { ActivityBinProjector, ActivityTrail, laneStep, shortenHashes } from '../../messages/sideDock';
 import { activityAge, agentCountSummary, deriveThreadActivity, waitTarget } from '../../messages/threadActivity';
 
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
@@ -270,8 +272,10 @@ if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
 const context = inject<{ backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
-const now = ref(Date.now());
-const trail = new ActivityTrail();
+const threadActivity = inject(THREAD_AGENT_ACTIVITY_KEY, null);
+const now = threadActivity?.snapshotClock ?? ref(Date.now());
+const trail = threadActivity?.activityTrail ?? new ActivityTrail();
+const activityBinProjector = new ActivityBinProjector();
 const messaging = reactive(new Set<string>());
 const drafts = reactive<Record<string, string>>({});
 const notice = reactive<Record<string, string>>({});
@@ -285,11 +289,12 @@ function onRowClick(event: MouseEvent, key: string): void {
   toggleExpand(key);
 }
 
+const activityRows = computed(() => threadActivity?.projection.value.agents.map(agent => agent.row) ?? client.snapshot.value.rows);
 const tree = computed(() => (context.backendThreadId.value
-  ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)
+  ? new AgentTreeBuilder(activityRows.value).forThread(context.backendThreadId.value)
   : []));
 
-const workGroups = computed(() => AgentWorkTree.build(client.snapshot.value.rows, context.backendThreadId.value));
+const workGroups = computed(() => AgentWorkTree.build(activityRows.value, context.backendThreadId.value));
 const live = computed(() => workGroups.value.flatMap(group => group.nodes).filter(node => AgentWorkTree.live(node.row)));
 const collapsedGroups = reactive(new Set<string>());
 function toggleGroup(key: string, event: Event): void {
@@ -313,7 +318,19 @@ const summary = computed(() => {
 const decisionStore = ChatDecisions.useChatDecisions();
 const needsYou = computed(() => ({ length: decisionStore.openCount.value }));
 
-watch(() => client.snapshot.value.rows, rows => trail.record(rows, Date.now()), { immediate: true });
+if (!threadActivity) watch(() => activityRows.value, rows => trail.record(rows, now.value), { immediate: true });
+const activityMeters = computed(() => {
+  const meters = new Map<string, { values: number[]; max: number }>();
+  for (const group of workGroups.value) {
+    for (const node of group.nodes) {
+      const values = activityBinProjector.values(trail.samples(node.row.key), now.value);
+      let max = 0;
+      for (const value of values) if (value > max) max = value;
+      meters.set(node.row.key, { values, max });
+    }
+  }
+  return meters;
+});
 
 function initials(row: AgentStateRow): string {
   const name = (row.agentId || row.label || 'A').replace(/[-_]?worker$/i, '');
@@ -328,7 +345,8 @@ function timeText(row: AgentStateRow): string {
   const lastActive = age(Date.parse(row.lastActivityAt));
   return lastActive ? `last active ${ lastActive } ago` : '';
 }
-function bins(key: string): number[] { return activityBins(trail.times(key), now.value) }
+function bins(key: string): number[] { return activityMeters.value.get(key)?.values ?? [] }
+function maxBin(key: string): number { return activityMeters.value.get(key)?.max ?? 0 }
 function resultMessageFor(row: AgentStateRow): string | undefined {
   return controller.messages.value.find((msg): msg is ProactiveMessage => msg.kind === 'proactive' &&
     !!msg.result?.items.some(item => item.jobId === row.jobId && item.taskIndex === row.taskIndex))?.id;
@@ -363,14 +381,11 @@ async function openAgent(row: AgentStateRow): Promise<void> {
   if (!opened) flash(row.key, 'Could not open it; it may have finished.');
 }
 
-let timer: ReturnType<typeof setInterval> | null = null;
 function clearConfirm(): void { confirmStop.value = '' }
 onMounted(() => {
-  timer = setInterval(() => { now.value = Date.now() }, 1000);
   window.addEventListener('click', clearConfirm);
 });
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
   window.removeEventListener('click', clearConfirm);
 });
 </script>
