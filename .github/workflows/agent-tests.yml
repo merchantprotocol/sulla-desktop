@@ -62,11 +62,14 @@ jobs:
       WRITE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.write_baseline && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - uses: actions/setup-node@v4
+        id: setup-node
         with:
           node-version-file: package.json
           cache: yarn
       - name: Install dependencies (no lifecycle scripts, no Electron download)
+        id: dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
@@ -76,36 +79,48 @@ jobs:
         continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
-        run: >-
-          node .github/scripts/typecheck-gate.mjs
-          --project tsconfig.agent-runtime-check.json
-          --baseline .github/typecheck-baseline/agent.txt
-          --
-          --pretty false
+        run: |
+          start=$(date +%s)
+          if node .github/scripts/typecheck-gate.mjs --project tsconfig.agent-runtime-check.json --baseline .github/typecheck-baseline/agent.txt -- --pretty false; then
+            status=0
+          else
+            status=$?
+          fi
+          duration=$(( $(date +%s) - start ))
+          echo "duration_seconds=$duration" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Type-check main and preload production graphs
         id: typecheck-main
         if: env.WRITE_BASELINE == 'false'
         continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
-        run: >-
-          node .github/scripts/typecheck-gate.mjs
-          --project tsconfig.typecheck.json
-          --baseline .github/typecheck-baseline/main.txt
-          --
-          --pretty false
+        run: |
+          start=$(date +%s)
+          if node .github/scripts/typecheck-gate.mjs --project tsconfig.typecheck.json --baseline .github/typecheck-baseline/main.txt -- --pretty false; then
+            status=0
+          else
+            status=$?
+          fi
+          duration=$(( $(date +%s) - start ))
+          echo "duration_seconds=$duration" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Type-check renderer production graphs
         id: typecheck-renderer
         if: env.WRITE_BASELINE == 'false'
         continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
-        run: >-
-          node .github/scripts/typecheck-gate.mjs
-          --project tsconfig.renderer-check.json
-          --baseline .github/typecheck-baseline/renderer.txt
-          --
-          --pretty false
+        run: |
+          start=$(date +%s)
+          if node .github/scripts/typecheck-gate.mjs --project tsconfig.renderer-check.json --baseline .github/typecheck-baseline/renderer.txt -- --pretty false; then
+            status=0
+          else
+            status=$?
+          fi
+          duration=$(( $(date +%s) - start ))
+          echo "duration_seconds=$duration" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Compile production agent bundle
         id: agent-bundle
         if: env.WRITE_BASELINE == 'false'
@@ -171,24 +186,30 @@ jobs:
         if: always()
         env:
           WRITE_BASELINE: ${{ env.WRITE_BASELINE }}
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          NODE_SETUP: ${{ steps.setup-node.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
           AGENT_GRAPH: ${{ steps.typecheck-agent.outcome }}
+          AGENT_DURATION: ${{ steps.typecheck-agent.outputs.duration_seconds }}
           MAIN_GRAPH: ${{ steps.typecheck-main.outcome }}
+          MAIN_DURATION: ${{ steps.typecheck-main.outputs.duration_seconds }}
           RENDERER_GRAPH: ${{ steps.typecheck-renderer.outcome }}
+          RENDERER_DURATION: ${{ steps.typecheck-renderer.outputs.duration_seconds }}
           BUNDLE: ${{ steps.agent-bundle.outcome }}
           BASELINE_AGENT: ${{ steps.baseline-agent.outcome }}
           BASELINE_MAIN: ${{ steps.baseline-main.outcome }}
           BASELINE_RENDERER: ${{ steps.baseline-renderer.outcome }}
         run: |
           if [[ "$WRITE_BASELINE" == "true" ]]; then
-            outcomes="agent=$BASELINE_AGENT main=$BASELINE_MAIN renderer=$BASELINE_RENDERER"
-            if [[ "$BASELINE_AGENT" != "success" || "$BASELINE_MAIN" != "success" || "$BASELINE_RENDERER" != "success" ]]; then
+            outcomes="checkout=$CHECKOUT setup=$NODE_SETUP install=$DEPENDENCIES agent=$BASELINE_AGENT main=$BASELINE_MAIN renderer=$BASELINE_RENDERER"
+            if [[ "$CHECKOUT" != "success" || "$NODE_SETUP" != "success" || "$DEPENDENCIES" != "success" || "$BASELINE_AGENT" != "success" || "$BASELINE_MAIN" != "success" || "$BASELINE_RENDERER" != "success" ]]; then
               echo "::error title=Typecheck baseline graph outcomes::$outcomes"
               exit 1
             fi
             echo "::notice title=Typecheck baseline graph outcomes::$outcomes"
           else
-            outcomes="agent=$AGENT_GRAPH main=$MAIN_GRAPH renderer=$RENDERER_GRAPH bundle=$BUNDLE"
-            if [[ "$AGENT_GRAPH" != "success" || "$MAIN_GRAPH" != "success" || "$RENDERER_GRAPH" != "success" || "$BUNDLE" != "success" ]]; then
+            outcomes="checkout=$CHECKOUT setup=$NODE_SETUP install=$DEPENDENCIES agent=$AGENT_GRAPH(${AGENT_DURATION}s) main=$MAIN_GRAPH(${MAIN_DURATION}s) renderer=$RENDERER_GRAPH(${RENDERER_DURATION}s) bundle=$BUNDLE"
+            if [[ "$CHECKOUT" != "success" || "$NODE_SETUP" != "success" || "$DEPENDENCIES" != "success" || "$AGENT_GRAPH" != "success" || "$MAIN_GRAPH" != "success" || "$RENDERER_GRAPH" != "success" || "$BUNDLE" != "success" ]]; then
               echo "::error title=Typecheck graph outcomes::$outcomes"
               exit 1
             fi
