@@ -57,7 +57,7 @@ export class InlineHtmlPreviewDocument {
   constructor(private readonly maxCharacters = MAX_INLINE_HTML_SOURCE_CHARACTERS) {}
 
   toHtml(source: string, assetBaseUrl?: string): string {
-    const documentSource = source.slice(0, this.maxCharacters);
+    const documentSource = this.capSource(source);
     if (!assetBaseUrl) return documentSource;
 
     // Match the Files HTML builder: insert its capability URL after an existing
@@ -85,6 +85,16 @@ export class InlineHtmlPreviewDocument {
 
   private escapeAttribute(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  }
+
+  private capSource(source: string): string {
+    let end = Math.min(source.length, Math.max(0, this.maxCharacters));
+    if (end < source.length) {
+      const lastKept = source.charCodeAt(end - 1);
+      const next = source.charCodeAt(end);
+      if (lastKept >= 0xD800 && lastKept <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) end--;
+    }
+    return source.slice(0, end);
   }
 }
 
