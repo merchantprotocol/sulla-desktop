@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { FileStreamResponder, sendFileStream } from '../src/sendFileStream.js';
