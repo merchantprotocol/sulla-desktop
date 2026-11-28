@@ -65,6 +65,8 @@ import type { MessageEnvelope } from '@sulla/domain';
 import { OrgContactRequestDecisionPrompter } from './OrgContactRequestDecisionPrompter';
 import { PostgresOrgMessagingStateRepository } from '../app/Repositories/PostgresOrgMessagingStateRepository';
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
+import { HumanSendWaitRecorder, type HumanSendDispatch, type HumanSendPath, type HumanSendRoute } from '@pkg/shared/HumanSend';
+import Logging from '@pkg/utils/logging';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -135,6 +137,11 @@ export class BackendGraphWebSocketService {
   // run in parallel. Previously this was keyed by channelId alone, which
   // made every new tab message abort the prior tab's still-running graph.
   private activeAborts = new Map<string, AbortService>();
+  /** Bounded, per-service idempotency ledger for renderer human sends. */
+  private readonly humanSendReceipts = new Map<string, { threadId: string; route: HumanSendRoute; path?: HumanSendPath }>();
+  private readonly cancelledHumanSends = new Set<string>();
+  private readonly humanSendInFlight = new Set<string>();
+  private readonly humanSendWaitRecorder = new HumanSendWaitRecorder(line => Logging.perf.log(line));
   private suspendedRuns = new Set<string>();
   private readonly relayRuns = new Map<string, { id: string; controller: AbortController }>();
   private readonly readinessWaits = new Map<string, Set<AbortController>>();
@@ -191,6 +198,77 @@ export class BackendGraphWebSocketService {
 
   private abortKey(channelId: string, threadId: string): string {
     return `${ channelId }|${ threadId }`;
+  }
+
+  private humanSendKey(channelId: string, threadId: string, sendId: string): string {
+    return `${ channelId }|${ threadId }|${ sendId }`;
+  }
+
+  private humanSendIds(send: HumanSendDispatch): string[] {
+    const ids = [send.sendId, ...(Array.isArray(send.coalescedSendIds) ? send.coalescedSendIds : [])];
+    return [...new Set(ids.filter(id => typeof id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(id)))].slice(0, 101);
+  }
+
+  private emitHumanSendReceipt(channelId: string, send: HumanSendDispatch, threadId: string, status: 'accepted' | 'cancelled' | 'rejected'): void {
+    for (const sendId of this.humanSendIds(send)) {
+      this.emitMessage(channelId, 'human_send_receipt', {
+        ...send,
+        sendId,
+        coalescedSendIds: undefined,
+        threadId,
+        thread_id: threadId,
+        status,
+      });
+    }
+  }
+
+  /** Accept once the backend owns the send in a graph state, never on optimistic UI alone. */
+  private acceptHumanSend(channelId: string, threadId: string, send: HumanSendDispatch): boolean {
+    const key = this.humanSendKey(channelId, threadId, send.sendId);
+    const prior = this.humanSendReceipts.get(key);
+    if (prior) {
+      this.emitHumanSendReceipt(channelId, { ...send, route: prior.route, path: prior.path }, threadId, 'accepted');
+      return true;
+    }
+    const sendIds = this.humanSendIds(send);
+    const sendKeys = sendIds.map(sendId => this.humanSendKey(channelId, threadId, sendId));
+    if (sendKeys.some(sendKey => this.cancelledHumanSends.has(sendKey))) {
+      this.emitHumanSendReceipt(channelId, send, threadId, 'cancelled');
+      for (const sendKey of sendKeys) this.humanSendInFlight.delete(sendKey);
+      return false;
+    }
+    for (const sendKey of sendKeys) {
+      this.humanSendReceipts.set(sendKey, { threadId, route: send.route, path: send.path });
+      this.humanSendInFlight.delete(sendKey);
+    }
+    if (this.humanSendReceipts.size > 2048) {
+      const oldest = this.humanSendReceipts.keys().next().value as string | undefined;
+      if (oldest) this.humanSendReceipts.delete(oldest);
+    }
+    for (const sendId of sendIds) this.humanSendWaitRecorder.accepted({ ...send, sendId, coalescedSendIds: undefined }, threadId);
+    this.emitHumanSendReceipt(channelId, send, threadId, 'accepted');
+    return true;
+  }
+
+  private rejectHumanSend(channelId: string, threadId: string, send: HumanSendDispatch): void {
+    const key = this.humanSendKey(channelId, threadId, send.sendId);
+    const accepted = this.humanSendReceipts.get(key);
+    if (accepted) {
+      this.emitHumanSendReceipt(channelId, { ...send, route: accepted.route, path: accepted.path }, threadId, 'accepted');
+      return;
+    }
+    const sendKeys = this.humanSendIds(send).map(sendId => this.humanSendKey(channelId, threadId, sendId));
+    for (const sendKey of sendKeys) this.humanSendInFlight.delete(sendKey);
+    const status = sendKeys.some(sendKey => this.cancelledHumanSends.has(sendKey)) ? 'cancelled' : 'rejected';
+    this.emitHumanSendReceipt(channelId, send, threadId, status);
+  }
+
+  private cancelledHumanSend(channelId: string, threadId: string, send: HumanSendDispatch): boolean {
+    const sendKeys = this.humanSendIds(send).map(sendId => this.humanSendKey(channelId, threadId, sendId));
+    if (!sendKeys.some(key => this.cancelledHumanSends.has(key))) return false;
+    this.emitHumanSendReceipt(channelId, send, threadId, 'cancelled');
+    for (const key of sendKeys) this.humanSendInFlight.delete(key);
+    return true;
   }
 
   private armConversationIdle(key: string, lifecycle: import('./AgentContainerLauncher').AgentContainerLifecycle): ReturnType<typeof setTimeout> {
@@ -1148,6 +1226,17 @@ export class BackendGraphWebSocketService {
       if (msg.type !== 'user_message' && msg.type !== 'inject_message') return;
       const data = typeof msg.data === 'string' ? {} : (msg.data as any);
       const threadId = typeof data?.threadId === 'string' ? data.threadId : undefined;
+      const rawSend = data?.humanSend as Partial<HumanSendDispatch> | undefined;
+      const send = typeof rawSend?.sendId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(rawSend.sendId) && threadId
+        ? {
+          sendId: rawSend.sendId,
+          ...(Array.isArray(rawSend.coalescedSendIds) ? { coalescedSendIds: rawSend.coalescedSendIds.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(id)).slice(0, 100) } : {}),
+          route: rawSend.route === 'steer' || rawSend.route === 'new_turn' ? rawSend.route : 'idle',
+          path: rawSend.path === 'queued' || rawSend.path === 'injected' ? rawSend.path : 'sent_fresh',
+          enqueuedAtMs: typeof rawSend.enqueuedAtMs === 'number' && Number.isFinite(rawSend.enqueuedAtMs) ? rawSend.enqueuedAtMs : Date.now(),
+        } satisfies HumanSendDispatch
+        : undefined;
+      if (send && threadId) this.rejectHumanSend(channelId, threadId, send);
       this.emitMessage(channelId, 'assistant_message', {
         content:   `Agent error: ${ err?.message || String(err) }`,
         role:      'assistant',
@@ -1292,12 +1381,102 @@ export class BackendGraphWebSocketService {
       return;
     }
 
+    // Human send receipt/cancellation protocol is scoped to one channel/thread.
+    // Dedupe state is keyed by opaque ids only; message content never enters the ledger or perf log.
+    const humanData = typeof msg.data === 'string' ? {} : (msg.data as any);
+    const humanThreadId = typeof humanData?.threadId === 'string' ? humanData.threadId : undefined;
+    const rawHumanSend = humanData?.humanSend as Partial<HumanSendDispatch> | undefined;
+    const sendId = typeof rawHumanSend?.sendId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(rawHumanSend.sendId)
+      ? rawHumanSend.sendId
+      : undefined;
+    const enqueuedAtMs = typeof rawHumanSend?.enqueuedAtMs === 'number' && Number.isFinite(rawHumanSend.enqueuedAtMs)
+      ? rawHumanSend.enqueuedAtMs
+      : Date.now();
+    const send: HumanSendDispatch | undefined = sendId ? {
+      sendId,
+      ...(Array.isArray(rawHumanSend?.coalescedSendIds) ? { coalescedSendIds: rawHumanSend.coalescedSendIds.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(id)).slice(0, 100) } : {}),
+      route: rawHumanSend?.route === 'steer' || rawHumanSend?.route === 'new_turn' ? rawHumanSend.route : 'idle',
+      path: rawHumanSend?.path === 'queued' || rawHumanSend?.path === 'injected' ? rawHumanSend.path : 'sent_fresh',
+      enqueuedAtMs,
+    } : undefined;
+
+    const suppliedContent = typeof humanData?.content === 'string' ? humanData.content.trim() : '';
+    const suppliedAttachments = Array.isArray(humanData?.metadata?.attachments) && humanData.metadata.attachments.length > 0;
+    const suppliedFiles = Array.isArray(humanData?.metadata?.fileReferences) && humanData.metadata.fileReferences.length > 0;
+    if (send && humanThreadId && !suppliedContent && !suppliedAttachments && !suppliedFiles) {
+      this.rejectHumanSend(channelId, humanThreadId, send);
+      return;
+    }
+
+    if (msg.type === 'cancel_human_send') {
+      const threadId = humanThreadId;
+      const sendIds = Array.isArray(humanData?.sendIds) ? humanData.sendIds : [];
+      if (!threadId) return;
+      for (const rawId of sendIds) {
+        if (typeof rawId !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(rawId)) continue;
+        const key = this.humanSendKey(channelId, threadId, rawId);
+        const accepted = this.humanSendReceipts.get(key);
+        if (accepted) {
+          this.emitHumanSendReceipt(channelId, { sendId: rawId, route: accepted.route, path: accepted.path, enqueuedAtMs }, threadId, 'accepted');
+          continue;
+        }
+        this.cancelledHumanSends.add(key);
+        this.humanSendInFlight.delete(key);
+        if (this.cancelledHumanSends.size > 2048) {
+          const oldest = this.cancelledHumanSends.values().next().value as string | undefined;
+          if (oldest) this.cancelledHumanSends.delete(oldest);
+        }
+        this.emitHumanSendReceipt(channelId, {
+          sendId: rawId,
+          route: rawHumanSend?.route === 'new_turn' ? 'new_turn' : 'steer',
+          path: rawHumanSend?.path === 'queued' ? 'queued' : 'injected',
+          enqueuedAtMs,
+        }, threadId, 'cancelled');
+      }
+      return;
+    }
+
+    const sendKey = sendId && humanThreadId ? this.humanSendKey(channelId, humanThreadId, sendId) : undefined;
+    if (send && sendKey) {
+      const existingReceipt = this.humanSendReceipts.get(sendKey);
+      if (existingReceipt) {
+        this.emitHumanSendReceipt(channelId, { ...send, route: existingReceipt.route, path: existingReceipt.path }, humanThreadId!, 'accepted');
+        return;
+      }
+      if (this.cancelledHumanSends.has(sendKey)) {
+        this.emitHumanSendReceipt(channelId, send, humanThreadId!, 'cancelled');
+        return;
+      }
+      if (this.humanSendInFlight.has(sendKey)) return;
+      this.humanSendInFlight.add(sendKey);
+    }
+
     // ── Inject message into running graph state (no execution trigger) ──
-    if (msg.type === 'inject_message') {
+    const incomingMetadata = humanData?.metadata as Record<string, unknown> | undefined;
+    const routeChanging = !!(incomingMetadata?.agentId || incomingMetadata?.workflowId || incomingMetadata?.useCaseIntent
+      || incomingMetadata?.inputSource === 'voice' || (Array.isArray(incomingMetadata?.attachments) && incomingMetadata.attachments.length > 0));
+    const shouldSteerUserMessage = msg.type === 'user_message' && !!send && !routeChanging;
+    const routeThreadId = humanThreadId ?? (typeof humanData?.threadId === 'string' ? humanData.threadId : undefined);
+    const routeRun = routeThreadId ? this.activeAborts.get(this.abortKey(channelId, routeThreadId)) : undefined;
+    const routeGraph = routeThreadId ? GraphRegistry.get(routeThreadId) : undefined;
+    const routeGraphBusy = !!routeGraph && (
+      agentJobLifecycle.hasLiveWaiter(routeThreadId!)
+      || (routeGraph.state.metadata as any)?.delegatedRunActive === true
+    );
+    if (send && routeChanging && routeThreadId && ((routeRun && !routeRun.signal.aborted) || routeGraphBusy)) {
+      // Do not replace a live turn when renderer state lagged behind the
+      // backend. Tell the renderer to keep the original send visibly queued;
+      // it can retry with the same id after the active turn ends.
+      this.rejectHumanSend(channelId, routeThreadId, { ...send, route: 'new_turn', path: 'queued' });
+      return;
+    }
+    if (msg.type === 'inject_message' || shouldSteerUserMessage) {
       const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
       const content = (data?.content ?? '').trim();
       const threadId = data?.threadId as string | undefined;
-      if (!content || !threadId) return;
+      const hasAttachments = (Array.isArray(data?.metadata?.attachments) && data.metadata.attachments.length > 0)
+        || (Array.isArray(data?.metadata?.fileReferences) && data.metadata.fileReferences.length > 0);
+      if ((!content && !hasAttachments) || !threadId) return;
       if (channelId === MOBILE_RELAY_CHANNEL_ID) {
         const run = this.relayRuns.get(threadId);
         if (!run || run.id !== data?.relayRunId || run.controller.signal.aborted) return;
@@ -1305,9 +1484,23 @@ export class BackendGraphWebSocketService {
 
       // Only a thread with a run in flight can absorb a steer. A registered
       // but idle graph would just hold the message with nobody to read it.
-      const existing = this.activeAborts.has(this.abortKey(channelId, threadId)) ? GraphRegistry.get(threadId) : undefined;
+      const runKey = this.abortKey(channelId, threadId);
+      const activeRun = this.activeAborts.get(runKey);
+      const existing = activeRun && !activeRun.signal.aborted ? GraphRegistry.get(threadId) : undefined;
       if (existing) {
-        await this.applySupportSessionCapability(existing.state, data?.metadata);
+        if (existing.state.metadata.supportSessionId !== data?.metadata?.supportSessionId && data?.metadata?.supportSessionId) {
+          await this.applySupportSessionCapability(existing.state, data?.metadata);
+        }
+        if (send && humanThreadId && this.cancelledHumanSend(channelId, humanThreadId, send)) return;
+        // The run can finish while support capabilities are loaded. Only append
+        // to the state still owned by the same live run; otherwise fall through
+        // to a fresh dispatch so no final-iteration steer is orphaned.
+        const sameLiveRun = this.activeAborts.get(runKey) === activeRun
+          && !activeRun.signal.aborted
+          && GraphRegistry.get(threadId)?.state === existing.state;
+        if (!sameLiveRun) {
+          console.info(`[BackendGraphWS] Run changed while accepting a human send for thread ${ threadId }; handing it to a fresh turn`);
+        } else {
         // Run in flight — steer it without starting a new execution
         const attachments = data?.metadata?.attachments as any[] | undefined;
         const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
@@ -1319,18 +1512,21 @@ export class BackendGraphWebSocketService {
           : contextualContent;
 
         injectSteer(existing.state, {
-          id:        nextMessageId(),
+          id:        send ? `user_${ send.sendId }` : nextMessageId(),
           role:      'user',
           content:   messageContent,
           timestamp: Date.now(),
           metadata:  {
             ...data?.metadata,
+            ...(send ? { humanSendId: send.sendId, humanSendIds: this.humanSendIds(send), humanSendEnqueuedAtMs: send.enqueuedAtMs } : {}),
             source: data?.metadata?.source || 'inject',
             inputSource: data?.metadata?.inputSource || 'keyboard',
           },
         } as any);
-        console.log(`[BackendGraphWS] Steered running thread ${ threadId }: ${ content.slice(0, 50) }...`);
+        if (send) this.acceptHumanSend(channelId, threadId, { ...send, route: 'steer', path: 'injected' });
+        console.log(`[BackendGraphWS] Steered running thread ${ threadId }`);
         return;
+        }
       }
 
       if (channelId === MOBILE_RELAY_CHANNEL_ID) return;
@@ -1343,7 +1539,8 @@ export class BackendGraphWebSocketService {
 
     const data = typeof msg.data === 'string' ? { content: msg.data } : (msg.data as any);
     const content = (data?.content ?? '').trim();
-    const hasAttachments = Array.isArray(data?.metadata?.attachments) && data.metadata.attachments.length > 0;
+    const hasAttachments = (Array.isArray(data?.metadata?.attachments) && data.metadata.attachments.length > 0)
+      || (Array.isArray(data?.metadata?.fileReferences) && data.metadata.fileReferences.length > 0);
     if (!content && !hasAttachments) return;
 
     // A hidden sub-agent opened in a tab is still driven by its spawn_agent
@@ -1354,18 +1551,33 @@ export class BackendGraphWebSocketService {
     // turn's lifecycle the same way: inject and release its waiter instead of
     // falling through to a disconnected new dispatchToAgent turn below.
     const parkedWaiter = typeof data?.threadId === 'string' && agentJobLifecycle.hasLiveWaiter(data.threadId);
-    if (content && delegated && (parkedWaiter || (delegated.state.metadata as any)?.delegatedRunActive)) {
-      await this.applySupportSessionCapability(delegated.state, data?.metadata);
-      injectSteer(delegated.state, {
-        id:        nextMessageId(),
-        role:      'user',
-        content,
-        timestamp: Date.now(),
-        metadata:  { ...data?.metadata, source: data?.metadata?.source || 'inject', inputSource: data?.metadata?.inputSource || 'keyboard' },
-      } as any);
-      if (parkedWaiter) agentJobLifecycle.wake(data.threadId as string);
-      console.log(`[BackendGraphWS] Steered delegated run ${ data.threadId }: ${ content.slice(0, 50) }...`);
-      return;
+    if ((content || hasAttachments) && delegated && (parkedWaiter || (delegated.state.metadata as any)?.delegatedRunActive)) {
+      const delegatedState = delegated.state;
+      const hasLiveWaiter = parkedWaiter;
+      if (delegatedState.metadata.supportSessionId !== data?.metadata?.supportSessionId && data?.metadata?.supportSessionId) {
+        await this.applySupportSessionCapability(delegatedState, data?.metadata);
+      }
+      if (send && humanThreadId && this.cancelledHumanSend(channelId, humanThreadId, send)) return;
+      const stillDelegated = GraphRegistry.get(data.threadId as string)?.state === delegatedState
+        && (hasLiveWaiter || (delegatedState.metadata as any)?.delegatedRunActive);
+      if (stillDelegated) {
+        injectSteer(delegatedState, {
+          id:        send ? `user_${ send.sendId }` : nextMessageId(),
+          role:      'user',
+          content,
+          timestamp: Date.now(),
+          metadata:  {
+            ...data?.metadata,
+            ...(send ? { humanSendId: send.sendId, humanSendIds: this.humanSendIds(send), humanSendEnqueuedAtMs: send.enqueuedAtMs } : {}),
+            source: data?.metadata?.source || 'inject',
+            inputSource: data?.metadata?.inputSource || 'keyboard',
+          },
+        } as any);
+        if (send) this.acceptHumanSend(channelId, data.threadId as string, { ...send, route: 'steer', path: 'injected' });
+        if (parkedWaiter) agentJobLifecycle.wake(data.threadId as string);
+        console.log(`[BackendGraphWS] Steered delegated run ${ data.threadId }`);
+        return;
+      }
     }
 
     // ThreadId is owned by the frontend chat interface — reuse it to maintain conversation
@@ -1405,7 +1617,25 @@ export class BackendGraphWebSocketService {
       return;
     }
 
-    await this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, { ...metadata, workerMappingNewHumanTurn: isWorkerMappingHumanTurn(msg.type, channelId, metadata) });
+    const route: HumanSendRoute = threadIdFromMsg && this.activeAborts.has(this.abortKey(channelId, threadIdFromMsg)) ? 'new_turn' : 'idle';
+    const acceptedSend: HumanSendDispatch | undefined = send ? {
+      ...send,
+      route,
+      path: 'sent_fresh',
+    } : undefined;
+    const dispatchMetadata = {
+      ...metadata,
+      workerMappingNewHumanTurn: isWorkerMappingHumanTurn(msg.type, channelId, metadata),
+      ...(acceptedSend ? { humanSend: acceptedSend } : {}),
+    };
+    const dispatch = this.dispatchToAgent(channelId, _triggerType, content, threadIdFromMsg, scopedWorkflowId, overrideAgentId, inputSource, dispatchMetadata);
+    if (acceptedSend && threadIdFromMsg) {
+      void dispatch.then(status => {
+        if (status !== 'accepted') this.rejectHumanSend(channelId, threadIdFromMsg, acceptedSend);
+      }).catch(() => this.rejectHumanSend(channelId, threadIdFromMsg, acceptedSend));
+      return;
+    }
+    await dispatch;
   }
 
   private async applySupportSessionCapability(state: AgentGraphState, metadata?: Record<string, unknown>): Promise<void> {
@@ -1734,6 +1964,9 @@ export class BackendGraphWebSocketService {
         ]
         : contextualMessage;
 
+      const humanSend = metadata?.humanSend as HumanSendDispatch | undefined;
+      if (humanSend && this.cancelledHumanSend(channelId, threadId, humanSend)) return 'deferred';
+
       DeferredStallInput.beginDispatch(state);
       if (deferredStalls.length) state.messages.push({
         id: nextMessageId(), role: 'user', content: '', timestamp: Date.now(),
@@ -1741,12 +1974,13 @@ export class BackendGraphWebSocketService {
       });
       if (!deferredStalls.length || contextualMessage || hasAttachments) {
         const inputMessage = {
-          id:        nextMessageId(),
+          id:        humanSend ? `user_${ humanSend.sendId }` : nextMessageId(),
           role:      'user',
           content:   messageContent,
           timestamp: Date.now(),
           metadata:  {
             ...metadata,
+            ...(humanSend ? { humanSendId: humanSend.sendId, humanSendIds: this.humanSendIds(humanSend), humanSendEnqueuedAtMs: humanSend.enqueuedAtMs } : {}),
             ...(deferredStalls.length ? { completionEntries: regularCompletions } : {}),
             source: metadata?.source || 'backend',
             inputSource: inputSource || 'keyboard',
@@ -1758,6 +1992,7 @@ export class BackendGraphWebSocketService {
             onConsumed: this.parentInputAcknowledger(channelId, threadId, metadata.parentInputWait, metadata, completionConsumption),
           });
         } else DeferredStallInput.appendActionable(state, inputMessage);
+        if (humanSend) this.acceptHumanSend(channelId, threadId, humanSend);
       }
 
       // Resume from current node if the agent was waiting for user input
@@ -1961,13 +2196,28 @@ export class BackendGraphWebSocketService {
             const jobMessageIds = parentInputWait.filter((wait: ParentInputWaitRecord) => wait.kind === 'orchestrator').map((wait: ParentInputWaitRecord) => wait.inputId);
             const inboxMessageIds = parentInputWait.filter((wait: ParentInputWaitRecord) => wait.kind === 'agent_inbox').map((wait: ParentInputWaitRecord) => wait.inputId);
             // Completion text is rebuilt at handoff so an expired advisory cannot slip through as plain text.
-            const text = leftovers.filter(message => !completionSteers.includes(message)).map(steerText).filter(Boolean).join('\n\n');
+            const userLeftovers = leftovers.filter(message => !completionSteers.includes(message));
+            const text = userLeftovers.map(steerText).filter(Boolean).join('\n\n');
             const images = leftovers.flatMap((m: any) => Array.isArray(m.content) ? m.content.filter((b: any) => b?.type === 'image') : []);
             const fileReferences = leftovers.flatMap((message:any) => Array.isArray(message.metadata?.fileReferences) ? message.metadata.fileReferences : []);
+            const continuationSendIds = [...new Set(userLeftovers.flatMap((message: any) => {
+              if (Array.isArray(message.metadata?.humanSendIds)) return message.metadata.humanSendIds.filter((id: unknown): id is string => typeof id === 'string');
+              return typeof message.metadata?.humanSendId === 'string' ? [message.metadata.humanSendId] : [];
+            }))].filter(id => /^[A-Za-z0-9_.:-]{1,128}$/.test(id)).slice(0, 101);
+            const enqueuedAtTimes = userLeftovers.map((message: any) => message.metadata?.humanSendEnqueuedAtMs)
+              .filter((value: unknown): value is number => typeof value === 'number' && Number.isFinite(value));
+            const continuationSend: HumanSendDispatch | undefined = continuationSendIds.length ? {
+              sendId: continuationSendIds[0],
+              ...(continuationSendIds.length > 1 ? { coalescedSendIds: continuationSendIds.slice(1) } : {}),
+              route: 'new_turn',
+              path: 'sent_fresh',
+              enqueuedAtMs: enqueuedAtTimes.length ? Math.min(...enqueuedAtTimes) : Date.now(),
+            } : undefined;
             console.log(`[BackendGraphWS] ${ leftovers.length } steer(s) arrived as thread ${ threadId } finished — running them as a follow-up turn`);
             this.dispatchToAgent(channelId, triggerType, text || (allCompletions.length ? '' : '(attached)'), threadId, scopedWorkflowId, overrideAgentId, inputSource, {
               source: allCompletions.length ? 'sub_agent_completion' : 'turn_continuation',
               ...(images.length || fileReferences.length ? { attachments: images, fileReferences } : {}),
+              ...(continuationSend ? { humanSend: continuationSend } : {}),
               ...(allCompletions.length ? { completionEntries: allCompletions, renderCompletionEntries: true } : {}),
               ...(parentInputWait.length ? { parentInputWait } : {}),
               ...(parentInputWait.length ? { parentInputWaitBoundary: 'followup' } : {}),
