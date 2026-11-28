@@ -14,6 +14,7 @@ import { personaLogger as console } from '@pkg/agent/utils/agentLogger';
 
 import type { ChatMessage, AgentRegistryEntry } from '../registry/AgentPersonaRegistry';
 import { MessageWindow } from '@pkg/pages/chat/messages/MessageWindow';
+import type { HumanSendDispatch, HumanSendReceipt } from '@pkg/shared/HumanSend';
 
 export type PersonaTemplateId =
   | 'terminal'
@@ -99,6 +100,8 @@ export class AgentPersonaService {
    * without watching the messages array (lower latency, no deep watcher overhead).
    */
   private readonly speakListeners: SpeakListener[] = [];
+  private readonly humanSendReceiptListeners = new Set<(receipt: HumanSendReceipt) => void>();
+  private readonly optimisticHumanSendIds = new Set<string>();
 
   graphRunning = ref(false);
   waitingForUser = ref(false);
@@ -193,17 +196,18 @@ export class AgentPersonaService {
   }
 
   // Kept old signature for compatibility, but agentId is now ignored (service owns its channel)
-  async addUserMessage(_agentId: string, content: string, metadata?: Record<string, unknown>): Promise<boolean> {
-    return this._addUserMessage(content, metadata);
+  async addUserMessage(_agentId: string, content: string, metadata?: Record<string, unknown>, humanSend?: HumanSendDispatch): Promise<boolean> {
+    return this._addUserMessage(content, metadata, humanSend);
   }
 
   // Internal clean version
-  private async _addUserMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
-    const hasAttachments = Array.isArray(extraMetadata?.attachments) && (extraMetadata.attachments).length > 0;
+  private async _addUserMessage(content: string, extraMetadata?: Record<string, unknown>, humanSend?: HumanSendDispatch): Promise<boolean> {
+    const hasAttachments = (Array.isArray(extraMetadata?.attachments) && (extraMetadata.attachments).length > 0)
+      || (Array.isArray(extraMetadata?.fileReferences) && (extraMetadata.fileReferences).length > 0);
     if (!content.trim() && !hasAttachments) return false;
 
     const id = this.state.agentId;
-    console.log(`[AgentPersonaService] _addUserMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }", content="${ content.slice(0, 80) }"`);
+    console.log(`[AgentPersonaService] _addUserMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }"`);
     this.stopReason.value = null;
     this.waitingForUser.value = false;
     this.currentActivity.value = 'Thinking';
@@ -212,11 +216,11 @@ export class AgentPersonaService {
     const attachments = extraMetadata?.attachments as any[] | undefined;
     const firstImage = attachments?.find((a: any) => a?.type === 'image' && a?.source?.data);
     const localMessage: any = {
-      id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
+      id:        humanSend ? `user_${ humanSend.sendId }` : `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       channelId: id,
       threadId:  this.state.threadId,
       role:      'user',
-      content:   content || (firstImage ? '(image attached)' : ''),
+      content:   content || (firstImage ? '(image attached)' : '(attached)'),
       ...(extraMetadata?.voiceIdentity ? { voiceIdentity: extraMetadata.voiceIdentity } : {}),
     };
     if (Array.isArray(extraMetadata?.fileReferences)) localMessage.fileReferences = extraMetadata.fileReferences;
@@ -226,15 +230,14 @@ export class AgentPersonaService {
         contentType: firstImage.source.media_type,
       };
     }
-    this.messages.push(localMessage);
-    this.markMessagesChanged();
+    this.appendOptimisticHumanMessage(localMessage, humanSend);
 
     this.registry.setLoading(id, true);
 
     console.log(`[AgentPersonaService] _addUserMessage() — sending via WebSocket to channel="${ id }"...`);
     const result = await this.sendWithRetry(id, {
         type:      'user_message',
-        data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
+        data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata, ...(humanSend ? { humanSend } : {}) },
         timestamp: Date.now(),
       });
     const delivered = result.delivered;
@@ -265,21 +268,23 @@ export class AgentPersonaService {
    * If the backend cannot find a running state (race — graph already finished),
    * it falls back to a full dispatch which starts a new execution cycle.
    */
-  async injectMessage(content: string, extraMetadata?: Record<string, unknown>): Promise<boolean> {
-    if (!content.trim()) return false;
+  async injectMessage(content: string, extraMetadata?: Record<string, unknown>, humanSend?: HumanSendDispatch): Promise<boolean> {
+    const hasAttachments = (Array.isArray(extraMetadata?.attachments) && (extraMetadata.attachments).length > 0)
+      || (Array.isArray(extraMetadata?.fileReferences) && (extraMetadata.fileReferences).length > 0);
+    if (!content.trim() && !hasAttachments) return false;
 
     const id = this.state.agentId;
-    console.log(`[AgentPersonaService] injectMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }", content="${ content.slice(0, 80) }"`);
+    console.log(`[AgentPersonaService] injectMessage() — channel="${ id }", threadId="${ this.state.threadId || '(none)' }"`);
 
     // Optimistic UI — push the user message locally so it appears in chat immediately
     const attachments = extraMetadata?.attachments as any[] | undefined;
     const firstImage = attachments?.find((a: any) => a?.type === 'image' && a?.source?.data);
     const localMessage: any = {
-      id:        `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
+      id:        humanSend ? `user_${ humanSend.sendId }` : `user_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) }`,
       channelId: id,
       threadId:  this.state.threadId,
       role:      'user',
-      content:   content || (firstImage ? '(image attached)' : ''),
+      content:   content || (firstImage ? '(image attached)' : '(attached)'),
     };
     if (firstImage) {
       localMessage.image = {
@@ -288,13 +293,12 @@ export class AgentPersonaService {
       };
     }
     if (Array.isArray(extraMetadata?.fileReferences)) localMessage.fileReferences = extraMetadata.fileReferences;
-    this.messages.push(localMessage);
-    this.markMessagesChanged();
+    this.appendOptimisticHumanMessage(localMessage, humanSend);
 
     // Send inject_message — backend will push to state.messages without calling graph.execute()
     const result = await this.sendWithRetry(id, {
         type:      'inject_message',
-        data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata },
+        data:      { role: 'user', content, threadId: this.state.threadId, metadata: extraMetadata, ...(humanSend ? { humanSend } : {}) },
         timestamp: Date.now(),
       });
     const delivered = result.delivered;
@@ -310,6 +314,49 @@ export class AgentPersonaService {
     }
 
     return delivered;
+  }
+
+  private appendOptimisticHumanMessage(message: ChatMessage, humanSend?: HumanSendDispatch): void {
+    if (humanSend && this.optimisticHumanSendIds.has(humanSend.sendId)) return;
+    this.messages.push(message);
+    if (humanSend) {
+      this.optimisticHumanSendIds.add(humanSend.sendId);
+      if (this.optimisticHumanSendIds.size > 2048) {
+        const oldest = this.optimisticHumanSendIds.values().next().value as string | undefined;
+        if (oldest) this.optimisticHumanSendIds.delete(oldest);
+      }
+    }
+    // The reactive array updates the UI immediately. Do not bump the broad
+    // transcript revision here: the adapter would rescan every history row
+    // for this one append. The owning ChatInterface schedules persistence.
+  }
+
+  removeOptimisticHumanMessage(sendId: string): void {
+    const messageId = `user_${ sendId }`;
+    const index = this.messages.findIndex(message => message.id === messageId);
+    this.optimisticHumanSendIds.delete(sendId);
+    if (index < 0) return;
+    this.messages.splice(index, 1);
+    this.markMessagesChanged();
+  }
+
+  onHumanSendReceipt(listener: (receipt: HumanSendReceipt) => void): () => void {
+    this.humanSendReceiptListeners.add(listener);
+    return () => this.humanSendReceiptListeners.delete(listener);
+  }
+
+  async cancelHumanSends(sendIds: string[]): Promise<boolean> {
+    const bounded = [...new Set(sendIds)].filter(id => /^[A-Za-z0-9_.:-]{1,128}$/.test(id)).slice(0, 100);
+    if (!bounded.length) return true;
+    try {
+      return await this.wsService.send(this.state.agentId, {
+        type: 'cancel_human_send',
+        data: { threadId: this.state.threadId, sendIds: bounded },
+        timestamp: Date.now(),
+      });
+    } catch {
+      return false;
+    }
   }
 
   private async sendWithRetry(channelId: string, message: WebSocketMessage): Promise<{ delivered: boolean; error: string }> {
@@ -531,6 +578,25 @@ export class AgentPersonaService {
 
     if (msgThreadId && myThreadId && msgThreadId !== myThreadId) {
       return; // belongs to a different chat tab — ignore
+    }
+
+    if (msg.type === 'human_send_receipt') {
+      const data = msg.data as Partial<HumanSendReceipt> | undefined;
+      if (typeof data?.sendId === 'string' && typeof data.threadId === 'string'
+          && (data.status === 'accepted' || data.status === 'cancelled' || data.status === 'rejected')
+          && (data.route === 'steer' || data.route === 'new_turn' || data.route === 'idle')
+          && typeof data.enqueuedAtMs === 'number') {
+        const receipt: HumanSendReceipt = {
+          sendId: data.sendId,
+          threadId: data.threadId,
+          route: data.route,
+          enqueuedAtMs: data.enqueuedAtMs,
+          status: data.status,
+          ...(data.path === 'injected' || data.path === 'queued' || data.path === 'sent_fresh' ? { path: data.path } : {}),
+        };
+        for (const listener of this.humanSendReceiptListeners) listener(receipt);
+      }
+      return;
     }
 
     this.dispatcher.dispatch(this.getDispatchContext(), agentId, msgThreadId ?? '', msg);
