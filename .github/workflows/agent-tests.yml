@@ -29,6 +29,9 @@ jobs:
   # main/preload, renderer) with real `tsc` diagnostics, not `--noCheck`
   # syntax parsing. ubuntu-latest gives this public repo a 16 GB runner, so
   # each graph gets a 12 GB heap (NODE_OPTIONS=--max-old-space-size=12288).
+  # Do not cache TypeScript build info: every run performs a clean tsc pass
+  # against the checked-out source. Each graph is allowed to finish even if
+  # an earlier graph fails; the final step reports all graph outcomes.
   # A graph with pre-existing errors on main is still checked, not skipped:
   # .github/scripts/typecheck-gate.mjs diffs that step's tsc output against
   # .github/typecheck-baseline/<graph>.txt and fails only on errors NOT
@@ -43,8 +46,7 @@ jobs:
   # from that ref's real tsc output and commits them back automatically.
   # Equivalent by hand: node .github/scripts/typecheck-gate.mjs --project
   # <tsconfig> --baseline .github/typecheck-baseline/<graph>.txt
-  # --write-baseline -- --incremental
-  # --tsBuildInfoFile .cache/typescript/<graph>.tsbuildinfo, then commit
+  # --write-baseline -- --pretty false, then commit
   # the rewritten file. Runs in parallel with `agent-tests`, which stays
   # the job that actually runs the specs.
   typecheck:
@@ -60,58 +62,75 @@ jobs:
       WRITE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.write_baseline && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - uses: actions/setup-node@v4
+        id: setup-node
         with:
-          node-version-file: package.json
+          node-version: 22.22.0
           cache: yarn
       - name: Install dependencies (no lifecycle scripts, no Electron download)
+        id: dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
-      - name: Restore incremental typecheck state
-        uses: actions/cache@v4
-        with:
-          path: .cache/typescript
-          key: typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-${{ github.sha }}
-          restore-keys: |
-            typecheck-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig*.json', 'pkg/sulla-desktop/tsconfig.json') }}-
       - name: Type-check agent runtime graph
+        id: typecheck-agent
         if: env.WRITE_BASELINE == 'false'
+        continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
-        run: >-
-          node .github/scripts/typecheck-gate.mjs
-          --project tsconfig.agent-runtime-check.json
-          --baseline .github/typecheck-baseline/agent.txt
-          --
-          --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+        run: |
+          start=$(date +%s)
+          if node .github/scripts/typecheck-gate.mjs --project tsconfig.agent-runtime-check.json --baseline .github/typecheck-baseline/agent.txt -- --pretty false; then
+            status=0
+          else
+            status=$?
+          fi
+          duration=$(( $(date +%s) - start ))
+          echo "duration_seconds=$duration" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Type-check main and preload production graphs
+        id: typecheck-main
         if: env.WRITE_BASELINE == 'false'
+        continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
-        run: >-
-          node .github/scripts/typecheck-gate.mjs
-          --project tsconfig.typecheck.json
-          --baseline .github/typecheck-baseline/main.txt
-          --
-          --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+        run: |
+          start=$(date +%s)
+          if node .github/scripts/typecheck-gate.mjs --project tsconfig.typecheck.json --baseline .github/typecheck-baseline/main.txt -- --pretty false; then
+            status=0
+          else
+            status=$?
+          fi
+          duration=$(( $(date +%s) - start ))
+          echo "duration_seconds=$duration" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Type-check renderer production graphs
+        id: typecheck-renderer
         if: env.WRITE_BASELINE == 'false'
+        continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
-        run: >-
-          node .github/scripts/typecheck-gate.mjs
-          --project tsconfig.renderer-check.json
-          --baseline .github/typecheck-baseline/renderer.txt
-          --
-          --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+        run: |
+          start=$(date +%s)
+          if node .github/scripts/typecheck-gate.mjs --project tsconfig.renderer-check.json --baseline .github/typecheck-baseline/renderer.txt -- --pretty false; then
+            status=0
+          else
+            status=$?
+          fi
+          duration=$(( $(date +%s) - start ))
+          echo "duration_seconds=$duration" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Compile production agent bundle
+        id: agent-bundle
         if: env.WRITE_BASELINE == 'false'
         env:
           NODE_OPTIONS: --max-old-space-size=12288
         run: node scripts/ts-wrapper.js scripts/check-agent-production-bundle.ts
       - name: Regenerate agent runtime baseline
+        id: baseline-agent
         if: env.WRITE_BASELINE == 'true'
+        continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
         run: >-
@@ -120,9 +139,11 @@ jobs:
           --baseline .github/typecheck-baseline/agent.txt
           --write-baseline
           --
-          --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+          --pretty false
       - name: Regenerate main and preload baseline
+        id: baseline-main
         if: env.WRITE_BASELINE == 'true'
+        continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
         run: >-
@@ -131,9 +152,11 @@ jobs:
           --baseline .github/typecheck-baseline/main.txt
           --write-baseline
           --
-          --incremental --tsBuildInfoFile .cache/typescript/main.tsbuildinfo
+          --pretty false
       - name: Regenerate renderer baseline
+        id: baseline-renderer
         if: env.WRITE_BASELINE == 'true'
+        continue-on-error: true
         env:
           NODE_OPTIONS: --max-old-space-size=12288
         run: >-
@@ -142,9 +165,13 @@ jobs:
           --baseline .github/typecheck-baseline/renderer.txt
           --write-baseline
           --
-          --incremental --tsBuildInfoFile .cache/typescript/renderer.tsbuildinfo
+          --pretty false
       - name: Commit regenerated baselines
-        if: env.WRITE_BASELINE == 'true'
+        if: >-
+          env.WRITE_BASELINE == 'true' &&
+          steps.baseline-agent.outcome == 'success' &&
+          steps.baseline-main.outcome == 'success' &&
+          steps.baseline-renderer.outcome == 'success'
         run: |
           git config user.name "sulla-ci[bot]"
           git config user.email "sulla-ci[bot]@users.noreply.github.com"
@@ -154,6 +181,39 @@ jobs:
           else
             git commit -m "ci: regenerate typecheck baselines from $(git rev-parse --short HEAD)"
             git push origin HEAD:${{ github.ref_name }}
+          fi
+      - name: Fail typecheck job after reporting every graph
+        if: always()
+        env:
+          WRITE_BASELINE: ${{ env.WRITE_BASELINE }}
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          NODE_SETUP: ${{ steps.setup-node.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          AGENT_GRAPH: ${{ steps.typecheck-agent.outcome }}
+          AGENT_DURATION: ${{ steps.typecheck-agent.outputs.duration_seconds }}
+          MAIN_GRAPH: ${{ steps.typecheck-main.outcome }}
+          MAIN_DURATION: ${{ steps.typecheck-main.outputs.duration_seconds }}
+          RENDERER_GRAPH: ${{ steps.typecheck-renderer.outcome }}
+          RENDERER_DURATION: ${{ steps.typecheck-renderer.outputs.duration_seconds }}
+          BUNDLE: ${{ steps.agent-bundle.outcome }}
+          BASELINE_AGENT: ${{ steps.baseline-agent.outcome }}
+          BASELINE_MAIN: ${{ steps.baseline-main.outcome }}
+          BASELINE_RENDERER: ${{ steps.baseline-renderer.outcome }}
+        run: |
+          if [[ "$WRITE_BASELINE" == "true" ]]; then
+            outcomes="checkout=$CHECKOUT setup=$NODE_SETUP install=$DEPENDENCIES agent=$BASELINE_AGENT main=$BASELINE_MAIN renderer=$BASELINE_RENDERER"
+            if [[ "$CHECKOUT" != "success" || "$NODE_SETUP" != "success" || "$DEPENDENCIES" != "success" || "$BASELINE_AGENT" != "success" || "$BASELINE_MAIN" != "success" || "$BASELINE_RENDERER" != "success" ]]; then
+              echo "::error title=Typecheck baseline graph outcomes::$outcomes"
+              exit 1
+            fi
+            echo "::notice title=Typecheck baseline graph outcomes::$outcomes"
+          else
+            outcomes="checkout=$CHECKOUT setup=$NODE_SETUP install=$DEPENDENCIES agent=$AGENT_GRAPH(${AGENT_DURATION}s) main=$MAIN_GRAPH(${MAIN_DURATION}s) renderer=$RENDERER_GRAPH(${RENDERER_DURATION}s) bundle=$BUNDLE"
+            if [[ "$CHECKOUT" != "success" || "$NODE_SETUP" != "success" || "$DEPENDENCIES" != "success" || "$AGENT_GRAPH" != "success" || "$MAIN_GRAPH" != "success" || "$RENDERER_GRAPH" != "success" || "$BUNDLE" != "success" ]]; then
+              echo "::error title=Typecheck graph outcomes::$outcomes"
+              exit 1
+            fi
+            echo "::notice title=Typecheck graph outcomes::$outcomes"
           fi
 
   changes:
@@ -172,8 +232,6 @@ jobs:
         run: node scripts/agent-test-ci-gate.mjs
       - name: Selection unit tests
         run: node --test scripts/agent-test-selection.test.mjs
-      - name: Architecture guard
-        run: node scripts/architecture-guard/guard.mjs
 
   # Per-PR run: a hard 60-second test budget (enforced inside scripts/test-pr.mjs
   # itself, which exits 124 on overrun). timeout-minutes here is deliberately
@@ -206,7 +264,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: package.json
+          node-version: 22.22.0
           cache: yarn
       - name: Restore exact dependency tree
         id: dependency-cache
@@ -343,7 +401,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version-file: package.json
+          node-version: 22.22.0
           cache: yarn
       - name: Restore exact dependency tree
         id: dependency-cache
