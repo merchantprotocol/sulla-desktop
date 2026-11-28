@@ -72,7 +72,40 @@ jobs:
         id: dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
+        run: |
+          install_log="$RUNNER_TEMP/typecheck-yarn-install.log"
+          for attempt in 1 2; do
+            if yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000 >"$install_log" 2>&1; then
+              echo "Dependency install succeeded on attempt $attempt."
+              exit 0
+            else
+              status=$?
+            fi
+
+            # Only report stable error classes; never echo package-manager output,
+            # which can contain private registry URLs or credentials.
+            category=$(node -e '
+              const fs = require("node:fs");
+              const text = fs.readFileSync(process.argv[1], "utf8");
+              const markers = [
+                ["disk", /ENOSPC/i],
+                ["memory", /ENOMEM/i],
+                ["network-timeout", /ETIMEDOUT|ESOCKETTIMEDOUT|network timeout/i],
+                ["dns", /EAI_AGAIN|ENOTFOUND/i],
+                ["tls", /CERT_HAS_EXPIRED|SELF_SIGNED_CERT|certificate/i],
+                ["auth-http", /\b401\b|\b403\b|unauthorized|forbidden/i],
+                ["registry-http", /\b429\b|\b5\d\d\b/],
+                ["lockfile", /frozen.?lockfile|lockfile|integrity check failed/i],
+                ["permission", /EACCES|EPERM/i],
+                ["resolution", /couldn.t find any versions|no matching version/i],
+              ];
+              const matches = markers.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
+              process.stdout.write(matches.join(",") || "unclassified");
+            ' "$install_log")
+            echo "::warning title=Dependency install attempt failed::attempt=$attempt exit=$status category=$category"
+            if [[ "$attempt" -lt 2 ]]; then sleep 5; fi
+          done
+          exit "$status"
       - name: Type-check agent runtime graph
         id: typecheck-agent
         if: env.WRITE_BASELINE == 'false'
