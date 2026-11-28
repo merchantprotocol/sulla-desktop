@@ -17,23 +17,27 @@
       :key="q.id"
       class="qitem"
     >
-      <span class="text">{{ q.text }}</span>
+      <span class="text">{{ q.text || (q.attachments.length ? 'Attachment waiting' : '') }}</span>
+      <span class="delivery">{{ q.cancelledByStop ? 'Paused' : 'Waiting' }}</span>
       <button
         class="up"
         type="button"
         title="Move up"
+      :disabled="q.deliveryStatus === 'delivering'"
         @click="controller.moveQueuedMessage(q.id, 'up')"
       >↑</button>
       <button
         class="down"
         type="button"
         title="Move down"
+      :disabled="q.deliveryStatus === 'delivering'"
         @click="controller.moveQueuedMessage(q.id, 'down')"
       >↓</button>
       <button
         class="inject"
         type="button"
         title="Send now"
+      :disabled="q.deliveryStatus === 'delivering' || Boolean(controller.isRunning.value && (q.attachments.length > 0 || q.agentId || q.useCaseIntent || q.inputSource === 'voice'))"
         @click="controller.injectQueuedMessage(q.id)"
       >▶</button>
       <button
@@ -51,7 +55,7 @@ import { computed } from 'vue';
 import { useChatController } from '../../controller/useChatController';
 
 const controller = useChatController();
-const queue = computed(() => controller.queue.value);
+const queue = computed(() => controller.visibleQueue.value);
 </script>
 
 <style scoped>
@@ -86,12 +90,14 @@ const queue = computed(() => controller.queue.value);
 }
 .qitem:first-of-type { border-top: none; padding-top: 4px; }
 .qitem .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qitem .delivery { color: var(--text-dim, var(--text-muted)); font: 10px var(--font-mono); font-style: normal; white-space: nowrap; }
 .qitem button {
   background: transparent; border: none; color: var(--text-muted, var(--text-muted));
   cursor: pointer; width: 24px; height: 24px; border-radius: 4px;
   font-family: var(--font-mono); font-size: 12px;
   transition: all 0.15s ease;
 }
+.qitem button:disabled { opacity: .45; cursor: default; }
 .qitem button:hover      { color: var(--accent, var(--accent-hover)); background: var(--accent-dim); }
 .qitem .inject           { color: var(--status-success); font-size: 10px; }
 .qitem .inject:hover     { color: var(--status-success); background: var(--status-success-soft); }
