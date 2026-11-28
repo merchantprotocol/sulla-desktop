@@ -49,6 +49,7 @@ import type {
 } from '../models';
 
 import { defaultChatHeartbeatConfig, normalizeChatHeartbeatConfig, type ChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
+import { newHumanSendId, type HumanSendPath, type HumanSendReceipt, type HumanSendRoute } from '@pkg/shared/HumanSend';
 
 // ─── Defaults ─────────────────────────────────────────────────────
 const DEFAULT_MODEL: ModelDescriptor = {
@@ -85,6 +86,13 @@ export interface SendOptions {
   useCaseIntent?: UseCaseIntentMetadata;
   /** Route this one message to an agent (an "Ask <agent>" chip). */
   agentId?: string;
+  /** Correlation fields for a message being handed to the backend. */
+  sendId?: string;
+  coalescedSendIds?: string[];
+  route?: HumanSendRoute;
+  path?: HumanSendPath;
+  enqueuedAtMs?: number;
+  queueId?: string;
 }
 
 export type SendHandler = (
@@ -103,6 +111,7 @@ export type SendHandler = (
 export type InjectHandler = (
   text: string,
   attachments: Attachment[],
+  opts?: SendOptions,
 ) => void | Promise<void>;
 
 export interface ThreadPersister {
@@ -121,6 +130,7 @@ export class ChatController {
   readonly thread:     Ref<Thread>;
   readonly runState:   Ref<RunState>;
   readonly queue:      Ref<QueuedMessage[]>;
+  readonly visibleQueue: ComputedRef<QueuedMessage[]>;
   readonly staged:     Ref<Attachment[]>;
   readonly voice:      Ref<VoiceState>;
   readonly artifacts:  Ref<{ list: Artifact[]; activeId: ArtifactId | null }>;
@@ -150,8 +160,11 @@ export class ChatController {
   private readonly tabId?:     string;
   private sendHandler?:        SendHandler;
   private injectHandler?:      InjectHandler;
-  private stopHandler?:        () => void;
+  private stopHandler?:        (sendIds: string[]) => void;
+  private cancelSendHandler?:  (sendIds: string[]) => void;
   private continueHandler?:    () => void;
+  private queuedSendDispatch: Promise<void> = Promise.resolve();
+  private readonly dispatchingQueuedIds = new Set<string>();
 
   // Internal timers (voice interim, thinking tick, etc.) — kept as refs
   // on the instance so dispose() can clear them.
@@ -173,7 +186,7 @@ export class ChatController {
     // restart left it stuck on 'thinking' etc.). The backend drives
     // runState live; an idle start is always correct.
     this.runState = ref(runIdle());
-    this.queue = ref([...initial.queue]);
+    this.queue = ref(this.restoreQueuedMessages(initial.queue));
     this.staged = ref([...initial.staged]);
     this.voice = ref(initial.voice);
     this.artifacts = ref(this.restoreArtifacts(initial));
@@ -189,6 +202,7 @@ export class ChatController {
     this.messages = computed(() => this.thread.value.messages);
     this.isRunning = computed(() => isRunning(this.runState.value));
     this.hasQueue = computed(() => this.queue.value.length > 0);
+    this.visibleQueue = computed(() => this.queue.value.filter(message => message.deliveryStatus === 'pending'));
     this.activeArtifact = computed(() => {
       const id = this.artifacts.value.activeId;
       return id ? (this.artifacts.value.list.find(a => a.id === id) ?? null) : null;
@@ -236,7 +250,15 @@ export class ChatController {
   send(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): void {
     // Voice, queue, and other non-composer entry points must not reach the local graph.
     if (this.remoteDraftSelected || this.thread.value.remote) return;
-    if (isRunning(this.runState.value)) { this.queueMessage(text, attachments, opts); return }
+    if (isRunning(this.runState.value)) {
+      const route: HumanSendRoute = attachments.length || opts.useCaseIntent || opts.agentId || opts.inputSource === 'voice' ? 'new_turn' : 'steer';
+      const queued = this.queueMessage(text, attachments, { ...opts, route });
+      if (queued && !attachments.length && !queued.useCaseIntent && !queued.agentId && queued.inputSource !== 'voice' && this.injectHandler) {
+        this.updateQueuedMessage(queued.id, { deliveryStatus: 'delivering', route: 'steer' });
+        this.enqueueQueuedDispatch(queued.id);
+      }
+      return;
+    }
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
 
@@ -249,7 +271,21 @@ export class ChatController {
       if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('sulla:send-hop-controller', { detail: performance.now() }));
       // Save the accepted title and cleared staging; otherwise a cached "New chat" wins at restart.
       this.persist();
-      this.sendHandler(trimmed || '(attached)', attachments, opts);
+      const sendOptions: SendOptions = {
+        ...opts,
+        sendId: opts.sendId ?? newHumanSendId(),
+        route: 'idle',
+        path: 'sent_fresh',
+        enqueuedAtMs: opts.enqueuedAtMs ?? Date.now(),
+      };
+      const queued = this.queueMessage(trimmed || '(attached)', attachments, sendOptions);
+      if (queued) this.updateQueuedMessage(queued.id, { deliveryStatus: 'delivering' });
+      void Promise.resolve(this.sendHandler(trimmed || '(attached)', attachments, {
+        ...sendOptions,
+        ...(queued ? { queueId: String(queued.id) } : {}),
+      })).catch(() => {
+        if (queued) this.updateQueuedMessage(queued.id, { deliveryStatus: 'pending' });
+      });
       return;
     }
 
@@ -284,15 +320,23 @@ export class ChatController {
     this.injectHandler = h;
   }
 
-  queueMessage(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): void {
+  queueMessage(text: string, attachments: Attachment[] = [], opts: SendOptions = {}): QueuedMessage | undefined {
     const trimmed = text.trim();
-    if (!trimmed && attachments.length === 0) return;
+    if (!trimmed && attachments.length === 0) return undefined;
+    const queuedAt = Date.now();
     const q: QueuedMessage = {
       id:          newQueuedId(),
+      sendId:      opts.sendId ?? newHumanSendId(),
+      ...(opts.coalescedSendIds?.length ? { coalescedSendIds: [...opts.coalescedSendIds] } : {}),
+      route:       opts.route ?? (opts.useCaseIntent || opts.agentId || opts.inputSource === 'voice' ? 'new_turn' : 'steer'),
+      deliveryStatus: 'pending',
+      enqueuedAtMs: opts.enqueuedAtMs ?? queuedAt,
       text:        trimmed,
       attachments: [...attachments],
-      queuedAt:    Date.now(),
+      queuedAt,
       ...(opts.inputSource ? { inputSource: opts.inputSource } : {}),
+      ...(opts.voiceTurnId ? { voiceTurnId: opts.voiceTurnId } : {}),
+      ...(opts.voiceIdentity ? { voiceIdentity: opts.voiceIdentity } : {}),
       ...(opts.useCaseIntent ? { useCaseIntent: opts.useCaseIntent } : {}),
       ...(opts.agentId ? { agentId: opts.agentId } : {}),
     };
@@ -300,19 +344,22 @@ export class ChatController {
     const submitted = new Set(attachments.map(attachment => attachment.id));
     this.staged.value = this.staged.value.filter(attachment => !submitted.has(attachment.id));
     this.persist();
+    return q;
   }
 
   injectQueuedMessage(id: QueuedId): void {
     const q = this.queue.value.find(m => m.id === id);
     if (!q) return;
 
-    // The in-flight injection channel carries only text and attachments. A
-    // structured use-case intent or agent route must wait for a fresh send,
-    // otherwise those options are silently lost by injectHandler.
-    if (isRunning(this.runState.value) && (q.useCaseIntent || q.agentId)) return;
-
-    this.queue.value = this.queue.value.filter(m => m.id !== id);
-    this.persist();
+    if (q.deliveryStatus === 'delivering') return;
+    if (isRunning(this.runState.value) && (q.attachments.length || q.useCaseIntent || q.agentId || q.inputSource === 'voice')) return;
+    if (q.cancelledByStop) {
+      this.updateQueuedMessage(id, {
+        sendId: newHumanSendId(),
+        ...(q.coalescedSendIds?.length ? { coalescedSendIds: q.coalescedSendIds.map(() => newHumanSendId()) } : {}),
+        enqueuedAtMs: Date.now(), queuedAt: Date.now(), cancelledByStop: false,
+      });
+    }
 
     // If the graph is running AND an adapter has registered an inject
     // handler, route through it — the message is appended to the agent's
@@ -323,13 +370,16 @@ export class ChatController {
     // send path will just re-queue it cleanly).
     if (!this.remoteDraftSelected && !this.thread.value.remote && this.injectHandler && isRunning(this.runState.value)) {
       this.autoTitleFromFirstUserMessage(q.text);
-      this.injectHandler(q.text, [...q.attachments]);
+      this.updateQueuedMessage(id, { deliveryStatus: 'delivering', route: 'steer' });
+      this.enqueueQueuedDispatch(id);
       return;
     }
-    this.send(q.text, [...q.attachments], { inputSource: q.inputSource, useCaseIntent: q.useCaseIntent, agentId: q.agentId });
+    this.dispatchQueuedMessage(id);
   }
 
   removeQueuedMessage(id: QueuedId): void {
+    const removed = this.queue.value.find(message => message.id === id);
+    if (removed?.deliveryStatus === 'delivering') this.cancelSendHandler?.([removed.sendId, ...(removed.coalescedSendIds ?? [])]);
     this.queue.value = this.queue.value.filter(m => m.id !== id);
     this.persist();
   }
@@ -346,6 +396,9 @@ export class ChatController {
   }
 
   clearQueue(): void {
+    const inFlight = this.queue.value.filter(message => message.deliveryStatus === 'delivering')
+      .flatMap(message => [message.sendId, ...(message.coalescedSendIds ?? [])]);
+    if (inFlight.length) this.cancelSendHandler?.(inFlight);
     this.queue.value = [];
     this.persist();
   }
@@ -365,21 +418,42 @@ export class ChatController {
       return false;
     });
     if (hasPendingGate) return;
-    const [first, ...rest] = this.queue.value;
+    const firstIndex = this.queue.value.findIndex(message => message.deliveryStatus === 'pending' && !message.cancelledByStop);
+    const first = firstIndex >= 0 ? this.queue.value[firstIndex] : undefined;
     if (!first) return;
-    this.queue.value = rest;
-    this.send(first.text, [...first.attachments], {
-      inputSource: first.inputSource,
-      ...(first.useCaseIntent ? { useCaseIntent: first.useCaseIntent } : {}),
-      ...(first.agentId ? { agentId: first.agentId } : {}),
-    });
+    if (first.inputSource === 'voice' && first.attachments.length === 0) {
+      const combined: string[] = [first.text];
+      const coalescedSendIds = [...(first.coalescedSendIds ?? [])];
+      const queue = [...this.queue.value];
+      let index = firstIndex + 1;
+      while (index < queue.length) {
+        const next = queue[index];
+        if (next.deliveryStatus !== 'pending' || next.cancelledByStop || next.inputSource !== 'voice' || next.attachments.length > 0) break;
+        combined.push(next.text);
+        coalescedSendIds.push(next.sendId, ...(next.coalescedSendIds ?? []));
+        queue.splice(index, 1);
+      }
+      if (combined.length > 1) {
+        queue[firstIndex] = { ...first, text: combined.join(' '), coalescedSendIds: [...new Set(coalescedSendIds.filter(sendId => sendId !== first.sendId))] };
+        this.queue.value = queue;
+        this.persist();
+      }
+    }
+    this.dispatchQueuedMessage(first.id);
   }
 
   // ─── Run control ────────────────────────────────────────────────
   stop(): void {
     if (this.thread.value.remote) { this.remoteStop?.(); return }
     if (this.remoteDraftSelected) return;
-    this.stopHandler?.();
+    const inFlight = this.queue.value.filter(message => message.deliveryStatus === 'delivering');
+    this.queue.value = this.queue.value.map(message => ({
+      ...message,
+      ...(message.deliveryStatus === 'delivering' ? { deliveryStatus: 'pending' as const } : {}),
+      cancelledByStop: true,
+    }));
+    this.persist();
+    this.stopHandler?.(inFlight.flatMap(message => [message.sendId, ...(message.coalescedSendIds ?? [])]));
     this.transitionRun({ type: 'stop' });
   }
 
@@ -390,9 +464,82 @@ export class ChatController {
   }
 
   /** Adapter hook — set after construction so backend stop/continue flow through. */
-  setRunHandlers(handlers: { onStop?: () => void; onContinue?: () => void }): void {
+  setRunHandlers(handlers: { onStop?: (sendIds: string[]) => void; onContinue?: () => void; onCancelSends?: (sendIds: string[]) => void }): void {
     this.stopHandler = handlers.onStop;
     this.continueHandler = handlers.onContinue;
+    this.cancelSendHandler = handlers.onCancelSends;
+  }
+
+  acknowledgeHumanSend(receipt: HumanSendReceipt): void {
+    const queued = this.queue.value.find(message => message.sendId === receipt.sendId);
+    if (!queued) return;
+    if (receipt.status === 'accepted') {
+      this.queue.value = this.queue.value.filter(message => message.sendId !== receipt.sendId);
+    } else if (receipt.status === 'rejected' && receipt.route === 'new_turn') {
+      this.updateQueuedMessage(queued.id, { deliveryStatus: 'pending', route: 'new_turn', cancelledByStop: false });
+    } else {
+      this.updateQueuedMessage(queued.id, { deliveryStatus: 'pending', cancelledByStop: true });
+    }
+    this.persist();
+  }
+
+  /** A renderer-level route check may discover a live run after this controller reported idle. */
+  markHumanSendQueued(sendId: string): void {
+    const queued = this.queue.value.find(message => message.sendId === sendId);
+    if (!queued) return;
+    this.updateQueuedMessage(queued.id, { deliveryStatus: 'pending', route: 'new_turn', cancelledByStop: false });
+  }
+
+  private updateQueuedMessage(id: QueuedId, patch: Partial<QueuedMessage>): void {
+    this.queue.value = this.queue.value.map(message => message.id === id ? { ...message, ...patch } : message);
+    this.persist();
+  }
+
+  private enqueueQueuedDispatch(id: QueuedId): void {
+    const key = String(id);
+    if (this.dispatchingQueuedIds.has(key)) return;
+    this.dispatchingQueuedIds.add(key);
+    this.queuedSendDispatch = this.queuedSendDispatch.catch(() => undefined).then(() => this.dispatchQueuedMessage(id));
+    void this.queuedSendDispatch.then(
+      () => this.dispatchingQueuedIds.delete(key),
+      () => this.dispatchingQueuedIds.delete(key),
+    );
+  }
+
+  private async dispatchQueuedMessage(id: QueuedId): Promise<void> {
+    const queued = this.queue.value.find(message => message.id === id);
+    if (!queued || queued.cancelledByStop) return;
+    const running = isRunning(this.runState.value);
+    const route: HumanSendRoute = running ? 'steer' : 'idle';
+    const options: SendOptions = {
+      sendId: queued.sendId,
+      ...(queued.coalescedSendIds?.length ? { coalescedSendIds: [...queued.coalescedSendIds] } : {}),
+      route,
+      path: route === 'steer' ? 'injected' : 'sent_fresh',
+      enqueuedAtMs: queued.enqueuedAtMs,
+      queueId: String(queued.id),
+      ...(queued.inputSource ? { inputSource: queued.inputSource } : {}),
+      ...(queued.voiceTurnId ? { voiceTurnId: queued.voiceTurnId } : {}),
+      ...(queued.voiceIdentity ? { voiceIdentity: queued.voiceIdentity } : {}),
+      ...(queued.useCaseIntent ? { useCaseIntent: queued.useCaseIntent } : {}),
+      ...(queued.agentId ? { agentId: queued.agentId } : {}),
+    };
+    if (running && (queued.attachments.length || queued.useCaseIntent || queued.agentId || queued.inputSource === 'voice')) return;
+    this.updateQueuedMessage(id, { deliveryStatus: 'delivering', route });
+    try {
+      if (running && this.injectHandler && !queued.useCaseIntent && !queued.agentId) {
+        this.autoTitleFromFirstUserMessage(queued.text);
+        await this.injectHandler(queued.text, [...queued.attachments], options);
+      } else if (this.sendHandler) {
+        this.autoTitleFromFirstUserMessage(queued.text);
+        await this.sendHandler(queued.text || '(attached)', [...queued.attachments], options);
+      } else {
+        this.updateQueuedMessage(id, { deliveryStatus: 'pending' });
+      }
+    } catch {
+      const latest = this.queue.value.find(message => message.id === id);
+      if (latest && !latest.cancelledByStop) this.updateQueuedMessage(id, { deliveryStatus: 'pending' });
+    }
   }
 
   private async deleteMessagesDurably(messageIds: MessageId[]): Promise<void> {
@@ -958,7 +1105,7 @@ export class ChatController {
     // `thinking`/`streaming`/`tool` from localStorage the composer would
     // show a stop button forever when the backend isn't actually running.
     this.runState.value = runIdle();
-    this.queue.value = [...state.queue];
+    this.queue.value = this.restoreQueuedMessages(state.queue);
     this.staged.value = [...state.staged];
     this.voice.value = state.voice;
     this.artifacts.value = this.restoreArtifacts(state);
@@ -983,6 +1130,19 @@ export class ChatController {
     const removedActive = state.activeArtifactId && promotedIds.has(state.activeArtifactId)
       && !list.some(artifact => artifact.id === state.activeArtifactId);
     return { list, activeId: removedActive ? null : state.activeArtifactId };
+  }
+
+  private restoreQueuedMessages(queue: QueuedMessage[]): QueuedMessage[] {
+    return queue.map(message => ({
+      ...message,
+      sendId: message.sendId ?? newHumanSendId(),
+      route: message.route ?? (message.useCaseIntent || message.agentId || message.inputSource === 'voice' ? 'new_turn' : 'steer'),
+      // A renderer restart cannot still be awaiting the old IPC receipt.
+      // Re-dispatch with the stable sendId; the backend receipt ledger makes
+      // that retry idempotent if the original delivery was already accepted.
+      deliveryStatus: 'pending',
+      enqueuedAtMs: message.enqueuedAtMs ?? message.queuedAt,
+    }));
   }
 
   // ─── Helpers ────────────────────────────────────────────────────
