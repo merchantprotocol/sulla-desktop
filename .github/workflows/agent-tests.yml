@@ -60,11 +60,14 @@ jobs:
       WRITE_BASELINE: ${{ github.event_name == 'workflow_dispatch' && inputs.write_baseline && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
+        id: checkout
       - uses: actions/setup-node@v4
+        id: setup-node
         with:
           node-version-file: package.json
           cache: yarn
       - name: Install dependencies (no lifecycle scripts, no Electron download)
+        id: dependencies
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000
@@ -86,6 +89,7 @@ jobs:
             echo "::warning title=diagnostic cache status::no tsbuildinfo found after cache restore"
           fi
       - name: Type-check agent runtime graph
+        id: typecheck-agent
         if: env.WRITE_BASELINE == 'false'
         env:
           NODE_OPTIONS: --max-old-space-size=12288
@@ -96,6 +100,15 @@ jobs:
           --baseline .github/typecheck-baseline/agent.txt
           --
           --incremental --tsBuildInfoFile .cache/typescript/agent.tsbuildinfo
+      - name: Report old typecheck stage outcomes
+        if: always() && github.ref_name == 'diag/ci-typecheck-old-cache-f920'
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          NODE_SETUP: ${{ steps.setup-node.outcome }}
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          CACHE_RESTORE: ${{ steps.typecheck-cache.outcome }}
+          TYPECHECK_AGENT: ${{ steps.typecheck-agent.outcome }}
+        run: echo "::error title=old typecheck stage outcomes::checkout=$CHECKOUT setup=$NODE_SETUP dependencies=$DEPENDENCIES cache=$CACHE_RESTORE tsc=$TYPECHECK_AGENT"
       - name: Type-check main and preload production graphs
         if: env.WRITE_BASELINE == 'false'
         env:
