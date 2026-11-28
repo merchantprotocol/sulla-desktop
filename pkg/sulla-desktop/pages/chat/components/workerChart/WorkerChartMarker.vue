@@ -7,7 +7,7 @@
 <template>
   <span
     class="worker-chart__marker"
-    :class="{ 'worker-chart__marker--ping': pulseSequence > 0 }"
+    :class="{ 'worker-chart__marker--ping': pulsedAfterMount }"
     :data-role="role"
     :data-state="visualState"
     aria-hidden="true"
@@ -20,16 +20,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import type { WorkerChartRole, WorkerChartState } from './workerChartModel';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   state: WorkerChartState | null;
   initials: string;
   role: WorkerChartRole;
   pulseSequence?: number;
-}>();
+}>(), { pulseSequence: 0 });
+
+const pulsedAfterMount = ref(false);
+let mounted = false;
+onMounted(() => { mounted = true; });
+watch(() => props.pulseSequence, (sequence, previous) => {
+  if (mounted && sequence !== previous) pulsedAfterMount.value = true;
+});
 
 const visualState = computed(() => {
   if (!props.state) return undefined;
