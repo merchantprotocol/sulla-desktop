@@ -36,6 +36,16 @@ export class PostgresAgentInboxRepository implements AgentInboxRepository {
     await this.connection.run(`UPDATE agent_inbox_messages SET delivered_at=now(),lease_owner=NULL,lease_expires_at=NULL
       WHERE message_id=ANY($1::text[]) AND lease_owner=$2 AND delivered_at IS NULL`, [claim.entries.map(e => e.envelope.ids.messageId) as unknown as string, claim.owner]);
   }
+  async acknowledgeIds(target: AgentInboxTarget, messageIds: string[]): Promise<void> {
+    if (!messageIds.length) return;
+    // A running graph may consume an inbox steer while its original flush is
+    // still releasing a lease. Ack only the exact input IDs, independent of
+    // that lease, so the consumed message cannot be replayed after the turn.
+    await this.connection.run(`UPDATE agent_inbox_messages SET delivered_at=now(),lease_owner=NULL,lease_expires_at=NULL
+      WHERE message_id=ANY($1::text[]) AND receiver_channel=$2
+        AND receiver_thread_id IS NOT DISTINCT FROM $3::text AND delivered_at IS NULL`,
+    [messageIds, target.channel, target.threadId ?? null]);
+  }
   async renew(claim: AgentInboxClaim): Promise<void> {
     await this.connection.run(`UPDATE agent_inbox_messages SET lease_expires_at=now()+($3*interval '1 second')
       WHERE message_id=ANY($1::text[]) AND lease_owner=$2 AND delivered_at IS NULL`, [claim.entries.map(e => e.envelope.ids.messageId) as unknown as string, claim.owner, LEASE_SECONDS]);
@@ -50,7 +60,9 @@ export class PostgresAgentInboxRepository implements AgentInboxRepository {
     return rows.map(row => ({ channel: row.receiver_channel, threadId: row.receiver_thread_id ?? undefined, agentId: row.receiver_agent_id ?? undefined }));
   }
   private map(row: any, fallback: AgentInboxTarget): AgentInboxEntry {
+    const createdAt = row.created_at instanceof Date ? row.created_at.getTime() : Date.parse(String(row.created_at ?? ''));
     return { target: { channel: row.receiver_channel, threadId: row.receiver_thread_id ?? fallback.threadId, agentId: row.receiver_agent_id ?? (row.kind === 'human' ? undefined : fallback.agentId) },
-      envelope: { from: row.sender, kind: row.kind as AgentMessageKind, body: row.body, ids: row.ids } };
+      envelope: { from: row.sender, kind: row.kind as AgentMessageKind, body: row.body, ids: row.ids },
+      ...(Number.isFinite(createdAt) ? { queuedAtMs: createdAt } : {}) };
   }
 }
