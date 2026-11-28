@@ -186,8 +186,7 @@ html.dark .worker-chart__popover {
   pointer-events: none;
 }
 .worker-chart__marker--ping .worker-chart__ring {
-  animation: worker-chart-pulse 2.6s var(--mk-std) infinite;
-  animation-delay: var(--mk-dl, 0s);
+  animation: worker-chart-pulse 2.6s var(--mk-std) 1;
 }
 .worker-chart__marker--popover .worker-chart__ring { display: none; }
 .worker-chart__name { min-width: 0; max-width: 54px; overflow: hidden; color: var(--mk-text2); font-size: 11px; text-overflow: ellipsis; }
@@ -270,9 +269,10 @@ html.dark .worker-chart__popover {
 .worker-chart-row-leave-to { transform: translate(var(--worker-chart-leave-x, 0), var(--worker-chart-leave-y, -8px)); }
 @keyframes worker-chart-pulse { 0% { opacity: .6; transform: scale(1); } 70%, 100% { opacity: 0; transform: scale(1.85); } }
 @media (prefers-reduced-motion: reduce) {
-  .worker-chart__marker--ping .worker-chart__ring { animation: none !important; opacity: .45; transform: scale(1.4); }
+  .worker-chart__marker--ping .worker-chart__ring { animation: worker-chart-pulse-reduced 180ms linear 1 !important; }
   .worker-chart-row-move, .worker-chart-row-enter-active, .worker-chart-row-leave-active, .worker-chart__link--stem { transition: opacity 240ms var(--mk-std); }
   .worker-chart__node, .worker-chart__marker { transition: none; transform: none !important; }
   .worker-chart__activity-bar { transition: none; }
   .worker-chart__popover { transform: none !important; transition-property: opacity !important; }
 }
+@keyframes worker-chart-pulse-reduced { 0% { opacity: .45; transform: scale(1.4); } 100% { opacity: 0; transform: scale(1.4); } }
