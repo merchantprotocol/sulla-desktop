@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Scale regression for the lazy FUSE directory reader (no FUSE mount needed)."""
 import asyncio
 import importlib.util
