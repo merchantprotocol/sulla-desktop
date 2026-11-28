@@ -15,6 +15,7 @@ export interface InlineArchiveEntryPreview {
 export type InlineFilePreview =
   | { kind: 'html'; source: string; assetBaseUrl?: string }
   | { kind: 'image'; bytes: Uint8Array; mimeType: string; altText?: string }
+  | { kind: 'pdf'; bytes: Uint8Array }
   | { kind: 'archive'; entries: readonly InlineArchiveEntryPreview[]; totalEntries: number }
   | { kind: 'custom' };
 
