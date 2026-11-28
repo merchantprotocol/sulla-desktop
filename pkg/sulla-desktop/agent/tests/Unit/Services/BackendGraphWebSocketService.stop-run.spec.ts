@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { describe, expect, it, vi } from 'vitest';
+import { ChatRunStateIpcController } from '@pkg/main/chatRunStateIpc';
 
 vi.mock('../../../tools/agents/jobRegistry', async() => {
   const actual = await vi.importActual<typeof import('../../../tools/agents/jobRegistry')>('../../../tools/agents/jobRegistry');
@@ -42,5 +43,21 @@ describe('BackendGraphWebSocketService stop_run scope', () => {
     expect(current.signal.aborted).toBe(false);
     await service.handleChannelMessage('mobile-relay', 'sulla-desktop', { type: 'stop_run', data: { threadId: 'relay-thread', relayRunId: 'next' } });
     expect(current.signal.aborted).toBe(true);
+  });
+
+  it('reports an active thread run from another channel and leaves non-agent state unknown', async() => {
+    // risk: correctness — a channel-scoped idle answer must not interrupt a thread running under another channel.
+    const { BackendGraphWebSocketService } = await import('../../../services/BackendGraphWebSocketService');
+    const service = Object.create(BackendGraphWebSocketService.prototype) as any;
+    service.activeAborts = new Map([['mobile-relay|cross-channel-thread', {}]]);
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const ipc = { handle: (channel: string, handler: (...args: any[]) => any) => handlers.set(channel, handler) };
+    const agentWindows = { isAgentWebContents: (sender: unknown) => sender === 'agent-window' };
+    new ChatRunStateIpcController(ipc, agentWindows, () => service).register();
+    const runState = handlers.get('chat:run-state')!;
+
+    expect(await runState({ sender: 'agent-window' }, 'sulla-desktop', 'cross-channel-thread')).toBe(true);
+    expect(await runState({ sender: 'agent-window' }, 'sulla-desktop', 'idle-thread')).toBe(false);
+    expect(await runState({ sender: 'desktop-window' }, 'sulla-desktop', 'cross-channel-thread')).toBeNull();
   });
 });

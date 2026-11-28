@@ -183,7 +183,7 @@ export class BackendGraphWebSocketService {
   }>();
   private conversationContainerStarts = new Map<string, Promise<import('./AgentContainerLauncher').AgentContainerLifecycle>>();
 
-  private hasActiveRunOnAnotherChannel(channelId: string, threadId: string): boolean {
+  hasActiveRunOnAnotherChannel(channelId: string, threadId: string): boolean {
     const currentKey = this.abortKey(channelId, threadId);
     return [...this.activeAborts.keys()].some(key => key !== currentKey && key.endsWith(`|${ threadId }`));
   }

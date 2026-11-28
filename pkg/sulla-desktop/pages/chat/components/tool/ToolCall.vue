@@ -35,14 +35,39 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, inject, ref, watch } from 'vue';
 
 import type { ToolMessage } from '../../models/Message';
+import { ToolStepClock } from '../transcript/ToolStepClock';
 
 const props = defineProps<{ msg: ToolMessage }>();
 
 const statusClass = computed(() => ({ running: 'run', ok: 'ok', error: 'err' }[props.msg.status]));
-const metaLabel = computed(() => props.msg.meta ?? (props.msg.status === 'running' ? 'running…' : ''));
+const activityContext = inject<{ toolStepClock?: ToolStepClock } | undefined>('chat:activity-context', undefined);
+const toolStepClock = activityContext ? (activityContext.toolStepClock ??= new ToolStepClock()) : new ToolStepClock();
+const step = computed(() => toolStepClock.step(props.msg.meta));
+const clockNow = ref(toolStepClock.nowMs);
+const ticking = computed(() => props.msg.status === 'running' && step.value?.endedAt === undefined && step.value !== undefined &&
+  !toolStepClock.isPastCeiling(step.value.startedAt, clockNow.value));
+
+watch(ticking, (active, _, onCleanup) => {
+  clockNow.value = toolStepClock.nowMs;
+  if (active) onCleanup(toolStepClock.subscribe(now => { clockNow.value = now; }));
+}, { immediate: true });
+
+const metaLabel = computed(() => {
+  if (typeof props.msg.meta === 'string') return props.msg.meta;
+  if (step.value) {
+    if (step.value.endedAt !== undefined) {
+      return toolStepClock.durationLabel(toolStepClock.elapsedMs(step.value.startedAt, step.value.endedAt, clockNow.value));
+    }
+    if (props.msg.status === 'running') {
+      return toolStepClock.durationLabel(toolStepClock.elapsedMs(step.value.startedAt, undefined, clockNow.value));
+    }
+    if (typeof step.value.durationMs === 'number') return toolStepClock.durationLabel(step.value.durationMs);
+  }
+  return props.msg.status === 'running' ? 'running…' : '';
+});
 </script>
 
 <style scoped>

@@ -13,11 +13,14 @@ import {
 import type { StatusRollupItem, StatusRollupKind } from '../components/composer/StatusRollupQueue';
 import { DetailedTraceProjection } from '../components/transcript/DetailedTraceProjection';
 import type { TraceRow } from '../components/transcript/traceTypes';
+import { ToolStepClock } from '../components/transcript/ToolStepClock';
 import type { Message } from '../models/Message';
 import type { WorkerChartAgent, WorkerChartRole, WorkerChartState } from '../components/workerChart/workerChartModel';
 
 /** Adapts the detailed transcript, scoped live snapshots, and authorized trace history into line events. */
 export class ThreadAgentActivityMapper {
+  private readonly toolSteps = new ToolStepClock();
+
   public constructor(private readonly traceProjection: DetailedTraceProjection) {}
 
   checkins(projection: ThreadAgentActivityProjection, threadId: string): StatusRollupItem[] {
@@ -90,13 +93,15 @@ export class ThreadAgentActivityMapper {
   }
 
   tool(agent: PresentedThreadAgent, threadId: string, name: string, at: number, key: string, phase: 'started' | 'finished' | 'failed', correlationId: string): StatusRollupItem {
-    const kind = this.toolKind(name);
-    const item = this.statusItem(agent, threadId, `${phase === 'started' ? 'Running' : phase === 'failed' ? 'Failed' : 'Finished'} ${name}`,
+    const safeLabel = this.toolSteps.safeLabel(undefined, name);
+    const kind = this.toolKind(safeLabel);
+    const item = this.statusItem(agent, threadId, `${phase === 'started' ? 'Running' : phase === 'failed' ? 'Failed' : 'Finished'} ${safeLabel}`,
       at, key, kind);
     return {
       ...item,
       phase: phase === 'started' ? 'start' : 'result',
       correlationId,
+      ...(phase === 'started' ? { startedAt: at } : {}),
       ...(phase === 'failed' ? { urgency: 'failed' as const } : {}),
     };
   }
@@ -140,7 +145,8 @@ export class ThreadAgentActivityMapper {
     const name = row.kind === 'subagent' ? row.target : agentName.trim() || 'Sulla';
     const kind = this.traceKind(row, message);
     const text = this.traceText(row, message);
-    const at = Number.isFinite(row.at) ? row.at! : now;
+    const step = message?.kind === 'tool' ? this.toolSteps.step(message.meta) : undefined;
+    const at = step?.startedAt ?? (Number.isFinite(row.at) ? row.at! : now);
     const state = row.status;
     const urgency = state === 'failed' ? 'failed' : state === 'blocked' || state === 'waiting' ? 'needs-you' : 'normal';
     return {
@@ -155,7 +161,12 @@ export class ThreadAgentActivityMapper {
       observedAt: at,
       urgency,
       role: agentRow ? 'worker' : 'root',
-      ...(row.kind === 'tool' ? { phase: state === 'running' ? 'start' as const : 'result' as const, correlationId: `primary:${threadId}:${row.id}` } : {}),
+      ...(row.kind === 'tool' ? {
+        phase: state === 'running' ? 'start' as const : 'result' as const,
+        correlationId: `primary:${threadId}:${row.id}`,
+        ...(step ? { startedAt: step.startedAt, ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}) } : {}),
+      } : {}),
+      ...(agentRow && ['returned', 'failed', 'stopped'].includes(row.status) ? { agentTerminal: true } : {}),
     };
   }
 
@@ -172,7 +183,7 @@ export class ThreadAgentActivityMapper {
     switch (row.kind) {
       case 'tool': {
         if (message?.kind !== 'tool') return `${row.verb} ${row.target}`;
-        return message.desc?.trim() || message.recordedToolName || message.tool;
+        return this.toolSteps.safeLabel(message.meta, message.recordedToolName ?? message.tool);
       }
       case 'thought': return row.target;
       case 'activity': return row.target;
@@ -208,6 +219,7 @@ export class ThreadAgentActivityMapper {
       observedAt,
       urgency: agent.urgency,
       role: role ?? (agent.row.waitingOnChildren > 0 ? 'manager' : 'worker'),
+      ...(['failed', 'lost', 'stopped', 'done'].includes(agent.state) ? { agentTerminal: true } : {}),
     };
   }
 
