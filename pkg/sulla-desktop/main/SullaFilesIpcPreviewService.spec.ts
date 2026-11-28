@@ -4,6 +4,42 @@ import { SullaFilesIpcPreviewService } from './SullaFilesIpcPreviewService';
 import { FilesPreviewTokenRegistry } from './FilesPreviewTokenRegistry';
 
 describe('SullaFilesIpcPreviewService', () => {
+  // risk: relative asset availability — the isolated guest session must register the same scoped capability handler as the default Files preview session.
+  it('serves capability assets from an additional isolated-session protocol', async() => {
+    const makeProtocol = () => {
+      let handler:((request:Request)=>Promise<Response>)|undefined;
+      return {
+        isProtocolHandled:()=>false,
+        handle:(_scheme:string, callback:typeof handler)=>{ handler=callback },
+        get handler() { return handler; },
+      };
+    };
+    const defaultProtocol = makeProtocol();
+    const guestProtocol = makeProtocol();
+    const page = '<!doctype html><html><head></head><body><a href="https://example.com">External</a></body></html>';
+    const api = {
+      listingRequest:async()=>new Response(JSON.stringify([{ id:'file-html', path:'index.html' }, { id:'file-css', path:'site.css' }]), { status:200 }),
+      client:{ stream:vi.fn(async(endpoint:string)=>new Response(endpoint.includes('file-html') ? page : 'body{color:red}', { status:200 })) },
+      json:vi.fn(),
+    };
+    const tokens = new FilesPreviewTokenRegistry();
+    const service = new SullaFilesIpcPreviewService(defaultProtocol as never, api as never, tokens);
+    service.initialize();
+    service.initialize(guestProtocol as never);
+    const token = tokens.issue('collection', '', 'index.html');
+
+    const defaultPage = await defaultProtocol.handler!({ url:`sulla-files-preview://${token}/index.html`, method:'GET' } as Request);
+    const guestPage = await guestProtocol.handler!({ url:`sulla-files-preview://${token}/index.html`, method:'GET' } as Request);
+    const guestAsset = await guestProtocol.handler!({ url:`sulla-files-preview://${token}/site.css`, method:'GET' } as Request);
+
+    expect(defaultProtocol.handler).toBeTypeOf('function');
+    expect(guestProtocol.handler).toBeTypeOf('function');
+    expect(await defaultPage.text()).toContain('sulla-files-nav');
+    expect(await guestPage.text()).toBe(page);
+    expect(guestAsset.status).toBe(200);
+    expect(await guestAsset.text()).toBe('body{color:red}');
+  });
+
   // risk: preview isolation — only the top-level HTML receives the navigation bridge; assets remain untouched.
   it('injects navigation bridge only into the token root HTML document', async() => {
     let handler:((request:Request)=>Promise<Response>)|undefined;
