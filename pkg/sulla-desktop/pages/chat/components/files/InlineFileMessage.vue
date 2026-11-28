@@ -76,17 +76,24 @@ async function load(): Promise<void> {
     }
     let htmlAssetBaseUrl: string | undefined;
     if (result.kind === 'html') {
-      const grant = await ipcRenderer.invoke('files:preview:open', {
-        collectionId: props.reference.collectionId,
-        fileId: doc.id,
-      }) as { token: string; url: string };
-      if (disposed) {
-        void ipcRenderer.invoke('files:preview:revoke', { token: grant.token }).catch(() => undefined);
-        return;
+      try {
+        const grant = await ipcRenderer.invoke('files:preview:open', {
+          collectionId: props.reference.collectionId,
+          fileId: doc.id,
+        }) as { token: string; url: string };
+        if (disposed) {
+          void ipcRenderer.invoke('files:preview:revoke', { token: grant.token }).catch(() => undefined);
+          return;
+        }
+        htmlPreviewToken = grant.token;
+        htmlAssetBaseUrl = grant.url;
+      } catch {
+        // The HTML remains useful without relative assets if the short-lived
+        // Files capability could not be created.
+        htmlAssetBaseUrl = undefined;
       }
-      htmlPreviewToken = grant.token;
-      htmlAssetBaseUrl = grant.url;
     }
+    if (disposed) return;
     content.value = text(result.content); truncated.value = !!result.truncated;
     file.value = { fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true,
       preview: result.kind === 'html' ? { kind: 'html', source: content.value, assetBaseUrl: htmlAssetBaseUrl } : result.kind === 'image' ? { kind: 'image', bytes: bytes(result.content), mimeType: doc.mime, altText: doc.name } : result.kind === 'pdf' ? undefined : { kind: 'custom' } };
