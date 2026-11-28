@@ -89,6 +89,7 @@ export class GoogleService extends BaseLanguageModel {
 
         const signal = this.combinedSignal(options?.signal, this.defaultTimeoutMs);
         const fetchOpts = this.buildFetchOptions(body, signal);
+        options?.onModelRequestStart?.();
         const res = await providerFetch(this.providerId ?? this.config.id, url, fetchOpts, options?.executionContext, {
           streaming:  false,
           injections: [{ field: 'api_key', target: 'header', name: 'x-goog-api-key', scheme: 'raw' }],
