@@ -6,12 +6,13 @@
 -->
 <template>
   <div class="worker-chart__activity">
-    <div class="worker-chart__spark" role="img" aria-label="Activity over the last 2.5 minutes">
+    <div class="worker-chart__spark" role="img" :aria-label="`Activity over the last 2.5 minutes: ${total} actions`">
       <i
-        v-for="(value, index) in values"
+        v-for="(value, index) in props.values"
         :key="index"
         class="worker-chart__activity-bar"
-        :style="{ transform: `scaleY(${buckets.scale(value).toFixed(2)})` }"
+        :title="`${value} actions`"
+        :style="{ transform: `scaleY(${buckets.scale(value, maxValue).toFixed(2)})` }"
       />
     </div>
     <div class="worker-chart__spark-label"><span>Activity</span><span>last 2.5 min</span></div>
@@ -19,8 +20,12 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+
 import { WorkerChartActivityBuckets } from './workerChartModel';
 
-defineProps<{ values: readonly number[] }>();
+const props = defineProps<{ values: readonly number[] }>();
 const buckets = new WorkerChartActivityBuckets();
+const maxValue = computed(() => props.values.reduce((max, value) => value > max ? value : max, 0));
+const total = computed(() => props.values.reduce((sum, value) => sum + value, 0));
 </script>
