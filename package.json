@@ -88,6 +88,7 @@
     "node-pty": "1.1.0",
     "node-schedule": "2.1.1",
     "onnxruntime-node": "1.23.0",
+    "pdfjs-dist": "6.4.299",
     "pg": "8.18.0",
     "playwright": "1.58.2",
     "proxy-agent": "6.5.0",
