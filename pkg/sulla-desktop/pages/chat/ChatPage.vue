@@ -334,7 +334,13 @@ onMounted(async() => {
   if (!threadId) return;
   try {
     const running = await ipcRenderer.invoke('chat:run-state', 'sulla-desktop', threadId);
-    if (!running) return;
+    if (running === false) {
+      // This IPC asks the backend for the authoritative state of this thread;
+      // local graphRunning alone starts false on every renderer load.
+      controller.settleInterruptedToolSteps();
+      return;
+    }
+    if (running !== true) return;
     controller.restoreActiveRun();
     window.dispatchEvent(new CustomEvent('sulla:chat-running', { detail: { tabId: props.tabId, running: true } }));
   } catch (error) {
