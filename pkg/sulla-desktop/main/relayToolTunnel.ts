@@ -8,6 +8,7 @@ import jwt from 'jsonwebtoken';
 import { containerRuntimeForExecution, withAgentContainerRuntime } from '@pkg/agent/services/AgentContainerRuntimeRegistry';
 import { GraphRegistry } from '@pkg/agent/services/GraphRegistry';
 import { toolRegistry } from '@pkg/agent/tools';
+import { ToolSessionChatTransport } from '@pkg/agent/tools/ToolSessionChatTransport';
 import { ToolInputValidationError } from '@pkg/agent/tools/base';
 import { getChatCompletionsServer } from '@pkg/main/chatCompletionsServer';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
@@ -19,7 +20,7 @@ import { usesContainerVaultAuthority, configuredVaultBrokerProvider } from '@pkg
 import { loopbackOrigin } from '@pkg/utils/instance';
 
 const console = Logging.background;
-async function executeThroughRegistry(
+export async function executeThroughRegistry(
   ctx: RelayToolExecutionContext,
   category: string,
   toolName: string,
@@ -37,8 +38,9 @@ async function executeThroughRegistry(
   const tool = await toolRegistry.createTool(resolvedName);
   tool.approvalSignal = signal;
   tool.executionContext = ctx;
-  const executionTarget = toolRegistry.getExecutionTarget(resolvedName);
   const registered = ctx.thread_id ? GraphRegistry.get(ctx.thread_id)?.state : undefined;
+  new ToolSessionChatTransport().attachToVerifiedThread(tool, ctx.thread_id, registered);
+  const executionTarget = toolRegistry.getExecutionTarget(resolvedName);
   const isolatedState = {
     ...(registered ?? {}),
     toolExecutionContext: ctx,
