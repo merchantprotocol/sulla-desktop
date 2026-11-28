@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import { randomUUID } from 'node:crypto';
 import { DeferredStallInput } from '../../app/Services/DeferredStallInput';
 import { StopPrincipal } from '../../app/ValueObjects/StopPrincipal';
 import { BaseTool, ToolResponse } from '../base';
@@ -65,12 +66,15 @@ import { trackHiddenAgentRun } from '../../services/HiddenAgentRuns';
 import { HiddenAgentTaskRunner } from '../../services/HiddenAgentTaskRunner';
 import { budgetPolicyService } from '../../services/BudgetPolicyService';
 import { budgetWorkerAdmission, countBudgetWorkers } from '../../services/BudgetWorkerAdmission';
+import { SystemTurnTimingClock, TurnTiming, TurnTimingOutcomePolicy } from '../../services/TurnTiming';
+import { cliPinnedModelId } from '../../languagemodels/ModelTierResolver';
 import { workerModelRouting, installWorkerRoute } from '../../services/WorkerModelRouting';
 import { RunActivity, watchForDeadRun } from '../../services/RunActivity';
 import { JobLineageRootChatThreadFinder, TabVisibilityResolver, type TabVisibilityDecision } from '../../services/TabVisibilityResolver';
 import { resolveAgentIdentity } from '../../utils/agentIdentity';
 
 import { effectiveAgentRunLocation } from '@pkg/backend/sullaRuntime/state';
+import Logging from '@pkg/utils/logging';
 
 import type { AgentJobResult, AgentJobTask, AgentJobVisibility } from './jobRegistry';
 import type { ResultReference } from '../../../shared/agentResults/AgentResultCard';
@@ -614,7 +618,7 @@ export class SpawnAgentWorker extends BaseTool {
     const delegationIds: (string | null)[] = [];
 
     // ── Single task executor ────────────────────────────────────
-    const executePersistedTask = async(input: { task: AgentJobTask; taskIndex: number; threadId: string; generation: number }): Promise<AgentJobResult> => {
+    const executePersistedTask = async(input: { task: AgentJobTask; taskIndex: number; threadId: string; generation: number; turnTiming?: TurnTiming }): Promise<AgentJobResult> => {
       const task: SpawnTask = { ...input.task, agentId: input.task.agentId, projectTaskId: input.task.taskId };
       const index = input.taskIndex;
       const threadId = input.threadId;
@@ -658,6 +662,10 @@ export class SpawnAgentWorker extends BaseTool {
           threadId,
         ) as { graph: any; state: any };
         subStateRef = subState;
+        if (input.turnTiming) {
+          subState.metadata.runId = input.turnTiming.runId;
+          Object.defineProperty(subState, '__turnTiming', { value: input.turnTiming, configurable: true, enumerable: false });
+        }
         installWorkerRoute(subState, input.task.workerModelRoute, activityJobId ? { jobId: activityJobId, taskIndex: index, generation: input.generation } : undefined);
         subState.metadata.modelDecision = input.task.modelDecision;
         if (input.task.modelOverride) subState.metadata.modelOverride = input.task.modelOverride;
@@ -677,6 +685,21 @@ export class SpawnAgentWorker extends BaseTool {
           ...(task.effort !== undefined ? { effort: task.effort } : {}),
           ...(task.runLocation ? { runLocation: task.runLocation } : {}),
         };
+        if (input.turnTiming) {
+          const route = input.task.workerModelRoute;
+          const selectedRoute = route?.candidates?.[route.selected];
+          const providerName = String(task.provider || selectedRoute?.provider || subState.metadata.agent?.provider || '').trim().toLowerCase();
+          const timingProvider = providerName === 'codex'
+            ? 'codex'
+            : providerName.includes('claude')
+              ? 'claude'
+              : ['openai', 'anthropic', 'api'].includes(providerName) ? 'api' : 'other';
+          const modelChoice = task.model || selectedRoute?.model || subState.metadata.agent?.model || null;
+          const model = timingProvider === 'codex' || timingProvider === 'claude'
+            ? cliPinnedModelId(providerName, modelChoice) ?? null
+            : typeof modelChoice === 'string' && modelChoice.trim() ? modelChoice.trim() : null;
+          input.turnTiming.setProviderModel(timingProvider, model);
+        }
         if (!input.task.workerModelRoute && (task.model || task.provider)) {
           const { resolveLaunchModelPrecedence } = await import('../../languagemodels/modelPrecedence');
           const { modelRouter } = await import('../../languagemodels/modelRouter');
@@ -977,6 +1000,7 @@ export class SpawnAgentWorker extends BaseTool {
             subStateRef.metadata.delegatedRunActive = false;
             subStateRef.metadata.runtimeRunnerActive = false;
           }
+          if (subStateRef && (subStateRef as any).__turnTiming === input.turnTiming) delete (subStateRef as any).__turnTiming;
           notifyAgentCompletionsReady(selector || parentChannel, threadId);
           // Deregister from parent's active-sub-agents list so stale threadIds
           // don't receive abort signals after the subagent has already exited
@@ -993,25 +1017,67 @@ export class SpawnAgentWorker extends BaseTool {
     };
 
     const taskRunner = new HiddenAgentTaskRunner({ execute: executePersistedTask });
-    const executeSingle = (task: SpawnTask, index: number): Promise<AgentJobResult> => {
+    const executeSingle = async(task: SpawnTask, index: number): Promise<AgentJobResult> => {
       const label = task.label || taskAgentSelector(task) || `task-${ index }`;
-      const run = () => taskRunner.run({
-        task: jobTasks[index],
+      const route = jobTasks[index].workerModelRoute;
+      const selectedRoute = route?.candidates?.[route.selected];
+      const providerName = String(task.provider || selectedRoute?.provider || '').trim().toLowerCase();
+      const timingProvider = providerName === 'codex'
+        ? 'codex'
+        : providerName.includes('claude')
+          ? 'claude'
+          : ['openai', 'anthropic', 'api'].includes(providerName) ? 'api' : 'other';
+      const modelChoice = task.model || selectedRoute?.model || null;
+      const model = timingProvider === 'codex' || timingProvider === 'claude'
+        ? cliPinnedModelId(providerName, modelChoice) ?? null
+        : typeof modelChoice === 'string' && modelChoice.trim() ? modelChoice.trim() : null;
+      const threadId = `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`;
+      const timingClock = new SystemTurnTimingClock();
+      const acceptedAtClockMs = timingClock.now();
+      const startedAtMs = timingClock.epochNow();
+      const turnTiming = new TurnTiming({
+        clock: timingClock,
+        perfLog: Logging.perf,
+        runId: randomUUID(),
+        surface: 'delegated',
+        provider: timingProvider,
+        model,
+        threadId,
+        jobId: activityJobId ?? null,
         taskIndex: index,
-        threadId:   `spawn-agent-${ threadSlug(label) }-${ Date.now() }-${ index }`,
-        generation: jobTasks[index].generation ?? 1,
+        startedAtMs,
       });
-      return budgetWorkerAdmission.run(async() => {
-        const policy = await budgetPolicyService.read();
-        const liveJobs = await getAllJobs();
-        const liveRunning = countBudgetWorkers(liveJobs);
-        return {
-          allowance: policy?.machine?.max_concurrent_workers ?? null,
-          // Running tasks held by this gate have reserved a slot but may not
-          // yet have persisted status=running. Don't count them twice.
-          running: Math.max(0, liveRunning - budgetWorkerAdmission.running),
-        };
-      }, run);
+      let outcome: 'ok' | 'error' | 'aborted' = 'error';
+      try {
+        const result = await budgetWorkerAdmission.run(async() => {
+          const policy = await budgetPolicyService.read();
+          const liveJobs = await getAllJobs();
+          const liveRunning = countBudgetWorkers(liveJobs);
+          return {
+            allowance: policy?.machine?.max_concurrent_workers ?? null,
+            // Running tasks held by this gate have reserved a slot but may not
+            // yet have persisted status=running. Don't count them twice.
+            running: Math.max(0, liveRunning - budgetWorkerAdmission.running),
+          };
+        }, () => {
+          turnTiming.setQueueWaitMs(timingClock.now() - acceptedAtClockMs);
+          const taskRun = {
+            task: jobTasks[index],
+            taskIndex: index,
+            threadId,
+            generation: jobTasks[index].generation ?? 1,
+            turnTiming,
+          };
+          return taskRunner.run(taskRun);
+        });
+        outcome = TurnTimingOutcomePolicy.forDelegatedResult(result.status);
+        return result;
+      } catch (reason) {
+        outcome = taskAbortSignals[index]?.aborted || (reason as any)?.name === 'AbortError' || (reason as any)?.runtimeInterrupted ? 'aborted' : 'error';
+        throw reason;
+      } finally {
+        turnTiming.finish(outcome);
+      }
     };
 
     // ── Execute all tasks (parallel or sequential) ──────────────

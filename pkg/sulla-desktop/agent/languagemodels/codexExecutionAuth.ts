@@ -9,6 +9,7 @@ import { ensureCodexAuthFile, extractChatgptAccountId } from '../util/codexAuthF
 import { createGuestCodexBrokerLease } from './codexGuestBrokerLease';
 import { createCodexPendingMemoryBridge } from './codexPendingMemoryBridge';
 import { AuthExpired, ProviderFailure, RoutingUnavailable, legacyProviderFailure } from './failures';
+import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
 
@@ -72,6 +73,21 @@ export async function resolveCodexExecutionAuth(input: {
   state?:         BaseThreadState;
 }): Promise<CodexExecutionAuth> {
   const mapped = (input.state?.metadata as any)?.workerModelRoute && !(input.state?.metadata as any)?.workerModelChatOverride;
+  const turnTiming = (input.state as any)?.__turnTiming;
+  const runId = typeof turnTiming?.runId === 'string' ? turnTiming.runId : String((input.state?.metadata as any)?.runId || '') || undefined;
+  const bridgeTiming = {
+    runId,
+    turnTiming,
+    getTimingContext: () => {
+      const current = (input.state as any)?.__turnTiming;
+      const currentRunId = String(current?.runId || (input.state?.metadata as any)?.runId || runId || '');
+      return {
+        runId: currentRunId,
+        turnTiming: current ?? (currentRunId === runId ? turnTiming : undefined),
+      };
+    },
+    logTiming: (message: string) => Logging.perf.log(message),
+  };
   const pending = getPendingCredential('codex');
   if (pending?.values.access_token && !mapped) {
     const idToken = typeof pending.values.id_token === 'string' ? pending.values.id_token : undefined;
@@ -80,7 +96,7 @@ export async function resolveCodexExecutionAuth(input: {
       throw new RoutingUnavailable('codex', { cause: new Error('First-run Codex sign-in has no ChatGPT account routing claim') });
     }
     try {
-      const lease = await createCodexPendingMemoryBridge({ accessToken: pending.values.access_token, chatgptAccountId }, input);
+      const lease = await createCodexPendingMemoryBridge({ accessToken: pending.values.access_token, chatgptAccountId }, { ...input, ...bridgeTiming });
       return fromLease('pending-memory-bridge', lease);
     } catch (err) {
       if (err instanceof ProviderFailure) throw err;
@@ -90,7 +106,7 @@ export async function resolveCodexExecutionAuth(input: {
 
   if (usesContainerVaultAuthority()) {
     try {
-      const lease = await createGuestCodexBrokerLease(input);
+      const lease = await createGuestCodexBrokerLease({ ...input, ...bridgeTiming });
       return fromLease('container-broker-lease', lease);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

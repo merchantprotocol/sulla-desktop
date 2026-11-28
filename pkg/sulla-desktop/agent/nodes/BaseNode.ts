@@ -47,6 +47,7 @@ import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 
 import type { BaseThreadState, NodeResult } from './Graph';
 import type { ModelDecision } from '../languagemodels/modelPrecedence';
+import { SafeToolLabel, type TurnTiming } from '../services/TurnTiming';
 import type { StreamContext } from '../controllers/Extractor';
 import { turnAgentDefinitionMemo } from './turnAgentDefinitionMemo';
 import { turnProviderResolver } from './TurnProviderResolver';
@@ -105,6 +106,8 @@ export interface NodeRunContext {
   hadToolCalls:    boolean;
   hadUserMessages: boolean;
   policy:          Required<NodeRunPolicy>;
+  /** Per-turn runtime sink; never serialized with graph state. */
+  turnTiming?:     TurnTiming;
 }
 
 export interface LLMResponse {
@@ -1556,6 +1559,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       hadToolCalls:    false,
       hadUserMessages: false,
       policy,
+      turnTiming:      (state as any).__turnTiming,
     };
   }
 
@@ -1711,6 +1715,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const replyStreamId = randomUUID();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
     const sendStreamingUpdate = (content: string): void => {
+      nodeRunContext?.turnTiming?.markFirstVisibleText();
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
       this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
@@ -1854,13 +1859,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       providerToolStarted = true;
       toolActivity.finished(event.toolUseId);
       new TurnOutputCounter(state.metadata as any).record();
-      providerTools.finished(event);
+      providerTools.finished({ ...event, toolName: SafeToolLabel.forNamedTool(event.toolName) });
     };
     const onToolStarted = (event?: { toolUseId: string; toolName: string; input?: unknown }): void => {
       providerToolStarted = true;
-      toolActivity.started(event?.toolUseId, event?.toolName);
+      const safeToolName = SafeToolLabel.forNamedTool(event?.toolName);
+      toolActivity.started(event?.toolUseId, safeToolName);
       new TurnOutputCounter(state.metadata as any).record();
-      if (event?.toolUseId) providerTools.started(event);
+      if (event?.toolUseId) providerTools.started({ ...event, toolName: safeToolName });
     };
 
     let reply: NormalizedResponse | null = null;
@@ -1895,6 +1901,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // No whole-reply timeout: agent turns (CLI tool loops) legitimately stream
       // for many minutes. Stalls are handled by the provider's own idle/abort logic.
       TurnHopTiming.mark(state, 'provider.chatStream.start');
+      nodeRunContext?.turnTiming?.markPreModelEnd();
       reply = await provider.chatStream(messages, {
         onToken, onActivity, onMessageBoundary: () => flushStreamingSegment(),
         onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness,

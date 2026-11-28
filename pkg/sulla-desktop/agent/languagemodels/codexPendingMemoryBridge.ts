@@ -16,8 +16,10 @@ import {
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
 import { firstRunTrace } from '@pkg/utils/firstRunTraceSink';
+import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import type { TurnTimingProviderRequestSink } from '../services/TurnTiming';
 
 /** Short-lived caller claims; renewed on every bridge request while the process lives. */
 const CONTEXT_TTL_S = 300;
@@ -40,12 +42,14 @@ export interface PendingCodexTokens {
  */
 export async function createCodexPendingMemoryBridge(
   tokens: PendingCodexTokens,
-  input: { conversationId: string; state?: BaseThreadState },
+  input: { conversationId: string; state?: BaseThreadState; runId?: string; turnTiming?: TurnTimingProviderRequestSink; getTimingContext?: () => { runId: string; turnTiming?: TurnTimingProviderRequestSink } | undefined; logTiming?: (message: string) => void },
 ): Promise<ProviderCliBridgeLease> {
   if (!tokens.accessToken) throw new Error('Codex pending-memory bridge requires an access token');
   firstRunTrace('codex', 'pending-memory bridge started', { providerId: 'codex', accountId: 'first-run', status: 'started' });
 
   const metadata = (input.state?.metadata ?? {}) as { agentId?: string; wsChannel?: string; orgId?: string };
+  const turnTiming = input.turnTiming ?? ((input.state as any)?.__turnTiming as TurnTimingProviderRequestSink | undefined);
+  const runId = input.runId || turnTiming?.runId || String((input.state?.metadata as any)?.runId || '') || crypto.randomUUID();
   const deviceId = await getDesktopDeviceId();
   const baseContext: ToolExecutionContext = {
     v:                1,
@@ -106,6 +110,14 @@ export async function createCodexPendingMemoryBridge(
       context:        renewed(),
       provider:       'codex',
       accountId:      'first-run',
+      runId,
+      turnTiming,
+      getTimingContext: input.getTimingContext ?? (() => {
+        const current = (input.state as any)?.__turnTiming as TurnTimingProviderRequestSink | undefined;
+        const currentRunId = String(current?.runId || (input.state?.metadata as any)?.runId || runId);
+        return { runId: currentRunId, turnTiming: current ?? (currentRunId === runId ? turnTiming : undefined) };
+      }),
+      logTiming:      input.logTiming ?? (message => Logging.perf.log(message)),
       advertisedHost: new URL(getMCPServerHost().getVmReachableUrl()).hostname,
       authorize:      renewed,
       broker,
