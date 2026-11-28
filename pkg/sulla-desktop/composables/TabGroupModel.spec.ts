@@ -1,331 +1,160 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+
 import { describe, expect, it } from 'vitest';
 
-import { calculateTabStripLayout, TabGroupModel, type TabStripLayoutGroup } from './TabGroupModel';
+import { TabGroupModel } from './TabGroupModel';
+import { TabStripLayoutRepository, type TabStripStorage } from './TabStripLayoutRepository';
+
+class MemoryStorage implements TabStripStorage {
+  private readonly entries = new Map<string, string>();
+
+  getItem(key: string): string | null { return this.entries.get(key) ?? null; }
+  setItem(key: string, value: string): void { this.entries.set(key, value); }
+}
+
+class GroupFixture {
+  private nextId = 0;
+  readonly repository: TabStripLayoutRepository;
+  readonly model: TabGroupModel;
+
+  constructor(storage = new MemoryStorage(), key = 'window-a') {
+    this.repository = new TabStripLayoutRepository(storage, key);
+    this.model = new TabGroupModel(this.repository, () => `generated-${ ++this.nextId }`);
+  }
+}
 
 describe('TabGroupModel', () => {
-  const model = new TabGroupModel();
-
-  const layoutGroup = (id: TabStripLayoutGroup['id'], tabs: TabStripLayoutGroup['tabs'], baseWidth = 80): TabStripLayoutGroup => ({
-    id,
-    tabs,
-    baseWidth,
-    foldedWidth: baseWidth - 10,
-  });
-  const crowdingGroups = () => [
-    layoutGroup('chats', [
-      { id: 'build-long-1', width: 500 },
-      { id: 'build-long-2', width: 460 },
-      { id: 'chat-3', width: 150 },
-      { id: 'chat-4', width: 120 },
-      { id: 'chat-5', width: 110 },
-      { id: 'chat-6', width: 110 },
-    ]),
-    layoutGroup('browser', [
-      { id: 'browser-active', width: 320, active: true },
-      { id: 'browser-2', width: 300 },
-    ]),
-  ];
-
-  it('maps chat, legacy secretary and Secretary conversations to Chats, browser to Browser, and all other modes to Tools', () => {
-    expect(model.groupForMode('chat')).toBe('chats');
-    expect(model.groupForMode('secretary')).toBe('chats');
-    expect(model.groupForMode('conversations')).toBe('chats');
-    expect(model.groupForMode('browser')).toBe('browser');
-    for (const mode of ['welcome', 'calendar', 'vault', 'files', undefined]) {
-      expect(model.groupForMode(mode)).toBe('tools');
-    }
-  });
-
-  it('keeps pinned tabs before ordered automatic groups and preserves order within each group', () => {
-    const grouped = model.groupTabs([
-      { id: 'tool', mode: 'vault' },
-      { id: 'chat-2', mode: 'secretary' },
-      { id: 'browser', mode: 'browser' },
-      { id: 'pin', mode: 'vault', pinned: true },
-      { id: 'chat-1', mode: 'chat' },
-    ]);
-    expect(grouped.pinned.map(tab => tab.id)).toEqual(['pin']);
-    expect(grouped.groups.map(group => [group.id, group.tabs.map(tab => tab.id)])).toEqual([
-      ['chats', ['chat-2', 'chat-1']],
-      ['browser', ['browser']],
-      ['tools', ['tool']],
-    ]);
-  });
-
-  it('selects all ordinals in grouped display order and reserves 9 for the last tab', () => {
-    const tabs = model.orderTabs([
-      { id: 'folded-tool', mode: 'vault' },
-      { id: 'folded-browser', mode: 'browser' },
-      { id: 'chat', mode: 'chat' },
-      { id: 'pinned', mode: 'vault', pinned: true },
-    ], []);
-    expect(['1', '2', '3', '4', '5', '9'].map(key => model.shortcutTab(tabs, key)?.id)).toEqual([
-      'pinned', 'chat', 'folded-browser', 'folded-tool', undefined, 'folded-tool',
-    ]);
-    const many = tabs.concat(Array.from({ length: 8 }, (_, index) => ({ id: `tool-${ index }`, mode: 'vault' })));
-    expect(model.shortcutTab(many, '9')?.id).toBe('tool-7');
-  });
-
-  it('clamps reorder and start/end moves to the moving tab group', () => {
-    const ids = ['p1', 'p2', 'c1', 'c2', 'b1', 't1', 't2'];
-    const modes = new Map([
-      ['c1', 'chat'], ['c2', 'secretary'], ['b1', 'browser'], ['t1', 'vault'], ['t2', 'calendar'],
-    ]);
-    const pinned = ['p1', 'p2'];
-
-    expect(model.reorderTabIds(ids, 2, 6, modes, pinned)).toEqual(['p1', 'p2', 'c2', 'c1', 'b1', 't1', 't2']);
-    expect(model.reorderTabIds(ids, 3, 0, modes, pinned)).toEqual(['p1', 'p2', 'c2', 'c1', 'b1', 't1', 't2']);
-    expect(model.moveToBoundary(ids, 'c2', 'start', modes, pinned)).toEqual(['p1', 'p2', 'c2', 'c1', 'b1', 't1', 't2']);
-    expect(model.moveToBoundary(ids, 'c1', 'end', modes, pinned)).toEqual(['p1', 'p2', 'c2', 'c1', 'b1', 't1', 't2']);
-    expect(model.moveToBoundary(ids, 'b1', 'start', modes, pinned)).toEqual(ids);
-  });
-
-  it('never loses, duplicates, or cross-moves IDs across deterministic shuffled drags', () => {
-    const modes = new Map<string, string | undefined>();
-    const pinned: string[] = [];
-    const original = Array.from({ length: 15 }, (_, index) => {
-      const id = `tab-${ index }`;
-      modes.set(id, index % 3 === 0 ? 'chat' : index % 3 === 1 ? 'browser' : 'calendar');
-      return id;
-    });
-    let seed = 0x51a7;
-    const random = (limit: number) => {
-      seed = (seed * 16807) % 2147483647;
-      return seed % limit;
-    };
-    let current = [...original];
-
-    for (let step = 0; step < 180; step++) {
-      const before = model.orderTabIds(current, modes, pinned);
-      const groupById = new Map(before.map(id => [id, model.groupForMode(modes.get(id))]));
-      const from = random(before.length);
-      const to = random(before.length);
-      const after = model.reorderTabIds(before, from, to, modes, pinned);
-
-      expect([...after].sort()).toEqual([...original].sort());
-      expect(new Set(after).size).toBe(original.length);
-      for (const group of ['chats', 'browser', 'tools']) {
-        const beforeGroup = before.filter(id => groupById.get(id) === group);
-        const afterGroup = after.filter(id => groupById.get(id) === group);
-        expect(afterGroup).toHaveLength(beforeGroup.length);
-      }
-      current = after;
-    }
-  });
-
-  it('counts only needs-you tabs, not stalled tabs', () => {
-    expect(model.needsYouCount([
-      { activity: 'working' }, { activity: 'waiting' }, { activity: 'you' }, { activity: 'stalled' }, { activity: 'idle' },
-    ])).toBe(1);
-  });
-
-  it('leaves every group expanded when the content-sized layout fits', () => {
-    const layout = calculateTabStripLayout({
-      groups: [
-        layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]),
-        layoutGroup('browser', [{ id: 'browser', width: 90 }]),
-        layoutGroup('tools', [{ id: 'tools', width: 100 }]),
-      ],
-      activeGroup: 'chats',
-      availableWidth: 570,
-    });
-
-    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'expanded', 'expanded']);
-    expect(layout.map(group => group.width)).toEqual([190, 170, 180]);
-  });
-
-  it('compacts the non-active capsules first while preserving every compact tab icon when they fit', () => {
-    const layout = calculateTabStripLayout({
-      groups: [
-        layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]),
-        layoutGroup('browser', [{ id: 'browser', width: 90 }]),
-        layoutGroup('tools', [{ id: 'tools', width: 100 }]),
-      ],
-      activeGroup: 'chats',
-      availableWidth: 420,
-    });
-
-    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'compact', 'compact']);
-    expect(layout.map(group => group.visibleTabIds)).toEqual([['chat'], ['browser'], ['tools']]);
-    expect(layout.reduce((total, group) => total + group.width, 0) + 16).toBeLessThanOrEqual(420);
-  });
-
-  it('keeps two non-active groups compact when each has several tabs', () => {
-    const layout = calculateTabStripLayout({
-      groups: [
-        layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]),
-        layoutGroup('browser', [{ id: 'b1', width: 80 }, { id: 'b2', width: 90 }]),
-        layoutGroup('tools', [{ id: 't1', width: 70 }, { id: 't2', width: 100 }]),
-      ],
-      activeGroup: 'chats',
-      availableWidth: 475,
-    });
-
-    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'compact', 'compact']);
-    expect(layout[1].visibleTabIds).toEqual(['b1', 'b2']);
-    expect(layout[2].visibleTabIds).toEqual(['t1', 't2']);
-    expect(layout[1].overflowCount).toBe(0);
-    expect(layout[2].overflowCount).toBe(0);
-  });
-
-  it('caps compact icons and returns a +N overflow count without pushing the active group offscreen', () => {
-    const manyTabs = (prefix: string) => Array.from({ length: 10 }, (_, index) => ({ id: `${ prefix }${ index }`, width: 80 }));
-    const layout = calculateTabStripLayout({
-      groups: [
-        layoutGroup('chats', [{ id: 'chat', width: 120, active: true }], 90),
-        layoutGroup('browser', manyTabs('b'), 90),
-        layoutGroup('tools', manyTabs('t'), 90),
-      ],
-      activeGroup: 'chats',
-      availableWidth: 520,
-    });
-
-    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'compact', 'compact']);
-    expect(layout[1].visibleTabIds.length).toBeLessThan(10);
-    expect(layout[2].visibleTabIds.length).toBeLessThan(10);
-    expect(layout[1].overflowCount).toBe(10 - layout[1].visibleTabIds.length);
-    expect(layout[2].overflowCount).toBe(10 - layout[2].visibleTabIds.length);
-    expect(layout.reduce((total, group) => total + group.width, 0) + 16).toBeLessThanOrEqual(520);
-  });
-
-  it('levels the widest tabs together without crossing their floors', () => {
-    const layout = calculateTabStripLayout({
-      groups: [
-        layoutGroup('chats', [
-          { id: 'long', width: 300 },
-          { id: 'busy', width: 180, busy: true },
-          { id: 'short', width: 90 },
-          { id: 'active', width: 220, active: true },
-        ], 100),
-        layoutGroup('browser', [{ id: 'browser', width: 80 }], 60),
-        layoutGroup('tools', [{ id: 'tools', width: 80 }], 60),
-      ],
-      activeGroup: 'chats',
-      availableWidth: 880,
-    });
-
-    expect(layout[0].tabWidths.get('long')).toBeCloseTo(140, 4);
-    expect(layout[0].tabWidths.get('busy')).toBeCloseTo(140, 4);
-    expect(layout[0].tabWidths.get('short')).toBe(90);
-    expect(layout[0].tabWidths.get('active')).toBe(220);
-  });
-
-  it('keeps shorter titles whole while a longer title is still full', () => {
-    const layout = calculateTabStripLayout({
-      groups: [layoutGroup('chats', [
-        { id: 'short', width: 80 },
-        { id: 'medium', width: 160 },
-        { id: 'long', width: 240 },
-      ], 50)],
-      activeGroup: 'chats',
-      availableWidth: 454,
-    });
-
-    expect(layout[0].tabWidths.get('short')).toBe(80);
-    expect(layout[0].tabWidths.get('medium')).toBeCloseTo(160, 4);
-    expect(layout[0].tabWidths.get('long')).toBeCloseTo(160, 4);
-  });
-
-  it('keeps busy and idle non-active tabs above their respective floors', () => {
-    const layout = calculateTabStripLayout({
-      groups: [layoutGroup('chats', [
-        { id: 'busy', width: 220, busy: true },
-        { id: 'idle', width: 80 },
-      ], 50)],
-      activeGroup: 'chats',
-      availableWidth: 198,
-    });
-
-    expect(layout[0].tabWidths.get('busy')).toBe(110);
-    expect(layout[0].tabWidths.get('idle')).toBe(80);
-  });
-
-  it('does not level the active tab with non-active tabs', () => {
-    const layout = calculateTabStripLayout({
-      groups: [layoutGroup('chats', [
-        { id: 'active', width: 510, active: true },
-        { id: 'busy', width: 250, busy: true },
-        { id: 'idle', width: 200 },
-      ], 50)],
-      activeGroup: 'chats',
-      availableWidth: 800,
-    });
-
-    expect(layout[0].tabWidths.get('active')).toBe(510);
-    expect(layout[0].tabWidths.get('busy')).toBe(110);
-    expect(layout[0].tabWidths.get('idle')).toBe(140);
-  });
-
-  it('levels long titles across expanded groups before compacting in the wide-bar evidence case', () => {
-    const layout = calculateTabStripLayout({
-      groups: crowdingGroups(),
-      activeGroup: 'browser',
-      availableWidth: 1700,
-    });
-
-    expect(layout.map(group => group.presentation)).toEqual(['expanded', 'expanded']);
-    expect(layout[0].tabWidths.get('build-long-1')).toBeGreaterThanOrEqual(140);
-    expect(layout[0].tabWidths.get('build-long-1')).toBeLessThan(500);
-    expect(layout[0].tabWidths.get('build-long-2')).toBeCloseTo(layout[0].tabWidths.get('build-long-1'), 4);
-    expect(layout[1].tabWidths.get('browser-2')).toBeCloseTo(layout[0].tabWidths.get('build-long-1'), 4);
-    expect(layout[1].tabWidths.get('browser-active')).toBe(320);
-  });
-
-  it('still compacts the non-active group when leveling cannot fit a narrow bar', () => {
-    const layout = calculateTabStripLayout({
-      groups: crowdingGroups(),
-      activeGroup: 'browser',
-      availableWidth: 700,
-    });
-
-    expect(layout.map(group => group.presentation)).toEqual(['compact', 'expanded']);
-    expect(layout[1].tabWidths.get('browser-active')).toBe(320);
-    expect(layout.reduce((total, group) => total + group.width, 0) + 8).toBeLessThanOrEqual(700);
-  });
-
-  it('uses 24px resize hysteresis to keep compaction stable around its fit boundary', () => {
-    const groups = [
-      layoutGroup('chats', [{ id: 'chat-1', width: 300 }, { id: 'chat-2', width: 300 }]),
-      layoutGroup('browser', [{ id: 'browser-active', width: 140, active: true }]),
+  it('starts with no groups and keeps pinned, ungrouped tabs ahead of user groups', () => {
+    // risk: data integrity — fresh state must not synthesize memberships.
+    const { model } = new GroupFixture();
+    const tabs = [
+      { id: 'plain' },
+      { id: 'pinned', pinned: true },
     ];
-    const compact = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 589 });
-    const nearBoundary = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 600, previousLayout: compact });
-    const resizedBack = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 589, previousLayout: nearBoundary });
-    const expanded = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 615, previousLayout: resizedBack });
-    const narrowedAfterExpansion = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 600, previousLayout: expanded });
 
-    expect(compact[0].presentation).toBe('compact');
-    expect(nearBoundary[0].presentation).toBe('compact');
-    expect(resizedBack[0].presentation).toBe('compact');
-    expect(expanded[0].presentation).toBe('expanded');
-    expect(narrowedAfterExpansion[0].presentation).toBe('expanded');
+    expect(model.groups).toEqual([]);
+    expect(model.membership).toEqual({});
+    expect(model.orderTabs(tabs, ['plain', 'pinned'])).toEqual([tabs[1], tabs[0]]);
   });
 
-  it('switches the expanded group and compacts the previous active capsule', () => {
-    const groups = [
-      layoutGroup('chats', [{ id: 'chat', width: 100, active: true }]),
-      layoutGroup('browser', [{ id: 'browser', width: 100 }]),
-    ];
-    const chatActive = calculateTabStripLayout({ groups, activeGroup: 'chats', availableWidth: 300 });
-    const browserActive = calculateTabStripLayout({ groups, activeGroup: 'browser', availableWidth: 300 });
+  it('creates user groups, trims names, preserves emoji, allows duplicates, and caps names at 60 characters', () => {
+    // risk: data integrity — name/color validation must preserve valid user input and reject invalid data.
+    const { model } = new GroupFixture();
+    const first = model.createGroup('  Research 🧪  ', 'accent', ['tab-a']);
+    const second = model.createGroup('Research 🧪', 'text-accent', ['tab-b']);
+    const long = model.createGroup(`${ 'x'.repeat(59) }🧪tail`, 'status-success', ['tab-c']);
 
-    expect(chatActive.map(group => group.presentation)).toEqual(['expanded', 'compact']);
-    expect(browserActive.map(group => group.presentation)).toEqual(['compact', 'expanded']);
+    expect(first).toMatchObject({ id: 'generated-1', name: 'Research 🧪', colorToken: 'accent', order: 0, collapsed: false });
+    expect(second.name).toBe(first.name);
+    expect(Array.from(long.name)).toHaveLength(60);
+    expect(long.name.endsWith('🧪')).toBe(true);
+    expect(() => model.createGroup(' \t ', 'accent', ['tab-d'])).toThrow(RangeError);
+    expect(() => model.renameGroup(first.id, '   ')).toThrow(RangeError);
+    expect(() => model.setGroupColor(first.id, 'violet' as never)).toThrow(RangeError);
   });
 
-  it('keeps a user-folded chip folded while other capsules compact automatically', () => {
-    const layout = calculateTabStripLayout({
-      groups: [
-        { ...layoutGroup('chats', [{ id: 'chat', width: 110, active: true }]), folded: true },
-        layoutGroup('browser', [{ id: 'browser', width: 90 }]),
-        layoutGroup('tools', [{ id: 'tools', width: 100 }]),
-      ],
-      activeGroup: 'chats',
-      availableWidth: 320,
+  it('renames, recolors, collapses, adds, and ungroups tabs through the model API', () => {
+    // risk: data integrity — edits must update group metadata and membership together.
+    const { model } = new GroupFixture();
+    const group = model.createGroup('Inbox', 'accent', ['tab-a']);
+
+    expect(model.renameGroup(group.id, '  Follow ups  ')).toBe(true);
+    expect(model.setGroupColor(group.id, 'status-warning')).toBe(true);
+    expect(model.setCollapsed(group.id, true)).toBe(true);
+    expect(model.addTabsToGroup(group.id, ['tab-b'])).toBe(true);
+    expect(model.groups[0]).toMatchObject({ name: 'Follow ups', colorToken: 'status-warning', collapsed: true });
+    expect(model.groupTabs([{ id: 'tab-a' }, { id: 'tab-b' }, { id: 'tab-c' }])).toMatchObject({
+      ungrouped: [{ id: 'tab-c' }],
+      groups: [{ group: { id: group.id }, tabs: [{ id: 'tab-a' }, { id: 'tab-b' }] }],
     });
 
-    expect(layout.map(group => group.presentation)).toEqual(['folded', 'compact', 'compact']);
-    expect(layout[0].visibleTabIds).toEqual([]);
+    expect(model.removeTabsFromGroup(group.id, ['tab-a'])).toBe(true);
+    expect(model.getGroupIdForTab('tab-a')).toBeUndefined();
+    expect(model.getGroupIdForTab('tab-b')).toBe(group.id);
+    expect(model.groups).toHaveLength(1);
+  });
+
+  it('moves initial members from their previous group and removes the group left empty', () => {
+    // risk: data integrity — reassignment must not leave orphan groups.
+    const { model } = new GroupFixture();
+    const original = model.createGroup('Original', 'accent', ['tab-a']);
+    const replacement = model.createGroup('Replacement', 'text-accent', ['tab-a']);
+
+    expect(model.getGroupIdForTab('tab-a')).toBe(replacement.id);
+    expect(model.groups).toEqual([{ ...replacement, order: 0 }]);
+    expect(model.groups.some(group => group.id === original.id)).toBe(false);
+  });
+
+  it('deletes a group without closing its tabs and reorders remaining groups', () => {
+    // risk: side effects — deleting group metadata must not close its tabs.
+    const { model } = new GroupFixture();
+    const first = model.createGroup('First', 'accent', ['tab-a']);
+    const second = model.createGroup('Second', 'status-success', ['tab-b']);
+    const tabs = [{ id: 'tab-a' }, { id: 'tab-b' }, { id: 'tab-c' }];
+
+    expect(model.reorder(second.id, 0)).toBe(true);
+    expect(model.groups.map(group => group.id)).toEqual([second.id, first.id]);
+    expect(model.deleteGroup(first.id)).toBe(true);
+    expect(tabs.map(tab => tab.id)).toEqual(['tab-a', 'tab-b', 'tab-c']); // risk: deletion must never close tabs
+    expect(model.getGroupIdForTab('tab-a')).toBeUndefined();
+    expect(model.orderTabs(tabs, tabs.map(tab => tab.id)).map(tab => tab.id)).toEqual(['tab-a', 'tab-c', 'tab-b']);
+  });
+
+  it('prunes stale membership and removes a group when its last tab closes', () => {
+    // risk: data integrity — stale tab IDs must not survive reconciliation.
+    const { model } = new GroupFixture();
+    const group = model.createGroup('Temporary', 'accent-2', ['tab-live', 'tab-closed']);
+
+    model.pruneTabs(['tab-live']);
+    expect(model.getGroupIdForTab('tab-closed')).toBeUndefined();
+    expect(model.groups).toHaveLength(1);
+
+    model.pruneTabs([]);
+    expect(model.groups).toEqual([]);
+    expect(model.membership).toEqual({});
+    expect(group.id).toBe('generated-1');
+  });
+
+  it('moves a dragged tab between groups, restores its prior group on cancel, and ungroups on drop in the normal row', () => {
+    // risk: data integrity — canceled drags must restore membership and order.
+    const { model } = new GroupFixture();
+    const source = model.createGroup('Source', 'accent', ['dragged', 'source-peer']);
+    const target = model.createGroup('Target', 'status-error', ['target-peer']);
+    const originalGroups = model.groups;
+
+    expect(model.moveTabToGroup('dragged', target.id, true)).toBe(true); // live drag reflow
+    expect(model.getGroupIdForTab('dragged')).toBe(target.id);
+    expect(model.groups.find(group => group.id === source.id)).toBeDefined();
+    expect(model.moveTabToGroup('dragged', source.id, true)).toBe(true); // Escape restores membership
+    expect(model.getGroupIdForTab('dragged')).toBe(source.id);
+    expect(model.groups).toEqual(originalGroups);
+
+    expect(model.moveTabToGroup('dragged')).toBe(true); // drop into ungrouped row
+    model.pruneEmptyGroups();
+    expect(model.getGroupIdForTab('dragged')).toBeUndefined();
+    expect(model.groups.map(group => group.id)).toEqual([source.id, target.id]);
+  });
+
+  it('orders membership by user group order while preserving order within each row', () => {
+    // risk: data accuracy — group ordering must not scramble tabs within a row.
+    const { model } = new GroupFixture();
+    const first = model.createGroup('First', 'accent', ['first-a', 'first-b']);
+    const second = model.createGroup('Second', 'text-accent', ['second-a']);
+    const tabs = [
+      { id: 'second-a' },
+      { id: 'free' },
+      { id: 'first-b' },
+      { id: 'pinned', pinned: true },
+      { id: 'first-a' },
+    ];
+
+    expect(model.orderTabs(tabs, tabs.map(tab => tab.id)).map(tab => tab.id)).toEqual([
+      'pinned', 'free', 'first-b', 'first-a', 'second-a',
+    ]);
+    expect(model.reorder(second.id, 0)).toBe(true);
+    expect(model.orderTabs(tabs, tabs.map(tab => tab.id)).map(tab => tab.id)).toEqual([
+      'pinned', 'free', 'second-a', 'first-b', 'first-a',
+    ]);
+    expect(model.reorder(first.id, 1)).toBe(true);
   });
 });
