@@ -129,6 +129,7 @@ import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, ge
 import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { supportsDocumentEditor } from '@pkg/pages/files/editor/editorTypes';
+import { FilesOpenDestinationRouter } from '@pkg/pages/files/FilesOpenDestinationRouter';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
@@ -146,6 +147,7 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
+const filesOpenDestinationRouter = new FilesOpenDestinationRouter();
 const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
@@ -608,7 +610,7 @@ function onAgentCommand(_event: any, args: any) {
       reply({ error: 'The resolved Files item is incomplete.' });
       break;
     }
-    if (args.kind === 'file' && args.mode !== 'view' && supportsDocumentEditor(args.path)) {
+    if (args.kind === 'file' && filesOpenDestinationRouter.resolve(args.path, args.mode).destination === 'document-editor') {
       const tab = openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId }, args.focus !== false);
       reply({ opened: true, tabId: tab.id, path: args.path, how: 'document-editor' });
       break;

@@ -6,6 +6,7 @@
 import { documentEditorTypeIdForPath, type DocumentEditorTypeId } from './editor/editorTypes';
 
 export type FileDetailPreviewDecision =
+  | { kind: 'editor' }
   | { kind: 'document'; documentType: DocumentEditorTypeId }
   | { kind: 'video' | 'audio' | 'image' | 'pdf' | 'unsupported' };
 
@@ -18,6 +19,7 @@ export class FileDetailPreviewRouter {
     const normalizedMime = mime.trim().toLowerCase();
     const documentType = this.documentTypeForPath(path) ?? this.documentTypeForMime(normalizedMime);
 
+    if (documentType === 'html') return { kind: 'editor' };
     if (documentType) return { kind: 'document', documentType };
     if (normalizedMime.startsWith('video/')) return { kind: 'video' };
     if (normalizedMime.startsWith('audio/')) return { kind: 'audio' };

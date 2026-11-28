@@ -20,8 +20,8 @@
 
     <div class="detail-content">
       <div v-if="error" class="error" role="alert">{{ error }}</div>
-      <div class="detail-grid">
-        <section class="card preview-card">
+      <div class="detail-grid" :class="{ 'editor-details-grid': previewRoute.kind === 'editor' }">
+        <section v-if="previewRoute.kind !== 'editor'" class="card preview-card">
           <template v-if="documentType">
             <div class="document-preview">
               <div v-if="documentPreviewLoading" class="document-state">Loading document preview…</div>
@@ -29,7 +29,6 @@
               <!-- renderMarkdown sanitizes before content enters the Files page DOM. -->
               <div v-else-if="documentType === 'markdown'" class="document-markdown" v-html="renderedMarkdown" />
               <pre v-else-if="documentType === 'text'" class="document-text">{{ documentContent }}</pre>
-              <iframe v-else :srcdoc="documentContent" :title="name" sandbox="" loading="lazy" />
             </div>
             <div class="preview-bar">
               <b>{{ documentTypeLabel }} preview</b>
@@ -393,7 +392,7 @@ const icons = {
 .retention-reason{margin:-6px 0 16px;padding:8px 10px;border-radius:7px;background:rgba(217,64,58,.08);color:#8c302b;font-size:11.5px}
 .purge-form{border-color:rgba(217,64,58,.32);background:rgba(217,64,58,.05)}.purge-form p{margin:0 0 8px;color:#8c302b;font-size:11.5px}
 .document-preview{box-sizing:border-box;min-height:420px;max-height:calc(100vh - 190px);overflow:auto;background:var(--bg-surface)}
-.document-preview>iframe{display:block;width:100%;height:70vh;min-height:420px;border:0;background:#fff}
+.detail-grid.editor-details-grid{grid-template-columns:minmax(0,1fr)}
 .document-state{display:grid;min-height:420px;place-items:center;padding:24px;color:var(--text-muted);text-align:center}
 .document-state.preview-error{color:var(--status-error,#b1302b)}
 .document-markdown{box-sizing:border-box;max-width:960px;margin:0 auto;padding:28px 36px;color:var(--text-primary);font:14px/1.7 -apple-system,BlinkMacSystemFont,"Inter","Segoe UI",sans-serif;overflow-wrap:anywhere}
