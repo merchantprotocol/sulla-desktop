@@ -3,7 +3,7 @@
   SPDX-License-Identifier: GPL-2.0-or-later
 -->
 <template>
-  <InlineFileCard :file="file" @open-in-tab="openInTab" @show-in-files="showInFiles" @download="download">
+  <InlineFileCard :file="file" :pdf-document-loader="pdfDocumentLoader" @open-in-tab="openInTab" @show-in-files="showInFiles" @download="download">
     <template #preview="{ file: previewFile }">
       <InlineTextPreview
         v-if="textKind"
@@ -27,6 +27,7 @@ import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import InlineFileCard from './InlineFileCard.vue';
 import InlineTextPreview from './inline/InlineTextPreview.vue';
 import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
+import type { InlinePdfDocumentLoader } from './inlinePdfPreview';
 import type { FilesSaveSuccess } from '@pkg/pages/files/types';
 import type { MarkdownSaveOutcome } from './inline/MarkdownEditSession';
 
@@ -43,6 +44,8 @@ function formatSize(bytes: unknown): string | undefined {
   return `${rounded} ${units[unit]}`;
 }
 const props = defineProps<{ reference: Reference }>();
+const requestId = crypto.randomUUID();
+const pdfDocumentLoader = ref<InlinePdfDocumentLoader>();
 const file = ref<InlineFileCardViewModel>({ fileId: props.reference.fileId, name: 'File', path: '', status: 'loading' });
 const content = ref('');
 const versionId = ref('');
@@ -61,7 +64,8 @@ function bytes(value: unknown): Uint8Array {
 function text(value: unknown): string { return typeof value === 'string' ? value : new TextDecoder().decode(bytes(value)); }
 async function load(): Promise<void> {
   try {
-    const result = await ipcRenderer.invoke('sulla-files:preview-read', { fileId: props.reference.fileId }) as any;
+    const result = await ipcRenderer.invoke('sulla-files:preview-read', { fileId: props.reference.fileId, requestId }) as any;
+    if (disposed) return;
     const metadataOnly = result.state === 'metadata-only' || result.state === 'too-large' || result.state === 'unsupported';
     if (result.state !== 'ready' && !metadataOnly) {
       file.value = { ...file.value, status: result.state === 'unavailable' || result.state === 'deleted' ? 'access-denied' : 'error', message: result.reason || result.state };
@@ -70,8 +74,11 @@ async function load(): Promise<void> {
     const doc = result.document;
     versionId.value = doc.currentVersionId || '';
     if (metadataOnly) {
-      content.value = ''; textKind.value = undefined; truncated.value = false;
-      file.value = { fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true };
+      content.value = ''; textKind.value = undefined; truncated.value = false; pdfDocumentLoader.value = undefined;
+      file.value = {
+        fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true,
+        ...(result.state === 'too-large' && result.kind === 'pdf' ? { cap: { label: `PDF inline preview is limited to ${ formatSize(result.maxBytes) || '20 MB' }. This file exceeds that limit.`, canOpenInTab: true } } : {}),
+      };
       return;
     }
     let htmlAssetBaseUrl: string | undefined;
@@ -94,11 +101,25 @@ async function load(): Promise<void> {
       }
     }
     if (disposed) return;
-    content.value = text(result.content); truncated.value = !!result.truncated;
+    const isPdf = result.kind === 'pdf';
+    pdfDocumentLoader.value = undefined;
+    if (isPdf) {
+      try {
+        const { InlinePdfJsDocumentLoaderFactory } = await import('./inlinePdfJsRuntime');
+        if (disposed) return;
+        pdfDocumentLoader.value = new InlinePdfJsDocumentLoaderFactory().create();
+      } catch {
+        // Keep the file card ready with its Open in tab fallback if PDF.js cannot load.
+      }
+    }
+    if (disposed) return;
+    content.value = isPdf ? '' : text(result.content); truncated.value = !!result.truncated;
     file.value = { fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true,
-      preview: result.kind === 'html' ? { kind: 'html', source: content.value, assetBaseUrl: htmlAssetBaseUrl } : result.kind === 'image' ? { kind: 'image', bytes: bytes(result.content), mimeType: doc.mime, altText: doc.name } : result.kind === 'pdf' ? undefined : { kind: 'custom' } };
+      preview: result.kind === 'html' ? { kind: 'html', source: content.value, assetBaseUrl: htmlAssetBaseUrl } : result.kind === 'image' ? { kind: 'image', bytes: bytes(result.content), mimeType: doc.mime, altText: doc.name } : result.kind === 'pdf' ? { kind: 'pdf', bytes: bytes(result.content) } : { kind: 'custom' } };
     textKind.value = ['markdown', 'code', 'csv'].includes(result.kind) ? result.kind : undefined;
-  } catch (error) { file.value = { ...file.value, status: 'error', message: error instanceof Error ? error.message : 'Preview unavailable.' }; }
+  } catch (error) {
+    if (!disposed) file.value = { ...file.value, status: 'error', message: error instanceof Error ? error.message : 'Preview unavailable.' };
+  }
 }
 async function openInTab(reference: InlineFileActionReference): Promise<void> { await ipcRenderer.invoke('files-ui:open-file', { fileId: reference.fileId, versionId: versionId.value }); }
 async function showInFiles(reference: InlineFileActionReference): Promise<void> { await openWorkspaceTab({ mode: 'files', title: 'File Manager', filesNavigation: { fileId: reference.fileId, path: reference.path, section: 'detail', collectionId: props.reference.collectionId, ...(versionId.value ? { versionId: versionId.value } : {}) } }); }
@@ -125,5 +146,6 @@ onBeforeUnmount(() => {
   const token = htmlPreviewToken;
   htmlPreviewToken = '';
   if (token) void ipcRenderer.invoke('files:preview:revoke', { token }).catch(() => undefined);
+  void ipcRenderer.invoke('sulla-files:preview-read-cancel', { requestId }).catch(() => undefined);
 });
 </script>
