@@ -7,14 +7,31 @@ import { EventEmitter } from 'node:events';
 
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('electron', () => ({}));
+const electronMocks = vi.hoisted(() => {
+  const previewSession = {
+    protocol: { isProtocolHandled: vi.fn(() => false), handle: vi.fn() },
+    webRequest: { onBeforeRequest: vi.fn() },
+    on: vi.fn(),
+    setPermissionRequestHandler: vi.fn(),
+    setPermissionCheckHandler: vi.fn(),
+    setWebRTCIPHandlingPolicy: vi.fn(),
+    resolveHost: vi.fn(async() => ({ endpoints: [] })),
+  };
+  return {
+    app: { on: vi.fn() },
+    previewSession,
+    fromPartition: vi.fn(() => previewSession),
+  };
+});
+vi.mock('electron', () => ({ default: { app: electronMocks.app, session: { fromPartition: electronMocks.fromPartition } } }));
+vi.mock('@pkg/window', () => ({ openUrlInApp: vi.fn() }));
 vi.mock('@pkg/utils/logging', () => ({ default: { background: { warn: vi.fn(), error: vi.fn(), log: vi.fn() } } }));
 vi.mock('./sullaFilesWatcher', () => ({ getSullaFilesWatcher: vi.fn() }));
 vi.mock('@pkg/agent/services/IntegrationService', () => ({ getIntegrationService: vi.fn() }));
 
 import { SullaFilesIpcProvider, type SullaFilesIpcProviderDependencies } from './SullaFilesIpcProvider';
 
-// The proxied channels the procedural initSullaFilesIpc registered before the split.
+// The proxied channels registered by the current Files IPC provider.
 const PROXIED_CHANNELS = [
   'files-ui:watch',
   'sulla-files:folders',
@@ -41,6 +58,8 @@ const PROXIED_CHANNELS = [
   'sulla-files:metadata',
   'sulla-files:history',
   'sulla-files:preview',
+  'sulla-files:preview-read',
+  'sulla-files:preview-read-cancel',
   'sulla-files:save-content',
   'sulla-files:upload',
   'sulla-files:trash',
@@ -178,6 +197,19 @@ describe('SullaFilesIpcProvider', () => {
     new SullaFilesIpcProvider(deps).register();
     expect([...ipc.handlers.keys()].sort()).toEqual([...PROXIED_CHANNELS].sort());
     expect([...rawIpc.handlers.keys()].sort()).toEqual([...LIVE_CHANNELS].sort());
+  });
+
+  it('registers the Files capability protocol and policy in the isolated HTML preview session', () => {
+    // risk: relative asset isolation — the dedicated guest session must serve only the same scoped Files capability URLs.
+    const { deps, protocol } = harness();
+    new SullaFilesIpcProvider(deps).register();
+
+    expect(electronMocks.fromPartition).toHaveBeenCalledWith('sulla-inline-html-preview', { cache: false });
+    expect(electronMocks.previewSession.protocol.handle).toHaveBeenCalledWith('sulla-files-preview', expect.any(Function));
+    expect(electronMocks.previewSession.webRequest.onBeforeRequest).toHaveBeenCalledWith({ urls: ['<all_urls>'] }, expect.any(Function));
+    expect(electronMocks.previewSession.setPermissionRequestHandler).toHaveBeenCalledWith(expect.any(Function));
+    expect(electronMocks.previewSession.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith('disable_non_proxied_udp');
+    expect(protocol.handle).toHaveBeenCalledWith('sulla-files-preview', expect.any(Function));
   });
 
   it('starts the File Provider, stops it on quit, and wires use-case suggestions to the watcher', () => {
