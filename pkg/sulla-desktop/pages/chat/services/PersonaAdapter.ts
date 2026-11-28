@@ -21,6 +21,7 @@
 
 import { watch, type ComputedRef, type WatchStopHandle } from 'vue';
 import type { UseCaseIntentMetadata } from '@pkg/shared/useCaseSuggestions';
+import { newHumanSendId, type HumanSendDispatch, type HumanSendPath } from '@pkg/shared/HumanSend';
 
 import { StreamUpdateScheduler } from './StreamUpdateScheduler';
 import { OptimisticSendFeedback } from './OptimisticSendFeedback';
@@ -33,7 +34,7 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { parseDurableFileReferences } from '@pkg/shared/filesReferences';
 import { A2aCardMarkup } from '../messages/a2aCardMarkup';
 
-import type { ChatController } from '../controller/ChatController';
+import type { ChatController, SendOptions } from '../controller/ChatController';
 import type {
   Artifact, ArtifactStatus, WorkflowPayload, WorkflowNode, WorkflowEdge, WorkflowRuntimeState,
 } from '../models/Artifact';
@@ -113,7 +114,7 @@ export class PersonaAdapter {
   private readonly optimisticUserMessages = new Map<string, MessageId[]>();
   private lastSendHopKeydownAt?: number;
   private lastSendHopControllerAt?: number;
-  private pendingSendHop?: { threadId: string; marks: Record<string, number>; origin: number; messageCount: number };
+  private pendingSendHop?: { threadId: string; marks: Record<string, number>; origin: number; messageCount: number; route: HumanSendPath };
 
   constructor(
     private readonly controller: ChatController,
@@ -139,12 +140,17 @@ export class PersonaAdapter {
     });
 
     // Tell the controller to delegate send/stop/continue to us.
-    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId, opts?.useCaseIntent, opts?.agentId, opts?.voiceIdentity));
-    this.controller.setInjectHandler((text, attachments) => this.inject(text, attachments));
+    this.controller.setSendHandler((text, attachments, opts) => this.send(text, attachments, opts?.inputSource, opts?.voiceTurnId, opts?.useCaseIntent, opts?.agentId, opts?.voiceIdentity, opts));
+    this.controller.setInjectHandler((text, attachments, opts) => this.inject(text, attachments, opts));
     this.controller.setRunHandlers({
-      onStop:     () => this.ci.stop(),
+      onStop:     (sendIds) => this.ci.stop(sendIds),
       onContinue: () => this.ci.continueRun(),
+      onCancelSends: (sendIds) => { void this.ci.cancelHumanSends(sendIds) },
     });
+    this.stopWatchers.push(this.ci.onHumanSendReceipt(receipt => {
+      if (receipt.status !== 'accepted') this.removeOptimisticHumanMessage(receipt.sendId);
+      this.controller.acknowledgeHumanSend(receipt);
+    }));
     const onArtifactChanged = (_event: unknown, change: ChatArtifactChangedEvent) => {
       if (change?.threadId !== this.ci.threadId.value) return;
       this.applyPersistentArtifact(change.artifact, !!change.focus);
@@ -371,8 +377,18 @@ export class PersonaAdapter {
     this.supportOptions = { ...this.supportOptions, supportSessionId, supportSendBlocked, supportToolNames: [...supportToolNames] };
   }
 
-  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }): Promise<void> {
-    if (this.supportOptions.supportSendBlocked) return;
+  async send(text: string, attachments: Attachment[], inputSource?: 'voice', voiceTurnId?: string, useCaseIntent?: UseCaseIntentMetadata, intentAgentId?: string, voiceIdentity?: { voiceId: string; voiceLabel: string; isOwner: boolean; score: number }, sendOptions?: SendOptions): Promise<void> {
+    if (this.supportOptions.supportSendBlocked) {
+      if (sendOptions?.sendId) throw new Error('Remote support readiness has expired.');
+      return;
+    }
+    const humanSend: HumanSendDispatch = {
+      sendId: sendOptions?.sendId ?? newHumanSendId(),
+      ...(sendOptions?.coalescedSendIds?.length ? { coalescedSendIds: [...sendOptions.coalescedSendIds] } : {}),
+      route: sendOptions?.route ?? 'idle',
+      path: sendOptions?.path ?? 'sent_fresh',
+      enqueuedAtMs: sendOptions?.enqueuedAtMs ?? Date.now(),
+    };
     // Optimistically render the user turn and thinking state before awaiting readiness IPC.
     const adapterStart = performance.now();
     const hopOrigin = this.lastSendHopKeydownAt ?? this.lastSendHopControllerAt ?? adapterStart;
@@ -384,7 +400,7 @@ export class PersonaAdapter {
     this.lastSendHopKeydownAt = undefined;
     this.lastSendHopControllerAt = undefined;
     const sendStartedAt = Date.now();
-    const optimistic = this.optimisticSendFeedback.show(text, attachments, sendStartedAt);
+    const optimistic = this.optimisticSendFeedback.show(text, attachments, sendStartedAt, asMessageId(`user_${ humanSend.sendId }`));
     const optimisticRunMessageId = optimistic.id;
     const optimisticText = optimistic.text;
     hopMarks.userBubblePushed = performance.now() - hopOrigin;
@@ -399,7 +415,8 @@ export class PersonaAdapter {
     hopMarks.connectionStatusResolved = performance.now() - hopOrigin;
     if (!aiStatus.loading && !aiStatus.connected) {
       this.showDisconnectedFeedback(optimisticRunMessageId, optimisticText, text, attachments);
-      this.writeSendHop(this.controller.thread.value.id, hopMarks);
+      this.writeSendHop(this.controller.thread.value.id, hopMarks, 'sent_fresh');
+      if (sendOptions?.sendId) throw new Error('No connected AI provider accepted the message.');
       return;
     }
     const taggedText = inputSource === 'voice' && voiceIdentity
@@ -428,10 +445,25 @@ export class PersonaAdapter {
       ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
     };
     try {
+      if (this.isQueuedSendCancelled(sendOptions)) {
+        this.controller.removeMessage(optimisticRunMessageId);
+        const remainingIds = this.optimisticUserMessages.get(optimisticText)?.filter(id => id !== optimisticRunMessageId) ?? [];
+        if (remainingIds.length) this.optimisticUserMessages.set(optimisticText, remainingIds);
+        else this.optimisticUserMessages.delete(optimisticText);
+        return;
+      }
       hopMarks.ipcSendIssued = performance.now() - hopOrigin;
-      this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin, messageCount: this.ci.messages.value.length };
+      this.pendingSendHop = { threadId: this.controller.thread.value.id, marks: hopMarks, origin: hopOrigin, messageCount: this.ci.messages.value.length, route: 'sent_fresh' };
       if (this.supportOptions.supportSendBlocked) throw new Error('Remote support readiness has expired.');
-      await this.ci.send(selection, resolved.length ? resolved : undefined);
+      const sendPath = await this.ci.send(selection, resolved.length ? resolved : undefined, humanSend);
+      if (sendPath === 'queued') {
+        this.pendingSendHop = undefined;
+        this.removeOptimisticHumanMessage(humanSend.sendId);
+        if (sendOptions?.sendId) this.controller.markHumanSendQueued(sendOptions.sendId);
+        this.writeSendHop(this.controller.thread.value.id, hopMarks, 'queued');
+      } else if (this.pendingSendHop) {
+        this.pendingSendHop.route = sendPath ?? 'sent_fresh';
+      }
     } catch (error) {
       this.pendingSendHop = undefined;
       this.controller.removeMessage(optimisticRunMessageId);
@@ -439,7 +471,7 @@ export class PersonaAdapter {
       if (queuedIds.length) this.optimisticUserMessages.set(optimisticText, queuedIds);
       else this.optimisticUserMessages.delete(optimisticText);
       this.controller.transitionRun({ type: 'error', message: 'Message could not be delivered' });
-      this.writeSendHop(this.controller.thread.value.id, hopMarks);
+      this.writeSendHop(this.controller.thread.value.id, hopMarks, humanSend.path ?? 'sent_fresh');
       throw error;
     }
     this.controller.setBackendThreadId(this.ci.threadId.value ?? '');
@@ -477,10 +509,21 @@ export class PersonaAdapter {
     return this.voiceTranscriptTagger.agentText(text, identity);
   }
 
-  private writeSendHop(threadId: string, marks: Record<string, number>): void {
-    ipcRenderer.send('send-hop:log' as any, {
+  private removeOptimisticHumanMessage(sendId: string): void {
+    const messageId = asMessageId(`user_${ sendId }`);
+    this.controller.removeMessage(messageId);
+    for (const [text, ids] of this.optimisticUserMessages) {
+      const remaining = ids.filter(id => id !== messageId);
+      if (remaining.length) this.optimisticUserMessages.set(text, remaining);
+      else this.optimisticUserMessages.delete(text);
+    }
+  }
+
+  private writeSendHop(threadId: string, marks: Record<string, number>, route: HumanSendPath): void {
+    ipcRenderer.send('send-hop:log', {
       threadId,
       messageCount: this.controller.messages.value.length,
+      route,
       marks,
     });
   }
@@ -489,7 +532,7 @@ export class PersonaAdapter {
     const pending = this.pendingSendHop;
     if (!pending) return;
     this.pendingSendHop = undefined;
-    this.writeSendHop(pending.threadId, pending.marks);
+    this.writeSendHop(pending.threadId, pending.marks, pending.route);
   }
 
   private watchOptimisticUserMessages(): void {
@@ -503,7 +546,7 @@ export class PersonaAdapter {
           if (this.pendingSendHop !== pendingHop) return;
           pendingHop.marks.firstTokenPainted = performance.now() - pendingHop.origin;
           this.pendingSendHop = undefined;
-          this.writeSendHop(pendingHop.threadId, pendingHop.marks);
+          this.writeSendHop(pendingHop.threadId, pendingHop.marks, pendingHop.route);
         });
       }
     }));
@@ -546,14 +589,53 @@ export class PersonaAdapter {
    * graph is still running) or sends normally (if it finished between
    * the user's click and this call).
    */
-  async inject(text: string, attachments: Attachment[]): Promise<void> {
+  async inject(text: string, attachments: Attachment[], sendOptions?: SendOptions): Promise<void> {
+    const humanSend: HumanSendDispatch = {
+      sendId: sendOptions?.sendId ?? newHumanSendId(),
+      ...(sendOptions?.coalescedSendIds?.length ? { coalescedSendIds: [...sendOptions.coalescedSendIds] } : {}),
+      route: sendOptions?.route ?? 'steer',
+      path: 'injected',
+      enqueuedAtMs: sendOptions?.enqueuedAtMs ?? Date.now(),
+    };
     const mapped = attachments
       .map(a => a.file ? fileToAttachmentInput(a.file) : a.fileRef?.mime.startsWith('image/') ? filesReferenceToAttachmentInput(a.fileRef) : null)
       .filter(Boolean) as Promise<{ mediaType: string; base64: string }>[];
 
     const resolved = await Promise.all(mapped);
-    const metadata = attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : undefined;
-    await this.ci.injectMessage(text, resolved.length ? resolved : undefined, metadata);
+    if (this.isQueuedSendCancelled(sendOptions)) return;
+    const metadata = {
+      ...(sendOptions?.inputSource ? { inputSource: sendOptions.inputSource } : {}),
+      ...(sendOptions?.voiceTurnId ? { voiceTurnId: sendOptions.voiceTurnId } : {}),
+      ...(sendOptions?.voiceIdentity ? { voiceIdentity: sendOptions.voiceIdentity } : {}),
+      ...(attachments.some(a => a.fileRef) ? { fileReferences: attachments.filter(a => a.fileRef).map(a => ({ ...a.fileRef, name: a.name, attachmentId: a.id })) } : {}),
+    };
+    const optimisticId = asMessageId(`user_${ humanSend.sendId }`);
+    if (!this.controller.thread.value.messages.some(message => message.id === optimisticId)) {
+      this.controller.appendMessage({
+        id: optimisticId,
+        kind: 'user',
+        text: text.trim() || '(attached)',
+        attachments: attachments.map(attachment => ({ id: attachment.id, name: attachment.name, size: attachment.size, kind: attachment.kind, fileRef: attachment.fileRef })),
+        createdAt: humanSend.enqueuedAtMs,
+      } satisfies UserMessage);
+    }
+    const optimisticText = text.trim() || '(attached)';
+    const pendingIds = this.optimisticUserMessages.get(optimisticText) ?? [];
+    if (!pendingIds.includes(optimisticId)) pendingIds.push(optimisticId);
+    this.optimisticUserMessages.set(optimisticText, pendingIds);
+    const hopOrigin = this.lastSendHopKeydownAt ?? this.lastSendHopControllerAt ?? performance.now();
+    const started = performance.now();
+    this.lastSendHopKeydownAt = undefined;
+    this.lastSendHopControllerAt = undefined;
+    const marks = { adapterStart: Math.max(0, started - hopOrigin), userBubblePushed: Math.max(0, performance.now() - hopOrigin), ipcSendIssued: Math.max(0, performance.now() - hopOrigin) };
+    this.pendingSendHop = { threadId: this.controller.thread.value.id, marks, origin: hopOrigin, messageCount: this.ci.messages.value.length, route: 'injected' };
+    await this.ci.injectMessage(text, resolved.length ? resolved : undefined, metadata, humanSend);
+  }
+
+  private isQueuedSendCancelled(options?: SendOptions): boolean {
+    if (!options?.queueId) return false;
+    const queued = this.controller.queue.value.find(message => String(message.id) === options.queueId);
+    return !queued || queued.cancelledByStop === true;
   }
 
   stop(): void { this.ci.stop(); this.flushPendingSendHop() }
