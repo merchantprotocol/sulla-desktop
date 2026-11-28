@@ -30,6 +30,8 @@ export class UpstreamHttpClient {
   constructor(
     private readonly host: LocalAuthorityHost,
     private readonly upstreamResolver = new ValidatedUpstreamResolver(),
+    /** Only explicit code compositions may add a private CA; production defaults to system trust. */
+    private readonly trustAnchor?: string | Buffer,
   ) {}
 
   async validateTarget(raw: string): Promise<URL & { pinnedAddress: string; pinnedFamily: 4 | 6; pinnedAddresses: PinnedAddress[] }> {
@@ -47,7 +49,7 @@ export class UpstreamHttpClient {
   }
 
   /** Resolve validated public pins, optionally bypassing the cache for connect retries. */
-  private async resolvePinnedAddresses(hostname: string, options: { fresh?: boolean } = {}, attempt = 1): Promise<PinnedAddress[]> {
+  protected async resolvePinnedAddresses(hostname: string, options: { fresh?: boolean } = {}, attempt = 1): Promise<PinnedAddress[]> {
     try {
       return await this.upstreamResolver.resolve(hostname, options);
     } catch (error) {
@@ -114,6 +116,7 @@ export class UpstreamHttpClient {
         autoSelectFamily: true,
         autoSelectFamilyAttemptTimeout: attempt === 1 ? UPSTREAM_FIRST_ATTEMPT_FAMILY_TIMEOUT_MS : UPSTREAM_RETRY_ATTEMPT_FAMILY_TIMEOUT_MS,
         lookup: addresses.length ? pinnedAddressesLookup(addresses) : pinnedLookup(target.pinnedAddress, target.pinnedFamily),
+        ...(this.trustAnchor ? { ca: this.trustAnchor } : {}),
       };
       const request = https.request(requestOptions, response => hooks.onResponse(request, response));
       this.host.inFlight.add(request);

@@ -27,6 +27,8 @@ import { CacheUpdateStager } from './CacheUpdateStager.js';
 import type { LocalAuthorityHost } from './LocalAuthorityHost.js';
 import { VaultKeyActivation } from './VaultKeyActivation.js';
 
+export type UpstreamHttpClientFactory = (host: LocalAuthorityHost) => UpstreamHttpClient;
+
 /**
  * The collaborators LocalVaultAuthority delegates to (E9). Each one holds only the host and
  * reads vault state from it at call time, so building them has no side effects.
@@ -55,7 +57,10 @@ export class LocalAuthorityCollaborators {
   readonly keyLender: UnlockedKeyLender;
   readonly cacheStager: CacheUpdateStager;
 
-  constructor(host: LocalAuthorityHost) {
+  constructor(
+    host: LocalAuthorityHost,
+    upstreamHttpClientFactory: UpstreamHttpClientFactory = authorityHost => new UpstreamHttpClient(authorityHost),
+  ) {
     this.bootstrap = new BootstrapUnlockService(host);
     this.keyActivation = new VaultKeyActivation(host);
     this.humanSessions = new HumanSessionService(host);
@@ -69,7 +74,7 @@ export class LocalAuthorityCollaborators {
     this.legacyMigration = new LegacyMigrationService(host);
     this.sullaCloud = new SullaCloudService(host);
     this.relays = new BrokerRelayService(host);
-    this.upstream = new UpstreamHttpClient(host);
+    this.upstream = upstreamHttpClientFactory(host);
     this.streams = new BrokerStreamSender(host);
     this.brokerRequests = new BrokerRequestPreparer(host);
     this.brokerExecution = new BrokerExecutionService(host);
