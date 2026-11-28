@@ -12,17 +12,20 @@ export interface UnresolvedBlockerInput {
   /** Latest time an orchestrator message was delivered to this task (the parent's answer). */
   answeredAt: number | null;
   startedAt: number;
+  /** When present, the durable blocker decision is authoritative over check-in telemetry. */
+  openDecision?: boolean;
 }
 
 /**
- * A blocker is unresolved only while its task is live and no answer was delivered after it was raised.
- * A task that returned, stopped or failed, a later check-in without blockers, or a delivered answer all resolve it.
+ * New blocker state follows the durable decision inbox. The legacy check-in rule
+ * remains only for projections that do not provide that reader.
  */
 export class UnresolvedBlockerPolicy {
   constructor(private readonly liveness: LiveTaskStatusProjector = new LiveTaskStatusProjector()) {}
 
   /** Number of unresolved blockers this task currently holds (0 when resolved). */
   unresolvedCount(input: UnresolvedBlockerInput): number {
+    if (input.openDecision !== undefined) return input.openDecision ? 1 : 0;
     if (!this.liveness.isLive(input.task)) return 0;
     const reported = input.checkin?.blockers?.length ?? 0;
     if (reported === 0 && (input.checkin || input.task.status !== 'blocked')) return 0;

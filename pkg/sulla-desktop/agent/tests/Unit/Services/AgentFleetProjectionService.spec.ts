@@ -120,4 +120,30 @@ describe('AgentFleetProjectionService open review items', () => {
     const [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
     expect((projected.tasks[0] as any).openReviewItems).toEqual([]);
   });
+
+  it('derives Blocked only from an open durable blocker decision, and clears it when the decision is answered', async() => {
+    // risk: inaccurate supervision — stale check-in text must not leave a cleared task blocked, and an open decision must not be hidden.
+    const values = [job('decision-job', 'root', [task('decision-thread')], 100_000)];
+    const telemetry = new FleetTelemetryReader();
+    telemetry.latestTelemetryForJobs = async() => ({ 'decision-job': {
+      0: { latestCheckin: { step: 'blocked', summary: 'waiting', blockers: ['stale blocker'], filesTouched: [], createdAt: 100_000 },
+        checkins: [], undeliveredMessages: 0, lastMessageDeliveredAt: null },
+    } });
+    let open = new Set<string>();
+    const decisionReader = { openBlockerTaskKeys: async() => open };
+    const fleet = new AgentFleetProjectionService(new FleetStateReader(values) as any, telemetry, new FleetTitleReader() as any,
+      () => 100_000, undefined, undefined, undefined, decisionReader as any);
+
+    let [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect(projected.tasks[0].state).toBe('working');
+    open = new Set(['decision-job#0']);
+    [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect(projected.tasks[0].state).toBe('blocked');
+    values[0].tasks[0].status = 'completed';
+    [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect(projected.tasks[0].state).toBe('blocked');
+    open = new Set();
+    [projected] = await fleet.list({ scope: 'mine', callerThreadId: 'root' });
+    expect(projected.tasks[0].state).toBe('done');
+  });
 });

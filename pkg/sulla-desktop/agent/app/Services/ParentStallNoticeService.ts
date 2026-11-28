@@ -5,7 +5,7 @@
 
 import { AgentStallClassification } from '../../../shared/agentState/AgentStallClassification';
 import type { AgentJob, AgentJobTask } from '../../tools/agents/jobRegistry';
-import type { ParentNoticeInbox } from '../../services/BlockerEscalationService';
+import type { ParentNoticeInbox } from '../../services/ParentNoticeInbox';
 import type { PendingCompletion } from './AgentCompletionInboxService';
 import type { AgentStateProjector, AgentTaskCheckin } from './AgentStateProjector';
 

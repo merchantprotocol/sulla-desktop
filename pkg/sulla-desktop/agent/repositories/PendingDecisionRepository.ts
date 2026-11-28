@@ -51,6 +51,41 @@ export class PendingDecisionRepository {
     return rows[0]?.record;
   }
 
+  /** Latest decision emitted for one delegated task, including an answered or withdrawn one. */
+  async latestBlockerForTask(jobId: string, taskIndex: number): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`SELECT record FROM human_decisions
+      WHERE record->>'kind'='question' AND record#>>'{payload,blockerDecision}'='true'
+        AND record#>>'{payload,blockerJobId}'=$1 AND record#>>'{payload,blockerTaskIndex}'=$2
+      ORDER BY (record->>'createdAt')::bigint DESC,id DESC LIMIT 1`, [jobId, String(taskIndex)]);
+    return rows[0]?.record;
+  }
+
+  /** Exact task keys with a currently actionable blocker decision. */
+  async openBlockerTaskKeys(jobIds: string[]): Promise<Set<string>> {
+    if (jobIds.length === 0) return new Set();
+    const rows = await this.client.query<{ job_id: string; task_index: string }>(`SELECT DISTINCT
+        record#>>'{payload,blockerJobId}' AS job_id,
+        record#>>'{payload,blockerTaskIndex}' AS task_index
+      FROM human_decisions
+      WHERE record->>'kind'='question' AND record#>>'{payload,blockerDecision}'='true'
+        AND record#>>'{payload,blockerJobId}'=ANY($1::text[])
+        AND status IN ('pending','deferred')
+        AND COALESCE(record->>'attention','active') NOT IN ('answered','dismissed')`, [jobIds]);
+    return new Set(rows.map(row => `${ row.job_id }#${ row.task_index }`));
+  }
+
+  /** Withdraw only an open blocker decision still owned by this exact task. */
+  async dismissBlockerForTask(id: string, jobId: string, taskIndex: number): Promise<DecisionRecord | undefined> {
+    const rows = await this.client.query<{ record: DecisionRecord }>(`UPDATE human_decisions
+      SET record=jsonb_set(record, '{attention}', '"dismissed"'), updated_at=NOW()
+      WHERE id=$1 AND record->>'kind'='question' AND record#>>'{payload,blockerDecision}'='true'
+        AND record#>>'{payload,blockerJobId}'=$2 AND record#>>'{payload,blockerTaskIndex}'=$3
+        AND status IN ('pending','deferred')
+        AND COALESCE(record->>'attention','active') NOT IN ('answered','dismissed')
+      RETURNING record`, [id, jobId, String(taskIndex)]);
+    return rows[0]?.record;
+  }
+
   async findById(id: string): Promise<DecisionRecord | undefined> {
     const rows = await this.client.query<{ record: DecisionRecord }>(
       `SELECT record FROM human_decisions WHERE id=$1 LIMIT 1`, [id],
