@@ -7,4 +7,4 @@
 
 // This file is emitted as a standalone Web Worker by the renderer bundler.
 // PDF parsing stays off the chat/app thread; page pixels are returned to canvas.
-import 'pdfjs-dist/build/pdf.worker.mjs';
+import 'pdfjs-dist/legacy/build/pdf.worker.mjs';
