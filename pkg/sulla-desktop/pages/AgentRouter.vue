@@ -127,6 +127,7 @@ import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioS
 import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
 import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
+import { FilesOpenDestinationRouter } from '@pkg/pages/files/FilesOpenDestinationRouter';
 import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId, type BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
@@ -148,7 +149,7 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 
 const route = useRoute();
 const router = useRouter();
-
+const filesOpenDestinationRouter = new FilesOpenDestinationRouter();
 const windowTabStrip = new WindowTabStripState(window, ipcRenderer);
 
 provide(windowTabStripKey, windowTabStrip);
@@ -637,7 +638,7 @@ function onAgentCommand(_event: any, args: any) {
       reply({ error: 'The resolved Files item is incomplete.' });
       break;
     }
-    if (args.kind === 'file' && args.mode !== 'view' && supportsDocumentEditor(args.path)) {
+    if (args.kind === 'file' && filesOpenDestinationRouter.resolve(args.path, args.mode).destination === 'document-editor') {
       const tab = openDocumentTab({ fileId: args.fileId, path: args.path, collectionId: args.collectionId }, args.focus !== false);
       reply({ opened: true, tabId: tab.id, path: args.path, how: 'document-editor' });
       break;
