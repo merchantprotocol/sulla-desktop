@@ -33,8 +33,7 @@
         :state="row.agent.state"
         :initials="row.agent.initials"
         :role="row.agent.role ?? (row.depth === 0 ? 'main' : 'wrk')"
-        :ping="ping"
-        :ping-delay="pingDelay"
+        :pulse-sequence="pulseSequence"
       />
       <span class="worker-chart__name" :data-state="visualState" :data-depth="row.depth">{{ row.agent.name }}</span>
     </button>
@@ -53,8 +52,7 @@ const props = defineProps<{
   popoverId: string;
   selected: boolean;
   hovered: boolean;
-  ping: boolean;
-  pingDelay: string;
+  pulseSequence: number;
 }>();
 
 const emit = defineEmits<{
