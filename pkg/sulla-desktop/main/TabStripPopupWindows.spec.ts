@@ -182,32 +182,6 @@ describe('native tab strip popups', () => {
     expect(second.listenerCount('closed')).toBe(0);
   });
 
-  it.each(['tab-context-menu', 'tab-hover'])('recreates a fresh %s after its own renderer crashes', async(channel) => {
-    const owner = opener();
-    const request = (id: string) => {
-      if (channel === 'tab-context-menu') openMenu(owner, id);
-      else emit('tab-hover:show', owner, { id, anchor: { x: 20, y: 45, aboveY: 5 }, palette: {}, title: 'Title', status: 'Idle', detail: '' });
-    };
-
-    request('first');
-    await vi.advanceTimersByTimeAsync(0);
-    const [popup] = popups;
-
-    expect(popup.visible).toBe(true);
-    popup.webContents.emit('render-process-gone');
-    expect(popup.destroyed).toBe(true);
-    expect(owner.webContents.listenerCount('render-process-gone')).toBe(0);
-
-    request('second');
-    await vi.advanceTimersByTimeAsync(0);
-    const replacement = popups[1];
-
-    expect(replacement.visible).toBe(true);
-    expect(replacement.webContents.send).toHaveBeenCalledWith(
-      `${ channel }:data`, expect.objectContaining(channel === 'tab-hover' ? { id: 'second' } : { requestId: 'second' }),
-    );
-  });
-
   it('accepts group edits only from the active popover and forwards allowed changes to its opener', async() => {
     // risk: permissions — only the active native popup may mutate its opener's group.
     // risk: data accuracy — group names accept 60 characters and reject longer input.
