@@ -46,9 +46,14 @@ export class SullaFilesIpcPreviewService {
     });
   }
 
-  initialize():void {
-    if (this.protocol.isProtocolHandled('sulla-files-preview')) return;
-    this.protocol.handle('sulla-files-preview', request => this.serve(request));
+  initialize(protocol:Protocol = this.protocol):void {
+    if (protocol.isProtocolHandled('sulla-files-preview')) return;
+    const injectNavigationBridge = protocol === this.protocol;
+    protocol.handle('sulla-files-preview', request => this.serve(request, injectNavigationBridge));
+  }
+
+  allowsCapabilityOrigin(url:URL):boolean {
+    return url.protocol === 'sulla-files-preview:' && Boolean(this.tokens.resolve(url.hostname));
   }
 
   private assertApp(senderUrl?:string):void {
@@ -63,7 +68,7 @@ export class SullaFilesIpcPreviewService {
     return undefined;
   }
 
-  private async serve(request:Request):Promise<Response> {
+  private async serve(request:Request, injectNavigationBridge:boolean):Promise<Response> {
     const noStore = { 'cache-control':'no-store', 'x-content-type-options':'nosniff' };
     if (request.method !== 'GET') return new Response(null, { status:404, headers:noStore });
     const binding = this.tokens.resolve(new URL(request.url).hostname);
@@ -86,7 +91,7 @@ export class SullaFilesIpcPreviewService {
     headers.set('content-type', result.mime);
     if (result.attachment) headers.set('content-disposition', 'attachment');
     let body = upstream.body;
-    if (targetPath === documentPath && /\.html?$/i.test(targetPath) && body) {
+    if (injectNavigationBridge && targetPath === documentPath && /\.html?$/i.test(targetPath) && body) {
       const html = await upstream.text();
       const head = /<head(?:\s[^>]*)?>/i.exec(html);
       body = new Blob([head ? html.slice(0, head.index + head[0].length) + NAVIGATION_BRIDGE + html.slice(head.index + head[0].length) : NAVIGATION_BRIDGE + html], { type:result.mime }).stream();
