@@ -9,6 +9,7 @@ import { nextTick } from 'vue';
 
 import InlineFileCard from '../../../../pages/chat/components/files/InlineFileCard.vue';
 import InlineFileCardFixture from './fixtures/InlineFileCardFixture.vue';
+import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
 import {
   MAX_INLINE_HTML_SOURCE_CHARACTERS,
   InlineImagePreviewSource,
@@ -40,30 +41,48 @@ const actionReference: InlineFileActionReference = {
 };
 
 describe('InlineFileCard', () => {
-  it('passes HTML through unchanged into a Files-base iframe that runs scripts without same-origin access', () => {
-    // risk: data integrity and renderer isolation — page scripts/styles/assets must survive while the app stays in a separate opaque-origin frame.
+  it('renders HTML in the isolated guest partition with its Files base after the doctype', () => {
+    // risk: data integrity and renderer isolation — scripts stay intact in a separate guest process, without giving HTML a chat-renderer iframe.
     const wrapper = mount(InlineFileCard, { props: { file: htmlFile } });
-    const frame = wrapper.get('iframe');
+    const guest = wrapper.get('webview');
 
-    expect(wrapper.findAll('iframe')).toHaveLength(1);
-    expect(frame.attributes('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-modals');
-    expect(frame.attributes('allow')).toBeUndefined();
-    expect(frame.attributes('src')).toBeUndefined();
-    const srcdoc = frame.attributes('srcdoc') ?? '';
+    expect(wrapper.findAll('iframe')).toHaveLength(0);
+    expect(wrapper.findAll('webview')).toHaveLength(1);
+    expect(guest.attributes('partition')).toBe(INLINE_HTML_PREVIEW_PARTITION);
+    expect(guest.attributes('webpreferences')).toBe('nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no');
+    expect(guest.attributes('allowpopups')).toBeUndefined();
+    const previewUrl = guest.attributes('src') ?? '';
+    expect(previewUrl.startsWith('data:text/html;charset=utf-8,')).toBe(true);
+    const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
     const baseTag = `<base href="${htmlBaseUrl}">`;
 
-    expect(srcdoc).toContain(baseTag);
-    expect(srcdoc.replace(baseTag, '')).toBe(htmlSource);
-    expect(srcdoc).toContain('<script>document.documentElement.dataset.previewRan = "yes";</script>');
-    expect(srcdoc).toContain('<style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")} .hero{background-image:url("../images/hero.png")}</style>');
-    expect(srcdoc).toContain('<img src="../images/hero.png" alt="Preview hero">');
-    expect(srcdoc).toContain('style="color: rebeccapurple"');
-    expect(srcdoc).not.toContain('Content-Security-Policy');
+    expect(document).toContain(baseTag);
+    expect(document.replace(baseTag, '')).toBe(htmlSource);
+    expect(document.startsWith('<!doctype html>')).toBe(true);
+    expect(document).toContain('<script>document.documentElement.dataset.previewRan = "yes";</script>');
+    expect(document).toContain('<style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")} .hero{background-image:url("../images/hero.png")}</style>');
+    expect(document).toContain('<img src="../images/hero.png" alt="Preview hero">');
+    expect(document).toContain('style="color: rebeccapurple"');
 
     wrapper.unmount();
   });
 
-  it('uses the same sandboxed frame when Full screen opens and restores focus after the native dialog closes', async() => {
+  it('does not move the doctype when a page has no head element', () => {
+    const source = '<!doctype html><html lang="en"><body><script>window.ran = true;</script></body></html>';
+    const file: InlineFileCardViewModel = {
+      ...htmlFile,
+      preview: { kind: 'html', source, assetBaseUrl: htmlBaseUrl },
+    };
+    const wrapper = mount(InlineFileCard, { props: { file } });
+    const encoded = wrapper.get('webview').attributes('src') ?? '';
+    const document = decodeURIComponent(encoded.slice('data:text/html;charset=utf-8,'.length));
+
+    expect(document.startsWith('<!doctype html><html lang="en"><base')).toBe(true);
+    expect(document).toContain('<script>window.ran = true;</script>');
+    wrapper.unmount();
+  });
+
+  it('uses the same isolated guest when Full screen opens and restores focus after the native dialog closes', async() => {
     // risk: renderer isolation — expanding a preview must not weaken iframe policy or strand keyboard focus.
     const wrapper = mount(InlineFileCard, { props: { file: htmlFile }, attachTo: document.body });
     const fullScreenButton = wrapper.get('[title="Full screen"]');
@@ -73,11 +92,14 @@ describe('InlineFileCard', () => {
 
     const dialog = wrapper.get('dialog');
     expect((dialog.element as HTMLDialogElement).open).toBe(true);
-    expect(wrapper.findAll('iframe')).toHaveLength(2);
-    for (const frame of wrapper.findAll('iframe')) {
-      expect(frame.attributes('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-modals');
-      const srcdoc = frame.attributes('srcdoc') ?? '';
-      expect(srcdoc.replace(`<base href="${htmlBaseUrl}">`, '')).toBe(htmlSource);
+    expect(wrapper.findAll('iframe')).toHaveLength(0);
+    expect(wrapper.findAll('webview')).toHaveLength(2);
+    for (const guest of wrapper.findAll('webview')) {
+      expect(guest.attributes('partition')).toBe(INLINE_HTML_PREVIEW_PARTITION);
+      expect(guest.attributes('webpreferences')).toContain('sandbox=yes');
+      const previewUrl = guest.attributes('src') ?? '';
+      const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
+      expect(document.replace(`<base href="${htmlBaseUrl}">`, '')).toBe(htmlSource);
     }
 
     const nativeDialog = dialog.element as HTMLDialogElement;
@@ -113,12 +135,13 @@ describe('InlineFileCard', () => {
       preview: { kind: 'html', source: 'x'.repeat(MAX_INLINE_HTML_SOURCE_CHARACTERS) + 'tail-marker' },
     };
     const wrapper = mount(InlineFileCard, { props: { file: oversizedFile } });
-    const srcdoc = wrapper.get('iframe').attributes('srcdoc') ?? '';
+    const previewUrl = wrapper.get('webview').attributes('src') ?? '';
+    const document = decodeURIComponent(previewUrl.slice('data:text/html;charset=utf-8,'.length));
 
     expect(wrapper.find('.file-cap').exists()).toBe(true);
     expect(wrapper.get('.file-cap button').exists()).toBe(true);
-    expect(srcdoc.length).toBeLessThan(MAX_INLINE_HTML_SOURCE_CHARACTERS + 1024);
-    expect(srcdoc).not.toContain('tail-marker');
+    expect(document.length).toBe(MAX_INLINE_HTML_SOURCE_CHARACTERS);
+    expect(document).not.toContain('tail-marker');
     wrapper.unmount();
   });
 
