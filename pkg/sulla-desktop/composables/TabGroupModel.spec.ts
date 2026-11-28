@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { TabGroupModel } from './TabGroupModel';
+import { TAB_GROUP_COLOR_TOKENS, TabGroupModel } from './TabGroupModel';
 import { TabStripLayoutRepository, type TabStripStorage } from './TabStripLayoutRepository';
 
 class MemoryStorage implements TabStripStorage {
@@ -37,32 +37,39 @@ describe('TabGroupModel', () => {
     expect(model.orderTabs(tabs, ['plain', 'pinned'])).toEqual([tabs[1], tabs[0]]);
   });
 
-  it('creates user groups, trims names, preserves emoji, allows duplicates, and caps names at 60 characters', () => {
+  it('creates user groups with the approved eight swatches', () => {
+    // risk: data accuracy — stored keys must match the eight fixed-hue mockup swatches exactly.
+    expect(TAB_GROUP_COLOR_TOKENS).toEqual(['grey', 'blue', 'cyan', 'green', 'gold', 'orange', 'pink', 'purple']);
+  });
+
+  it('trims names, permits blank names, preserves emoji, allows duplicates, and caps names at 60 characters', () => {
     // risk: data integrity — name/color validation must preserve valid user input and reject invalid data.
     const { model } = new GroupFixture();
-    const first = model.createGroup('  Research 🧪  ', 'accent', ['tab-a']);
-    const second = model.createGroup('Research 🧪', 'text-accent', ['tab-b']);
-    const long = model.createGroup(`${ 'x'.repeat(59) }🧪tail`, 'status-success', ['tab-c']);
+    const first = model.createGroup('  Research 🧪  ', 'blue', ['tab-a']);
+    const second = model.createGroup('Research 🧪', 'purple', ['tab-b']);
+    const long = model.createGroup(`${ 'x'.repeat(59) }🧪tail`, 'green', ['tab-c']);
+    const unnamed = model.createGroup(' \t ', 'grey', ['tab-d']);
 
-    expect(first).toMatchObject({ id: 'generated-1', name: 'Research 🧪', colorToken: 'accent', order: 0, collapsed: false });
+    expect(first).toMatchObject({ id: 'generated-1', name: 'Research 🧪', colorToken: 'blue', order: 0, collapsed: false });
     expect(second.name).toBe(first.name);
     expect(Array.from(long.name)).toHaveLength(60);
     expect(long.name.endsWith('🧪')).toBe(true);
-    expect(() => model.createGroup(' \t ', 'accent', ['tab-d'])).toThrow(RangeError);
-    expect(() => model.renameGroup(first.id, '   ')).toThrow(RangeError);
+    expect(unnamed.name).toBe('');
+    expect(model.renameGroup(first.id, '   ')).toBe(true);
+    expect(model.groups.find(group => group.id === first.id)?.name).toBe('');
     expect(() => model.setGroupColor(first.id, 'violet' as never)).toThrow(RangeError);
   });
 
   it('renames, recolors, collapses, adds, and ungroups tabs through the model API', () => {
     // risk: data integrity — edits must update group metadata and membership together.
     const { model } = new GroupFixture();
-    const group = model.createGroup('Inbox', 'accent', ['tab-a']);
+    const group = model.createGroup('Inbox', 'blue', ['tab-a']);
 
     expect(model.renameGroup(group.id, '  Follow ups  ')).toBe(true);
-    expect(model.setGroupColor(group.id, 'status-warning')).toBe(true);
+    expect(model.setGroupColor(group.id, 'gold')).toBe(true);
     expect(model.setCollapsed(group.id, true)).toBe(true);
     expect(model.addTabsToGroup(group.id, ['tab-b'])).toBe(true);
-    expect(model.groups[0]).toMatchObject({ name: 'Follow ups', colorToken: 'status-warning', collapsed: true });
+    expect(model.groups[0]).toMatchObject({ name: 'Follow ups', colorToken: 'gold', collapsed: true });
     expect(model.groupTabs([{ id: 'tab-a' }, { id: 'tab-b' }, { id: 'tab-c' }])).toMatchObject({
       ungrouped: [{ id: 'tab-c' }],
       groups: [{ group: { id: group.id }, tabs: [{ id: 'tab-a' }, { id: 'tab-b' }] }],
@@ -77,8 +84,8 @@ describe('TabGroupModel', () => {
   it('moves initial members from their previous group and removes the group left empty', () => {
     // risk: data integrity — reassignment must not leave orphan groups.
     const { model } = new GroupFixture();
-    const original = model.createGroup('Original', 'accent', ['tab-a']);
-    const replacement = model.createGroup('Replacement', 'text-accent', ['tab-a']);
+    const original = model.createGroup('Original', 'blue', ['tab-a']);
+    const replacement = model.createGroup('Replacement', 'purple', ['tab-a']);
 
     expect(model.getGroupIdForTab('tab-a')).toBe(replacement.id);
     expect(model.groups).toEqual([{ ...replacement, order: 0 }]);
@@ -88,8 +95,8 @@ describe('TabGroupModel', () => {
   it('deletes a group without closing its tabs and reorders remaining groups', () => {
     // risk: side effects — deleting group metadata must not close its tabs.
     const { model } = new GroupFixture();
-    const first = model.createGroup('First', 'accent', ['tab-a']);
-    const second = model.createGroup('Second', 'status-success', ['tab-b']);
+    const first = model.createGroup('First', 'blue', ['tab-a']);
+    const second = model.createGroup('Second', 'green', ['tab-b']);
     const tabs = [{ id: 'tab-a' }, { id: 'tab-b' }, { id: 'tab-c' }];
 
     expect(model.reorder(second.id, 0)).toBe(true);
@@ -103,7 +110,7 @@ describe('TabGroupModel', () => {
   it('prunes stale membership and removes a group when its last tab closes', () => {
     // risk: data integrity — stale tab IDs must not survive reconciliation.
     const { model } = new GroupFixture();
-    const group = model.createGroup('Temporary', 'accent-2', ['tab-live', 'tab-closed']);
+    const group = model.createGroup('Temporary', 'cyan', ['tab-live', 'tab-closed']);
 
     model.pruneTabs(['tab-live']);
     expect(model.getGroupIdForTab('tab-closed')).toBeUndefined();
@@ -118,8 +125,8 @@ describe('TabGroupModel', () => {
   it('moves a dragged tab between groups, restores its prior group on cancel, and ungroups on drop in the normal row', () => {
     // risk: data integrity — canceled drags must restore membership and order.
     const { model } = new GroupFixture();
-    const source = model.createGroup('Source', 'accent', ['dragged', 'source-peer']);
-    const target = model.createGroup('Target', 'status-error', ['target-peer']);
+    const source = model.createGroup('Source', 'blue', ['dragged', 'source-peer']);
+    const target = model.createGroup('Target', 'orange', ['target-peer']);
     const originalGroups = model.groups;
 
     expect(model.moveTabToGroup('dragged', target.id, true)).toBe(true); // live drag reflow
@@ -138,8 +145,8 @@ describe('TabGroupModel', () => {
   it('orders membership by user group order while preserving order within each row', () => {
     // risk: data accuracy — group ordering must not scramble tabs within a row.
     const { model } = new GroupFixture();
-    const first = model.createGroup('First', 'accent', ['first-a', 'first-b']);
-    const second = model.createGroup('Second', 'text-accent', ['second-a']);
+    const first = model.createGroup('First', 'blue', ['first-a', 'first-b']);
+    const second = model.createGroup('Second', 'purple', ['second-a']);
     const tabs = [
       { id: 'second-a' },
       { id: 'free' },
