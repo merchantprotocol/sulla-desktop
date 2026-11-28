@@ -1448,9 +1448,9 @@ export class PlaybookController<TState = any> {
             const { toolRegistry } = await import('../tools/registry');
             const tool = await toolRegistry.createTool(step.toolName);
             const toolActionId = randomUUID();
-            RunActivity.recordActionForMetadata(state.metadata, 'tool_start', step.toolName, toolActionId);
+            RunActivity.recordActionForMetadata((state as any).metadata, 'tool_start', step.toolName, toolActionId);
             const toolResult = await Promise.resolve().then(() => tool.invoke(step.params, state)).finally(() => {
-              RunActivity.recordActionForMetadata(state.metadata, 'tool_end', step.toolName, toolActionId);
+              RunActivity.recordActionForMetadata((state as any).metadata, 'tool_end', step.toolName, toolActionId);
             });
 
             const resultText = toolResult.success
