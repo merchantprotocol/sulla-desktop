@@ -126,14 +126,14 @@ export class ThreadAgentActivityMapper {
     let count = 0;
     let label: string | null = null;
     let latestAt = Number.NEGATIVE_INFINITY;
-    let running = false;
+    const running = projection.agents.some(agent => agent.row.state === 'working');
+    if (!running) return { running: false, count: 0, label: null };
 
     for (const agent of projection.agents) {
       const { row } = agent;
-      if (row.state !== 'working') continue;
-      running = true;
       if (Number.isFinite(row.actionCount)) count += row.actionCount ?? 0;
 
+      if (row.state !== 'working') continue;
       const action = row.lastAction;
       if (!action || !action.label) continue;
       const at = Date.parse(action.at);
