@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 // risk: duplicate side effects — a Desktop workflow agent node must use the local Sulla agent orchestration API.
