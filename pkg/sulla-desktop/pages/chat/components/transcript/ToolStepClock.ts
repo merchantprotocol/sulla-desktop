@@ -26,7 +26,7 @@ export interface ToolStepDisplaySelection {
 
 /** One view-scoped 1s clock shared by every running trace row and status line. */
 export class ToolStepClock {
-  static readonly maximumRunningMs = 6 * 60 * 60_000;
+  static readonly maximumRunningMs = 30 * 60_000;
   private readonly listeners = new Set<(now: number) => void>();
   private readonly activeSteps = new Map<string, ActiveStep>();
   private interval: IntervalHandle | undefined;
@@ -144,6 +144,13 @@ export class ToolStepClock {
   }
 
   reset(): void { this.activeSteps.clear(); }
+
+  /** A confirmed root run-end clears root timers but leaves independently live workers intact. */
+  endRootRun(threadId: string): void {
+    for (const [key, step] of this.activeSteps) {
+      if (step.item.threadId === threadId && step.item.role === 'root') this.activeSteps.delete(key);
+    }
+  }
 
   /** All mounted rows in one chat share this single interval. */
   subscribe(listener: (now: number) => void): () => void {
