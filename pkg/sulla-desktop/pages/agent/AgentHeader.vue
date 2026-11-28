@@ -27,20 +27,19 @@
     <div
       ref="tabScrollWrapper"
       class="tab-scroll-wrapper"
-      :class="{ 'fade-left': canScrollLeft, 'fade-right': canScrollRight }"
     >
       <div
         ref="tabScrollContainer"
         class="tab-scroll-container"
-        @wheel.prevent="onTabWheel"
       >
         <template
           v-for="section in tabSections"
-          :key="section.id"
+          :key="section.key"
         >
           <div
-            v-if="section.pinned"
+            v-if="section.kind === 'pinned'"
             class="tab-pinned-section"
+            data-strip-row="pinned"
           >
             <TransitionGroup
               tag="div"
@@ -72,24 +71,56 @@
             </TransitionGroup>
           </div>
           <div
+            v-else-if="section.kind === 'ungrouped'"
+            class="tab-ungrouped-section"
+            data-strip-row="ungrouped"
+          >
+            <TransitionGroup
+              tag="div"
+              name="tab-anim"
+              class="tab-group-tabs tab-ungrouped-tabs"
+            >
+              <TabStripTab
+                v-for="(tab, localIndex) in section.tabs"
+                :key="tab.id"
+                :tab="tab"
+                :index="section.startIndex + localIndex"
+                :pinned-boundary="section.startIndex + localIndex === pinnedTabCount && pinnedTabCount > 0"
+                :dragging="dragState?.active === true && dragState.tabHeaderId === tab.id"
+                :renaming="renamingTabId === tab.id"
+                :rename-draft="renameDraft"
+                :activity-labels="ACTIVITY_LABEL"
+                @pointerdown="onPointerDown"
+                @hover="scheduleTabHover"
+                @hover-end="hideTabHover"
+                @promote="promoteTab"
+                @auxclick="onAuxClick"
+                @contextmenu="onTabContextMenu"
+                @close="closeAnyTab"
+                @update:rename-draft="renameDraft = $event"
+                @commit-rename="commitRename"
+                @cancel-rename="cancelRename"
+                @rename-blur="onRenameBlur"
+              />
+            </TransitionGroup>
+          </div>
+          <div
             v-else
             class="tab-group"
             :class="[
-              `tab-group-${section.id}`,
               {
-                'tab-group-folded': isGroupFolded(section.id),
-                'tab-group-compact': isGroupCompact(section.id),
-                'tab-group-active': isActiveGroup(section.id),
+                'tab-group-folded': isGroupFolded(section.group.id),
+                'tab-group-compact': isGroupCompact(section.group.id),
               },
             ]"
-            :style="groupSizingStyle(section.id)"
-            :data-group-id="section.id"
+            :style="groupColorStyle(section.group)"
+            :data-group-id="section.group.id"
           >
             <button
               class="tab-group-label"
               type="button"
-              :aria-expanded="!isGroupFolded(section.id)"
-              @click="toggleGroup(section.id)"
+              :aria-expanded="!isGroupFolded(section.group.id)"
+              @click="toggleGroup(section.group.id)"
             >
               <svg
                 class="tab-group-icon"
@@ -100,11 +131,11 @@
                 stroke-linecap="round"
                 stroke-linejoin="round"
                 aria-hidden="true"
-              ><path :d="section.iconPath" /></svg>
-              <span>{{ section.label }}</span>
+              ><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" /></svg>
+              <span class="tab-group-name">{{ section.group.name }}</span>
               <span class="tab-group-count">{{ section.tabs.length }}</span>
               <span
-                v-if="isGroupFolded(section.id)"
+                v-if="isGroupFolded(section.group.id)"
                 class="tab-group-dots"
                 aria-hidden="true"
               >
@@ -116,7 +147,7 @@
               </span>
             </button>
             <TransitionGroup
-              v-show="!isGroupFolded(section.id)"
+              v-show="!isGroupFolded(section.group.id)"
               tag="div"
               name="tab-anim"
               class="tab-group-tabs"
@@ -131,9 +162,7 @@
                 :renaming="renamingTabId === tab.id"
                 :rename-draft="renameDraft"
                 :activity-labels="ACTIVITY_LABEL"
-                :compact="isGroupCompact(section.id)"
-                :icon-only="tabIsIconOnly(tab, section.id)"
-                :style="tabSizingStyle(tab, section.id)"
+                :compact="isGroupCompact(section.group.id)"
                 @pointerdown="onPointerDown"
                 @hover="scheduleTabHover"
                 @hover-end="hideTabHover"
@@ -148,14 +177,14 @@
               />
             </TransitionGroup>
             <button
-              v-if="groupOverflowCount(section.id) > 0"
+              v-if="groupOverflowCount(section.group.id) > 0"
               class="tab-group-more"
               type="button"
-              :aria-label="`Show ${groupOverflowCount(section.id)} more ${section.label} tabs`"
+              :aria-label="`Show ${groupOverflowCount(section.group.id)} more ${section.group.name} tabs`"
               @pointerdown.stop
               @click="openGroupTabList(section, $event)"
             >
-              +{{ groupOverflowCount(section.id) }}
+              +{{ groupOverflowCount(section.group.id) }}
             </button>
           </div>
         </template>
@@ -400,7 +429,7 @@
 </template>
 
 <script lang="ts">
-import { ref, computed, inject, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, inject, nextTick, onDeactivated, onMounted, onUnmounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import TabStripTab from './TabStripTab.vue';
@@ -408,12 +437,10 @@ import { isTabCloseable } from './tabStrip';
 
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
-import { TabDragAutoScroll } from '@pkg/composables/TabDragAutoScroll';
 import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
-import { TabGroupModel, type TabGroupId } from '@pkg/composables/TabGroupModel';
+import { type TabGroup, type TabGroupId } from '@pkg/composables/TabGroupModel';
 import { TabHoverController } from '@pkg/composables/TabHoverController';
 import { calculateTabStripLayout, type TabGroupLayoutResult, type TabStripLayoutGroup } from '@pkg/composables/TabStripLayoutAllocator';
-import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { TabStripPopupAnchor } from '@pkg/composables/TabStripPopupAnchor';
 import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composables/TabTransferPayload';
 import { windowTabStripKey } from '@pkg/composables/WindowTabStripState';
@@ -432,10 +459,6 @@ const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
 };
 const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
 
-// Every page and every browser tab mounts its own AgentHeader, so there is one
-// tab strip per page. They share a single scroll offset so switching tabs
-// never resets the strip back to the left.
-let sharedTabScrollLeft = 0;
 </script>
 
 <script setup lang="ts">
@@ -488,11 +511,8 @@ const {
   tabs: browserTabs, closedTabs, tabOrder, previewTabId, pinnedTabIds,
   createTab, closeTab, updateTab, getTab, ensureOneTab, restoreClosedTab,
   reorderTabs, promoteTab, isTabPinned, setTabPinned, prunePinnedTabs,
-  tabStripLayoutStorageKey,
+  tabGroupModel,
 } = useBrowserTabs();
-const tabGroupModel = new TabGroupModel();
-const tabLayoutRepository = new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey);
-const foldedGroupIds = tabLayoutRepository.foldedGroups;
 defineProps<{
   isDark:         boolean;
   toggleTheme:    () => void;
@@ -528,7 +548,6 @@ const isMobileMenuOpen = ref(false);
 function openModeTab(mode: BrowserTabMode) {
   const tab = createTab('about:blank', { mode });
 
-  setGroupFolded(tabGroupModel.groupForMode(mode), false);
   router.push(`/Browser/${ tab.id }`);
   return tab;
 }
@@ -601,86 +620,20 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
 function handleNavigateTab(event: Event) {
   const tabId = (event as CustomEvent).detail?.tabId;
   if (tabId) {
-    const tab = getTab(tabId);
-    if (tab && !isTabPinned(`browser-${ tabId }`)) setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
+    const groupId = tabGroupModel.getGroupIdForTab(`browser-${ tabId }`);
+    if (groupId) tabGroupModel.setCollapsed(groupId, false);
     router.push(`/Browser/${ tabId }`);
   }
 }
 
-// ── Grouped tab strip scrolling ──
+// ── Tab strip sizing ──
 
 const tabScrollContainer = ref<HTMLElement | null>(null);
 const tabScrollWrapper = ref<HTMLElement | null>(null);
-const canScrollLeft = ref(false);
-const canScrollRight = ref(false);
 let scrollObserver: ResizeObserver | null = null;
 
 function getScrollEl(): HTMLElement | null {
   return tabScrollContainer.value;
-}
-
-function updateScrollButtons() {
-  const el = getScrollEl();
-  if (!el) return;
-  canScrollLeft.value = el.scrollLeft > 1;
-  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-}
-
-/** Hidden strips (inactive browser tabs, kept-alive pages) must not drive the shared offset. */
-function isStripVisible(el: HTMLElement): boolean {
-  return el.clientWidth > 0 && getComputedStyle(el).visibility !== 'hidden';
-}
-
-function onTabStripScroll() {
-  hideTabHover();
-  const el = getScrollEl();
-  if (!el) return;
-  if (isStripVisible(el)) sharedTabScrollLeft = el.scrollLeft;
-  updateScrollButtons();
-}
-
-/** Restore the shared offset, then reveal the active tab without resetting the strip. */
-function syncTabStrip() {
-  const el = getScrollEl();
-  if (!el || !isStripVisible(el) || dragState.value?.active) return;
-
-  let left = sharedTabScrollLeft;
-  const active = el.querySelector<HTMLElement>('.tab-active, .tab-active-native');
-  if (active) {
-    const groupScroller = active.closest<HTMLElement>('.tab-group > .tab-group-tabs');
-
-    if (groupScroller) {
-      const scroller = groupScroller.getBoundingClientRect();
-      const tab = active.getBoundingClientRect();
-      const style = getComputedStyle(groupScroller);
-      const contentLeft = scroller.left + (Number.parseFloat(style.paddingLeft) || 0);
-      const contentRight = scroller.right - (Number.parseFloat(style.paddingRight) || 0);
-
-      if (tab.left < contentLeft) groupScroller.scrollLeft += tab.left - contentLeft;
-      else if (tab.right > contentRight) groupScroller.scrollLeft += tab.right - contentRight;
-    }
-    const viewport = el.getBoundingClientRect();
-    const tab = active.getBoundingClientRect();
-    const start = tab.left - viewport.left + el.scrollLeft;
-    const end = start + tab.width;
-    if (start < left) left = start;
-    else if (end > left + el.clientWidth) left = end - el.clientWidth;
-  }
-  el.scrollTo({ left, behavior: 'instant' });
-  sharedTabScrollLeft = el.scrollLeft;
-  updateScrollButtons();
-}
-
-function onTabWheel(event: WheelEvent) {
-  const el = getScrollEl();
-  if (!el) return;
-  const delta = Math.abs(event.deltaY) > Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-  const target = event.target as HTMLElement;
-  const groupScroller = target.closest<HTMLElement>('.tab-group > .tab-group-tabs');
-
-  if (groupScroller && groupScroller.scrollWidth > groupScroller.clientWidth + 1) groupScroller.scrollLeft += delta;
-  else el.scrollLeft += delta;
-  updateScrollButtons();
 }
 
 const popupAnchor = new TabStripPopupAnchor(window);
@@ -759,7 +712,7 @@ function publishAttentionMenu(id: string, update: boolean): void {
   });
 }
 
-function openGroupTabList(section: TabStripSection, event: MouseEvent): void {
+function openGroupTabList(section: GroupTabStripSection, event: MouseEvent): void {
   const button = event.currentTarget as HTMLElement;
   const position = popupAnchor.locate(button);
 
@@ -785,7 +738,7 @@ function openGroupTabList(section: TabStripSection, event: MouseEvent): void {
     select: action => {
       if (!action.startsWith('attention:')) return;
       const tabId = action.slice('attention:'.length);
-      const tab = orderedTabs.value.find(candidate => candidate.id === tabId && !candidate.pinned && tabGroupModel.groupForMode(candidate.mode) === section.id);
+      const tab = orderedTabs.value.find(candidate => candidate.id === tabId && !candidate.pinned && tabGroupModel.getGroupIdForTab(candidate.id) === section.group.id);
 
       if (tab) activateTab(tab);
     },
@@ -794,7 +747,7 @@ function openGroupTabList(section: TabStripSection, event: MouseEvent): void {
   ipcRenderer.send('tab-context-menu:show', {
     requestId: id,
     items: rows,
-    attention: { ...position, title: `${ section.label } tabs` },
+    attention: { ...position, title: `${ section.group.name } tabs` },
     update: false,
   });
 }
@@ -836,22 +789,17 @@ onMounted(() => {
   _onMoreFetchHist = handleMoreMenuFetchHistory;
   _mountIpcListeners();
 
-  // Keep fade edges current as tab widths or the window size change.
+  // Recalculate automatic group compaction when the available bar width changes.
   const el = getScrollEl();
   if (el) {
     scrollObserver = new ResizeObserver(() => {
       availableTabWidth.value = el.clientWidth;
-      updateScrollButtons();
     });
     scrollObserver.observe(el);
     if (tabScrollWrapper.value) scrollObserver.observe(tabScrollWrapper.value);
-    el.addEventListener('scroll', onTabStripScroll, { passive: true });
     availableTabWidth.value = el.clientWidth;
-    updateScrollButtons();
   }
-  nextTick(syncTabStrip);
 });
-onActivated(() => nextTick(syncTabStrip));
 onDeactivated(() => {
   hideStripPopups();
   cancelCurrentDrag();
@@ -871,17 +819,12 @@ onUnmounted(() => {
     scrollObserver.disconnect();
     scrollObserver = null;
   }
-  const el = getScrollEl();
-  if (el) el.removeEventListener('scroll', onTabStripScroll);
 });
 
 function onRestoreClosedTab(index: number) {
   const tab = restoreClosedTab(index);
 
-  if (tab) {
-    setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
-    router.push(`/Browser/${ tab.id }`);
-  }
+  if (tab) router.push(`/Browser/${ tab.id }`);
 }
 
 // ── More menu (popup window via IPC) ──
@@ -941,14 +884,12 @@ function handleMoreMenuAction(
     } else {
       tab = createTab('about:blank', { mode: 'chat' as BrowserTabMode });
     }
-    setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
     router.push(`/Browser/${ tab.id }`);
     break;
   }
   case 'showAllHistory': {
     const tab = createTab('about:blank', { mode: 'history' as BrowserTabMode });
 
-    setGroupFolded('tools', false);
     router.push(`/Browser/${ tab.id }`);
     break;
   }
@@ -973,7 +914,6 @@ const toggleMobileMenu = () => {
 function openNewBrowserTab() {
   const tab = createTab('about:blank', { mode: 'chat' });
 
-  setGroupFolded('chats', false);
   router.push(`/Browser/${ tab.id }`);
 }
 
@@ -1034,14 +974,29 @@ const MODE_ICON_PATHS: Record<BrowserTabMode, string> = {
   'capture-studio':  'M4 5h16v14H4zM8 9h8M8 12h8M8 15h5',
 };
 
-interface TabStripSection {
-  id:         TabGroupId | 'pinned';
-  label:      string;
-  iconPath:   string;
-  tabs:       HeaderTab[];
-  pinned:     boolean;
+interface PinnedTabStripSection {
+  kind: 'pinned';
+  key: 'pinned-row';
+  tabs: HeaderTab[];
   startIndex: number;
 }
+
+interface UngroupedTabStripSection {
+  kind: 'ungrouped';
+  key: 'ungrouped-row';
+  tabs: HeaderTab[];
+  startIndex: number;
+}
+
+interface GroupTabStripSection {
+  kind: 'group';
+  key: string;
+  group: TabGroup;
+  tabs: HeaderTab[];
+  startIndex: number;
+}
+
+type TabStripSection = PinnedTabStripSection | UngroupedTabStripSection | GroupTabStripSection;
 
 const needsYouRows = computed<TabAttentionRow[]>(() => orderedTabs.value.flatMap(tab => {
   const state = tab.activity;
@@ -1051,19 +1006,15 @@ const needsYouRows = computed<TabAttentionRow[]>(() => orderedTabs.value.flatMap
 }));
 
 function isGroupFolded(id: TabGroupId): boolean {
-  return foldedGroupIds.value.includes(id);
+  return tabGroupModel.groups.find(group => group.id === id)?.collapsed ?? false;
 }
 
-function setGroupFolded(id: TabGroupId, folded: boolean): void {
-  const next = new Set(foldedGroupIds.value);
-  if (folded) next.add(id);
-  else next.delete(id);
-  if (next.size === foldedGroupIds.value.length && foldedGroupIds.value.every(group => next.has(group))) return;
-  tabLayoutRepository.setFoldedGroups([...next]);
+function setGroupCollapsed(id: TabGroupId, collapsed: boolean): void {
+  tabGroupModel.setCollapsed(id, collapsed);
 }
 
 function toggleGroup(id: TabGroupId): void {
-  setGroupFolded(id, !isGroupFolded(id));
+  setGroupCollapsed(id, !isGroupFolded(id));
 }
 
 function groupDotState(tab: HeaderTab): ThreadActivityState | undefined {
@@ -1073,19 +1024,16 @@ function groupDotState(tab: HeaderTab): ThreadActivityState | undefined {
 }
 
 function activateTab(tab: HeaderTab): void {
-  if (!tab.pinned) setGroupFolded(tabGroupModel.groupForMode(tab.mode), false);
-  router.push(tab.route).then(() => nextTick(() => scrollTabIntoView(tab.id)));
+  if (!tab.pinned) {
+    const groupId = tabGroupModel.getGroupIdForTab(tab.id);
+    if (groupId) setGroupCollapsed(groupId, false);
+  }
+  router.push(tab.route);
 }
 
 function activateTabById(tabId: string): void {
   const tab = orderedTabs.value.find(candidate => candidate.id === tabId);
   if (tab) activateTab(tab);
-}
-
-function scrollTabIntoView(tabId: string): void {
-  const container = getScrollEl();
-  const tab = Array.from(container?.querySelectorAll<HTMLElement>('.tab-item') ?? []).find(element => element.dataset.tabId === tabId);
-  tab?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
 }
 
 const tabSections = computed<TabStripSection[]>(() => {
@@ -1094,17 +1042,15 @@ const tabSections = computed<TabStripSection[]>(() => {
   let startIndex = 0;
 
   if (grouped.pinned.length) {
-    sections.push({ id: 'pinned', label: '', iconPath: '', tabs: grouped.pinned, pinned: true, startIndex });
+    sections.push({ kind: 'pinned', key: 'pinned-row', tabs: grouped.pinned, startIndex });
     startIndex += grouped.pinned.length;
   }
+  if (grouped.ungrouped.length) {
+    sections.push({ kind: 'ungrouped', key: 'ungrouped-row', tabs: grouped.ungrouped, startIndex });
+    startIndex += grouped.ungrouped.length;
+  }
   for (const group of grouped.groups) {
-    if (!group.tabs.length) continue;
-    const presentation = group.id === 'chats'
-      ? { label: 'Chats', iconPath: MODE_ICON_PATHS.chat }
-      : group.id === 'browser'
-        ? { label: 'Browser', iconPath: MODE_ICON_PATHS.browser }
-        : { label: 'Tools', iconPath: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z' };
-    sections.push({ id: group.id, ...presentation, tabs: group.tabs, pinned: false, startIndex });
+    sections.push({ kind: 'group', key: `group:${ group.group.id }`, group: group.group, tabs: group.tabs, startIndex });
     startIndex += group.tabs.length;
   }
 
@@ -1165,96 +1111,48 @@ const allTabsById = computed(() => {
   return map;
 });
 
-/** Saved order is reconciled and sorted into visual order by the group model. */
+/** Saved order is reconciled into pinned, ungrouped, and user-group rows. */
 const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value.values()], tabOrder.value));
 
-watch(
-  () => {
-    const active = orderedTabs.value.find(tab => tab.isActive && !tab.pinned);
-
-    return active ? tabGroupModel.groupForMode(active.mode) : undefined;
-  },
-  (group) => {
-    if (group) windowTabStrip.setActiveGroup(group);
-  },
-  { immediate: true, flush: 'sync' },
-);
-
 const availableTabWidth = ref<number | null>(null);
-const textMeasureCanvas = document.createElement('canvas');
-const textMeasureContext = navigator.userAgent.includes('jsdom') ? null : textMeasureCanvas.getContext('2d');
 
-function measureTextWidth(text: string, font: string, fallbackSize = 7): number {
-  if (textMeasureContext) {
-    textMeasureContext.font = font;
-    return textMeasureContext.measureText(text).width;
-  }
-
-  return Array.from(text).reduce((total, character) => total + (/[^\u0000-\u024f]/u.test(character) ? fallbackSize * 1.8 : fallbackSize), 0);
-}
-
-function tabWidth(tab: HeaderTab): number {
-  const sample = document.querySelector<HTMLElement>('.app-titlebar .tab-label');
-  const labelStyle = sample ? getComputedStyle(sample) : undefined;
-  const fontFamily = labelStyle?.fontFamily || 'system-ui, sans-serif';
-  const fontSize = labelStyle?.fontSize || '13px';
-  const fontWeight = tab.isActive ? '600' : labelStyle?.fontWeight || '500';
-  const maxLabelWidth = tab.isActive ? 440 : 240;
-  const textWidth = Math.min(maxLabelWidth, measureTextWidth(tab.label, `${ fontWeight } ${ fontSize } ${ fontFamily }`));
-  const isBusy = tab.working || ['you', 'stalled', 'working', 'waiting'].includes(tab.activity ?? '');
-  const fixedWidth = 16 + 8 + 20 + (tab.closeable ? 24 : 0) + (tab.pinned ? 21 : 0) + (tab.isActive ? 2 : 0);
-  const minimum = tab.isActive ? 120 : isBusy ? 110 : 36;
-
-  return Math.ceil(Math.max(minimum, textWidth + fixedWidth));
-}
-
-function groupBaseWidth(section: TabStripSection): { baseWidth: number; foldedWidth: number } {
-  const labelFont = '600 12px system-ui, sans-serif';
-  const countFont = '600 11px system-ui, sans-serif';
-  const labelTextWidth = measureTextWidth(section.label, labelFont, 6.5);
-  const countTextWidth = measureTextWidth(String(section.tabs.length), countFont, 6);
-  const labelButtonWidth = 14 + 12 + labelTextWidth + Math.max(16, countTextWidth + 12) + 16;
+function groupBaseWidth(section: GroupTabStripSection): { baseWidth: number; foldedWidth: number } {
+  const labelWidth = Math.min(100, Array.from(section.group.name).length * 7);
+  const countWidth = String(section.tabs.length).length * 6;
+  const labelButtonWidth = 14 + 12 + labelWidth + Math.max(16, countWidth + 12) + 16;
   const dots = section.tabs.filter(tab => Boolean(groupDotState(tab))).length;
   const dotsWidth = dots ? dots * 6 + Math.max(0, dots - 1) * 3 : 0;
 
   return { baseWidth: labelButtonWidth + 10, foldedWidth: labelButtonWidth + (dots ? 6 : 0) + dotsWidth };
 }
 
-const tabStripLayout = computed((previousLayout) => {
-  const availableWidth = availableTabWidth.value ? availableTabWidth.value - 8 : Number.POSITIVE_INFINITY;
-  const sections = tabSections.value.filter((section): section is TabStripSection & { id: TabGroupId } => section.id !== 'pinned');
-  const pinned = tabSections.value.find(section => section.id === 'pinned');
-  const pinnedWidth = pinned
-    ? pinned.tabs.reduce((total, tab) => total + tabWidth(tab), 0) + Math.max(0, pinned.tabs.length - 1) * 2 + (sections.length ? 8 : 0)
-    : 0;
-  let hasPinnedBoundary = Boolean(pinned);
-  const activeGroup = windowTabStrip.activeGroup.value;
+const tabStripLayout = computed(() => {
+  const availableWidth = availableTabWidth.value ?? Number.POSITIVE_INFINITY;
+  const sections = tabSections.value.filter((section): section is GroupTabStripSection => section.kind === 'group');
+  const groupedCount = sections.reduce((total, section) => total + section.tabs.length, 0);
+  const nonGroupTabCount = Math.max(0, orderedTabs.value.length - groupedCount);
+  const nonGroupRows = tabSections.value.filter(section => section.kind !== 'group');
+  const innerTabGaps = nonGroupRows.reduce((total, section) => total + Math.max(0, section.tabs.length - 1) * 2, 0);
+  const sectionGaps = Math.max(0, tabSections.value.length - 1) * 8;
+  const groupGaps = Math.max(0, sections.length - 1) * 8;
+  const reservedWidth = nonGroupTabCount * 64 + innerTabGaps + Math.max(0, sectionGaps - groupGaps) + 8;
   const groups: TabStripLayoutGroup[] = sections.map(section => {
     const { baseWidth, foldedWidth } = groupBaseWidth(section);
-    const leadingBoundary = hasPinnedBoundary ? 12 : 0;
-    const activeTabEars = section.id === activeGroup ? 20 : 0;
 
-    hasPinnedBoundary = false;
     return {
-      id: section.id,
-      tabs: section.tabs.map(tab => ({
-        id: tab.id,
-        width: tabWidth(tab),
-        active: tab.isActive,
-        busy: tab.working || ['you', 'stalled', 'working', 'waiting'].includes(tab.activity ?? ''),
-      })),
-      baseWidth: baseWidth + leadingBoundary + activeTabEars,
+      id: section.group.id,
+      tabs: section.tabs.map(tab => ({ id: tab.id })),
+      baseWidth,
       foldedWidth,
-      folded: isGroupFolded(section.id),
+      folded: section.group.collapsed,
     };
   });
 
   return new Map(calculateTabStripLayout({
     groups,
-    previousLayout: previousLayout ? [...previousLayout.values()] : undefined,
-    activeGroup: windowTabStrip.activeGroup.value,
     availableWidth,
-    reservedWidth: pinnedWidth,
+    reservedWidth,
+    minimumTabWidth: 64,
   }).map(layout => [layout.id, layout]));
 });
 
@@ -1266,49 +1164,39 @@ function isGroupCompact(id: TabGroupId): boolean {
   return layoutForGroup(id)?.presentation === 'compact';
 }
 
-function isActiveGroup(id: TabGroupId): boolean {
-  return windowTabStrip.activeGroup.value === id;
+function groupColorStyle(group: TabGroup): Record<string, string> {
+  return { '--group-accent': `var(--${ group.colorToken })` };
 }
 
-function groupSizingStyle(id: TabGroupId): Record<string, string> | undefined {
-  const layout = layoutForGroup(id);
-
-  return layout ? { width: `${ layout.width }px`, flex: '0 0 auto' } : undefined;
-}
-
-function groupDisplayTabs(section: TabStripSection): HeaderTab[] {
-  const layout = layoutForGroup(section.id);
+function groupDisplayTabs(section: GroupTabStripSection): HeaderTab[] {
+  const layout = layoutForGroup(section.group.id);
 
   if (layout?.presentation !== 'compact') return section.tabs;
   const visible = new Set(layout.visibleTabIds);
+  const displayIds = new Set(visible);
+  const priorityIds = [
+    dragState.value?.active ? dragState.value.tabHeaderId : undefined,
+    section.tabs.find(tab => tab.isActive)?.id,
+  ].filter((id): id is string => Boolean(id && section.tabs.some(tab => tab.id === id)));
 
-  return section.tabs.filter(tab => visible.has(tab.id));
+  for (const id of priorityIds) {
+    if (displayIds.has(id)) continue;
+    const replaceId = [...displayIds].reverse().find(candidate => !priorityIds.includes(candidate));
+
+    if (replaceId) displayIds.delete(replaceId);
+    displayIds.add(id);
+  }
+
+  return section.tabs.filter(tab => displayIds.has(tab.id));
 }
 
 function groupOverflowCount(id: TabGroupId): number {
   return layoutForGroup(id)?.overflowCount ?? 0;
 }
 
-function tabIsIconOnly(tab: HeaderTab, id: TabGroupId): boolean {
-  const layout = layoutForGroup(id);
-
-  return layout?.presentation === 'compact' || (layout?.tabWidths.get(tab.id) ?? Infinity) <= 36;
-}
-
-function tabSizingStyle(tab: HeaderTab, id: TabGroupId): Record<string, string> | undefined {
-  const width = layoutForGroup(id)?.tabWidths.get(tab.id);
-
-  return width === undefined ? undefined : {
-    width: `${ width }px`,
-    maxWidth: `${ width }px`,
-    flex: `0 0 ${ width }px`,
-  };
-}
-
 watch(tabStripLayout, () => {
   nextTick(() => {
     hideTabHover();
-    updateScrollButtons();
   });
 }, { flush: 'post' });
 
@@ -1317,10 +1205,13 @@ watch(() => attentionMenuId.value ? JSON.stringify(needsYouRows.value) : null, (
 }, { flush: 'post' });
 watch(() => route.path, hideStripPopups, { flush: 'sync' });
 watch(() => orderedTabs.value.find(tab => tab.isActive)?.mode, hideStripPopups, { flush: 'sync' });
-watch(foldedGroupIds, hideTabHover);
+watch(() => tabGroupModel.groups.map(group => `${ group.id }:${ group.collapsed }`).join('|'), hideTabHover);
 watch(() => orderedTabs.value.map(tab => `${ tab.id }:${ tab.mode }`).join('\0'), hideTabHover);
 
-const visibleTabs = computed(() => orderedTabs.value.filter(tab => tab.pinned || !isGroupFolded(tabGroupModel.groupForMode(tab.mode))));
+const visibleTabs = computed(() => orderedTabs.value.filter(tab => {
+  const groupId = tabGroupModel.getGroupIdForTab(tab.id);
+  return tab.pinned || !groupId || !isGroupFolded(groupId);
+}));
 
 const pinnedTabCount = computed(() => orderedTabs.value.filter(tab => tab.pinned).length);
 
@@ -1339,34 +1230,28 @@ watch(
         filtered.push(id);
       }
     }
+    tabGroupModel.pruneTabs(currentIds);
     tabOrder.value = tabGroupModel.orderTabs([...allTabsById.value.values()], filtered).map(tab => tab.id);
     prunePinnedTabs(currentIds);
   },
   { immediate: true },
 );
 
-// Update scroll fades and active visibility when order or status changes.
+// Keep the dragged tab attached to the pointer after a live reorder.
 watch(
   () => orderedTabs.value.map(tab => `${ tab.id }:${ tab.isActive }:${ tab.pinned }:${ tab.working }:${ tab.activity || '' }`).join('|'),
   () => {
     nextTick(() => {
-      updateScrollButtons();
       const dragging = dragState.value;
       const container = getScrollEl();
 
       if (dragging?.active && !dragging.detached && dragging.tabEl.isConnected && container) {
         positionDraggedTab(dragging, container);
-      } else {
-        syncTabStrip();
       }
     });
   },
   { flush: 'post' },
 );
-
-// The newly active tab's strip becomes visible after the parent re-renders;
-// carry the scroll offset over and keep the focused tab in view.
-watch(() => route.path, () => nextTick(syncTabStrip), { flush: 'post' });
 // ── Adjacent tab on close (Chrome behavior) ──
 // Defined after orderedTabs to avoid temporal dead zone in immediate watchers
 
@@ -1396,7 +1281,6 @@ async function closeBrowserTab(id: string) {
     } else {
       // Fallback: closeTab auto-creates a welcome tab when list is empty
       const next = browserTabs[browserTabs.length - 1];
-      setGroupFolded(tabGroupModel.groupForMode(next.mode), false);
       router.push(`/Browser/${ next.id }`);
     }
   }
@@ -1423,9 +1307,12 @@ interface DragState {
   grabOffsetX:  number;
   grabOffsetY:  number;
   lastClientX:  number;
+  lastClientY:  number;
   tabEl:        HTMLElement;
   tabId:        string;
   tabHeaderId:  string;
+  initialGroupId?: TabGroupId;
+  initialGroupCollapse: ReadonlyMap<TabGroupId, boolean>;
   detached:     boolean;
   initialOrder: string[];
 }
@@ -1434,7 +1321,6 @@ const dragState = ref<DragState | null>(null);
 let currentDragCancel: (() => void) | null = null;
 const transferPayload = new TabTransferPayload();
 const suppressDragClick = new TabDragClickSuppression(window);
-const dragEdgeScroll = new TabDragAutoScroll(window);
 
 function captureTransferState(tabId: string) {
   let snapshot: TabEditorTransferSnapshot | undefined;
@@ -1511,9 +1397,12 @@ function onPointerDown(event: PointerEvent, index: number): void {
     grabOffsetX: Math.max(0, Math.min(event.clientX - bounds.left, bounds.width)),
     grabOffsetY: Math.max(0, Math.min(event.clientY - bounds.top, bounds.height)),
     lastClientX: event.clientX,
+    lastClientY: event.clientY,
     tabEl,
     tabId:       tab.browserId || '',
     tabHeaderId: tab.id,
+    initialGroupId: tabGroupModel.getGroupIdForTab(tab.id),
+    initialGroupCollapse: new Map(tabGroupModel.groups.map(group => [group.id, group.collapsed] as const)),
     detached:    false,
     initialOrder: orderedTabs.value.map(item => item.id),
   };
@@ -1523,7 +1412,6 @@ function onPointerDown(event: PointerEvent, index: number): void {
   if (!state) return;
   let finished = false;
   const removeListeners = () => {
-    dragEdgeScroll.stop();
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
@@ -1540,7 +1428,12 @@ function onPointerDown(event: PointerEvent, index: number): void {
     if (finished) return;
     finished = true;
     removeListeners();
-    if (state.active) tabOrder.value = tabGroupModel.orderTabs([...allTabsById.value.values()], state.initialOrder).map(item => item.id);
+    if (state.active) {
+      tabGroupModel.moveTabToGroup(state.tabHeaderId, state.initialGroupId, true);
+      tabOrder.value = tabGroupModel.orderTabs([...allTabsById.value.values()], state.initialOrder).map(item => item.id);
+      for (const [groupId, collapsed] of state.initialGroupCollapse) tabGroupModel.setCollapsed(groupId, collapsed);
+      tabGroupModel.pruneEmptyGroups();
+    }
     if (state.detached) ipcRenderer.send('tabs:drag-cancel', { tabId: state.tabId });
     resetVisuals();
     if (waitForGestureClick && state.active) suppressDragClick.arm(tabEl, state.pointerId, true);
@@ -1562,19 +1455,48 @@ function onPointerDown(event: PointerEvent, index: number): void {
         transient: captureTransferState(state.tabId),
       });
     }
+    if (state.active) tabGroupModel.pruneEmptyGroups();
     resetVisuals();
     if (state.active) suppressDragClick.arm(tabEl, state.pointerId);
   };
 
-  const reposition = (container: HTMLElement, rect: DOMRect) => {
-    const peers = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'))
-      .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0);
-    const fromIndex = orderedTabs.value.findIndex(item => item.id === state.tabHeaderId);
-    const pointerX = state.lastClientX - rect.left + container.scrollLeft;
-    const target = peers.find(element => pointerX < offsetLeftWithin(element, container) + element.offsetWidth / 2) ?? peers.at(-1);
-    const targetIndex = Number(target?.dataset.tabIndex);
+  const reposition = (container: HTMLElement) => {
+    const moving = orderedTabs.value.find(tab => tab.id === state.tabHeaderId);
+    const pointerX = state.lastClientX;
+    const groupElement = Array.from(container.querySelectorAll<HTMLElement>('.tab-group[data-group-id]'))
+      .find(element => {
+        const bounds = element.getBoundingClientRect();
+        return pointerX >= bounds.left && pointerX <= bounds.right && state.lastClientY >= bounds.top && state.lastClientY <= bounds.bottom;
+      });
+    const targetGroupId = moving?.pinned ? undefined : groupElement?.dataset.groupId;
+    const tabElements = Array.from(container.querySelectorAll<HTMLElement>('.tab-item'))
+      .filter(element => element.offsetWidth > 0 && element.offsetHeight > 0 && element.dataset.tabId !== state.tabHeaderId)
+      .filter(element => {
+        const tab = allTabsById.value.get(element.dataset.tabId ?? '');
+        if (!tab || tab.pinned !== moving?.pinned) return false;
+        return tab.pinned || tabGroupModel.getGroupIdForTab(tab.id) === targetGroupId;
+      });
+    const target = tabElements.find(element => pointerX < element.getBoundingClientRect().left + element.offsetWidth / 2) ?? tabElements.at(-1);
+    const targetTabId = target?.dataset.tabId;
+    const beforeTarget = target ? pointerX < target.getBoundingClientRect().left + target.offsetWidth / 2 : false;
+    const membershipChanged = Boolean(moving && !moving.pinned && tabGroupModel.getGroupIdForTab(moving.id) !== targetGroupId);
 
-    if (fromIndex >= 0 && Number.isFinite(targetIndex) && targetIndex !== fromIndex) {
+    if (moving && membershipChanged) tabGroupModel.moveTabToGroup(moving.id, targetGroupId, true);
+    if (targetGroupId && isGroupFolded(targetGroupId)) tabGroupModel.setCollapsed(targetGroupId, false);
+    const currentOrder = orderedTabs.value;
+    const fromIndex = currentOrder.findIndex(item => item.id === state.tabHeaderId);
+    const targetPeerIndex = targetTabId ? currentOrder.findIndex(item => item.id === targetTabId) : -1;
+    let targetIndex = targetPeerIndex < 0 ? fromIndex : targetPeerIndex + (beforeTarget ? 0 : 1);
+
+    if (targetPeerIndex < 0 && targetGroupId) {
+      const groupIndexes = currentOrder.flatMap((tab, index) => tabGroupModel.getGroupIdForTab(tab.id) === targetGroupId ? [index] : []);
+      targetIndex = groupIndexes.at(-1) ?? fromIndex;
+    } else if (targetPeerIndex < 0 && !targetGroupId && moving && !moving.pinned) {
+      const ungroupedIndexes = currentOrder.flatMap((tab, index) => !tab.pinned && !tabGroupModel.getGroupIdForTab(tab.id) ? [index] : []);
+      targetIndex = ungroupedIndexes[0] ?? fromIndex;
+    }
+
+    if (fromIndex >= 0 && targetIndex >= 0 && (targetIndex !== fromIndex || membershipChanged)) {
       reorderTabs(fromIndex, targetIndex);
       nextTick(() => {
         if (dragState.value === state && state.active && !state.detached) positionDraggedTab(state, container);
@@ -1582,26 +1504,6 @@ function onPointerDown(event: PointerEvent, index: number): void {
     }
     positionDraggedTab(state, container);
   };
-  const scrollAtEdge = () => {
-    if (!stillPresent()) {
-      cancel(false);
-      return false;
-    }
-    const container = getScrollEl();
-
-    if (!container || state.detached) return false;
-    const rect = container.getBoundingClientRect();
-    const direction = state.lastClientX > rect.right - 30 ? 1 : state.lastClientX < rect.left + 30 ? -1 : 0;
-    const before = container.scrollLeft;
-
-    if (!direction) return false;
-    container.scrollLeft += direction * 8;
-    if (container.scrollLeft === before) return false;
-    updateScrollButtons();
-    reposition(container, rect);
-    return true;
-  };
-
   const onMove = (moveEvent: PointerEvent): void => {
     if (moveEvent.pointerId !== state.pointerId || dragState.value !== state) return;
     if (!stillPresent()) {
@@ -1619,6 +1521,7 @@ function onPointerDown(event: PointerEvent, index: number): void {
       hideStripPopups();
     }
     state.lastClientX = moveEvent.clientX;
+    state.lastClientY = moveEvent.clientY;
 
     const detached = moveEvent.clientY < -30 || moveEvent.clientY > window.innerHeight + 30 ||
       moveEvent.clientX < 0 || moveEvent.clientX > window.innerWidth || Math.abs(dy) > 30;
@@ -1628,7 +1531,6 @@ function onPointerDown(event: PointerEvent, index: number): void {
 
       if (descriptor) {
         state.detached = true;
-        dragEdgeScroll.stop();
         ipcRenderer.send('tabs:drag-start', {
           tabId:       descriptor.id,
           descriptor:  transferPayload.descriptor(descriptor),
@@ -1646,8 +1548,7 @@ function onPointerDown(event: PointerEvent, index: number): void {
     const container = getScrollEl();
 
     if (container) {
-      reposition(container, container.getBoundingClientRect());
-      dragEdgeScroll.start(scrollAtEdge);
+      reposition(container);
     }
   };
 
@@ -1800,7 +1701,6 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
       const dupUrl = srcTab?.url && srcTab.url !== 'about:blank' ? srcTab.url : undefined;
       const newTab = createTab(dupUrl);
 
-      setGroupFolded(tabGroupModel.groupForMode(newTab.mode), false);
       router.push(`/Browser/${ newTab.id }`);
     } else {
       activateTab(headerTab);
@@ -1928,13 +1828,12 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  scroll-behavior: smooth;
   position: relative;
 }
 
@@ -1962,19 +1861,7 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
   background-color: var(--bg-surface-hover);
 }
 
-/*
-  Tab geometry + baseline styling.
-
-  Width: content-sized (flex-basis:auto) with a sensible cap so a page
-  titled "Extremely Long Article About Quantum Cryptography..." can't
-  hog the strip, and a small min so a blank "New Tab" still reads as a
-  tab. Previously every tab was pinned to 240px which made titles feel
-  forced and hid short labels behind padding.
-
-  --tab-bg + --tab-bg-hover are per-mode overrides set below. They give
-  each kind of tab the option to blend into the page beneath it instead
-  of every active tab using the same surface-alt tone.
-*/
+/* Main-style shared tab widths; labels truncate instead of setting tab width. */
 .tab-item {
   --tab-bg: var(--bg-surface-alt);
   --tab-bg-hover: color-mix(in srgb, var(--bg-surface-alt) 55%, transparent);
@@ -2000,9 +1887,9 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
   transition: color 160ms, background-color 160ms, border-color 160ms, transform 160ms;
   user-select: none;
 
-  flex: 0 1 auto;
-  min-width: 120px;
-  max-width: 220px;
+  flex: 0 1 180px;
+  min-width: 64px;
+  max-width: none;
 }
 
 .tab-label {
@@ -2013,6 +1900,8 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+  flex: 1 1 auto;
+  max-width: none;
   letter-spacing: 0.01em;
 }
 
@@ -2405,7 +2294,7 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
 .app-titlebar > div:first-child { height: 44px; }
 .app-titlebar .window-drag-logo { padding: 0; margin-left: 0; }
 .app-titlebar .tab-scroll-wrapper { margin-left: 0; height: 44px; padding: 0; align-items: center; }
-.app-titlebar .tab-scroll-container { gap: var(--tab-gap, 8px); height: 44px; align-items: flex-end; overflow-x: auto; overflow-y: hidden; }
+.app-titlebar .tab-scroll-container { gap: 8px; height: 44px; align-items: flex-end; overflow-x: hidden; overflow-y: hidden; }
 .app-titlebar .tab-icon { position: relative; flex: 0 0 16px; width: 16px; height: 16px; }
 .app-titlebar .tab-activity-dot { z-index: 2; box-shadow: none; }
 .app-titlebar .tab-active .tab-activity-dot,
@@ -2415,7 +2304,7 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
   z-index: 2;
-  min-width: 120px;
+  min-width: 64px;
   margin-bottom: -1px;
   border: 1px solid var(--border-default);
   border-bottom: 0;
