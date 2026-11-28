@@ -111,6 +111,29 @@ describe('ToolStepClock', () => {
     expect(expiredClock.currentStep('parent')).toBeNull();
   });
 
+  it('uses a 30 minute maximum for live timers', () => {
+    // risk: false status — a lost result must not leave a timer running for hours.
+    expect(ToolStepClock.maximumRunningMs).toBe(30 * 60_000);
+    const clock = new ToolStepClock(() => 30 * 60_000 + 1_001);
+    clock.observe([toolEvent({ startedAt: 1_000 })]);
+    expect(clock.currentStep('parent')).toBeNull();
+  });
+
+  it('clears only root active steps when a chat run ends', () => {
+    // risk: false status — root tool timers must stop on run-end without erasing live worker timers.
+    const clock = new ToolStepClock(() => 5_000);
+    const rootStart = toolEvent({ key: 'root-start', correlationId: 'root-step', observedAt: 1_000, role: 'root' });
+    const workerStart = toolEvent({ key: 'worker-start', agentId: 'job-1:0', correlationId: 'worker-step', observedAt: 2_000, role: 'worker' });
+
+    clock.observe([rootStart]);
+    clock.endRootRun('parent');
+    expect(clock.currentStep('parent')).toBeNull();
+
+    clock.observe([rootStart, workerStart]);
+    clock.endRootRun('parent');
+    expect(clock.currentStep('parent')).toEqual(workerStart);
+  });
+
   it('lets needs-you or failed urgency supersede a running tool step', () => {
     // risk: blocked work — a live tool timer must not hide a user decision or a failed-agent alert.
     const clock = new ToolStepClock(() => 2_000);
