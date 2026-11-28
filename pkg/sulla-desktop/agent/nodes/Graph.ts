@@ -94,6 +94,8 @@ export interface BaseThreadState {
   metadata: {
     action:                'direct_answer' | 'ask_clarification' | 'use_tools' | 'create_plan' | 'run_again';
     threadId:              string;
+    // Correlation id of the current graph run; set by BackendGraphWebSocketService and spawn_agent.
+    runId?:                 string;
     wsChannel:             string;
     /**
      * Stable agent identity set when the graph is created. Unlike wsChannel,
