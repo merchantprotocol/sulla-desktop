@@ -2,12 +2,10 @@
 // Copyright (c) 2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import { reactive, ref, type InjectionKey } from 'vue';
+import { reactive, type InjectionKey } from 'vue';
 
 import { isChatTabActivitySnapshot, type ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 import type { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import type { TabGroupId } from './TabGroupModel';
-
 interface Request {
   id:       string;
   select:   (action: string) => void;
@@ -18,7 +16,6 @@ interface Request {
 export class WindowTabStripState {
   private readonly snapshots = reactive(new Map<string, ChatTabActivitySnapshot>());
   private readonly running = reactive(new Set<string>());
-  readonly activeGroup = ref<TabGroupId>('chats');
   private current?: Request;
   private connected = false;
 
@@ -62,10 +59,6 @@ export class WindowTabStripState {
 
   clearSnapshot(tabId: string): void {
     this.snapshots.delete(tabId);
-  }
-
-  setActiveGroup(group: TabGroupId): void {
-    this.activeGroup.value = group;
   }
 
   open(request: Request): void {
