@@ -7,16 +7,15 @@
 <template>
   <span
     class="worker-chart__marker"
-    :class="{ 'worker-chart__marker--ping': ping }"
+    :class="{ 'worker-chart__marker--ping': pulseSequence > 0 }"
     :data-role="role"
     :data-state="visualState"
-    :style="{ '--mk-dl': pingDelay }"
     aria-hidden="true"
   >
     <svg v-if="state === 'done'" viewBox="0 0 10 10"><path d="M2 5.300 4.200 7.500 8 3" /></svg>
     <svg v-else-if="state === 'failed'" viewBox="0 0 10 10"><path d="M2.500 2.500l5 5M7.500 2.500l-5 5" /></svg>
     <span v-else>{{ state === 'needs-you' ? '!' : initials }}</span>
-    <i class="worker-chart__ring" />
+    <i :key="pulseSequence" class="worker-chart__ring" />
   </span>
 </template>
 
@@ -29,8 +28,7 @@ const props = defineProps<{
   state: WorkerChartState | null;
   initials: string;
   role: WorkerChartRole;
-  ping?: boolean;
-  pingDelay?: string;
+  pulseSequence?: number;
 }>();
 
 const visualState = computed(() => {
