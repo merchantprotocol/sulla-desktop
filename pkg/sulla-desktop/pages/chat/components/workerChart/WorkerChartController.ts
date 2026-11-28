@@ -23,13 +23,15 @@ export interface WorkerChartControllerSources {
   root: ComputedRef<WorkerChartAgent | null>;
   chatColumnWidth: ComputedRef<number>;
   snippetTick: ComputedRef<WorkerChartSnippetTick | null | undefined>;
+  actionBlips?: ComputedRef<ReadonlyMap<string, number>>;
+  /** Shared thread-activity clock; chart rows never allocate their own tickers. */
+  now?: ComputedRef<number> | (() => number);
   instanceId: string;
   openAgent: (payload: { agentId: string }) => void;
 }
 
 export class WorkerChartController {
   public readonly collapsedDoneIds = ref<Set<string>>(new Set());
-  public readonly now = ref(Date.now());
   public readonly pageHidden = ref(false);
 
   private readonly doneTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -38,7 +40,6 @@ export class WorkerChartController {
   private readonly chartValue: ComputedRef<WorkerChartLayoutResult>;
   private readonly doneIdsValue: ComputedRef<string[]>;
   private readonly stopWatches: (() => void)[] = [];
-  private nowTimer: ReturnType<typeof setInterval> | null = null;
   private previousRows: readonly WorkerChartRow[] = [];
 
   public constructor(
@@ -74,13 +75,17 @@ export class WorkerChartController {
   public get isPopoverOpen(): boolean { return this.interaction.isPopoverOpen }
   public get popoverId(): string { return this.interaction.popoverId }
   public get activePopoverAgent(): WorkerChartAgent | null { return this.interaction.activePopoverAgent }
+  public readonly currentNow = (): number => {
+    const source = this.sources.now;
+    return typeof source === 'function' ? source() : source?.value ?? Date.now();
+  };
   public get host() { return this.interaction.host }
   public get railTrigger() { return this.interaction.railTrigger }
   public get chartSurface() { return this.interaction.chartSurface }
   public get tree() { return this.interaction.tree }
   public get popover() { return this.interaction.popover }
   public get activityValues(): number[] {
-    return this.activityBuckets.values(this.activePopoverAgent?.activity, this.now.value);
+    return this.activityBuckets.values(this.activePopoverAgent?.activity, this.currentNow());
   }
   public get selected(): boolean { return this.interaction.selected }
 
@@ -88,12 +93,8 @@ export class WorkerChartController {
     return { left: `${this.isRail ? 7.5 : 8 + row.x}px`, top: `${row.y}px` };
   }
 
-  public rowPings(row: WorkerChartRow): boolean {
-    return this.geometry.shouldPing(row.agent.state);
-  }
-
-  public pulseDelay(row: WorkerChartRow): string {
-    return this.geometry.pulseDelay(row.agent.id);
+  public pulseSequence(row: WorkerChartRow): number {
+    return this.sources.actionBlips?.value.get(row.agent.id) ?? 0;
   }
 
   public registerButton(key: string, element: HTMLButtonElement | null): void {
@@ -102,20 +103,16 @@ export class WorkerChartController {
 
   public registerPopover(element: HTMLElement | null): void { this.interaction.registerPopover(element) }
 
-  public elapsed(agent: WorkerChartAgent): string { return this.timeFormatter.elapsed(agent, this.now.value) }
-  public lastCheckInTime(agent: WorkerChartAgent): string { return this.timeFormatter.lastCheckIn(agent, this.now.value) }
+  public elapsed(agent: WorkerChartAgent): string { return this.timeFormatter.elapsed(agent, this.currentNow()) }
+  public lastCheckInTime(agent: WorkerChartAgent): string { return this.timeFormatter.lastCheckIn(agent, this.currentNow()) }
 
   public mount(): void {
     this.pageHidden.value = document.hidden;
-    this.nowTimer = setInterval(() => {
-      if (!document.hidden) this.now.value = Date.now();
-    }, 1_000);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
     this.interaction.mount();
   }
 
   public unmount(): void {
-    if (this.nowTimer) clearInterval(this.nowTimer);
     for (const timer of this.doneTimers.values()) clearTimeout(timer);
     for (const animation of this.nodeAnimations.values()) animation.cancel();
     for (const stop of this.stopWatches) stop();
@@ -184,7 +181,6 @@ export class WorkerChartController {
 
   private onVisibilityChange = (): void => {
     this.pageHidden.value = document.hidden;
-    if (!document.hidden) this.now.value = Date.now();
     const animations = new Set([
       ...this.nodeAnimations.values(),
       ...(typeof document.getAnimations === 'function' ? document.getAnimations() : []),

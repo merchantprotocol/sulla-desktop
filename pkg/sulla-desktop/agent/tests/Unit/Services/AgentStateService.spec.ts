@@ -376,10 +376,19 @@ describe('authoritative live agent state', () => {
 
   it('keeps snapshot state working when task-scoped model activity is fresh but its check-in is old', async() => {
     // risk: Live Agents snapshot disagrees with fleet/check_agent_jobs during a long model or tool call
-    const { states } = harness([job('active', [task({ startedAt: 100_000 })])]);
-    const activity = new AgentTaskActivityProjector({ lastActivityAt: key => key === 'active#0' ? 990_000 : undefined }, () => 1_000_000);
+    const active = job('active', [task({ startedAt: 100_000 })]);
+    const { states } = harness([active]);
+    const activity = new AgentTaskActivityProjector({
+      lastActivityAt: key => key === 'active#0' ? 990_000 : undefined,
+      actionCount: key => key === 'active#0' ? 8 : 0,
+      lastAction: key => key === 'active#0' ? { kind: 'model', label: 'model call', at: new Date(990_000).toISOString() } : null,
+    }, () => 1_000_000);
+    expect(activity.projectWithActions(active, active.tasks[0], 0)).toMatchObject({ actionCount: 8,
+      lastAction: { kind: 'model', label: 'model call', at: new Date(990_000).toISOString() } });
     const snapshot = await new AgentStateProjector(states, { latest: async() => ({ createdAt: 100_000, summary: 'old', blockers: [] }) }, () => 1_000_000, {}, activity).snapshot();
     expect(snapshot.rows[0].state).toBe('working');
+    expect(snapshot.rows[0]).toMatchObject({ actionCount: 8,
+      lastAction: { kind: 'model', label: 'model call', at: new Date(990_000).toISOString() } });
   });
 
   it('returns the complete descendant set for a root chat', async() => {

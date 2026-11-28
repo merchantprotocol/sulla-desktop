@@ -1943,6 +1943,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       nodeRunContext?.turnTiming?.markPreModelEnd();
       reply = await provider.chatStream(messages, {
         onToken, onActivity, onMessageBoundary: () => flushStreamingSegment(),
+        onModelRequestStart: () => RunActivity.recordActionForMetadata(state.metadata, 'request_start'),
         onFilePatch, onContextCompaction, onToolEvent, onToolStarted, onLiveness,
       }, { ...options, state, executionContext });
       TurnHopTiming.mark(state, 'provider.chatStream.end');

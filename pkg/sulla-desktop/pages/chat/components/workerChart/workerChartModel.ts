@@ -177,10 +177,13 @@ export class WorkerChartActivityBuckets {
       if (sample.timestamp < start || sample.timestamp > now) continue;
       const index = Math.min(WorkerChartActivityBuckets.count - 1,
         Math.floor((sample.timestamp - start) / WorkerChartActivityBuckets.bucketMs));
-      buckets[index] += Math.max(0, sample.value);
+      buckets[index] += sample.value;
     }
     return buckets;
   }
 
-  public scale(value: number): number { return Math.max(.04, Math.min(1, value / 5)) }
+  public scale(value: number, max: number): number {
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(max) || max <= 0) return 0.04;
+    return Math.max(0.04, value / max);
+  }
 }

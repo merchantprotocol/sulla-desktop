@@ -319,6 +319,7 @@ export class CliAgentService extends BaseLanguageModel {
     const proc = childProcess.spawn(paths.sullaRuntime, ['exec', '--', 'sh', '-c', innerCommand], {
       env: { ...process.env, TERM: 'dumb' },
     });
+    proc.once('spawn', () => callbacks.onModelRequestStart?.());
 
     return await new Promise((resolve, reject) => {
       const started = Date.now();

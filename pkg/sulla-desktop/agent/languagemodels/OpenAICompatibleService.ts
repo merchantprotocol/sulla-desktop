@@ -101,6 +101,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         const signal = this.combinedSignal(options?.signal, timeoutMs);
         await this.beforeProviderRequest();
         const payload = this.buildFetchOptions(body, signal);
+        options?.onModelRequestStart?.();
         const res = await providerFetch(this.providerId ?? this.config.id, url, payload, options?.executionContext, {
           streaming:  false,
           preserveHttpErrors: true,
@@ -214,6 +215,7 @@ export class OpenAICompatibleService extends BaseLanguageModel {
         const signal = this.combinedSignal(options?.signal, timeoutMs);
         await this.beforeProviderRequest();
         const payload = this.buildFetchOptions(body, signal);
+        options?.onModelRequestStart?.();
         const res = await providerFetch(this.providerId ?? this.config.id, url, payload, options?.executionContext, {
           streaming:  true,
           preserveHttpErrors: true,

@@ -9,11 +9,17 @@ import { LONG_TOOL_CEILING_MS, toolHoldsRunAlive } from '../../services/RunLiven
 
 export interface AgentTaskActivityReader {
   lastActivityAt(key: string): number | undefined;
+  actionCount?(key: string): number;
+  lastAction?(key: string): { kind: 'model' | 'tool'; label: string; at: string } | null;
   /** The oldest tool call still running for this task, if the reader tracks them. */
   toolInFlight?(key: string): { name: string; startedAt: number } | undefined;
 }
 export interface AgentTaskActivityCheckin { createdAt: number; blockers?: string[] }
 export interface AgentTaskActivityProjection { lastActivityAt: number; state: string }
+export interface AgentTaskActionProjection extends AgentTaskActivityProjection {
+  actionCount: number;
+  lastAction?: { kind: 'model' | 'tool'; label: string; at: string } | null;
+}
 
 /** One task-scoped activity and presentation-state policy shared by every fleet surface. */
 export class AgentTaskActivityProjector {
@@ -30,6 +36,19 @@ export class AgentTaskActivityProjector {
   /** Presentation states that still represent work in progress. Everything else is terminal. */
   static isOpen(state: string): boolean {
     return ['queued', 'working', 'quiet', 'parked', 'blocked'].includes(state);
+  }
+
+  /** Adds task-scoped model/tool telemetry without changing the shared lifecycle projection. */
+  projectWithActions(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin?: AgentTaskActivityCheckin | null, answeredAt?: number | null,
+    openBlockerDecision?: boolean): AgentTaskActionProjection {
+    const projection = this.project(job, task, taskIndex, checkin, answeredAt, openBlockerDecision);
+    const activityKey = `${ job.jobId }#${ taskIndex }`;
+    const lastAction = this.activity.lastAction?.(activityKey);
+    return {
+      ...projection,
+      actionCount: this.activity.actionCount?.(activityKey) ?? 0,
+      ...(lastAction !== undefined ? { lastAction } : {}),
+    };
   }
 
   /** The oldest command this task is still running, if any. */

@@ -119,43 +119,58 @@ function laneStepRaw(row: AgentStateRow, now: number): string {
   return runningDetail(row, now) || row.lastCheckinSummary || row.stateReason || (row.state === 'queued' ? 'starting' : 'working');
 }
 
-/**
- * The activity meter: how many activity updates landed in each slice of the
- * last `windowMs`, oldest first. A stalled agent reads as a flat line.
- */
-export function activityBins(times: readonly number[], now: number, bins = 24, windowMs = 10 * 60_000): number[] {
-  const out = new Array<number>(bins).fill(0);
-  const size = windowMs / bins;
-  for (const at of times) {
-    const age = now - at;
-    if (age < 0 || age >= windowMs) continue;
-    out[bins - 1 - Math.floor(age / size)]++;
+export interface ActivityCountSample { at: number; count: number }
+
+/** The activity meter: cumulative action deltas observed in each trailing time slice, oldest first. */
+export class ActivityBinProjector {
+  values(samples: readonly ActivityCountSample[], now: number, bins = 24, windowMs = 10 * 60_000): number[] {
+    const out = new Array<number>(bins).fill(0);
+    const size = windowMs / bins;
+    for (const sample of samples) {
+      const age = now - sample.at;
+      if (age < 0 || age >= windowMs) continue;
+      out[bins - 1 - Math.floor(age / size)] += sample.count;
+    }
+    return out;
   }
-  return out;
+
+  height(count: number, max: number): number {
+    return count > 0 && max > 0 ? Math.max(3, 1 + 11 * count / max) : 1;
+  }
 }
 
 /**
- * Records when each agent last showed activity, sampled from the agent state
- * rows as they change. Kept in the window only (lost on reload), which is
- * enough for a 10-minute meter.
+ * Records cumulative action-count deltas at the time each accepted snapshot is
+ * observed. Kept only within the 10-minute meter window (lost on reload).
  */
 export class ActivityTrail {
-  private readonly trail = new Map<string, number[]>();
-  private readonly last = new Map<string, string>();
+  private readonly trail = new Map<string, ActivityCountSample[]>();
+  private readonly lastCount = new Map<string, number>();
 
   record(rows: readonly AgentStateRow[], now: number): void {
+    const scopedKeys = new Set(rows.map(row => row.key));
     for (const row of rows) {
-      const stamp = `${ row.lastActivityAt }|${ row.lastCheckinAt ?? '' }|${ row.toolInFlight?.since ?? '' }`;
-      if (this.last.get(row.key) === stamp) continue;
-      this.last.set(row.key, stamp);
-      const at = Date.parse(row.lastActivityAt);
+      const count = Number.isFinite(row.actionCount) ? row.actionCount ?? 0 : 0;
+      const previous = this.lastCount.get(row.key);
+      this.lastCount.set(row.key, count);
+      const delta = previous !== undefined && count >= previous ? count - previous : 0;
+      if (!delta) continue;
       const list = this.trail.get(row.key) ?? [];
-      list.push(Number.isFinite(at) ? Math.min(at, now) : now);
-      this.trail.set(row.key, list.filter(t => now - t < 10 * 60_000));
+      list.push({ at: now, count: delta });
+      this.trail.set(row.key, list);
     }
+
+    for (const [key, samples] of this.trail) {
+      const retained = scopedKeys.has(key) ? samples.filter(sample => now - sample.at < 10 * 60_000) : [];
+      if (retained.length) this.trail.set(key, retained);
+      else this.trail.delete(key);
+    }
+    for (const key of this.lastCount.keys()) if (!scopedKeys.has(key)) this.lastCount.delete(key);
   }
 
-  times(key: string): readonly number[] { return this.trail.get(key) ?? [] }
+  samples(key: string): readonly ActivityCountSample[] { return this.trail.get(key) ?? [] }
+
+  clear(): void { this.trail.clear(); this.lastCount.clear() }
 }
 
 /**

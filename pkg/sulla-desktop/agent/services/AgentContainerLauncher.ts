@@ -1958,6 +1958,7 @@ export async function runAgentContainer(run: AgentContainerRun): Promise<AgentCo
       const processProviderLine = (line: string) => {
         let event: any;
         try { event = JSON.parse(line) } catch { return }
+        RunActivity.recordProviderStreamEvent(run.state.metadata, event);
         if (event.type === 'sulla.steer.ack' && typeof event.id === 'string') {
           if (pendingSteers.delete(event.id)) RunActivity.touch(run.state.metadata);
           return;
