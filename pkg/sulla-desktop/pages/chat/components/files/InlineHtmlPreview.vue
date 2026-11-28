@@ -9,8 +9,8 @@
     <div :class="['html-stage', 'view-' + view]">
       <iframe
         :srcdoc="srcdoc"
-        :title="'Static preview of ' + name"
-        sandbox=""
+        :title="'Preview of ' + name"
+        sandbox="allow-scripts allow-forms allow-popups allow-modals"
         referrerpolicy="no-referrer"
         loading="lazy"
       />
@@ -33,8 +33,8 @@
       <iframe
         v-if="fullscreenOpen"
         :srcdoc="srcdoc"
-        :title="'Full-screen static preview of ' + name"
-        sandbox=""
+        :title="'Full-screen preview of ' + name"
+        sandbox="allow-scripts allow-forms allow-popups allow-modals"
         referrerpolicy="no-referrer"
       />
     </dialog>
@@ -44,13 +44,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
-import { InlineHtmlPreviewPolicy, type InlineFileActionReference } from './inlineFilePreview';
+import { InlineHtmlPreviewDocument, type InlineFileActionReference } from './inlineFilePreview';
 
 const props = defineProps<{
   fileId: string;
   name: string;
   path: string;
   source: string;
+  assetBaseUrl?: string;
   view: 'desktop' | 'phone';
 }>();
 
@@ -58,8 +59,8 @@ const emit = defineEmits<{
   'open-in-tab': [reference: InlineFileActionReference];
 }>();
 
-const policy = new InlineHtmlPreviewPolicy();
-const srcdoc = computed(() => policy.toSrcdoc(props.source));
+const previewDocument = new InlineHtmlPreviewDocument();
+const srcdoc = computed(() => previewDocument.toSrcdoc(props.source, props.assetBaseUrl));
 const dialog = ref<HTMLDialogElement | null>(null);
 const fullscreenTrigger = ref<HTMLElement | null>(null);
 const fullscreenOpen = ref(false);
