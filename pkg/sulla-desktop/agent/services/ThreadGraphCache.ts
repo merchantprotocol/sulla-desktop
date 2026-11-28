@@ -56,18 +56,27 @@ export class ThreadGraphCache {
       const now = this.now();
       const idle = [...this.records].filter(([, entry]) => this.isIdle(entry));
       const eligible = idle.filter(([, entry]) => !this.isPinned(entry.record.state));
-      const stale = new Set(eligible.filter(([, entry]) => now - entry.lastAccessAt > this.idleMs).map(([key]) => key));
-      const excess = Math.max(0, eligible.length - this.maxIdleEntries);
-      for (const [key] of eligible) {
+      // Idle capacity limits apply only to graphs we can actually release.
+      const evictable = eligible.filter(([, entry]) => !this.hasLiveRunner(entry.record.state));
+      const expired = (entry: { lastAccessAt: number }) => now - entry.lastAccessAt > this.idleMs;
+      const stale = new Set(evictable.filter(([, entry]) => expired(entry)).map(([key]) => key));
+      const excess = Math.max(0, evictable.length - this.maxIdleEntries);
+      for (const [key] of evictable) {
         if (stale.size >= excess) break;
         stale.add(key);
       }
-      const candidates = eligible.filter(([key]) => stale.has(key));
+      const candidates = eligible.filter(([key, entry]) => stale.has(key) || expired(entry));
       const evicted: string[] = [];
       for (const [threadId, entry] of candidates) {
         if (this.records.get(threadId)?.record !== entry.record || !this.isIdle(entry) || this.isPinned(entry.record.state)) continue;
         try {
           await this.save(entry.record.state);
+          // A parked runner still owns this exact state. Check after persistence
+          // in case ownership changed while saving; checkpoint again after TTL.
+          if (this.hasLiveRunner(entry.record.state)) {
+            entry.lastAccessAt = this.now();
+            continue;
+          }
           // A run may have started while persistence was in flight. Re-check before
           // dropping the live graph; the state is safe on disk but the cache is not.
           if (this.records.get(threadId)?.record === entry.record && this.isIdle(entry) && !this.isPinned(entry.record.state)) {
@@ -89,6 +98,12 @@ export class ThreadGraphCache {
     return metadata?.cycleComplete === true
       && metadata?.waitingForUser !== true;
   }
+
+  private hasLiveRunner(state: BaseThreadState): boolean {
+    const metadata = state.metadata as typeof state.metadata & { runtimeRunnerActive?: boolean; delegatedRunActive?: boolean };
+    return metadata?.runtimeRunnerActive === true || metadata?.delegatedRunActive === true;
+  }
+
   private ensureSweep(): void {
     if (this.sweepTimer) return;
     this.sweepTimer = setInterval(() => { void this.evictIdle(); }, Math.min(this.idleMs, 60_000));
