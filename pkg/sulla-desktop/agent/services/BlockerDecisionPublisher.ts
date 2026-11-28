@@ -21,7 +21,7 @@ export class BlockerDecisionPublisher {
 
     await this.decisions.reconcileBlockerDecision({
       conversationId,
-      channel: target.parentChannel || fallbackChannel || 'sulla-desktop',
+      channel: fallbackChannel || 'sulla-desktop',
       jobId: target.jobId,
       taskIndex: target.taskIndex,
       label: target.label || target.agentId || `task ${ target.taskIndex }`,
