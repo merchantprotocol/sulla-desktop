@@ -317,6 +317,33 @@ describe('provider bridge never falsely denies a healthy container job', () => {
     expect(error).not.toHaveBeenCalled();
   });
 
+  it('writes one failure reason and stage when cancellation arrives before upstream headers', async() => {
+    // risk: cancellation diagnostics duplicate a failure/reason/stage set and distort bridge failure counts
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lifecycle = new AbortController();
+    let markStarted!: () => void;
+    const upstreamStarted = new Promise<void>(resolve => { markStarted = resolve });
+    const broker = new FakeBroker(async signal => new Promise<Response>((_resolve, reject) => {
+      markStarted();
+      signal?.addEventListener('abort', () => reject(new DOMException('This operation was aborted', 'AbortError')), { once: true });
+    }));
+    const { send, timings } = await openBridge({ broker, signal: lifecycle.signal });
+
+    const pending = send();
+    await upstreamStarted;
+    lifecycle.abort();
+    const response = await pending;
+    await response.text();
+
+    const line = timings.at(-1)!;
+    expect(response.status).toBe(403);
+    expect((line.match(/failure=/g) ?? [])).toHaveLength(1);
+    expect((line.match(/reason=/g) ?? [])).toHaveLength(1);
+    expect((line.match(/stage=/g) ?? [])).toHaveLength(1);
+    expect(line).toContain('failure=provider_bridge_cancelled');
+    expect(line).toContain('reason=lifecycle_revoked');
+  });
+
   it('answers a malformed body as a client error, not a bridge failure', async() => {
     // risk: CLI-side request bugs counted (and failed fast) as Sulla bridge failures
     vi.spyOn(console, 'warn').mockImplementation(() => {});
