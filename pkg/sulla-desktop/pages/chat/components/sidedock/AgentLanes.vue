@@ -151,7 +151,6 @@
               ><i
                 v-for="(count, index) in bins(node.row.key)"
                 :key="index"
-                :title="`${count} actions`"
                 :style="{ height: `${activityBinProjector.height(count, maxBin(node.row.key))}px` }"
               /></span>
             </div>
