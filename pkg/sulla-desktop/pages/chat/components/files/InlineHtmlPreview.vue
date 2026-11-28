@@ -7,12 +7,11 @@
 <template>
   <div class="inline-html-preview">
     <div :class="['html-stage', 'view-' + view]">
-      <iframe
-        :srcdoc="srcdoc"
-        :title="'Preview of ' + name"
-        sandbox="allow-scripts allow-forms allow-popups allow-modals"
-        referrerpolicy="no-referrer"
-        loading="lazy"
+      <webview
+        :partition="partition"
+        :src="previewUrl"
+        :aria-label="'Preview of ' + name"
+        webpreferences="nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no"
       />
     </div>
 
@@ -30,12 +29,12 @@
         <button type="button" @click="openInTab">Open in tab</button>
         <button type="button" aria-label="Close preview" @click="closeFullscreen">Close</button>
       </header>
-      <iframe
+      <webview
         v-if="fullscreenOpen"
-        :srcdoc="srcdoc"
-        :title="'Full-screen preview of ' + name"
-        sandbox="allow-scripts allow-forms allow-popups allow-modals"
-        referrerpolicy="no-referrer"
+        :partition="partition"
+        :src="previewUrl"
+        :aria-label="'Full-screen preview of ' + name"
+        webpreferences="nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no"
       />
     </dialog>
   </div>
@@ -44,6 +43,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 
+import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
 import { InlineHtmlPreviewDocument, type InlineFileActionReference } from './inlineFilePreview';
 
 const props = defineProps<{
@@ -60,7 +60,8 @@ const emit = defineEmits<{
 }>();
 
 const previewDocument = new InlineHtmlPreviewDocument();
-const srcdoc = computed(() => previewDocument.toSrcdoc(props.source, props.assetBaseUrl));
+const previewUrl = computed(() => previewDocument.toDataUrl(props.source, props.assetBaseUrl));
+const partition = INLINE_HTML_PREVIEW_PARTITION;
 const dialog = ref<HTMLDialogElement | null>(null);
 const fullscreenTrigger = ref<HTMLElement | null>(null);
 const fullscreenOpen = ref(false);
@@ -111,9 +112,9 @@ defineExpose({ openFullscreen });
 <style scoped>
 .inline-html-preview { min-width: 0; }
 .html-stage { display: flex; justify-content: center; min-height: 0; background: var(--bg-surface-alt); }
-.html-stage iframe { display: block; width: 100%; height: 400px; border: 0; background: #fff; }
+.html-stage webview { display: block; width: 100%; height: 400px; border: 0; background: #fff; }
 .html-stage.view-phone { padding: 16px 0; }
-.html-stage.view-phone iframe { width: 375px; max-width: 100%; height: 560px; box-shadow: 0 0 0 1px var(--border-default); }
+.html-stage.view-phone webview { width: 375px; max-width: 100%; height: 560px; box-shadow: 0 0 0 1px var(--border-default); }
 .html-lightbox:not([open]) { display: none; }
 .html-lightbox { position: fixed; inset: 3vh 3vw; width: 94vw; max-width: none; height: 94vh; max-height: none; overflow: hidden; padding: 0; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--elev-float); }
 .html-lightbox::backdrop { background: var(--bg-overlay, rgb(0 0 0 / 55%)); }
@@ -122,6 +123,6 @@ defineExpose({ openFullscreen });
 .lightbox-spacer { flex: 1; }
 .lightbox-header button { min-height: 28px; padding: 0 9px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 12px; }
 .lightbox-header button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
-.html-lightbox iframe { display: block; width: 100%; height: calc(100% - 42px); border: 0; background: #fff; }
+.html-lightbox webview { display: block; width: 100%; height: calc(100% - 42px); border: 0; background: #fff; }
 @media (max-width: 600px) { .html-lightbox { inset: 0; width: 100vw; height: 100vh; border-radius: 0; } }
 </style>
