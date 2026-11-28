@@ -51,18 +51,18 @@ dbDescribe('AgentJobMessagingRepository', () => {
     expect(secondDelivery.getTime()).toBe(firstDelivery.getTime());
   });
 
-  it('creates one routed pending decision, suppresses unchanged reports, replaces changed blockers, and recreates after clear/re-raise', async() => {
-    // risk: orchestration liveness — blockers must become answerable parent decisions exactly once, changed text must replace the obligation, and a clear/re-raise must get a fresh id.
+  it('retries a failed blocker insert on unchanged reports without duplicating answered decisions', async() => {
+    // risk: orchestration liveness — a persisted check-in whose decision insert failed must retry into one answerable parent decision, while unchanged or already-answered reports must not duplicate it.
     const suffix = `blocker-${ Date.now() }`;
     const managerThread = `${ suffix }-manager`;
     const childThread = `${ suffix }-child`;
     const managerJob = `${ suffix }-manager-job`;
     const childJob = `${ suffix }-child-job`;
     await jobs.insertJob({ jobId: managerJob, status: 'running', createdAt: Date.now(), finishedAt: null, taskCount: 1,
-      results: [], visibility: 'hidden', parentChannel: 'sulla-desktop', parentThreadId: `${ suffix }-root`,
+      results: [], visibility: 'hidden', parentChannel: 'root-channel', parentThreadId: `${ suffix }-root`,
       tasks: [{ agentId: 'manager', label: 'manager', prompt: 'manage work', status: 'running', threadId: managerThread }] });
     await jobs.insertJob({ jobId: childJob, status: 'running', createdAt: Date.now(), finishedAt: null, taskCount: 1,
-      results: [], visibility: 'hidden', parentChannel: 'sulla-desktop', parentThreadId: managerThread,
+      results: [], visibility: 'hidden', parentChannel: 'manager-channel', parentThreadId: managerThread,
       tasks: [{ agentId: 'worker', label: 'database lane', prompt: 'work', status: 'running', threadId: childThread }] });
 
     const queryClient = { query: async(sql: string, params?: unknown[]) => database.query(sql, params) };
@@ -96,14 +96,23 @@ dbDescribe('AgentJobMessagingRepository', () => {
     });
     const publisher = new BlockerDecisionPublisher(decisions);
     const blocker = 'Which schema should this migration use?';
+    const childChannel = 'worker-channel';
     const report = (blockers: string[]) => messages.appendCheckin(childThread, { step: blockers.length ? 'blocked' : 'unblocked', summary: 'Worker progress', blockers });
 
     const first = await report([blocker]);
     expect(first?.blockersChanged).toBe(true);
-    await publisher.publish(first!, childThread, 'sulla-desktop');
+    vi.spyOn(pending, 'latestBlockerForTask').mockRejectedValueOnce(new Error('transient lookup failure'));
+    await expect(publisher.publish(first!, childThread, childChannel)).rejects.toThrow('transient lookup failure');
+    expect(await pending.latestBlockerForTask(childJob, 0)).toBeUndefined();
+
+    const retry = await report([blocker]);
+    expect(retry?.blockersChanged).toBe(false);
+    await publisher.publish(retry!, childThread, childChannel);
     const created = await pending.latestBlockerForTask(childJob, 0);
     expect(created).toMatchObject({ kind: 'question', status: 'pending', requestedBy: { jobId: childJob, taskIndex: 0, label: 'database lane' } });
+    expect(created?.channel).toBe(childChannel);
     expect(created?.route?.chain[0]).toMatchObject({ threadId: managerThread, jobId: managerJob, taskIndex: 0, kind: 'agent' });
+    expect(created?.route?.chain[0]?.channel).toBe('manager-channel');
     expect(holderDeliveries).toHaveLength(1);
     expect(holderDeliveries[0]).toMatchObject({ jobId: managerJob, taskIndex: 0 });
     expect(holderDeliveries[0].message).toContain(`[Decision from database lane (decision ${ created?.id })]`);
@@ -111,15 +120,18 @@ dbDescribe('AgentJobMessagingRepository', () => {
     expect(holderDeliveries[0].message).toContain(blocker);
     expect(parkQuestionAsker).not.toHaveBeenCalled();
     expect(await decisions.openBlockerTaskKeys([childJob])).toEqual(new Set([`${ childJob }#0`]));
+    const [{ count: blockerDecisionCount }] = await database.query<{ count: string }>(`SELECT count(*)::text AS count FROM human_decisions
+      WHERE record->>'kind'='question' AND record#>>'{payload,blockerJobId}'=$1 AND record#>>'{payload,blockerTaskIndex}'=$2`, [childJob, '0']);
+    expect(blockerDecisionCount).toBe('1');
 
     const repeated = await report([blocker]);
     expect(repeated?.blockersChanged).toBe(false);
-    await publisher.publish(repeated!, childThread, 'sulla-desktop');
+    await publisher.publish(repeated!, childThread, childChannel);
     expect(holderDeliveries).toHaveLength(1);
     expect((await pending.latestBlockerForTask(childJob, 0))?.id).toBe(created?.id);
 
     const changed = await report(['Use the compatible migration schema instead.']);
-    await publisher.publish(changed!, childThread, 'sulla-desktop');
+    await publisher.publish(changed!, childThread, childChannel);
     const changedDecision = await pending.latestBlockerForTask(childJob, 0);
     expect(changedDecision?.id).not.toBe(created?.id);
     expect((await pending.findById(created!.id))?.attention).toBe('dismissed');
@@ -127,12 +139,12 @@ dbDescribe('AgentJobMessagingRepository', () => {
 
     const cleared = await report([]);
     expect(cleared?.blockersChanged).toBe(true);
-    await publisher.publish(cleared!, childThread, 'sulla-desktop');
+    await publisher.publish(cleared!, childThread, childChannel);
     expect((await pending.latestBlockerForTask(childJob, 0))?.attention).toBe('dismissed');
     expect(await decisions.openBlockerTaskKeys([childJob])).toEqual(new Set());
 
     const reraised = await report([blocker]);
-    await publisher.publish(reraised!, childThread, 'sulla-desktop');
+    await publisher.publish(reraised!, childThread, childChannel);
     const replacement = await pending.latestBlockerForTask(childJob, 0);
     expect(replacement?.id).not.toBe(changedDecision?.id);
     expect(holderDeliveries).toHaveLength(3);
@@ -144,8 +156,14 @@ dbDescribe('AgentJobMessagingRepository', () => {
     expect(answer?.message).toContain('Decision answered by manager');
     expect(await decisions.openBlockerTaskKeys([childJob])).toEqual(new Set());
 
+    const answeredRetry = await report([blocker]);
+    expect(answeredRetry?.blockersChanged).toBe(false);
+    await publisher.publish(answeredRetry!, childThread, childChannel);
+    expect((await pending.latestBlockerForTask(childJob, 0))?.id).toBe(replacement?.id);
+    expect(holderDeliveries).toHaveLength(3);
+
     const finishing = await report(['A new blocker before the child returns']);
-    await publisher.publish(finishing!, childThread, 'sulla-desktop');
+    await publisher.publish(finishing!, childThread, childChannel);
     await database.query(`UPDATE agent_jobs SET tasks=jsonb_set(tasks, '{0,status}', '"completed"') WHERE job_id=$1`, [childJob]);
     expect((await pending.latestBlockerForTask(childJob, 0))?.status).toBe('pending');
     expect(await decisions.openBlockerTaskKeys([childJob])).toEqual(new Set([`${ childJob }#0`]));
