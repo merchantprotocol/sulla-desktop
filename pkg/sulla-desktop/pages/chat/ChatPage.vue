@@ -333,11 +333,13 @@ onMounted(async() => {
   const threadId = controller.thread.value.backendThreadId;
   if (!threadId) return;
   try {
+    const settlementCutoff = Date.now();
     const running = await ipcRenderer.invoke('chat:run-state', 'sulla-desktop', threadId);
     if (running === false) {
       // This IPC asks the backend for the authoritative state of this thread;
       // local graphRunning alone starts false on every renderer load.
-      controller.settleInterruptedToolSteps();
+      if (controller.isRunning.value) return;
+      controller.settleInterruptedToolSteps(settlementCutoff);
       return;
     }
     if (running !== true) return;
