@@ -5,7 +5,13 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <article class="inline-file-card" :aria-label="'File preview: ' + file.name">
+  <article
+    class="inline-file-card"
+    :aria-label="'File preview: ' + file.name"
+    :tabindex="pdfPreview ? 0 : undefined"
+    :role="pdfPreview ? 'group' : undefined"
+    @keydown="handlePdfKeyboard"
+  >
     <header class="file-header">
       <FileGlyph :name="file.name" :mime="file.mimeType" />
       <span class="file-name" :title="file.name">{{ file.name }}</span>
@@ -43,6 +49,30 @@
             @click="openHtmlFullscreen"
           >
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5H2.5V6M10 2.5h3.5V6M6 13.5H2.5V10M10 13.5h3.5V10" /></svg><span>Full screen</span>
+          </button>
+        </template>
+
+        <template v-if="pdfPreview">
+          <button
+            class="file-action pdf-page-action"
+            type="button"
+            aria-label="Previous page"
+            title="Previous page"
+            :disabled="pdfState.status !== 'ready' || pdfState.pageNumber <= 1"
+            @click="previousPdfPage"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
+          </button>
+          <span class="pdf-page-count" aria-live="polite" aria-atomic="true">{{ pdfPageLabel }}</span>
+          <button
+            class="file-action pdf-page-action"
+            type="button"
+            aria-label="Next page"
+            title="Next page"
+            :disabled="pdfState.status !== 'ready' || pdfState.pageNumber >= pdfState.pageCount"
+            @click="nextPdfPage"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
           </button>
         </template>
 
@@ -119,6 +149,16 @@
         :total-entries="archivePreview.totalEntries"
       />
     </div>
+    <div v-else-if="isReady && pdfPreview" class="file-body">
+      <InlinePdfPreview
+        v-if="pdfDocumentLoader"
+        ref="pdfPreviewComponent"
+        :bytes="pdfPreview.bytes"
+        :document-loader="pdfDocumentLoader"
+        @state-change="onPdfStateChange"
+      />
+      <p v-else class="file-status file-error" role="alert">This PDF preview is unavailable. Open it in a tab to view it.</p>
+    </div>
     <div v-else-if="isReady && file.preview?.kind === 'custom'" class="file-body">
       <slot name="preview" :file="file" />
     </div>
@@ -132,13 +172,15 @@ import FileGlyph from './FileGlyph.vue';
 import InlineArchivePreview from './InlineArchivePreview.vue';
 import InlineHtmlPreview from './InlineHtmlPreview.vue';
 import InlineImagePreview from './InlineImagePreview.vue';
+import InlinePdfPreview from './InlinePdfPreview.vue';
+import type { InlinePdfDocumentLoader, InlinePdfPreviewState } from './inlinePdfPreview';
 import {
   MAX_INLINE_HTML_SOURCE_CHARACTERS,
   type InlineFileActionReference,
   type InlineFileCardViewModel,
 } from './inlineFilePreview';
 
-const props = defineProps<{ file: InlineFileCardViewModel }>();
+const props = defineProps<{ file: InlineFileCardViewModel; pdfDocumentLoader?: InlinePdfDocumentLoader }>();
 
 const emit = defineEmits<{
   'open-in-tab': [reference: InlineFileActionReference];
@@ -148,22 +190,46 @@ const emit = defineEmits<{
 
 const htmlView = ref<'desktop' | 'phone'>('desktop');
 const htmlPreviewComponent = ref<InstanceType<typeof InlineHtmlPreview> | null>(null);
+const pdfPreviewComponent = ref<InstanceType<typeof InlinePdfPreview> | null>(null);
+const pdfState = ref<InlinePdfPreviewState>({ status: 'loading', pageNumber: 1, pageCount: 0 });
 
 const isReady = computed(() => !props.file.status || props.file.status === 'ready');
 const htmlPreview = computed(() => props.file.preview?.kind === 'html' ? props.file.preview : null);
 const imagePreview = computed(() => props.file.preview?.kind === 'image' ? props.file.preview : null);
 const archivePreview = computed(() => props.file.preview?.kind === 'archive' ? props.file.preview : null);
+const pdfPreview = computed(() => props.file.preview?.kind === 'pdf' ? props.file.preview : null);
 const isCompact = computed(() => !props.file.preview || archivePreview.value !== null
   || (props.file.preview.kind === 'custom' && !canOpenInTab.value));
 const canOpenInTab = computed(() => props.file.canOpenInTab
-  ?? (htmlPreview.value !== null || imagePreview.value !== null || props.file.preview?.kind === 'custom'));
+  ?? (htmlPreview.value !== null || imagePreview.value !== null || pdfPreview.value !== null || props.file.preview?.kind === 'custom'));
 const htmlSourceCapped = computed(() => (htmlPreview.value?.source.length ?? 0) > MAX_INLINE_HTML_SOURCE_CHARACTERS);
 const hasPreviewCap = computed(() => Boolean(props.file.cap) || htmlSourceCapped.value);
 const canOpenForCap = computed(() => props.file.cap?.canOpenInTab ?? canOpenInTab.value);
 const capLabel = computed(() => props.file.cap?.label
   ?? 'HTML preview limited to the first ' + MAX_INLINE_HTML_SOURCE_CHARACTERS.toLocaleString() + ' characters.');
+const pdfPageLabel = computed(() => pdfState.value.pageCount > 0 ? `${pdfState.value.pageNumber} / ${pdfState.value.pageCount}` : '— / —');
 
-watch(() => props.file.fileId, () => { htmlView.value = 'desktop'; });
+watch(() => props.file.fileId, () => {
+  htmlView.value = 'desktop';
+  pdfState.value = { status: 'loading', pageNumber: 1, pageCount: 0 };
+});
+
+function onPdfStateChange(state: InlinePdfPreviewState): void {
+  pdfState.value = state;
+}
+
+function previousPdfPage(): void {
+  void pdfPreviewComponent.value?.previousPage();
+}
+
+function nextPdfPage(): void {
+  void pdfPreviewComponent.value?.nextPage();
+}
+
+function handlePdfKeyboard(event: KeyboardEvent): void {
+  if (!pdfPreview.value || !pdfPreviewComponent.value?.handleKey(event.key)) return;
+  event.preventDefault();
+}
 
 function actionReference(): InlineFileActionReference {
   return { fileId: props.file.fileId, name: props.file.name, path: props.file.path };
@@ -192,6 +258,7 @@ function openHtmlFullscreen(event: MouseEvent): void {
 
 <style scoped>
 .inline-file-card { container-type: inline-size; min-width: 0; overflow: hidden; margin: 10px 0 0; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); scroll-margin-top: 12px; }
+.inline-file-card:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .file-header { display: flex; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 6px 0 12px; color: var(--text-secondary); }
 .file-header :deep(.file-glyph) { width: 17px; height: 17px; border-radius: 4px; color: var(--primary-color-text-override, var(--accent-primary)); background: color-mix(in srgb, var(--accent-primary) 12%, transparent); }
 .file-header :deep(.file-glyph svg) { width: 13px; height: 13px; }
@@ -203,9 +270,11 @@ function openHtmlFullscreen(event: MouseEvent): void {
 .file-actions { display: flex; flex: none; align-items: center; gap: 2px; }
 .file-action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 28px; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; white-space: nowrap; }
 .file-action:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+.file-action:disabled { color: var(--text-muted); cursor: default; opacity: .5; }
 .file-action:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
 .file-action[aria-pressed='true'] { background: color-mix(in srgb, var(--accent-primary) 12%, var(--bg-surface)); color: var(--primary-color-text-override, var(--accent-primary)); }
 .file-action svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.pdf-page-count { min-width: 3.25em; color: var(--text-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap; }
 .file-body { min-width: 0; border-top: 1px solid var(--border-subtle); }
 .file-cap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 7px 12px; border-top: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 11.5px; }
 .file-cap button { padding: 0; border: 0; background: transparent; color: var(--primary-color-text-override, var(--accent-primary)); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
