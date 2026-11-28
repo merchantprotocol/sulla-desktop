@@ -180,15 +180,19 @@ jobs:
           BASELINE_RENDERER: ${{ steps.baseline-renderer.outcome }}
         run: |
           if [[ "$WRITE_BASELINE" == "true" ]]; then
-            echo "Baseline graph outcomes: agent=$BASELINE_AGENT main=$BASELINE_MAIN renderer=$BASELINE_RENDERER"
+            outcomes="agent=$BASELINE_AGENT main=$BASELINE_MAIN renderer=$BASELINE_RENDERER"
             if [[ "$BASELINE_AGENT" != "success" || "$BASELINE_MAIN" != "success" || "$BASELINE_RENDERER" != "success" ]]; then
+              echo "::error title=Typecheck baseline graph outcomes::$outcomes"
               exit 1
             fi
+            echo "::notice title=Typecheck baseline graph outcomes::$outcomes"
           else
-            echo "Typecheck graph outcomes: agent=$AGENT_GRAPH main=$MAIN_GRAPH renderer=$RENDERER_GRAPH bundle=$BUNDLE"
+            outcomes="agent=$AGENT_GRAPH main=$MAIN_GRAPH renderer=$RENDERER_GRAPH bundle=$BUNDLE"
             if [[ "$AGENT_GRAPH" != "success" || "$MAIN_GRAPH" != "success" || "$RENDERER_GRAPH" != "success" || "$BUNDLE" != "success" ]]; then
+              echo "::error title=Typecheck graph outcomes::$outcomes"
               exit 1
             fi
+            echo "::notice title=Typecheck graph outcomes::$outcomes"
           fi
 
   changes:
