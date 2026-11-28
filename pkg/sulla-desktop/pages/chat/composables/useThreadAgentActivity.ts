@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { computed, getCurrentScope, onScopeDispose, readonly, ref, shallowRef, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
+import { computed, getCurrentScope, onScopeDispose, readonly, ref, shallowReactive, shallowRef, watch, type ComputedRef, type InjectionKey, type Ref } from 'vue';
 
 import type { DecisionRecord } from '@pkg/shared/decisions';
 import type { AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
@@ -38,7 +38,7 @@ export interface ThreadAgentActivity {
   readonly projection: ComputedRef<ThreadAgentActivityProjection>;
   /** One chat-scoped clock for the worker-chart popup; row views only update when their snapshot data changes. */
   readonly clock: Readonly<Ref<number>>;
-  /** Snapshot clock shared by row views without per-second rerenders. */
+  /** Shared one-second clock for row ages and rolling meter windows; it does not republish unchanged rows. */
   readonly snapshotClock: Readonly<Ref<number>>;
   /** Monotonic, per-agent blip sequences emitted from cumulative action-count deltas. */
   readonly actionBlips: Readonly<Ref<ReadonlyMap<string, number>>>;
@@ -72,28 +72,31 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const scheduledSnapshot = shallowRef(sources.snapshot.value);
   const scheduledClock = ref(now());
   const snapshotClockValue = ref(scheduledClock.value);
-  const actionBlipSequences = shallowRef<ReadonlyMap<string, number>>(new Map());
+  const projectionClockValue = ref(scheduledClock.value);
+  const actionBlipSequences = shallowReactive(new Map<string, number>());
+  const actionBlips = readonly(shallowRef<ReadonlyMap<string, number>>(actionBlipSequences));
   const snapshotScheduler = new ThreadAgentActivitySnapshotScheduler(sources.snapshot.value, {
     publish: (snapshot, at) => {
       scheduledSnapshot.value = snapshot;
       scheduledClock.value = at;
       snapshotClockValue.value = at;
+      projectionClockValue.value = at;
     },
-    tick: at => { scheduledClock.value = at; },
+    tick: at => {
+      scheduledClock.value = at;
+      snapshotClockValue.value = at;
+    },
     actionBlips: agentKeys => {
-      const next = new Map(actionBlipSequences.value);
-      for (const key of agentKeys) next.set(key, (next.get(key) ?? 0) + 1);
-      actionBlipSequences.value = next;
+      for (const key of agentKeys) actionBlipSequences.set(key, (actionBlipSequences.get(key) ?? 0) + 1);
     },
   }, now);
   const clock = readonly(scheduledClock);
   const snapshotClock = readonly(snapshotClockValue);
-  const actionBlips = readonly(actionBlipSequences);
   const activityTrail = new ActivityTrail();
   const projection = computed(() => presenter.project(
     scheduledSnapshot.value,
     sources.threadId.value,
-    snapshotClockValue.value,
+    projectionClockValue.value,
     sources.decisions?.value ?? [],
   ));
   const actionStatus = computed(() => mapper.runningActionStatus(projection.value));
@@ -136,7 +139,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     activeThreadId = threadId;
     eventBuffer.clear();
     snippetTick.value = null;
-    actionBlipSequences.value = new Map();
+    actionBlipSequences.clear();
     previousRows.clear();
     snapshotCheckinDiffs.clear();
     historyCursors.clear();
