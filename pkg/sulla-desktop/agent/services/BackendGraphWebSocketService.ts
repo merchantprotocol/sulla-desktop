@@ -1498,7 +1498,7 @@ export class BackendGraphWebSocketService {
         // The run can finish while support capabilities are loaded. Only append
         // to the state still owned by the same live run; otherwise fall through
         // to a fresh dispatch so no final-iteration steer is orphaned.
-        const sameLiveRun = this.activeAborts.get(runKey) === activeRun
+        const sameLiveRun = activeRun !== undefined && this.activeAborts.get(runKey) === activeRun
           && !activeRun.signal.aborted
           && GraphRegistry.get(threadId)?.state === existing.state;
         if (!sameLiveRun) {
