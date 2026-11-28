@@ -283,6 +283,13 @@ const syncReducedMotion = (event?: MediaQueryListEvent): void => {
   }
 };
 
+const onChatRunEnded = (event: Event): void => {
+  const detail = (event as CustomEvent<{ threadId?: string }>).detail;
+  if (detail?.threadId !== props.threadId) return;
+  toolStepClock.endRootRun(props.threadId);
+  activeToolStep.value = toolStepClock.currentStep(props.threadId);
+};
+
 watch(
   () => [props.threadId, props.checkIns, props.rootFallback] as const,
   syncInput,
@@ -292,6 +299,7 @@ watch(
 onMounted(() => {
   emit('consumer-attached');
   mounted.value = true;
+  window.addEventListener('sulla:chat-run-ended', onChatRunEnded);
   documentVisible.value = !document.hidden;
   document.addEventListener('visibilitychange', syncVisibility);
   if (typeof window.matchMedia === 'function') {
@@ -307,6 +315,7 @@ onBeforeUnmount(() => {
   emit('consumer-detached');
   mounted.value = false;
   hovered.value = false;
+  window.removeEventListener('sulla:chat-run-ended', onChatRunEnded);
   if (timer !== undefined) window.clearInterval(timer);
   if (typingTimer !== undefined) window.clearTimeout(typingTimer);
   if (dotTimer !== undefined) window.clearTimeout(dotTimer);
