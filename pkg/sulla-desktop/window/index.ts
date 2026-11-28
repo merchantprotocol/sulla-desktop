@@ -31,6 +31,7 @@ import Logging from '@pkg/utils/logging';
 import paths from '@pkg/utils/paths';
 import { isFirstRunTestInstance } from '@pkg/utils/instance';
 import { AppStartupTelemetry } from '@pkg/main/startup/AppStartupTelemetry';
+import { ChatRunStateIpcController } from '@pkg/main/chatRunStateIpc';
 import { CommandOrControl, Shortcuts } from '@pkg/utils/shortcuts';
 
 const console = Logging[`window_${ process.type || 'unknown' }`];
@@ -477,11 +478,10 @@ if (process.type === 'browser') {
   void import('./browserTabViewManager').then(({ BrowserTabViewManager }) => {
     new TabTransferService(ipcMain, screen, agentWindowRegistry.agentWindowFor.bind(agentWindowRegistry), agentWindowRegistry.getAgentWindowsByFocusOrder.bind(agentWindowRegistry), openAgentWindow, BrowserTabViewManager.getInstance(), options => new BrowserWindow(options), () => nativeTheme.shouldUseDarkColors, app).install();
   }).catch(error => console.error('[TabTransfer] Could not initialize transfer service', error));
-  ipcMain.handle('chat:run-state', async(event, channelId: string, threadId: string) => {
-    if (!agentWindowRegistry.isAgentWebContents(event.sender) || !channelId || !threadId) return false;
+  new ChatRunStateIpcController(ipcMain, agentWindowRegistry, async() => {
     const { getBackendGraphWebSocketService } = await import('@pkg/agent/services/BackendGraphWebSocketService');
-    return getBackendGraphWebSocketService().hasActiveRun(channelId, threadId);
-  });
+    return getBackendGraphWebSocketService();
+  }).register();
   ipcMain.on('open-url-in-app', (_event: Electron.IpcMainEvent, url: string) => {
     openUrlInApp(url);
   });
