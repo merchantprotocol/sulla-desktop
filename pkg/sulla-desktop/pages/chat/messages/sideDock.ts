@@ -135,7 +135,7 @@ export class ActivityBinProjector {
   }
 
   height(count: number, max: number): number {
-    return count > 0 && max > 0 ? 1 + 11 * count / max : 1;
+    return count > 0 && max > 0 ? Math.max(3, 1 + 11 * count / max) : 1;
   }
 }
 
