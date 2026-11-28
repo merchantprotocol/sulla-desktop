@@ -1,7 +1,7 @@
 /* Sulla Desktop · https://sulladesktop.com
  * Copyright (c) 2025-2026 Merchant Protocol LLC.
  * SPDX-License-Identifier: GPL-2.0-or-later */
-/* A2 grouped capsules. The titlebar stays 44px high; capsules rise behind 34px tabs. */
+/* User-defined groups share the titlebar with the main-style tab row. */
 .app-titlebar {
   justify-content: flex-start;
   gap: calc(var(--spacing) * 3);
@@ -23,34 +23,14 @@
   position: relative;
   display: flex;
   flex: 1 1 auto;
-  width: 0;
+  width: auto;
   min-width: 0;
   height: 44px;
   align-items: flex-end;
   gap: 8px;
   padding: 0 8px 0 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
-  scroll-behavior: auto;
-  overscroll-behavior-x: contain;
-}
-.app-titlebar .tab-scroll-wrapper.fade-left::before,
-.app-titlebar .tab-scroll-wrapper.fade-right::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  z-index: 4;
-  width: 24px;
-  content: '';
-  pointer-events: none;
-}
-.app-titlebar .tab-scroll-wrapper.fade-left::before {
-  left: 0;
-  background: linear-gradient(90deg, var(--bg-surface-alt), transparent);
-}
-.app-titlebar .tab-scroll-wrapper.fade-right::after {
-  right: 32px;
-  background: linear-gradient(270deg, var(--bg-surface-alt), transparent);
 }
 .app-titlebar .tab-pinned-section,
 .app-titlebar .tab-group-tabs {
@@ -61,21 +41,17 @@
   gap: 2px;
 }
 .app-titlebar .tab-group > .tab-group-tabs {
-  width: 0;
-  flex: 1 1 auto;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  flex: 0 1 auto;
+  overflow: visible;
 }
-.app-titlebar .tab-group-active > .tab-group-tabs { padding-inline: 10px; }
-.app-titlebar .tab-group > .tab-group-tabs::-webkit-scrollbar { display: none; }
-.app-titlebar .tab-pinned-section { min-width: min-content; }
+.app-titlebar .tab-pinned-section { min-width: 0; }
+.app-titlebar .tab-ungrouped-section { display: flex; flex: 0 1 auto; min-width: 0; align-items: flex-end; }
+.app-titlebar .tab-ungrouped-tabs { min-width: 0; }
 .app-titlebar .tab-group {
   position: relative;
   display: flex;
   flex: 0 1 auto;
-  min-width: min-content;
+  min-width: 0;
   height: 40px;
   align-items: flex-end;
   padding: 0 4px 0 2px;
@@ -85,9 +61,6 @@
     inset 1px 0 0 color-mix(in srgb, var(--group-accent) 16%, transparent),
     inset -1px 0 0 color-mix(in srgb, var(--group-accent) 16%, transparent);
 }
-.app-titlebar .tab-group-chats { --group-accent: var(--accent); }
-.app-titlebar .tab-group-browser { --group-accent: var(--text-accent); }
-.app-titlebar .tab-group-tools { --group-accent: var(--status-success); }
 .app-titlebar .tab-group-label {
   display: flex;
   flex: none;
@@ -114,6 +87,12 @@
   width: 14px;
   height: 14px;
   flex: none;
+}
+.app-titlebar .tab-group-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .app-titlebar .tab-group-count {
   min-width: 16px;
@@ -142,7 +121,8 @@
 .app-titlebar .tab-group-dot-you { background: var(--status-warning); }
 .app-titlebar .tab-group-dot-stalled { background: var(--status-error); }
 .app-titlebar .tab-group-folded {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   height: 30px;
   align-self: center;
   padding: 0;
@@ -151,7 +131,7 @@
 }
 .app-titlebar .tab-group-folded .tab-group-label { height: 30px; margin: 0; }
 .app-titlebar .tab-group-folded .tab-group-tabs { display: none; }
-.app-titlebar .tab-group-compact { flex: 0 0 auto; }
+.app-titlebar .tab-group-compact { flex: 0 1 auto; min-width: 0; }
 .app-titlebar .tab-group-compact .tab-item.tab-compact {
   width: 24px;
   min-width: 24px;
@@ -169,19 +149,8 @@
 .app-titlebar .tab-item.tab-compact .tab-label,
 .app-titlebar .tab-item.tab-compact .tab-close-spacer,
 .app-titlebar .tab-item.tab-compact .tab-close,
-.app-titlebar .tab-item.tab-compact .tab-pin,
-.app-titlebar .tab-item.tab-size-icon .tab-label,
-.app-titlebar .tab-item.tab-size-icon .tab-close-spacer,
-.app-titlebar .tab-item.tab-size-icon .tab-close {
+.app-titlebar .tab-item.tab-compact .tab-pin {
   display: none !important;
-}
-.app-titlebar .tab-item.tab-size-icon:not(.tab-compact) {
-  width: 36px;
-  min-width: 36px;
-  max-width: 36px;
-  justify-content: center;
-  padding: 0;
-  gap: 0;
 }
 .app-titlebar .tab-group-more {
   display: grid;
@@ -213,13 +182,13 @@
 .app-titlebar .tab-item {
   position: relative;
   display: flex;
-  flex: 0 1 auto;
-  min-width: 36px;
+  flex: 0 1 180px;
+  min-width: 64px;
   max-width: none;
   height: 34px;
   align-items: center;
   gap: 8px;
-  padding: 0 8px 0 12px;
+  padding: 0 12px;
   border: 0;
   border-radius: 9px 9px 0 0;
   color: var(--text-muted);
@@ -233,13 +202,13 @@
   background: color-mix(in srgb, var(--group-accent) 12%, transparent);
 }
 .app-titlebar .tab-busy {
-  min-width: fit-content(110px);
+  min-width: 64px;
 }
 .app-titlebar .tab-active,
 .app-titlebar .tab-active-native {
   z-index: 2;
-  flex: 0 1 auto;
-  min-width: max-content;
+  flex: 0 1 180px;
+  min-width: 64px;
   margin-bottom: -1px;
   border: 1px solid var(--border-default);
   border-bottom: 0;
@@ -250,9 +219,10 @@
 }
 .app-titlebar .tab-active .tab-label,
 .app-titlebar .tab-active-native .tab-label {
-  flex: 0 1 auto;
-  max-width: 440px;
-  text-overflow: clip;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  text-overflow: ellipsis;
 }
 .app-titlebar .tab-accent-bar {
   display: block;
@@ -296,11 +266,11 @@
 .app-titlebar .tab-active-native:hover { background: var(--bg-chrome-active); }
 .app-titlebar .tab-label {
   display: block;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 240px;
+  max-width: none;
   overflow: hidden;
-  text-overflow: clip;
+  text-overflow: ellipsis;
   white-space: nowrap;
   -webkit-mask-image: none;
   mask-image: none;
