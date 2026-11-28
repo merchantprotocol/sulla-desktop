@@ -15,7 +15,7 @@ import semver from 'semver';
 
 import { SnapshotDialog, SnapshotEvent } from '@pkg/main/snapshots/types';
 import type { ChatTabActivityArgs } from '@pkg/shared/ChatTabActivity';
-import type { TabContextMenuRequest, TabHoverRequest } from '@pkg/shared/TabStripPopup';
+import type { TabContextMenuRequest, TabGroupPopoverChange, TabGroupPopoverRequest, TabHoverRequest } from '@pkg/shared/TabStripPopup';
 import type { UseCaseSuggestionResponse } from '@pkg/shared/useCaseSuggestions';
 import type { Direction, RecursivePartial } from '@pkg/utils/typeUtils';
 
@@ -255,6 +255,11 @@ export interface IpcMainEvents {
   'tab-hover:hide':           (id: string) => void;
   'tab-context-menu:action':  (requestId: string, action: string) => void;
   'tab-context-menu:dismiss': (requestId: string) => void;
+  'tab-group-popover:show':   (payload: TabGroupPopoverRequest) => void;
+  'tab-group-popover:hide':   (requestId: string) => void;
+  'tab-group-popover:change': (requestId: string, change: TabGroupPopoverChange) => void;
+  'tab-group-popover:done':   (requestId: string) => void;
+  'tab-group-popover:dismiss': (requestId: string) => void;
   // #endregion
 
   // #region More menu (popup window)
@@ -1422,6 +1427,9 @@ export interface IpcRendererEvents {
   'sulla-cloud-connection:status-changed': (status: Record<string, any>) => void;
   'tab-context-menu:closed':        (requestId: string) => void;
   'tab-context-menu:selected':      (requestId: string, action: string) => void;
+  'tab-group-popover:data':         (payload: TabGroupPopoverRequest) => void;
+  'tab-group-popover:changed':      (requestId: string, change: TabGroupPopoverChange) => void;
+  'tab-group-popover:closed':       (requestId: string) => void;
   'more-menu:selected':             (action: string, extra: Record<string, unknown> | null) => void;
   'more-menu:fetch-history':        () => void;
   'browser-context-menu:ai-action': (payload: {
