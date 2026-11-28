@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
 """End-to-end Sulla Files torture test. Runs inside a Sulla VM.
 
 Writes files through the real FUSE mount, keeps a checksum manifest outside Files
