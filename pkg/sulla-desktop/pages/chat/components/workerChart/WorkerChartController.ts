@@ -23,6 +23,7 @@ export interface WorkerChartControllerSources {
   root: ComputedRef<WorkerChartAgent | null>;
   chatColumnWidth: ComputedRef<number>;
   snippetTick: ComputedRef<WorkerChartSnippetTick | null | undefined>;
+  actionBlips?: ComputedRef<ReadonlyMap<string, number>>;
   /** Shared thread-activity clock; chart rows never allocate their own tickers. */
   now?: ComputedRef<number> | (() => number);
   instanceId: string;
@@ -92,12 +93,8 @@ export class WorkerChartController {
     return { left: `${this.isRail ? 7.5 : 8 + row.x}px`, top: `${row.y}px` };
   }
 
-  public rowPings(row: WorkerChartRow): boolean {
-    return this.geometry.shouldPing(row.agent.state);
-  }
-
-  public pulseDelay(row: WorkerChartRow): string {
-    return this.geometry.pulseDelay(row.agent.id);
+  public pulseSequence(row: WorkerChartRow): number {
+    return this.sources.actionBlips?.value.get(row.agent.id) ?? 0;
   }
 
   public registerButton(key: string, element: HTMLButtonElement | null): void {
