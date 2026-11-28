@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ThreadAgentActivityPresenter } from '@pkg/services/agentState/ThreadAgentActivityPresenter';
+import { ThreadAgentActivityMapper } from '@pkg/pages/chat/composables/ThreadAgentActivityMapper';
+import { ThreadAgentActivitySnapshotScheduler } from '@pkg/pages/chat/composables/ThreadAgentActivitySnapshotScheduler';
+import { WorkerChartActivityBuckets } from '@pkg/pages/chat/components/workerChart/workerChartModel';
 import type { AgentStateRow, AgentStateSnapshot } from '@pkg/shared/agentState/AgentStateSnapshot';
 
 class RowFactory {
@@ -14,7 +17,7 @@ class RowFactory {
       depth: parentKey ? 1 : 0, agentId: 'codex-sol-worker', label: key,
       visibility: 'hidden', state: 'working', stateReason: null, killedByHuman: false,
       waitingOnChildren: 0, startedAt: null, endedAt: null,
-      lastActivityAt: '2026-11-23T17:00:00.000Z', lastCheckinAt: null,
+      lastActivityAt: '2026-11-23T17:00:00.000Z', actionCount: 0, lastCheckinAt: null,
       lastCheckinSummary: null, canMessage: true, canStop: true, canOpen: true,
     };
   }
@@ -101,13 +104,14 @@ describe('ThreadAgentActivityPresenter', () => {
     expect(stale.agents[0].checkins).toEqual([]);
   });
 
-  it('bounds observed check-ins and 150-second activity samples, retaining normalized urgency', () => {
-    // risk: unbounded live-agent memory and incorrectly prioritized status
+  it('bounds check-ins, retains all count deltas in the chart window, and normalizes urgency', () => {
+    // risk: losing real activity counts or incorrectly prioritizing status
     const row = new RowFactory().create('agent:0', 'root');
     const presenter = new ThreadAgentActivityPresenter();
     let projection = presenter.project(snapshot(1, [row]), 'root', at);
     for (let version = 2; version <= 40; version++) {
       row.lastActivityAt = new Date(at - (40 - version) * 1_000).toISOString();
+      row.actionCount = version;
       row.lastCheckinAt = row.lastActivityAt;
       row.lastCheckinSummary = `update ${version}`;
       row.state = version === 40 ? 'blocked' : 'working';
@@ -115,7 +119,7 @@ describe('ThreadAgentActivityPresenter', () => {
     }
     expect(projection.agents[0].checkins).toHaveLength(6);
     expect(projection.agents[0].checkins[0].summary).toBe('update 35');
-    expect(projection.agents[0].activity).toHaveLength(30);
+    expect(projection.agents[0].activity).toHaveLength(39);
     expect(projection.agents[0].state).toBe('blocked');
     expect(projection.agents[0].urgency).toBe('needs-you');
     expect(projection.agents[0].initials).toBe('CS');
@@ -135,6 +139,98 @@ describe('ThreadAgentActivityPresenter', () => {
 
     expect(second.checkins).toEqual([{ at: row.lastCheckinAt, summary: 'earlier check-in' }]);
     expect(second.initials).toBe(first.initials);
+  });
+
+  it('bins every cumulative action delta, including a 500-action burst, in the worker chart', () => {
+    // risk: activity bursts between snapshots must not collapse or flatten in the chart
+    const row = new RowFactory().create('actions:0', 'root');
+    const presenter = new ThreadAgentActivityPresenter();
+    const mapper = new ThreadAgentActivityMapper({} as any);
+    const buckets = new WorkerChartActivityBuckets();
+    presenter.project(snapshot(1, [row]), 'root', at);
+
+    row.actionCount = 4;
+    presenter.project(snapshot(2, [row]), 'root', at + 6_000);
+    row.lastActivityAt = new Date(at + 7_000).toISOString();
+    const unchanged = presenter.project(snapshot(3, [row]), 'root', at + 7_000);
+    expect(unchanged.agents[0].activity).toHaveLength(1);
+    row.actionCount = 507;
+    const projection = presenter.project(snapshot(4, [row]), 'root', at + 10_500);
+    const chart = mapper.chartRoot(projection, 'root')!;
+    const values = buckets.values(chart.children?.[0].activity, at + 10_500);
+
+    expect(values[42]).toBe(4);
+    expect(values[43]).toBe(503);
+    expect(values.reduce((total, value) => total + value, 0)).toBe(507);
+    expect(buckets.scale(5, 503)).toBeGreaterThan(0);
+    expect(buckets.scale(5, 503)).toBeLessThan(1);
+    expect(buckets.scale(503, 503)).toBe(1);
+    expect(buckets.scale(0, 503)).toBe(0);
+  });
+
+  it('uses the live snapshot count and exact last-action label, then goes quiet when idle', () => {
+    // risk: chat status must show the actual run count and safe current-action label
+    const row = new RowFactory().create('status:0', 'root');
+    row.actionCount = 500;
+    row.lastAction = { kind: 'tool', label: 'Bash', at: new Date(at).toISOString() };
+    const presenter = new ThreadAgentActivityPresenter();
+    const mapper = new ThreadAgentActivityMapper({} as any);
+    const active = presenter.project(snapshot(1, [row]), 'root', at);
+
+    expect(mapper.runningActionStatus(active)).toEqual({ running: true, count: 500, label: 'Bash' });
+
+    const idleRow = { ...row, state: 'parked' as const };
+    const idle = presenter.project(snapshot(2, [idleRow]), 'root', at + 1_000);
+    expect(mapper.runningActionStatus(idle)).toEqual({ running: false, count: 0, label: null });
+  });
+
+  it('coalesces working snapshots to one-second updates without dropping cumulative counts', () => {
+    // risk: renderer throttling must never lose actions from cumulative snapshots
+    vi.useFakeTimers();
+    try {
+      const factory = new RowFactory();
+      const rows = Array.from({ length: 300 }, (_, index) => factory.create(`scheduled:${index}`, 'root'));
+      const initial = snapshot(1, rows);
+      let shown = initial;
+      let clock = 0;
+      let snapshotPublishes = 0;
+      let clockTicks = 0;
+      const scheduler = new ThreadAgentActivitySnapshotScheduler(initial, {
+        publish: (next, at) => { shown = next; clock = at; snapshotPublishes++; },
+        tick: at => { clock = at; clockTicks++; },
+      });
+      scheduler.observe(initial, 'root');
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(1_000);
+      expect(snapshotPublishes).toBe(1);
+      expect(clockTicks).toBe(1);
+
+      const four = snapshot(2, initial.rows.map(row => row.key === 'scheduled:0' ? { ...row, actionCount: 4 } : row));
+      scheduler.observe(four, 'root');
+      vi.advanceTimersByTime(500);
+      const seven = snapshot(3, initial.rows.map(row => row.key === 'scheduled:0' ? { ...row, actionCount: 7 } : row));
+      scheduler.observe(seven, 'root');
+      expect(shown.rows.find(row => row.key === 'scheduled:0')?.actionCount).toBe(0);
+
+      vi.advanceTimersByTime(500);
+      expect(shown.rows.find(row => row.key === 'scheduled:0')?.actionCount).toBe(7);
+      expect(snapshotPublishes).toBe(2);
+
+      const idle = snapshot(4, initial.rows.map(row => ({ ...row, state: 'parked' as const, actionCount: row.key === 'scheduled:0' ? 507 : 0 })));
+      scheduler.observe(idle, 'root');
+      expect(shown.rows.find(row => row.key === 'scheduled:0')?.actionCount).toBe(507);
+      expect(snapshotPublishes).toBe(3);
+      expect(vi.getTimerCount()).toBe(0);
+      const idleClock = clock;
+      const unrelated = new RowFactory().create('unrelated:0', 'another-root');
+      scheduler.observe(snapshot(5, [...idle.rows.map(row => ({ ...row })), unrelated]), 'root');
+      vi.advanceTimersByTime(2_000);
+      expect(shown.version).toBe(4);
+      expect(clock).toBe(idleClock);
+      scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('preserves every source state while prioritizing only blocked and failed rows', () => {
