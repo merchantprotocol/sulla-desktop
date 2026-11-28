@@ -383,7 +383,7 @@ describe('authoritative live agent state', () => {
       actionCount: key => key === 'active#0' ? 8 : 0,
       lastAction: key => key === 'active#0' ? { kind: 'model', label: 'model call', at: new Date(990_000).toISOString() } : null,
     }, () => 1_000_000);
-    expect(activity.project(active, active.tasks[0], 0)).toMatchObject({ actionCount: 8,
+    expect(activity.projectWithActions(active, active.tasks[0], 0)).toMatchObject({ actionCount: 8,
       lastAction: { kind: 'model', label: 'model call', at: new Date(990_000).toISOString() } });
     const snapshot = await new AgentStateProjector(states, { latest: async() => ({ createdAt: 100_000, summary: 'old', blockers: [] }) }, () => 1_000_000, {}, activity).snapshot();
     expect(snapshot.rows[0].state).toBe('working');
