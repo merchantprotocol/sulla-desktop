@@ -40,6 +40,8 @@ export interface ThreadAgentActivity {
   readonly clock: Readonly<Ref<number>>;
   /** Snapshot clock shared by row views without per-second rerenders. */
   readonly snapshotClock: Readonly<Ref<number>>;
+  /** Monotonic, per-agent blip sequences emitted from cumulative action-count deltas. */
+  readonly actionBlips: Readonly<Ref<ReadonlyMap<string, number>>>;
   readonly actionStatus: ComputedRef<ThreadAgentRunningActionStatus>;
   /** Shared cumulative action deltas so opening a surface does not reset its meter history. */
   readonly activityTrail: ActivityTrail;
@@ -70,6 +72,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
   const scheduledSnapshot = shallowRef(sources.snapshot.value);
   const scheduledClock = ref(now());
   const snapshotClockValue = ref(scheduledClock.value);
+  const actionBlipSequences = shallowRef<ReadonlyMap<string, number>>(new Map());
   const snapshotScheduler = new ThreadAgentActivitySnapshotScheduler(sources.snapshot.value, {
     publish: (snapshot, at) => {
       scheduledSnapshot.value = snapshot;
@@ -77,9 +80,15 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
       snapshotClockValue.value = at;
     },
     tick: at => { scheduledClock.value = at; },
+    actionBlips: agentKeys => {
+      const next = new Map(actionBlipSequences.value);
+      for (const key of agentKeys) next.set(key, (next.get(key) ?? 0) + 1);
+      actionBlipSequences.value = next;
+    },
   }, now);
   const clock = readonly(scheduledClock);
   const snapshotClock = readonly(snapshotClockValue);
+  const actionBlips = readonly(actionBlipSequences);
   const activityTrail = new ActivityTrail();
   const projection = computed(() => presenter.project(
     scheduledSnapshot.value,
@@ -127,6 +136,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     activeThreadId = threadId;
     eventBuffer.clear();
     snippetTick.value = null;
+    actionBlipSequences.value = new Map();
     previousRows.clear();
     snapshotCheckinDiffs.clear();
     historyCursors.clear();
@@ -362,6 +372,7 @@ export function useThreadAgentActivity(sources: ThreadAgentActivitySources): Thr
     projection,
     clock,
     snapshotClock,
+    actionBlips,
     actionStatus,
     activityTrail,
     checkIns: computed(() => eventItems.value),
