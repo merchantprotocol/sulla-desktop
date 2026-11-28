@@ -47,7 +47,7 @@ describe('SetChatHeartbeatWorker', () => {
     // risk: hidden jobs retain a recurring wake after their agent explicitly turned its heartbeat off.
     for (const context of [
       { threadId: 'chat-thread' },
-      { threadId: 'job-thread', delegatedJobId: 'job-1' },
+      { threadId: 'job-thread', delegatedJobId: 'job-1', modelDecisionTask: { jobId: 'job-1', taskIndex: 0, threadId: 'job-thread' } },
     ]) {
       const worker = new TestableSetChatHeartbeatWorker();
       worker.setState({ metadata: { wsChannel: 'sulla-desktop', ...context } } as any);
@@ -75,7 +75,7 @@ describe('SetChatHeartbeatWorker', () => {
     mocks.getScheduler.mockReturnValue(scheduler);
     const register = vi.spyOn(scheduler, 'register');
     const worker = new TestableSetChatHeartbeatWorker();
-    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'job-thread', delegatedJobId: 'job-1' } } as any);
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'job-thread', delegatedJobId: 'job-1', modelDecisionTask: { jobId: 'job-1', taskIndex: 0, threadId: 'job-thread' } } } as any);
 
     expect((await worker.set({ intervalMinutes: 5, message: 'Keep working.' })).successBoolean).toBe(true);
     expect(register).toHaveBeenCalledTimes(1); // no runtime existed yet
@@ -96,14 +96,14 @@ describe('SetChatHeartbeatWorker', () => {
     // risk: rebinding on every tool call replaces timer state during an in-flight delivery.
     const register = vi.spyOn(scheduler, 'register');
     const worker = new TestableSetChatHeartbeatWorker();
-    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'job-thread', delegatedJobId: 'job-1' } } as any);
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'job-thread', delegatedJobId: 'job-1', modelDecisionTask: { jobId: 'job-1', taskIndex: 0, threadId: 'job-thread' } } } as any);
 
     await worker.set({ intervalMinutes: 5 });
     await worker.set({ intervalMinutes: 10 });
     expect(register).toHaveBeenCalledTimes(1);
 
     scheduler.register({ threadId: 'unbound-job-thread', channel: 'sulla-desktop', config: { intervalMinutes: null, message: 'Check.' } });
-    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'unbound-job-thread', delegatedJobId: 'job-1' } } as any);
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'unbound-job-thread', delegatedJobId: 'job-1', modelDecisionTask: { jobId: 'job-1', taskIndex: 0, threadId: 'unbound-job-thread' } } } as any);
     mocks.getJob.mockResolvedValueOnce({
       jobId: 'job-1', status: 'parked', parentChannel: 'sulla-desktop',
       tasks: [{ threadId: 'unbound-job-thread', agentId: 'codex-sol-worker', status: 'parked' }],
@@ -165,9 +165,9 @@ describe('SetChatHeartbeatWorker', () => {
     expect(scheduler.status('parent-thread')?.intervalMinutes).toBe(15);
     expect(scheduler.jobTarget('parent-thread')).toBeUndefined();
     expect(mocks.persistJobHeartbeat).not.toHaveBeenCalled();
-    expect(mocks.getJob).toHaveBeenCalledWith('running-child');
-    expect(mocks.getJob).toHaveBeenCalledWith('finished-tab-child');
     expect(mocks.getJob).toHaveBeenCalledWith('stopped-child');
+    expect(mocks.getJob).not.toHaveBeenCalledWith('running-child');
+    expect(mocks.getJob).not.toHaveBeenCalledWith('finished-tab-child');
 
     const clamped = await worker.set({ intervalMinutes: 0.25 });
     expect(scheduler.status('parent-thread')?.intervalMinutes).toBe(1);
@@ -178,15 +178,12 @@ describe('SetChatHeartbeatWorker', () => {
 
   it('keeps a tab agent bound to its own task when it has launched child workers', async() => {
     // risk: a tab parent adopts its most recently launched child job and loses the heartbeat that should wake its own task.
-    mocks.findTaskByThread.mockResolvedValue({
-      job: {
-        jobId: 'tab-own-job', status: 'running', parentChannel: 'sulla-desktop',
-        tasks: [{ threadId: 'tab-thread', agentId: 'tab-agent', status: 'running' }],
-      },
-      taskIndex: 0,
+    mocks.getJob.mockResolvedValue({
+      jobId: 'tab-own-job', status: 'running', parentChannel: 'sulla-desktop',
+      tasks: [{ threadId: 'tab-thread', agentId: 'tab-agent', status: 'running' }],
     });
     const worker = new TestableSetChatHeartbeatWorker();
-    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'tab-thread', delegatedJobId: 'child-job' } } as any);
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'tab-thread', delegatedJobId: 'child-job', modelDecisionTask: { jobId: 'tab-own-job', taskIndex: 0, threadId: 'tab-thread' } } } as any);
 
     const result = await worker.set({ intervalMinutes: 1 });
 
@@ -198,19 +195,15 @@ describe('SetChatHeartbeatWorker', () => {
 
   it('resolves two chats for the same agent by thread ownership, not agent identity', async() => {
     // risk: same-agent conversations cross-bind a plain parent chat to a sibling delegated task.
-    mocks.findTaskByThread.mockImplementation(async(threadId: string) => threadId === 'owned-thread' ? ({
-      job: {
-        jobId: 'owned-job', status: 'parked', parentChannel: 'account-manager',
-        tasks: [{ threadId: 'owned-thread', agentId: 'account-manager', status: 'parked' }],
-      },
-      taskIndex: 0,
-    }) : undefined);
-    mocks.getJob.mockResolvedValue({
+    mocks.getJob.mockImplementation(async(jobId: string) => jobId === 'owned-job' ? {
+      jobId: 'owned-job', status: 'parked', parentChannel: 'account-manager',
+      tasks: [{ threadId: 'owned-thread', agentId: 'account-manager', status: 'parked' }],
+    } : {
       jobId: 'child-job', status: 'running', parentThreadId: 'parent-thread',
       tasks: [{ threadId: 'leaf-thread', agentId: 'worker', status: 'running' }],
     });
     const owned = new TestableSetChatHeartbeatWorker();
-    owned.setState({ metadata: { wsChannel: 'account-manager', threadId: 'owned-thread', delegatedJobId: 'child-job' } } as any);
+    owned.setState({ metadata: { wsChannel: 'account-manager', threadId: 'owned-thread', delegatedJobId: 'child-job', modelDecisionTask: { jobId: 'owned-job', taskIndex: 0, threadId: 'owned-thread' } } } as any);
     const parent = new TestableSetChatHeartbeatWorker();
     parent.setState({ metadata: { wsChannel: 'account-manager', threadId: 'parent-thread', delegatedJobId: 'child-job' } } as any);
 
@@ -228,11 +221,35 @@ describe('SetChatHeartbeatWorker', () => {
       tasks: [{ threadId: 'terminal-thread', agentId: 'codex-sol-worker', status }],
     });
     const worker = new TestableSetChatHeartbeatWorker();
-    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'terminal-thread', delegatedJobId: 'terminal-job' } } as any);
+    worker.setState({ metadata: { wsChannel: 'sulla-desktop', threadId: 'terminal-thread', delegatedJobId: 'terminal-job', isSubAgent: true, modelDecisionTask: { jobId: 'terminal-job', taskIndex: 0, threadId: 'terminal-thread' } } } as any);
 
     const result = await worker.set({ intervalMinutes: 15 });
 
     expect(result).toMatchObject({ successBoolean: false, responseString: 'This delegated task is no longer open; its heartbeat cannot be changed.' });
     expect(scheduler.has('terminal-thread')).toBe(false);
+  });
+
+  it('treats a top-level chat as a chat even when its thread has a finished task record', async() => {
+    // risk: a completed delegated row for a reused thread prevents its top-level chat from scheduling a wake.
+    const finishedJob = {
+      jobId: 'finished-job', status: 'completed', parentChannel: 'sulla-desktop',
+      tasks: [{ threadId: 'reused-thread', agentId: 'account-manager', status: 'completed' }],
+    };
+    mocks.getJob.mockResolvedValue(finishedJob);
+    mocks.findTaskByThread.mockResolvedValue({ job: finishedJob, taskIndex: 0 });
+    const worker = new TestableSetChatHeartbeatWorker();
+    worker.setState({ metadata: {
+      wsChannel: 'sulla-desktop', threadId: 'reused-thread', isSubAgent: false, subAgentDepth: 0,
+      modelDecisionTask: { jobId: 'finished-job', taskIndex: 0, threadId: 'reused-thread' },
+      delegatedJobId: 'finished-job', jobId: 'finished-job',
+    } } as any);
+
+    const result = await worker.set({ intervalMinutes: 5, message: 'Keep the chat alive.' });
+
+    expect(result.successBoolean).toBe(true);
+    expect(scheduler.status('reused-thread')).toMatchObject({ enabled: true, intervalMinutes: 5 });
+    expect(scheduler.jobTarget('reused-thread')).toBeUndefined();
+    expect(mocks.persistJobHeartbeat).not.toHaveBeenCalled();
+    expect(mocks.findTaskByThread).not.toHaveBeenCalled();
   });
 });

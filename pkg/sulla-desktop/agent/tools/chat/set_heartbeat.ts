@@ -4,7 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { chatHeartbeatProvider } from '../../app/Providers/ChatHeartbeatServiceProvider';
-import { findTaskByThread, getJob } from '../agents/jobRegistry';
+import { getJob } from '../agents/jobRegistry';
 import { BaseTool, ToolResponse } from '../base';
 
 import { CHAT_HEARTBEAT_JOB_MIN_INTERVAL_MINUTES, DEFAULT_CHAT_HEARTBEAT_MESSAGE, normalizeChatHeartbeatConfig } from '@pkg/shared/chatHeartbeat';
@@ -20,27 +20,36 @@ export class SetChatHeartbeatWorker extends BaseTool {
       return { successBoolean: false, responseString: 'This tool must be called from a chat thread or delegated agent task.' };
     }
 
-    const candidateIds = [...new Set([
-      String(this.executionContext?.job_id || '').trim(),
-      String(metadata?.modelDecisionTask?.jobId || '').trim(),
-      String(metadata?.delegatedJobId || '').trim(),
-      String(metadata?.jobId || '').trim(),
-    ].filter(Boolean))];
-    // A thread is job-bound only through the task that actually owns that thread.
-    // Parent links and stale delegated metadata describe launched children, not the caller.
-    const owner = candidateIds.length ? await findTaskByThread(threadId) : undefined;
-    let job = owner?.job;
-    let taskIndex = owner?.taskIndex ?? -1;
-    if (!job) {
-      for (const candidateId of candidateIds) {
-        const candidate = await getJob(candidateId);
-        const candidateIndex = candidate?.tasks.findIndex(task => task.threadId === threadId) ?? -1;
-        if (candidate && candidateIndex >= 0) {
-          job = candidate;
-          taskIndex = candidateIndex;
-          break;
-        }
+    const executionJobId = String(this.executionContext?.job_id || '').trim();
+    const modelDecisionTask = metadata?.modelDecisionTask;
+    const taskReference = executionJobId
+      ? { jobId: executionJobId, taskIndex: this.executionContext?.task_index }
+      : modelDecisionTask?.threadId === threadId
+        ? { jobId: String(modelDecisionTask.jobId || '').trim(), taskIndex: modelDecisionTask.taskIndex }
+        : undefined;
+    let job: Awaited<ReturnType<typeof getJob>>;
+    let taskIndex = -1;
+    if (taskReference?.jobId) {
+      const candidate = await getJob(taskReference.jobId);
+      const explicitTaskIndex = Number.isInteger(taskReference.taskIndex) ? Number(taskReference.taskIndex) : undefined;
+      const candidateIndex = explicitTaskIndex !== undefined
+        ? (explicitTaskIndex >= 0 && candidate?.tasks[explicitTaskIndex]?.threadId === threadId ? explicitTaskIndex : -1)
+        : candidate?.tasks.findIndex(task => task.threadId === threadId) ?? -1;
+      if (candidate && candidateIndex >= 0) {
+        job = candidate;
+        taskIndex = candidateIndex;
       }
+    }
+    // Job/task markers are persisted with a thread and can outlive a delegated
+    // run when that thread is reused as a top-level chat. A top-level caller is
+    // delegated only while the exact referenced task is still open.
+    const isTopLevelChat = metadata?.isSubAgent === false
+      && Number(metadata?.subAgentDepth ?? 0) === 0
+      && !String(metadata?.managerThreadId ?? '').trim();
+    if (isTopLevelChat && job && (!['running', 'parked'].includes(job.status)
+        || taskIndex < 0 || !['running', 'parked'].includes(job.tasks[taskIndex]?.status))) {
+      job = undefined;
+      taskIndex = -1;
     }
     const jobId = job?.jobId ?? '';
     if (job && (!['running', 'parked'].includes(job.status)
