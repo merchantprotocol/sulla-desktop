@@ -5,7 +5,7 @@
  * "Sulla" is a trademark. See TRADEMARK.md.
  */
 
-import * as pdfjs from 'pdfjs-dist';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import {
   PdfJsInlineDocumentLoader,
