@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Behavioral coverage for bounded response decoding and retention."""
 import gzip
 import os
