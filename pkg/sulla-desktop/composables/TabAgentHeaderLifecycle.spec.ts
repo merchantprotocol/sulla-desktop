@@ -137,7 +137,7 @@ describe('window tab state with real AgentHeaders', () => {
     // risk: side effects — deleting organization metadata must never close browser tabs.
     const first = store.createTab('https://first.test');
     const second = store.createTab('https://second.test');
-    const group = store.tabGroupModel.createGroup('Research', 'accent', [`browser-${ first.id }`]);
+    const group = store.tabGroupModel.createGroup('Research', 'blue', [`browser-${ first.id }`]);
 
     expect(store.tabGroupModel.deleteGroup(group.id)).toBe(true);
     expect(store.tabs.map(tab => tab.id)).toContain(first.id);
@@ -151,7 +151,7 @@ describe('window tab state with real AgentHeaders', () => {
     // risk: data integrity — closing one tab must prune its membership without touching siblings.
     const selected = store.createTab('https://selected.test');
     const sibling = store.createTab('https://sibling.test');
-    const group = store.tabGroupModel.createGroup('Temporary', 'status-success', [`browser-${ selected.id }`]);
+    const group = store.tabGroupModel.createGroup('Temporary', 'green', [`browser-${ selected.id }`]);
 
     expect(await store.closeTab(selected.id)).toBe(true);
     expect(store.tabs.map(tab => tab.id)).not.toContain(selected.id);
@@ -174,21 +174,22 @@ describe('window tab state with real AgentHeaders', () => {
     expect(store.tabs.map(current => current.url)).toEqual([tab.url, tab.url]);
   });
 
-  it('activates a Needs-you row exactly once with two mounted headers', async() => {
+  it('activates a group overflow row exactly once with two mounted headers', async() => {
+    // risk: data accuracy — selecting the overflow list must activate its intended tab after pill removal.
     store.createTab('https://example.test');
     const chat = store.createTab('about:blank', { mode: 'chat' });
+    store.tabGroupModel.createGroup('Needs', 'blue', [`browser-${ chat.id }`]);
     const { root, router } = await mountShell(2);
     const push = vi.spyOn(router, 'push');
 
     ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, false, { state: 'stalled' });
     await nextTick();
-    expect(root.querySelector('[aria-haspopup="menu"]')).toBeNull();
-
     ipc.events!.emit('internal-tab-view:chat-running', {}, chat.id, true, { state: 'you' });
     await nextTick();
-    const button = root.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')!;
+    const button = root.querySelector<HTMLButtonElement>('.tab-group-more')!;
     const anchor = DOMRect.fromRect({ x: 10, y: 10, width: 60, height: 28 });
 
+    expect(button).not.toBeNull();
     button.style.visibility = 'visible';
     vi.spyOn(button, 'getClientRects').mockReturnValue(Object.assign([anchor], { item: () => anchor }));
     vi.spyOn(button, 'getBoundingClientRect').mockReturnValue(anchor);
