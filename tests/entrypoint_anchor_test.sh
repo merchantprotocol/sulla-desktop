@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Exercise the exact mountinfo lookup used by the adapter entrypoint.
 set -eu
 entrypoint=$(CDPATH= cd -- "$(dirname "$0")/../services/sulla-files-fuse" && pwd)/entrypoint.sh
