@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { FilesListSharedWorker } from '../../../tools/files/list_shared';
 import { FilesShareToOrgWorker } from '../../../tools/files/share_to_org';

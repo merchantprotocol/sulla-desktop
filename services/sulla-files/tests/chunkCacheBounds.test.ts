@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { ChunkAccessTracker } from '../src/chunkCache/access.js';
 import { DEFAULT_CACHE_MAX_BYTES, cacheMaxBytes } from '../src/chunkCache/budget.js';

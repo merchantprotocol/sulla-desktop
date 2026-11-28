@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../../../../../../services/sulla-files/src/config.js';

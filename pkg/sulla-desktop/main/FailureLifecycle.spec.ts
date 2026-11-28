@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 
 import { FailureLifecycle, type FailureLifecycleOptions } from './failureLifecycle';

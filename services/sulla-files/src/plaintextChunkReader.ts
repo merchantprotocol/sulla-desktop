@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import type { Readable } from 'node:stream';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;

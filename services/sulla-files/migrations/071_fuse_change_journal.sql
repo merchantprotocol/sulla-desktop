@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Per-collection, path-scoped FUSE invalidation events. Inserts do not lock
 -- shared tree-revision rows, so unrelated collection writes remain independent.
 CREATE TABLE fuse_change_journal (

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@pkg/agent/database/models/WorkflowExecutionModel', () => ({ WorkflowExecutionModel: { markFailed: vi.fn() } }));

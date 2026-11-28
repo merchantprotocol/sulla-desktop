@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import type express from 'express';
 import type { ByteRange } from './fileStream.js';
 

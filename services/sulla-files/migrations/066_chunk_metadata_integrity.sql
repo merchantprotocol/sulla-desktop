@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Keep manifest-referenced chunks present for every immutable/restorable version.
 -- Per-chunk transaction advisory locks serialize version creation with GC deletion
 -- without globally serializing unrelated chunk writes.

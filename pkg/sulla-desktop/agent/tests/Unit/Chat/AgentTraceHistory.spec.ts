@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import { AgentTraceHistory } from '@pkg/agent/app/Services/AgentTraceHistory';
 import { SubAgentTraceProjection } from '@pkg/pages/chat/components/transcript/SubAgentTraceProjection';

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { PlaintextChunkReader } from '../src/plaintextChunkReader.js';

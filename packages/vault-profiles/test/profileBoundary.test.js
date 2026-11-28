@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // risk: profile isolation — requests must resolve one profile and reject missing/ambiguous ids.
 // risk: stale work — requests from an earlier profile generation must fail closed.
 // risk: SQL/database-name injection — Cloud identities must never enter identifier construction.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';

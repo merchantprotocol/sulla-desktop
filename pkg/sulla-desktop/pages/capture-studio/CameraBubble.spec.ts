@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';

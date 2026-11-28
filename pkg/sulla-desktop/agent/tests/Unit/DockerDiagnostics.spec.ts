@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it } from 'vitest';
 import toolPlacements from '../../../../../resources/tool-placements.json';
 import { DockerDiagnostics } from '../../tools/docker/DockerDiagnostics';

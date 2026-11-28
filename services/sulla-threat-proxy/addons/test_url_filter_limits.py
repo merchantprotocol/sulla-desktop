@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Behavioral coverage for URLhaus memory caps."""
 import os
 import sys
