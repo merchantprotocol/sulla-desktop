@@ -82,4 +82,49 @@ describe('ChatController tool-step hydration', () => {
     ]);
     controller.dispose();
   });
+
+  it('does not settle steps that started after the idle snapshot cutoff', () => {
+    // risk: correctness — an IPC idle answer must not interrupt a tool call that began while it was pending.
+    const source = new ChatController();
+    const state = source.serialize();
+    source.dispose();
+    const cutoff = 2_000;
+    const earlier = {
+      id: asMessageId('tool-before-cutoff'), kind: 'tool', createdAt: 1_000, tool: 'Shell', recordedToolName: 'exec',
+      status: 'running', meta: { step: { stepId: 'step-before', startedAt: 1_000 } },
+    } satisfies Message;
+    const later = {
+      id: asMessageId('tool-after-cutoff'), kind: 'tool', createdAt: 3_000, tool: 'Shell', recordedToolName: 'exec',
+      status: 'running', meta: { step: { stepId: 'step-after', startedAt: 3_000 } },
+    } satisfies Message;
+    const controller = new ChatController();
+    vi.spyOn(Date, 'now').mockReturnValue(5_000);
+    controller.hydrate({ ...state, thread: { ...state.thread, messages: [earlier, later] } });
+
+    controller.settleInterruptedToolSteps(cutoff);
+
+    expect(controller.messages.value.map(message => message.kind === 'tool' ? message.status : null)).toEqual(['error', 'running']);
+    expect((controller.messages.value[1] as Extract<Message, { kind: 'tool' }>).meta).toEqual(later.meta);
+    controller.dispose();
+  });
+
+  it('does not settle cards while the local run state is active', () => {
+    // risk: correctness — a stale idle response must not interrupt a run already observed by this renderer.
+    const source = new ChatController();
+    const state = source.serialize();
+    source.dispose();
+    const startedAt = 1_000;
+    const tool = {
+      id: asMessageId('tool-locally-running'), kind: 'tool', createdAt: startedAt, tool: 'Shell', recordedToolName: 'exec',
+      status: 'running', meta: { step: { stepId: 'step-local', startedAt } },
+    } satisfies Message;
+    const controller = new ChatController();
+    controller.hydrate({ ...state, thread: { ...state.thread, messages: [tool] } });
+    controller.runState.value = { phase: 'tool', startedAt, messageId: tool.id, tool: 'exec' };
+
+    controller.settleInterruptedToolSteps(2_000);
+
+    expect(controller.messages.value[0]).toMatchObject({ status: 'running', meta: tool.meta });
+    controller.dispose();
+  });
 });
