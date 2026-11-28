@@ -63,7 +63,7 @@
                 :root="chartRoot"
                 :chat-column-width="appWidth"
                 :snippet-tick="snippetTick"
-                :action-blips="threadAgentActivity.actionBlips"
+                :action-blips="actionBlips"
                 :now="activityNow"
                 @open-agent="openChartAgent"
               />
@@ -495,6 +495,7 @@ const threadAgentActivity = useThreadAgentActivity({
 });
 const chartRoot = threadAgentActivity.chartRoot;
 const snippetTick = threadAgentActivity.snippetTick;
+const actionBlips = threadAgentActivity.actionBlips;
 const activityNow = () => threadAgentActivity.clock.value;
 provide(THREAD_AGENT_ACTIVITY_KEY, threadAgentActivity);
 
