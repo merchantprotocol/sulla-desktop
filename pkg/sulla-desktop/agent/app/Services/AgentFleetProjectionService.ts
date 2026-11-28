@@ -22,6 +22,10 @@ export interface AgentFleetReviewReader {
   openReviewItemsForTasks(jobIds: string[]): Promise<Record<string, AgentJobReviewItem[]>>;
 }
 
+export interface AgentFleetBlockerDecisionReader {
+  openBlockerTaskKeys(jobIds: string[]): Promise<Set<string>>;
+}
+
 export interface AgentFleetRequest {
   scope: 'mine' | 'all';
   callerThreadId?: string;
@@ -40,6 +44,7 @@ interface FleetReadContext {
   stranded: Map<string, { stateKey: string; reason: string }>;
   openTasksOnly: boolean;
   reviews: Record<string, AgentJobReviewItem[]>;
+  openBlockerTasks?: Set<string>;
 }
 
 /** Authoritative, lineage-enriched fleet read model consumed by agent supervision tools. */
@@ -52,6 +57,7 @@ export class AgentFleetProjectionService {
     private readonly stranded?: { deliveredForManagers(): Promise<Map<string, { stateKey: string; reason: string }>> },
     private readonly activity = new AgentTaskActivityProjector({ lastActivityAt: () => undefined }, now),
     private readonly reviews?: AgentFleetReviewReader,
+    private readonly blockerDecisions?: AgentFleetBlockerDecisionReader,
   ) {}
 
   async list(request: AgentFleetRequest): Promise<FleetJobView[]> {
@@ -65,8 +71,13 @@ export class AgentFleetProjectionService {
       ? index.descendants(this.requiredCaller(request.callerThreadId))
       : all;
     const selected = this.bound(scoped, request.limit, request.includeFinished);
-    const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews(selected)]);
-    return this.project(selected, all, telemetry, false, stranded, request.includeFinished === false, reviews);
+    const [telemetry, stranded, reviews, openBlockerTasks] = await Promise.all([
+      this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)),
+      this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()),
+      this.openReviews(selected),
+      this.openBlockerTasks(selected),
+    ]);
+    return this.project(selected, all, telemetry, false, stranded, request.includeFinished === false, reviews, openBlockerTasks);
   }
 
   /** All non-terminal managers with children plus every descendant; never globally truncates terminal children. */
@@ -85,16 +96,26 @@ export class AgentFleetProjectionService {
         selected.push(child); selectedIds.add(child.jobId);
       }
     }
-    const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews(selected)]);
-    return this.project(selected, all, telemetry, false, stranded, false, reviews);
+    const [telemetry, stranded, reviews, openBlockerTasks] = await Promise.all([
+      this.telemetry.latestTelemetryForJobs(selected.map(job => job.jobId)),
+      this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()),
+      this.openReviews(selected),
+      this.openBlockerTasks(selected),
+    ]);
+    return this.project(selected, all, telemetry, false, stranded, false, reviews, openBlockerTasks);
   }
 
   async job(jobId: string): Promise<FleetJobView | undefined> {
     const [job, all] = await Promise.all([this.states.job(jobId), this.states.jobsForProjection(60 * 60_000)]);
     if (!job) return undefined;
     if (!all.some(candidate => candidate.jobId === job.jobId)) all.push(job);
-    const [telemetry, stranded, reviews] = await Promise.all([this.telemetry.telemetryForJob(jobId), this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()), this.openReviews([job])]);
-    return (await this.project([job], all, { [jobId]: telemetry }, true, stranded, false, reviews))[0];
+    const [telemetry, stranded, reviews, openBlockerTasks] = await Promise.all([
+      this.telemetry.telemetryForJob(jobId),
+      this.stranded?.deliveredForManagers() ?? Promise.resolve(new Map()),
+      this.openReviews([job]),
+      this.openBlockerTasks([job]),
+    ]);
+    return (await this.project([job], all, { [jobId]: telemetry }, true, stranded, false, reviews, openBlockerTasks))[0];
   }
 
   private bound(jobs: AgentJob[], limit = 25, includeFinished = true): AgentJob[] {
@@ -113,6 +134,11 @@ export class AgentFleetProjectionService {
     return this.reviews.openReviewItemsForTasks(jobs.map(job => job.jobId));
   }
 
+  private async openBlockerTasks(jobs: AgentJob[]): Promise<Set<string> | undefined> {
+    if (!this.blockerDecisions || jobs.length === 0) return undefined;
+    return this.blockerDecisions.openBlockerTaskKeys(jobs.map(job => job.jobId));
+  }
+
   private requiredCaller(callerThreadId?: string): string {
     const caller = callerThreadId?.trim();
     if (!caller) throw new Error('scope:"mine" requires a calling chat thread. Use scope:"all" only for an authorized fleet-wide read.');
@@ -127,11 +153,12 @@ export class AgentFleetProjectionService {
     stranded: Map<string, { stateKey: string; reason: string }>,
     openTasksOnly = false,
     reviews: Record<string, AgentJobReviewItem[]> = {},
+    openBlockerTasks?: Set<string>,
   ): Promise<FleetJobView[]> {
     const index = new AgentLineageIndex(all);
     const roots = [...new Set(selected.map(job => index.lineage(job).rootThreadId).filter((value): value is string => !!value))];
     const titles = await this.titles.titlesForThreadIds(roots);
-    const view: FleetReadContext = { index, waits: new DescendantWaitCounter(index), titles, detailed, stranded, openTasksOnly, reviews };
+    const view: FleetReadContext = { index, waits: new DescendantWaitCounter(index), titles, detailed, stranded, openTasksOnly, reviews, openBlockerTasks };
     return selected
       .map(job => this.jobView(job, view, telemetry[job.jobId] ?? {}))
       .filter(job => !openTasksOnly || job.tasks.length > 0);
@@ -173,7 +200,8 @@ export class AgentFleetProjectionService {
     const stranded = strandedMap.get(`${ job.jobId }#${ taskIndex }`);
     const latestCheckin = telemetry?.latestCheckin ?? null;
     const startedAt = task.startedAt ?? job.createdAt;
-    const activity = this.activity.project(job, task, taskIndex, latestCheckin, telemetry?.lastMessageDeliveredAt ?? null);
+    const openBlockerDecision = context.openBlockerTasks?.has(`${ job.jobId }#${ taskIndex }`);
+    const activity = this.activity.project(job, task, taskIndex, latestCheckin, telemetry?.lastMessageDeliveredAt ?? null, openBlockerDecision);
     return {
       taskIndex,
       agentId: task.agentId,
