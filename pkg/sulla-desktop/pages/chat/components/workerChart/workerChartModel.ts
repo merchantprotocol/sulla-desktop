@@ -182,5 +182,8 @@ export class WorkerChartActivityBuckets {
     return buckets;
   }
 
-  public scale(value: number, max: number): number { return value > 0 && max > 0 ? value / max : 0 }
+  public scale(value: number, max: number): number {
+    if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(max) || max <= 0) return 0.04;
+    return Math.max(0.04, value / max);
+  }
 }
