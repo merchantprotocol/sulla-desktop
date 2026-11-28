@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 vi.mock('@pkg/window/agentWindowTrust', () => ({ isAgentWindowSender: vi.fn() }));
-vi.mock('../../../../main/sullaFilesClient', () => ({ FilesApiError: class FilesApiError extends Error { constructor(message:string, readonly status:number) { super(message) } } }));
+vi.mock('@pkg/main/sullaFilesClient', () => ({
+  FilesApiError: class FilesApiError extends Error {
+    constructor(message:string, readonly status:number) { super(message); }
+  },
+}));
 
 import { isAgentWindowSender } from '@pkg/window/agentWindowTrust';
 import { SullaFilesIpcPreviewReadService, SullaFilesPreviewContentClassifier, type SullaFilesPreviewReadCaps } from '@pkg/main/SullaFilesIpcPreviewReadService';
 
-const CAPS:SullaFilesPreviewReadCaps = { html:4, markdown:4, code:4, csv:4, image:4, pdf:4 };
+const CAPS:SullaFilesPreviewReadCaps = { html:4, markdown:4, code:4, csv:4, image:4, pdf:1024 };
 const metadata = (overrides:Record<string, unknown> = {}) => ({ id:'f', path:'file.md', mime:'text/markdown', size:3, collection_id:'c', current_version_id:'v', deleted_at:null, version:{ id:'v', size:3 }, ...overrides });
+const pdfFixture = new Uint8Array(readFileSync(new URL('./fixtures/inline-pdf-fixture.pdf', import.meta.url)));
+const pdfMetadata = (size = pdfFixture.byteLength) => metadata({ path:'file.pdf', mime:'application/pdf', size, version:{ id:'v', size } });
 const clientFor = (metadataValue:unknown = metadata(), stream = vi.fn(async() => new Response('abc')), principal = vi.fn(async() => 'account-a'), authority = vi.fn(async() => principal())) => ({ json:vi.fn(async() => metadataValue), stream, currentPrincipalId:principal, currentAuthorityId:authority });
 const serviceFor = (client:any) => new SullaFilesIpcPreviewReadService({ client } as never, new SullaFilesPreviewContentClassifier(CAPS));
 
@@ -42,14 +49,98 @@ describe('bounded Files preview read', () => {
       .resolves.toEqual({ state:'unavailable', reason:'authority-changed' });
   });
 
-  it.each(['pdf', 'image'])('returns no body and makes no Range request for oversized %s', async(kind) => {
+  it.each(['pdf', 'image'] as const)('returns no body and makes no Range request for oversized %s', async(kind) => {
     const file = kind === 'pdf' ? metadata({ path:'file.pdf', mime:'application/pdf', size:10_000_000, version:{ id:'v', size:10_000_000 } }) : metadata({ path:'file.png', mime:'image/png', size:10_000_000, version:{ id:'v', size:10_000_000 } });
     const stream = vi.fn();
     const client = clientFor(file, stream);
     const result = await serviceFor(client).read('f');
     expect(result).not.toHaveProperty('content');
     expect(stream).not.toHaveBeenCalled();
-    expect(result.state).toBe(kind === 'pdf' ? 'metadata-only' : 'too-large');
+    expect(result).toMatchObject({ state:'too-large', kind, maxBytes:CAPS[kind] });
+  });
+
+  it('returns authorized in-cap PDF bytes without a Range request', async() => {
+    // risk: authorization + data integrity — the inline PDF renderer must receive the complete current version only within the byte cap.
+    const stream = vi.fn(async() => new Response(pdfFixture));
+    const client = clientFor(pdfMetadata(), stream);
+    const result = await serviceFor(client).read('f');
+
+    expect(result).toMatchObject({ state:'ready', kind:'pdf', truncated:false });
+    if (result.state !== 'ready') throw new Error('Expected a ready PDF preview.');
+    expect(result.content).toEqual(pdfFixture);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(stream.mock.calls[0]?.[1]).toEqual({ method:'GET' });
+    expect(client.currentAuthorityId).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns an empty PDF byte array for an empty current version without opening a stream', async() => {
+    // risk: data integrity — zero-length binary PDFs stay binary and do not trigger a misleading network read.
+    const stream = vi.fn();
+    const result = await serviceFor(clientFor(pdfMetadata(0), stream)).read('f');
+
+    expect(result).toMatchObject({ state:'ready', kind:'pdf', truncated:false });
+    if (result.state !== 'ready') throw new Error('Expected a ready PDF preview.');
+    expect(result.content).toEqual(new Uint8Array());
+    expect(stream).not.toHaveBeenCalled();
+  });
+
+  it('discards PDF bytes if the Files authority changes before the read completes', async() => {
+    // risk: permissions — a principal switch must never return previously authorized PDF bytes.
+    const authority = vi.fn().mockResolvedValueOnce('account-a').mockResolvedValueOnce('account-a').mockResolvedValueOnce('account-b');
+    const stream = vi.fn(async() => new Response(pdfFixture));
+    const client = clientFor(pdfMetadata(), stream, vi.fn(async() => 'account-a'), authority);
+    const result = await serviceFor(client).read('f');
+
+    expect(result).toEqual({ state:'unavailable', reason:'authority-changed' });
+    expect(result).not.toHaveProperty('content');
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels an authorized PDF body read when the caller aborts', async() => {
+    // risk: resource bounds — unmounted/cancelled previews must stop reading body bytes.
+    const controller = new AbortController();
+    let startStream!: () => void;
+    const streamStarted = new Promise<void>(resolve => { startStream = resolve; });
+    let cancelled = false;
+    const stream = vi.fn(async(_endpoint:string, _init:RequestInit, signal?:AbortSignal) => {
+      startStream();
+      await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once:true }));
+      return new Response(new ReadableStream<Uint8Array>({
+        start(streamController) { streamController.enqueue(pdfFixture); },
+        cancel() { cancelled = true; },
+      }));
+    });
+    const pending = serviceFor(clientFor(pdfMetadata(), stream)).read('f', { signal:controller.signal });
+    await streamStarted;
+    controller.abort();
+    const result = await pending;
+
+    expect(result).toEqual({ state:'cancelled' });
+    expect(stream.mock.calls[0]?.[2]).toBe(controller.signal);
+    expect(cancelled).toBe(true);
+  });
+
+  it('discards PDF bytes if cancellation arrives during the final authority recheck', async() => {
+    // risk: permissions + resource lifecycle — cancellation wins a race with the final identity check.
+    const controller = new AbortController();
+    let finalCheckStarted!: () => void;
+    const finalCheck = new Promise<void>(resolve => { finalCheckStarted = resolve; });
+    let releaseFinalCheck!: () => void;
+    const finalCheckResult = new Promise<string>(resolve => { releaseFinalCheck = () => resolve('account-a'); });
+    const authority = vi.fn()
+      .mockResolvedValueOnce('account-a')
+      .mockResolvedValueOnce('account-a')
+      .mockImplementationOnce(async() => { finalCheckStarted(); return finalCheckResult; });
+    const stream = vi.fn(async() => new Response(pdfFixture));
+    const pending = serviceFor(clientFor(pdfMetadata(), stream, vi.fn(async() => 'account-a'), authority))
+      .read('f', { signal:controller.signal });
+    await finalCheck;
+    controller.abort();
+    releaseFinalCheck();
+    const result = await pending;
+
+    expect(result).toEqual({ state:'cancelled' });
+    expect(result).not.toHaveProperty('content');
   });
 
   it('rejects an untrusted sender, subframe, non-string and oversized fileId', async() => {
@@ -57,12 +148,42 @@ describe('bounded Files preview read', () => {
     vi.mocked(isAgentWindowSender).mockReturnValue(false);
     const service = serviceFor(clientFor());
     service.register({ handle:register } as never);
-    const handler = register.mock.calls[0][1];
+    const handlers = new Map(register.mock.calls.map(([channel, handler]) => [channel, handler]));
+    const handler = handlers.get('sulla-files:preview-read')!;
+    const cancelHandler = handlers.get('sulla-files:preview-read-cancel')!;
     const mainFrame = { url:'app://.' };
-    await expect(handler({ sender:{ mainFrame }, senderFrame:mainFrame }, { fileId:'f' })).rejects.toThrow('Untrusted');
+    const event = { sender:{ id:17, mainFrame }, senderFrame:mainFrame };
+    await expect(handler(event, { fileId:'f', requestId:'request-1' })).rejects.toThrow('Untrusted');
+    expect(() => cancelHandler(event, { requestId:'request-1' })).toThrow('Untrusted');
     vi.mocked(isAgentWindowSender).mockReturnValue(true);
-    await expect(handler({ sender:{ mainFrame }, senderFrame:{} }, { fileId:'f' })).rejects.toThrow('Untrusted');
-    await expect(handler({ sender:{ mainFrame }, senderFrame:mainFrame }, { fileId:42 })).rejects.toThrow('Invalid');
-    await expect(handler({ sender:{ mainFrame }, senderFrame:mainFrame }, { fileId:'x'.repeat(201) })).rejects.toThrow('Invalid');
+    await expect(handler({ ...event, senderFrame:{} }, { fileId:'f', requestId:'request-1' })).rejects.toThrow('Untrusted');
+    await expect(handler(event, { fileId:42, requestId:'request-1' })).rejects.toThrow('Invalid');
+    await expect(handler(event, { fileId:'f' })).rejects.toThrow('Invalid');
+    await expect(handler(event, { fileId:'x'.repeat(201), requestId:'request-1' })).rejects.toThrow('Invalid');
+  });
+
+  it('cancels an active IPC read owned by the invoking agent window', async() => {
+    // risk: resource lifecycle — unmounting a file card must abort its main-process Files body request.
+    const register = vi.fn();
+    const service = serviceFor(clientFor(pdfMetadata(), vi.fn(async(_endpoint:string, _init:RequestInit, signal?:AbortSignal) => {
+      startStream();
+      await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once:true }));
+      return new Response(new ReadableStream<Uint8Array>({ start(streamController) { streamController.enqueue(pdfFixture); } }));
+    })));
+    service.register({ handle:register } as never);
+    const handlers = new Map(register.mock.calls.map(([channel, handler]) => [channel, handler]));
+    const readHandler = handlers.get('sulla-files:preview-read')!;
+    const cancelHandler = handlers.get('sulla-files:preview-read-cancel')!;
+    const mainFrame = { url:'app://.' };
+    const event = { sender:{ id:29, mainFrame }, senderFrame:mainFrame };
+    let startStream!: () => void;
+    const streamStarted = new Promise<void>(resolve => { startStream = resolve; });
+    vi.mocked(isAgentWindowSender).mockReturnValue(true);
+
+    const pending = readHandler(event, { fileId:'f', requestId:'request-29' });
+    await streamStarted;
+    expect(cancelHandler(event, { requestId:'request-29' })).toEqual({ cancelled:true });
+    await expect(pending).resolves.toEqual({ state:'cancelled' });
+    expect(cancelHandler(event, { requestId:'request-29' })).toEqual({ cancelled:false });
   });
 });
