@@ -10,10 +10,12 @@ describe('delegated Claude native-tool policy', () => {
   const policy = new ClaudeToolPolicy();
 
   it('denies detached-work and direct-human tools while preserving synchronous Sulla CLI tools', () => {
-    // risk: delegated agents bypass the graph or interrupt the human directly
+    // risk: permissions — delegated agents must retain the session-bound parent-first decision tool without regaining detached work or direct control.
     const denied = policy.disallowedToolsFor({ isSubAgent: true, modelSlot: 'primary' }).split(' ');
     expect(denied).toEqual(expect.arrayContaining(DELEGATED_NATIVE_TOOL_DENYLIST.split(' ')));
     expect(denied).toEqual(expect.arrayContaining(BASE_DISALLOWED_TOOLS.split(' ')));
+    expect(denied).toContain('AskUserQuestion');
+    expect(denied).not.toContain('mcp__sulla-native__ask_user_question');
     expect(denied).not.toContain('Bash');
     expect(denied).not.toContain('Read');
     expect(denied).not.toContain('Edit');
@@ -28,11 +30,12 @@ describe('delegated Claude native-tool policy', () => {
   });
 
   it('keeps observers on their unchanged restricted policy', () => {
-    // risk: observer memory agents accidentally regain native filesystem or orchestration tools
+    // risk: observer memory agents accidentally regain action tools, including the question card now enabled for delegated workers.
     const denied = policy.disallowedToolsFor({ modelSlot: 'subconscious', isSubAgent: true }).split(' ');
     expect(denied).toEqual(expect.arrayContaining(BASE_DISALLOWED_TOOLS.split(' ')));
     expect(denied).toEqual(expect.arrayContaining(SUBCONSCIOUS_NATIVE_TOOL_DENYLIST.split(' ')));
     expect(denied).not.toContain('SendMessage');
+    expect(denied).toContain('mcp__sulla-native__ask_user_question');
   });
 
   it('restricts support chats to the gated Sulla support RPC transport', () => {
