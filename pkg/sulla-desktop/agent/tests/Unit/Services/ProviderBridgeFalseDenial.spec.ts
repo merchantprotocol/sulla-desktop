@@ -313,6 +313,10 @@ describe('provider bridge never falsely denies a healthy container job', () => {
 
     const line = timings.find(entry => entry.includes('status=499'))!;
     expect(line).toContain('bridgeRequestId=');
+    expect((line.match(/failure=/g) ?? [])).toHaveLength(1);
+    expect((line.match(/reason=/g) ?? [])).toHaveLength(1);
+    expect((line.match(/stage=/g) ?? [])).toHaveLength(1);
+    expect(line).toContain('failure=provider_bridge_cancelled reason=lifecycle_revoked stage=upstream_stream');
     expect(line).not.toContain('provider_bridge_failed');
     expect(error).not.toHaveBeenCalled();
   });
