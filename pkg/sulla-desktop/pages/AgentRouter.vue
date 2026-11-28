@@ -124,9 +124,7 @@ import { ConversationShellPolicy } from './conversations/ConversationShellPolicy
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
 import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
-import { TabGroupModel } from '@pkg/composables/TabGroupModel';
 import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
-import { TabStripLayoutRepository } from '@pkg/composables/TabStripLayoutRepository';
 import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { selectTabAfterRemoval } from '@pkg/composables/tabSelection';
 import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId, type BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
@@ -156,7 +154,7 @@ const windowTabStrip = new WindowTabStripState(window, ipcRenderer);
 provide(windowTabStripKey, windowTabStrip);
 windowTabStrip.connect();
 onUnmounted(() => windowTabStrip.dispose());
-const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabStripLayoutStorageKey, isTabPinned } = useBrowserTabs();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab, tabGroupModel, isTabPinned } = useBrowserTabs();
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
   statusResolved: vaultStatusResolved.value,
@@ -294,16 +292,15 @@ const hasTitlebar = computed(() => isBrowserRoute.value || [
 const restoredTabId = getPersistedActiveTabId();
 const restoredTab = browserTabs.find(tab => tab.id === restoredTabId);
 const tabGroupReveal = new TabGroupReveal(
-  new TabGroupModel(),
-  new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey),
-  restoredTab && { id: restoredTab.id, mode: restoredTab.mode, pinned: isTabPinned(`browser-${ restoredTab.id }`) },
+  tabGroupModel,
+  restoredTab && { id: `browser-${ restoredTab.id }`, pinned: isTabPinned(`browser-${ restoredTab.id }`) },
 );
 watch(() => {
   const id = /^\/Browser\/(.+)$/.exec(route.path)?.[1];
   if (id) {
     const tab = browserTabs.find(candidate => candidate.id === id);
 
-    return tab && { id, mode: tab.mode, pinned: isTabPinned(`browser-${ id }`) };
+    return tab && { id: `browser-${ id }`, pinned: isTabPinned(`browser-${ id }`) };
   }
 
   return route.path.startsWith('/Extension/') ? { id: `ext-${ route.path }`, pinned: isTabPinned(`ext-${ route.path }`) } : null;

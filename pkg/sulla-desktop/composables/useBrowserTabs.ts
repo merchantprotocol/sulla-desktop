@@ -7,6 +7,7 @@ import { nextTick, reactive, readonly, ref, watch } from 'vue';
 
 import { TabCloseGuardRegistry } from './TabCloseGuardRegistry';
 import { TabGroupModel } from './TabGroupModel';
+import { TabStripLayoutRepository } from './TabStripLayoutRepository';
 import { shouldRunGc, shouldStartFresh, storageKey as makeStorageKey, WindowStorageMigrator, withHostedTab } from './windowStorage';
 
 import type { StudioSection } from '@pkg/components/routines/studioSections';
@@ -535,10 +536,11 @@ function closeTabInHistory(tabId: string): void {
 }
 
 export function useBrowserTabs() {
-  const tabGroupModel = new TabGroupModel();
-  const tabModesByHeaderId = () => new Map(tabs.map(tab => [`browser-${ tab.id }`, tab.mode] as const));
+  const tabStripLayoutStorageKey = storageKey('tab-strip-layout');
+  const tabStripLayoutRepository = new TabStripLayoutRepository(localStorage, tabStripLayoutStorageKey);
+  const tabGroupModel = new TabGroupModel(tabStripLayoutRepository);
   const orderTabIds = (ids: readonly string[], pins: readonly string[] = pinnedTabIds.value) =>
-    tabGroupModel.orderTabIds(ids, tabModesByHeaderId(), pins);
+    tabGroupModel.orderTabIds(ids, pins);
 
   const MODE_TITLES: Record<BrowserTabMode, string> = {
     welcome:           'New Tab',
@@ -653,6 +655,7 @@ export function useBrowserTabs() {
       // Record closure in conversation history
       closeTabInHistory(id);
       const removed = tabs[idx];
+      tabGroupModel.moveTabToGroup(`browser-${ id }`);
       if (removed.mode === 'chat') window.dispatchEvent(new CustomEvent('sulla:chat-tab-closed', { detail: { tabId: id } }));
       if (previewTabId.value === id) previewTabId.value = null;
 
@@ -692,6 +695,7 @@ export function useBrowserTabs() {
     const index = tabs.findIndex(tab => tab.id === id);
     if (index < 0) return null;
     const [tab] = tabs.splice(index, 1);
+    tabGroupModel.moveTabToGroup(`browser-${ id }`);
     if (previewTabId.value === id) previewTabId.value = null;
     const headerId = `browser-${ id }`;
     tabOrder.value = tabOrder.value.filter(existing => existing !== headerId);
@@ -788,6 +792,8 @@ export function useBrowserTabs() {
 
     if (pinned) nextPinned.push(id);
 
+    if (pinned) tabGroupModel.moveTabToGroup(id);
+
     const ids = tabOrder.value.filter(tabId => tabId !== id);
     const pinnedSet = new Set(nextPinned);
     const boundary = ids.filter(tabId => pinnedSet.has(tabId)).length;
@@ -809,7 +815,6 @@ export function useBrowserTabs() {
       tabOrder.value,
       fromIndex,
       toIndex,
-      tabModesByHeaderId(),
       pinnedTabIds.value,
     );
   }
@@ -858,7 +863,9 @@ export function useBrowserTabs() {
     restoreHistoryTab,
     clearClosedTabs,
     reorderTabs,
-    tabStripLayoutStorageKey: storageKey('tab-strip-layout'),
+    tabGroupModel,
+    tabStripLayoutRepository,
+    tabStripLayoutStorageKey,
   };
 }
 

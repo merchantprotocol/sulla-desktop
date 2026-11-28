@@ -3,23 +3,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import type { GroupableTab, TabGroupId, TabGroupModel } from './TabGroupModel';
-import type { TabStripLayoutRepository } from './TabStripLayoutRepository';
 
 interface TabPlacement {
   id:     string;
   pinned: boolean;
-  group:  TabGroupId;
+  group?: TabGroupId;
 }
 
-/** Reveals an active placement once, regardless of how many headers render it. */
+/** Reveals a selected tab's user group once, regardless of how many headers render it. */
 export class TabGroupReveal {
   private active?: TabPlacement;
 
-  constructor(
-    private readonly groups: TabGroupModel,
-    private readonly layout: Pick<TabStripLayoutRepository, 'foldedGroups' | 'setFoldedGroups'>,
-    restoredTab?: GroupableTab,
-  ) {
+  constructor(private readonly groups: Pick<TabGroupModel, 'getGroupIdForTab' | 'setCollapsed'>, restoredTab?: GroupableTab) {
     this.active = this.placement(restoredTab);
   }
 
@@ -28,14 +23,11 @@ export class TabGroupReveal {
 
     if (this.active?.id === next?.id && this.active?.pinned === next?.pinned && this.active?.group === next?.group) return;
     this.active = next;
-    if (!next || next.pinned) return;
-    const { group } = next;
-    const folded = this.layout.foldedGroups.value;
-
-    if (folded.includes(group)) this.layout.setFoldedGroups(folded.filter(id => id !== group));
+    if (!next || next.pinned || !next.group) return;
+    this.groups.setCollapsed(next.group, false);
   }
 
   private placement(tab?: GroupableTab): TabPlacement | undefined {
-    if (tab) return { id: tab.id, pinned: tab.pinned === true, group: this.groups.groupForMode(tab.mode) };
+    if (tab) return { id: tab.id, pinned: tab.pinned === true, group: this.groups.getGroupIdForTab(tab.id) };
   }
 }
