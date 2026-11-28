@@ -949,13 +949,17 @@ export class ChatController {
    * Hydration is deliberately non-authoritative: another renderer can mount
    * while the backend graph and its tool call are still live.
    */
-  settleInterruptedToolSteps(): void {
+  settleInterruptedToolSteps(cutoff = Date.now()): void {
+    if (this.isRunning.value) return;
+
     const now = Date.now();
     let changed = false;
     for (const [index, message] of this.thread.value.messages.entries()) {
       if (message.kind !== 'tool' || message.status !== 'running') continue;
       const metadata = typeof message.meta === 'object' && message.meta !== null ? message.meta : undefined;
       const step = metadata?.step;
+      const startedAt = typeof step?.startedAt === 'number' && Number.isFinite(step.startedAt) ? step.startedAt : message.createdAt;
+      if (startedAt > cutoff) continue;
       const endedAt = typeof step?.endedAt === 'number' && Number.isFinite(step.endedAt) ? step.endedAt : undefined;
       if (endedAt !== undefined && typeof step?.ok === 'boolean') {
         this.updateMessage<ToolMessage>(message.id, {
