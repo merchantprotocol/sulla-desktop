@@ -127,7 +127,7 @@ describe('bounded inline PDF paging', () => {
     const controller = new InlinePdfPreviewController(loaderFor(document));
     const result = await controller.open(fixture, canvasSurface().canvas);
 
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('load-error');
     expect(result.message).toContain('pages');
     expect(document.getPage).not.toHaveBeenCalled();
     await controller.destroy();
@@ -138,9 +138,52 @@ describe('bounded inline PDF paging', () => {
     const controller = new InlinePdfPreviewController(loaderFor(documentWith(1)));
     const result = await controller.open(new Uint8Array(), canvasSurface().canvas);
 
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('load-error');
     expect(result.message).toContain('empty or damaged');
     expect(result.message).toContain('tab');
+  });
+
+  it('keeps page navigation available after a page render error', async() => {
+    // risk: data availability — one bad page render must not lock navigation to other pages.
+    const firstPageTask:InlinePdfRenderTask = { promise:Promise.reject(new Error('rasterization failed')), cancel:vi.fn() };
+    const document = documentWith(2, new Map([[1, pageWith(firstPageTask)], [2, pageWith()]]));
+    const controller = new InlinePdfPreviewController(loaderFor(document));
+
+    const firstPage = await controller.open(fixture, canvasSurface().canvas);
+    expect(firstPage).toMatchObject({ status:'render-error', pageNumber:1, pageCount:2 });
+
+    const secondPage = await controller.nextPage();
+    expect(secondPage).toMatchObject({ status:'ready', pageNumber:2, pageCount:2 });
+    expect(document.getPage).toHaveBeenCalledTimes(2);
+    await controller.destroy();
+  });
+
+  it('keeps the next-page control enabled after a page render error', async() => {
+    // risk: usability — a failed canvas render cannot disable navigation to another loaded page.
+    const firstPageTask:InlinePdfRenderTask = { promise:Promise.reject(new Error('rasterization failed')), cancel:vi.fn() };
+    const pdfDocument = documentWith(2, new Map([[1, pageWith(firstPageTask)], [2, pageWith()]]));
+    const context = { fillStyle:'', fillRect:vi.fn() } as unknown as CanvasRenderingContext2D;
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as never);
+    const wrapper = mount(InlineFileCard, {
+      props:{
+        pdfDocumentLoader:loaderFor(pdfDocument),
+        file:{
+          fileId:'fixture-pdf', name:'inline-pdf-fixture.pdf', path:'fixtures/inline-pdf-fixture.pdf',
+          status:'ready', canOpenInTab:true, preview:{ kind:'pdf', bytes:fixture },
+        },
+      },
+    });
+    const preview = wrapper.findComponent(InlinePdfPreview);
+    const latestState = () => preview.emitted('state-change')?.at(-1)?.[0];
+    await vi.waitFor(() => expect(latestState()).toMatchObject({ status:'render-error', pageNumber:1, pageCount:2 }));
+    const nextPageButton = wrapper.get('[title="Next page"]');
+    expect((nextPageButton.element as HTMLButtonElement).disabled).toBe(false);
+
+    await nextPageButton.trigger('click');
+    await vi.waitFor(() => expect(latestState()).toMatchObject({ status:'ready', pageNumber:2, pageCount:2 }));
+    expect(pdfDocument.getPage).toHaveBeenCalledTimes(2);
+    wrapper.unmount();
+    getContext.mockRestore();
   });
 
   it('cancels an in-flight page render before requesting the next page', async() => {
@@ -186,7 +229,7 @@ describe('bounded inline PDF paging', () => {
     const controller = new InlinePdfPreviewController(loader);
     const result = await controller.open(fixture, canvasSurface().canvas);
 
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('load-error');
     expect(result.message).toContain(expected);
     expect(result.message).toContain('tab');
   });
@@ -203,7 +246,7 @@ describe('bounded inline PDF paging', () => {
     const controller = new InlinePdfPreviewController(loader, 5, 20);
     const result = await controller.open(fixture, canvasSurface().canvas);
 
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('load-error');
     expect(result.message).toContain('too long');
     expect(loaderSignal?.aborted).toBe(true);
   });
@@ -220,7 +263,7 @@ describe('bounded inline PDF paging', () => {
     const controller = new InlinePdfPreviewController(loaderFor(document), 12_000, 5);
     const result = await controller.open(fixture, canvasSurface().canvas);
 
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('render-error');
     expect(result.message).toContain('too long');
     pendingPage.resolve(latePage);
     await Promise.resolve();
@@ -260,11 +303,11 @@ describe('bounded inline PDF paging', () => {
     // risk: usability — keyboard and button paging must reach the same bounded renderer.
     const context = { fillStyle:'', fillRect:vi.fn() } as unknown as CanvasRenderingContext2D;
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as never);
-    const document = documentWith(2);
+    const pdfDocument = documentWith(2);
     const wrapper = mount(InlineFileCard, {
       attachTo:document.body,
       props:{
-        pdfDocumentLoader:loaderFor(document),
+        pdfDocumentLoader:loaderFor(pdfDocument),
         file:{
           fileId:'fixture-pdf', name:'inline-pdf-fixture.pdf', path:'fixtures/inline-pdf-fixture.pdf',
           status:'ready', canOpenInTab:true, preview:{ kind:'pdf', bytes:fixture },
@@ -277,14 +320,36 @@ describe('bounded inline PDF paging', () => {
 
     const card = wrapper.get('article');
     (card.element as HTMLElement).focus();
+    expect(document.activeElement).toBe(card.element);
+    for (const modifier of [{ altKey:true }, { metaKey:true }, { ctrlKey:true }]) {
+      await card.trigger('keydown', { key:'ArrowRight', ...modifier });
+      expect(latestState()).toMatchObject({ pageNumber:1, pageCount:2 });
+      expect(document.activeElement).toBe(card.element);
+    }
+
+    await card.trigger('keydown', { key:'ArrowLeft' });
+    expect(document.activeElement).toBe(wrapper.get('[title="Next page"]').element);
+    expect(latestState()).toMatchObject({ pageNumber:1, pageCount:2 });
+
+    (card.element as HTMLElement).focus();
+    expect(document.activeElement).toBe(card.element);
     await card.trigger('keydown', { key:'ArrowRight' });
     await vi.waitFor(() => expect(latestState()).toMatchObject({ status:'ready', pageNumber:2, pageCount:2 }));
 
+    await card.trigger('keydown', { key:'ArrowRight' });
+    expect(document.activeElement).toBe(wrapper.get('[title="Previous page"]').element);
+    expect(latestState()).toMatchObject({ pageNumber:2, pageCount:2 });
+
     await wrapper.get('[title="Previous page"]').trigger('click');
     await vi.waitFor(() => expect(latestState()).toMatchObject({ status:'ready', pageNumber:1, pageCount:2 }));
-    expect(document.getPage).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(document.activeElement).toBe(wrapper.get('[title="Next page"]').element));
+
+    await wrapper.get('[title="Next page"]').trigger('click');
+    await vi.waitFor(() => expect(latestState()).toMatchObject({ status:'ready', pageNumber:2, pageCount:2 }));
+    await vi.waitFor(() => expect(document.activeElement).toBe(wrapper.get('[title="Previous page"]').element));
+    expect(pdfDocument.getPage).toHaveBeenCalledTimes(4);
     wrapper.unmount();
-    expect(document.destroy).toHaveBeenCalledTimes(1);
+    expect(pdfDocument.destroy).toHaveBeenCalledTimes(1);
     getContext.mockRestore();
   });
 });
