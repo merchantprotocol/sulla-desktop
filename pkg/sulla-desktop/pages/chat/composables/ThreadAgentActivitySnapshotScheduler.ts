@@ -6,15 +6,21 @@ export interface ThreadAgentActivitySnapshotSink {
   publish(snapshot: AgentStateSnapshot, now: number): void;
   /** Advance time-dependent popup details without rebuilding unchanged agent rows. */
   tick?(now: number): void;
+  /** Emit the next queued action blip for each agent in this shared scheduler tick. */
+  actionBlips?(agentKeys: readonly string[]): void;
 }
 
-/** Coalesces working snapshots to one per second and keeps clock-only ticks off the row views. */
+/** Coalesces working snapshots and drains action blips through one shared timer. */
 export class ThreadAgentActivitySnapshotScheduler {
+  private static readonly actionBlipIntervalMs = 100;
   private latestSnapshot: AgentStateSnapshot;
   private activeThreadId?: string;
   private initialized = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private publishedRows: readonly AgentStateRow[] = [];
+  private lastPublishedAt: number | null = null;
+  private readonly lastActionCounts = new Map<string, number>();
+  private readonly pendingActionBlips = new Map<string, number>();
 
   constructor(
     initialSnapshot: AgentStateSnapshot,
@@ -32,29 +38,83 @@ export class ThreadAgentActivitySnapshotScheduler {
     this.latestSnapshot = snapshot;
 
     const rows = this.rowsForThread(snapshot, threadId);
+    this.collectActionDeltas(rows, threadChanged);
     const working = rows.some(row => row.state === 'working');
 
     if (working) {
       if (threadChanged || this.timer === null) this.publish(rows, true);
-      if (this.timer === null) this.timer = setInterval(this.publish, this.intervalMs);
+      this.start();
       return;
     }
 
-    this.stop();
     if (threadChanged || this.rowsChanged(rows)) this.publish(rows, true);
+    if (this.pendingActionBlips.size) this.start();
+    else this.stop();
   }
 
   dispose(): void { this.stop() }
 
-  private publish = (rows = this.rowsForThread(this.latestSnapshot, this.activeThreadId), force = false): void => {
+  private publish(rows: readonly AgentStateRow[], force = false): void {
     const now = this.now();
     if (force || this.rowsChanged(rows)) {
       this.publishedRows = rows;
+      this.lastPublishedAt = now;
       this.sink.publish(this.latestSnapshot, now);
       return;
     }
     this.sink.tick?.(now);
+    this.lastPublishedAt = now;
+  }
+
+  private onTimer = (): void => {
+    this.drainActionBlips();
+    const rows = this.rowsForThread(this.latestSnapshot, this.activeThreadId);
+    const working = rows.some(row => row.state === 'working');
+    const now = this.now();
+    if (working && (this.lastPublishedAt === null || now - this.lastPublishedAt >= this.intervalMs)) {
+      this.publish(rows);
+    }
+    if (!working && !this.pendingActionBlips.size) this.stop();
   };
+
+  private collectActionDeltas(rows: readonly AgentStateRow[], reset: boolean): void {
+    const currentKeys = new Set<string>();
+    for (const row of rows) {
+      currentKeys.add(row.key);
+      const count = row.actionCount;
+      if (count === undefined) {
+        this.lastActionCounts.delete(row.key);
+        continue;
+      }
+      const previous = this.lastActionCounts.get(row.key);
+      if (!reset && previous !== undefined && count > previous) {
+        this.pendingActionBlips.set(row.key, (this.pendingActionBlips.get(row.key) ?? 0) + count - previous);
+      }
+      this.lastActionCounts.set(row.key, count);
+    }
+    for (const key of this.lastActionCounts.keys()) {
+      if (!currentKeys.has(key)) {
+        this.lastActionCounts.delete(key);
+        this.pendingActionBlips.delete(key);
+      }
+    }
+  }
+
+  private drainActionBlips(): void {
+    if (!this.pendingActionBlips.size) return;
+    const agentKeys: string[] = [];
+    for (const [key, pending] of this.pendingActionBlips) {
+      agentKeys.push(key);
+      if (pending <= 1) this.pendingActionBlips.delete(key);
+      else this.pendingActionBlips.set(key, pending - 1);
+    }
+    this.sink.actionBlips?.(agentKeys);
+  }
+
+  private start(): void {
+    if (this.timer !== null) return;
+    this.timer = setInterval(this.onTimer, Math.min(this.intervalMs, ThreadAgentActivitySnapshotScheduler.actionBlipIntervalMs));
+  }
 
   private rowsChanged(rows: readonly AgentStateRow[]): boolean {
     if (rows.length !== this.publishedRows.length) return true;
