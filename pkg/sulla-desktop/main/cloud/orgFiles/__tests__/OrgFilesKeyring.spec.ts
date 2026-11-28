@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { webcrypto } from 'node:crypto';
 import { ProfileCatalogEntry } from '../../../../../../packages/vault-profiles/src/index.js';
 import { describe, expect, it, vi } from 'vitest';
