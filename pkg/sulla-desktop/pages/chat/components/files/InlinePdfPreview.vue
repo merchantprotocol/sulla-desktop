@@ -7,7 +7,7 @@
 <template>
   <div class="pdf-preview">
     <p v-if="state.status === 'loading'" class="pdf-status" role="status">Rendering PDF page…</p>
-    <p v-else-if="state.status === 'error'" class="pdf-status pdf-error" role="alert">{{ state.message }}</p>
+    <p v-else-if="state.status === 'load-error' || state.status === 'render-error'" class="pdf-status pdf-error" role="alert">{{ state.message }}</p>
     <div class="pdf-page-frame">
       <canvas ref="canvas" class="pdf-page" :aria-label="pageDescription" />
     </div>
