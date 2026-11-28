@@ -778,6 +778,7 @@ export class SpawnAgentWorker extends BaseTool {
           const { createAgentContainerLifecycle } = await import('../../services/AgentContainerLauncher');
           const { delegatedThreadPersistenceKey } = await import('../../services/DelegatedContainerKey');
           const createLifecycle = () => createAgentContainerLifecycle({
+            kind: 'delegated',
             jobId: activityJobId!,
             taskIndex: index,
             provider,
