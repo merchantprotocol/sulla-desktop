@@ -55,7 +55,21 @@
     </svg>
     <span class="tab-icon">
       <span
-        v-if="tab.working || tab.activity === 'working'"
+        v-if="statusIcon.kind === 'alert'"
+        class="tab-needs-alert-icon"
+        aria-hidden="true"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        ><path d="M8 2.6 14 13H2z" /><path d="M8 6.6v3M8 11.2v.1" /></svg>
+      </span>
+      <span
+        v-else-if="tab.working || tab.activity === 'working'"
         class="tab-status tab-status-working tab-icon-meter"
         role="img"
         :aria-label="activityLabels.working"
@@ -146,6 +160,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { BrowserTabMode } from '@pkg/composables/useBrowserTabs';
+import { TabNeedsYouIconResolver } from '@pkg/composables/TabNeedsYouIconResolver';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
 
 interface TabStripTabData {
@@ -198,6 +213,8 @@ const labelElement = ref<HTMLSpanElement | null>(null);
 const labelOverflows = ref(false);
 let labelResizeObserver: ResizeObserver | null = null;
 const GENERIC_TAB_ICON_PATH = 'M4 4h16v16H4zM8 8h8M8 12h8M8 16h5';
+const needsYouIconResolver = new TabNeedsYouIconResolver();
+const statusIcon = computed(() => needsYouIconResolver.resolve(props.tab.mode, props.tab.activity, props.tab.iconPath || GENERIC_TAB_ICON_PATH));
 function onPointerDown(event: PointerEvent, index: number): void {
   if (!props.compact) emit('pointerdown', event, index);
 }
