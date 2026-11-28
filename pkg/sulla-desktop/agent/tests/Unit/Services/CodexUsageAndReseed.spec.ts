@@ -5,12 +5,36 @@
 
 import '../../Support/TestHomeEnv';
 
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { CodexService } from '../../../languagemodels/CodexService';
+import { getProviderExecutionTransport } from '../../../languagemodels/ProviderExecutionTransport';
 import { UsageRecorder } from '../../../languagemodels/UsageRecorder';
 
 vi.mock('electron', () => ({ app: { getPath: () => '/tmp', getVersion: () => 'test', isPackaged: false }, safeStorage: {} }));
+vi.mock('../../../languagemodels/ProviderExecutionTransport', () => ({
+  getProviderExecutionTransport: vi.fn(),
+  requireBrokeredContainerAuth: vi.fn(() => ({})),
+  requireContainerToolConfig: vi.fn(() => ({})),
+}));
+vi.mock('../../../languagemodels/codexMcpConfig', () => ({
+  bindCodexMcpSession: vi.fn(() => null),
+  buildCodexMcpOverrides: vi.fn(() => []),
+  CODEX_MCP_TOKEN_ENV: 'SULLA_TEST_TOKEN',
+}));
+vi.mock('../../../languagemodels/providerSessionStore', () => ({
+  providerSessionStore: { get: vi.fn(async() => undefined), set: vi.fn(async() => {}), delete: vi.fn(async() => {}) },
+}));
+vi.mock('../../../services/AgentContainerRuntimeRegistry', () => ({ currentAgentContainerRuntime: vi.fn(() => undefined) }));
+vi.mock('../../../tools/agents/workerMessaging', () => ({ prepareWorkerTurnPrompt: (_state: unknown, prompt: string) => prompt }));
+vi.mock('../../../utils/steerChannel', () => ({
+  markSteerDelivered: vi.fn(), markSteerPending: vi.fn(), onSteer: vi.fn(() => () => {}),
+}));
+vi.mock('@pkg/main/MCPServerHost', () => ({ getMCPServerHost: vi.fn(() => ({})) }));
+vi.mock('@pkg/main/firstRun/firstRunTrace', () => ({ firstRunTrace: vi.fn() }));
 
 const context = {
   runId:       'run-1',
@@ -22,6 +46,56 @@ const context = {
 };
 
 describe('Codex usage and transcript reseeding', () => {
+  it('correlates completion usage with the dispatcher runId in state metadata', async() => {
+    // risk: E1 telemetry accuracy — uncorrelated usage cannot be joined to the turn timing record.
+    const proc = Object.assign(new EventEmitter(), {
+      stdin:    new PassThrough(),
+      stdout:   new PassThrough(),
+      stderr:   new PassThrough(),
+      exitCode: null,
+      kill:     vi.fn(() => true),
+    });
+    const transport = {
+      runtime:   'container',
+      context:   vi.fn(async() => ({ runtime: 'container' })),
+      files:     { write: vi.fn(async() => ({ path: '/tmp/test-instructions.md', dispose: vi.fn() })) },
+      spawn:     vi.fn(() => proc),
+      terminate: vi.fn(async() => {}),
+    };
+    vi.mocked(getProviderExecutionTransport).mockReturnValue(transport as any);
+
+    const service = new CodexService('gpt-5.5', 'medium') as any;
+    vi.spyOn(service, 'getSession').mockResolvedValue(undefined);
+    vi.spyOn(service, 'buildUserMessageContextPrefix').mockResolvedValue({ prefix: '', stableHash: '' });
+    const recorded: unknown[] = [];
+    const recorder = new UsageRecorder(() => {});
+    vi.spyOn(service.usageRecorder, 'recordCodex').mockImplementation((usage: unknown, usageContext: any) => {
+      const sample = recorder.recordCodex(usage, usageContext);
+      recorded.push(sample);
+      return sample;
+    });
+
+    const result = service.runCodex([
+      { role: 'system', content: 'Synthetic run instructions.' },
+      { role: 'user', content: 'Run one synthetic turn.' },
+    ], {}, { conversationId: 'conv-1', state: { metadata: { runId: 'run-1' } } });
+    await vi.waitFor(() => expect(transport.spawn).toHaveBeenCalledOnce());
+
+    proc.emit('spawn');
+    proc.stdout.write(`${ JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }) }\n`);
+    proc.stdout.write(`${ JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'ok' } }) }\n`);
+    proc.stdout.write(`${ JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 12, output_tokens: 3 } }) }\n`);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    proc.emit('exit', 0, null);
+    proc.emit('close', 0, null);
+
+    await expect(result).resolves.toMatchObject({ text: 'ok' });
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      runId: 'run-1', convId: 'conv-1', threadId: 'thread-1', inputTokens: 12, outputTokens: 3,
+    });
+  });
+
   it('maps Codex completion usage and Claude result usage while keeping turn order per session', () => {
     // risk: telemetry accuracy — wrong cache or reasoning counters make payload and cost analysis misleading.
     const recorder = new UsageRecorder(() => {});
