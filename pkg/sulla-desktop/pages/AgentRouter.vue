@@ -151,14 +151,14 @@ async function answerPermission(granted:boolean){const prompt=permissionPrompt.v
 const route = useRoute();
 const router = useRouter();
 const filesOpenDestinationRouter = new FilesOpenDestinationRouter();
+const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
+const { tabGroupModel, isTabPinned } = useBrowserTabs();
+const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const windowTabStrip = new WindowTabStripState(window, ipcRenderer);
 
 provide(windowTabStripKey, windowTabStrip);
 windowTabStrip.connect();
 onUnmounted(() => windowTabStrip.dispose());
-const { tabs: browserTabs, tabOrder, pinnedTabIds, createTab, ensureOneTab, restoreClosedTab, updateTab, adoptTab, releaseTab } = useBrowserTabs();
-const { tabGroupModel, isTabPinned } = useBrowserTabs();
-const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
   statusResolved: vaultStatusResolved.value,
   loggedIn: vaultLoggedIn.value,
