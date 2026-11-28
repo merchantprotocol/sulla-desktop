@@ -14,6 +14,19 @@ export class CompletionConsumptionRecorder {
     for (const entry of entries) this.entries.set(this.keyOf(entry), entry);
   }
 
+  confirmConsumed(entries: PendingCompletion[]): void {
+    for (const entry of entries) this.entries.delete(this.keyOf(entry));
+  }
+
+  hasPending(entry: PendingCompletion): boolean {
+    return this.entries.has(this.keyOf(entry));
+  }
+
+  /** Keep claims owned by the explicit post-run continuation instead of releasing them twice. */
+  handoff(entries: PendingCompletion[]): void {
+    this.confirmConsumed(entries);
+  }
+
   confirmSeen(): void {
     this.confirmed = true;
     this.entries.clear();
@@ -36,7 +49,11 @@ export class CompletionConsumptionRecorder {
         continue;
       }
       const carried = message?.metadata?.completionEntries;
-      if (answered && Array.isArray(carried)) for (const entry of carried) this.entries.delete(this.keyOf(entry));
+      // A pending steer is explicitly known not to have reached a provider
+      // boundary. A later reply to some other prompt must not consume it.
+      if (answered && message?.metadata?.steerPending !== true && Array.isArray(carried)) {
+        for (const entry of carried) this.entries.delete(this.keyOf(entry));
+      }
     }
   }
 

@@ -47,7 +47,7 @@ import { prepareWorkerTurnPrompt } from '../tools/agents/workerMessaging';
 import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } from '../usage/providerUsage';
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { RecallDedupe } from '../utils/recallDedupe';
-import { markSteerPending, onSteer } from '../utils/steerChannel';
+import { markSteerDelivered, markSteerPending, onSteer } from '../utils/steerChannel';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -1554,7 +1554,8 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               return;
             }
             if (idx >= 0) {
-              steersInFlight.splice(idx, 1);
+              const [consumed] = steersInFlight.splice(idx, 1);
+              if (consumed) markSteerDelivered(consumed.message, 'claude_replay');
               if (steerGraceTimer && !steersInFlight.length) { clearTimeout(steerGraceTimer); steerGraceTimer = null }
               emitActivity('Claude picked up your message', 'status');
             }

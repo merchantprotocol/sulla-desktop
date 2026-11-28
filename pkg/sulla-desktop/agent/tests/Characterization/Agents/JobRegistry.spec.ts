@@ -22,9 +22,12 @@ import { AgentJobServiceProvider } from '../../../app/Providers/AgentJobServiceP
 // Lifecycle tests run in Node without an installed Electron application binary.
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), getVersion: () => '0.0.0-test', isPackaged: false }, safeStorage: {} }));
 
-const { wakeParkedAgent } = vi.hoisted(() => ({ wakeParkedAgent: vi.fn(async() => undefined) }));
+const { wakeParkedAgent, steerOrchestratorMessageIfBusy } = vi.hoisted(() => ({
+  wakeParkedAgent: vi.fn(async() => undefined),
+  steerOrchestratorMessageIfBusy: vi.fn(() => false),
+}));
 vi.mock('../../../services/BackendGraphWebSocketService', () => ({
-  getBackendGraphWebSocketService: () => ({ wakeParkedAgent }),
+  getBackendGraphWebSocketService: () => ({ wakeParkedAgent, steerOrchestratorMessageIfBusy }),
 }));
 
 class CheckAgentJobsHarness extends CheckAgentJobsWorker {

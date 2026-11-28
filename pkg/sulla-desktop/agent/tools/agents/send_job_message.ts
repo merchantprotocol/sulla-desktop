@@ -94,6 +94,16 @@ export async function sendJobMessage(input: { jobId: string; taskIndex?: number;
       jobMessageKind:     record.messageKind,
     };
 
+    // Queue first (above), then route a live parent through the shared
+    // provider-boundary acknowledgement path. Marking the row delivered just
+    // because injectSteer accepted it would lose it if the live turn ended
+    // before consuming the steer.
+    const { getBackendGraphWebSocketService } = await import('../../services/BackendGraphWebSocketService');
+    if (getBackendGraphWebSocketService().steerOrchestratorMessageIfBusy(job?.parentChannel ?? 'sulla-desktop', target.threadId, message, meta)) {
+      deliveredLive += 1;
+      continue;
+    }
+
     if (job?.visibility === 'tab') {
       const { messageAgentTab } = await import('../../services/AgentTabOpener');
       try {

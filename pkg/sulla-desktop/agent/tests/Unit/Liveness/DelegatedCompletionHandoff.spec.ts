@@ -4,6 +4,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('../../../../utils/logging', () => ({ default: { perf: { log: () => undefined } } }));
+
 vi.mock('../../../app/Providers/AgentJobServiceProvider', () => ({ agentJobProvider: {} }));
 vi.mock('../../../tools/agents/jobDelivery', () => ({ deliverJobCompletion: vi.fn(), returnedJobResult: vi.fn() }));
 vi.mock('../../../tools/agents/jobRegistry', () => ({ completeJob: vi.fn(), getJob: vi.fn(), parkJobTask: vi.fn(), recordTaskCompletion: vi.fn(), resumeParkedJob: vi.fn() }));
@@ -14,6 +16,7 @@ import { CompletionFormatter } from '../../../app/Services/CompletionFormatter';
 import { CompletionIdleDispatcher } from '../../../app/Services/CompletionIdleDispatcher';
 import { DelegatedCompletionHandoff, type DelegatedThreadState } from '../../../app/Services/DelegatedCompletionHandoff';
 import { AgentJobLifecycleService } from '../../../services/AgentJobLifecycleService';
+import { injectSteer, markSteerDelivered } from '../../../utils/steerChannel';
 
 const MANAGER_CHANNEL = 'coding-manager';
 const MANAGER_THREAD = 'thread-manager';
@@ -32,7 +35,7 @@ class NestedDelegationHarness {
       firstDelivered: async entry => { this.delivered.push(`${ entry.jobId }#${ entry.taskIndex }`) },
       acknowledge:    async entry => { this.acknowledged.push(`${ entry.jobId }#${ entry.taskIndex }`); this.inbox.acknowledge(entry) },
     },
-    (state, message) => { state.messages.push(message) },
+    (state, message, options) => { injectSteer(state as any, message, options) },
     () => `msg-${ this.state.messages.length + 1 }`,
   );
 
@@ -78,6 +81,10 @@ describe('nested child completion wakes its delegated manager', () => {
     expect(steers[0].metadata.completionEntries.map((entry: PendingCompletion) => entry.jobId)).toEqual(['child-job-1']);
     expect(steers[0].content).toContain('child-job-1 done');
     expect(harness.inbox.pendingCount()).toBe(0);
+    expect(harness.acknowledged).toEqual([]);
+    markSteerDelivered(steers[0]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(harness.acknowledged).toEqual(['child-job-1#0']);
   });
 
   it('wakes a manager that is already parked and consumes the completion exactly once', async() => {
@@ -91,9 +98,26 @@ describe('nested child completion wakes its delegated manager', () => {
     expect(harness.childReturns('child-job-2')).toBe(false); // recovery re-send is a duplicate
     await harness.flush();
     expect(harness.completionSteers()).toHaveLength(1);
+    expect(harness.acknowledged).toEqual([]);
+    markSteerDelivered(harness.completionSteers()[0]);
+    await new Promise(resolve => setImmediate(resolve));
     expect(harness.delivered).toEqual(['child-job-2#0']);
     expect(harness.acknowledged).toEqual(['child-job-2#0']);
     expect(harness.inbox.pendingCount()).toBe(0);
+  });
+
+  it('keeps multiple live-turn completions in their enqueue order', async() => {
+    // risk: reordered helper results can make a manager act on stale information.
+    const harness = new NestedDelegationHarness();
+    harness.childReturns('first-child');
+    harness.childReturns('second-child');
+    await harness.flush();
+
+    expect(harness.completionSteers().map(message => message.metadata.completionEntries[0].jobId)).toEqual(['first-child', 'second-child']);
+    expect(harness.completionSteers().map(message => message.content)).toEqual(expect.arrayContaining([
+      expect.stringContaining('first-child done'),
+      expect.stringContaining('second-child done'),
+    ]));
   });
 
   it('leaves a dormant thread (no live runner) to the normal dispatch path', async() => {

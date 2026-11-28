@@ -22,11 +22,22 @@
  */
 import { DeferredStallInput } from '../app/Services/DeferredStallInput';
 import type { ChatMessage } from '../languagemodels/BaseLanguageModel';
+import { ParentInputWaitRecorder, type ParentInputWaitBoundary, type ParentInputWaitRecord } from '../services/ParentInputWaitRecorder';
 
 /** Return true when the listener took ownership of delivering the steer. */
 export type SteerListener = (message: ChatMessage) => boolean;
 
 const listeners = new WeakMap<object, Set<SteerListener>>();
+const STEER_CONSUMED_CALLBACK = Symbol('steer-consumed-callback');
+const PARENT_INPUT_WAIT_RECORDER = Symbol('parent-input-wait-recorder');
+const STEER_CONSUMED_PROMISE = Symbol('steer-consumed-promise');
+
+export interface SteerInjectionOptions {
+  /** Runtime-only callback; it is deliberately non-enumerable and never persisted with thread state. */
+  onConsumed?: (message: ChatMessage, boundary: ParentInputWaitBoundary) => Promise<void> | void;
+  /** Injected with the steer so the same recorder owns both defer and delivery events. */
+  recorder?: ParentInputWaitRecorder;
+}
 
 export function isPendingSteer(message: any): boolean {
   return message?.role === 'user' && message?.metadata?.steerPending === true;
@@ -36,12 +47,27 @@ export function pendingSteers(state: { messages?: ChatMessage[] }): ChatMessage[
   return Array.isArray(state?.messages) ? state.messages.filter(isPendingSteer) : [];
 }
 
-export function markSteerDelivered(message: ChatMessage): void {
+export function markSteerDelivered(message: ChatMessage, boundary: ParentInputWaitBoundary = 'api_prompt'): void {
   const meta = (message as any).metadata;
   if (meta && meta.steerPending) {
     meta.steerPending = false;
     meta.steerDeliveredAt = Date.now();
-    if (typeof meta.jobMessageId === 'string' && typeof meta.jobMessageThreadId === 'string') {
+    const deliveredBoundary = meta.parentInputWaitBoundary === 'followup' ? 'followup' : boundary;
+    const waits = Array.isArray(meta.parentInputWait) ? meta.parentInputWait as ParentInputWaitRecord[] : [];
+    if (waits.length) {
+      const recorder = ((message as any)[PARENT_INPUT_WAIT_RECORDER] as ParentInputWaitRecorder | undefined) ?? new ParentInputWaitRecorder();
+      for (const wait of waits) recorder.delivered(wait, deliveredBoundary, meta.steerDeliveredAt);
+      const onConsumed = (message as any)[STEER_CONSUMED_CALLBACK] as SteerInjectionOptions['onConsumed'] | undefined;
+      delete (message as any)[STEER_CONSUMED_CALLBACK];
+      delete (message as any)[PARENT_INPUT_WAIT_RECORDER];
+      if (onConsumed) {
+        const settled = Promise.resolve().then(() => onConsumed(message, deliveredBoundary)).catch(error => {
+          console.warn('[steerChannel] parent input acknowledgement failed:', error?.name ?? 'unknown');
+        });
+        Object.defineProperty(message, STEER_CONSUMED_PROMISE, { value: settled, configurable: true });
+      }
+    }
+    if (!waits.length && typeof meta.jobMessageId === 'string' && typeof meta.jobMessageThreadId === 'string') {
       void import('../database/models/AgentJobMessagingModel')
         .then(({ AgentJobMessagingModel }) => AgentJobMessagingModel.markMessagesDelivered(
           [meta.jobMessageId],
@@ -50,6 +76,14 @@ export function markSteerDelivered(message: ChatMessage): void {
         .catch(err => console.warn('[steerChannel] could not mark job message delivered:', (err as Error).message));
     }
   }
+}
+
+/** Wait for boundary acknowledgements before the run-end drain can replay a durable input. */
+export async function awaitSteerAcknowledgements(state: { messages?: ChatMessage[] }): Promise<void> {
+  const messages = Array.isArray(state?.messages) ? state.messages : [];
+  const pending = messages.map(message => (message as any)[STEER_CONSUMED_PROMISE]).filter((value): value is Promise<void> => Boolean(value));
+  if (pending.length) await Promise.all(pending);
+  for (const message of messages) delete (message as any)[STEER_CONSUMED_PROMISE];
 }
 
 /** Hand a steer back to the graph — the live turn took it but never used it. */
@@ -65,11 +99,13 @@ export function markSteerPending(message: ChatMessage): void {
 export function injectSteer(state: {
   messages: ChatMessage[];
   metadata?: { reportingDecisionFollowUp?: { id: string; threadId: string }; reportingSteerRevision?: number };
-}, message: ChatMessage): boolean {
+}, message: ChatMessage, options: SteerInjectionOptions = {}): boolean {
   if (state.metadata) {
     delete state.metadata.reportingDecisionFollowUp;
     state.metadata.reportingSteerRevision = (state.metadata.reportingSteerRevision ?? 0) + 1;
   }
+  if (options.onConsumed) Object.defineProperty(message, STEER_CONSUMED_CALLBACK, { value: options.onConsumed, configurable: true });
+  if (options.recorder) Object.defineProperty(message, PARENT_INPUT_WAIT_RECORDER, { value: options.recorder, configurable: true });
   (message as any).metadata = { ...((message as any).metadata || {}), steerPending: true };
   DeferredStallInput.appendActionable(state, message);
   return offerSteer(state, message);
@@ -82,7 +118,9 @@ function offerSteer(state: object, message: ChatMessage): boolean {
     let taken = false;
     try { taken = listener(message) } catch { /* a broken listener must not drop the steer */ }
     if (taken) {
-      markSteerDelivered(message);
+      // Parent-input waits stay pending until the provider confirms the actual
+      // snapshot/replay/resume boundary, not merely a successful stdin write.
+      if (!Array.isArray((message as any).metadata?.parentInputWait)) markSteerDelivered(message);
       DeferredStallInput.settledInputs(state as { messages: ChatMessage[] }, [message]);
       return true;
     }
