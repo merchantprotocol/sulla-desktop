@@ -1164,6 +1164,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             maybeInterruptForSteer();
             return;
           }
+          if (parsed.type === 'turn.started') callbacks.onModelRequestStart?.();
           if (parsed.type === 'item.started' || parsed.type === 'item.completed') {
             const item = parsed.item ?? {};
             if (!firstContentAt && parsed.type === 'item.started') firstContentAt = Date.now();
