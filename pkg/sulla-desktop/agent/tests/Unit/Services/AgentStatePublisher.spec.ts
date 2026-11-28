@@ -4,8 +4,12 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentJob } from '../../../tools/agents/jobRegistry';
+import '../../Support/TestHomeEnv';
 import { AgentStateService, type AgentStateStore } from '../../../app/Services/AgentStateService';
 import { AgentStateProjector } from '../../../app/Services/AgentStateProjector';
+import { AgentTaskActivityProjector } from '../../../app/Services/AgentTaskActivityProjector';
+import { ToolExecutor } from '../../../controllers/ToolExecutor';
+import { RunActivity } from '../../../services/RunActivity';
 
 const { send, handle, removeHandler } = vi.hoisted(() => ({ send: vi.fn(), handle: vi.fn(), removeHandler: vi.fn() }));
 vi.mock('electron', () => ({
@@ -149,5 +153,57 @@ describe('AgentStatePublisher', () => {
     const snapshot = send.mock.calls[0][1];
     expect(snapshot.rows.map((row: { state: string }) => row.state)).toEqual(['stopped', 'stopped', 'stopped']);
     publisher.dispose();
+  });
+
+  it('publishes exact cumulative request and tool-boundary counts with the latest safe action', async() => {
+    // risk: coalesced snapshots drop real actions or include token/liveness noise
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(10_000));
+    const activity = RunActivity;
+    const jobId = 'meter-job-s1-test';
+    const states = new AgentStateService(new PublisherStore([makeJob(jobId, 'worker-thread')]), { jobs: new Map() });
+    const taskActivity = new AgentTaskActivityProjector(activity, () => Date.now());
+    const projector = new AgentStateProjector(states, { latest: async() => null }, () => Date.now(), {}, taskActivity);
+    const publisher = new AgentStatePublisher(states, projector, 10, activity, 1_000);
+    publisher.register();
+    const metadata = { activityKeys: ['manager#0', `${ jobId }#0`] };
+    const executor = new ToolExecutor({
+      nodeId: 'meter-test', nodeName: 'Meter test', currentNodeRunContext: null,
+      wsChatMessage: async() => true, bumpStateVersion: () => {},
+    } as any);
+    Object.defineProperty(executor, 'dispatchToWebSocket', { configurable: true, value: async() => true });
+    const state = { metadata: { ...metadata, wsChannel: 'meter-test', threadId: 'worker-thread' }, messages: [] } as any;
+
+    activity.recordActionForMetadata(metadata, 'request_start');
+    activity.recordActionForMetadata(metadata, 'request_start');
+    await executor.emitToolCallEvent(state, 'tool-1', 'mcp__sulla-native__files_search', { query: 'SYNTHETIC_SECRET' });
+    await executor.emitToolResultEvent(state, 'tool-1', true, undefined, { matches: [] });
+    await executor.emitToolCallEvent(state, 'tool-2', 'mcp__sulla-native__github_get_pr', { number: 2988 });
+    await executor.emitToolResultEvent(state, 'tool-2', true, undefined, { state: 'open' });
+    activity.touch(metadata);
+    const firstLastAction = activity.lastAction(`${ jobId }#0`);
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(send).toHaveBeenCalledTimes(1);
+    const firstRow = send.mock.calls[0][1].rows.find((row: any) => row.jobId === jobId);
+    expect(firstRow).toMatchObject({
+      actionCount: 6,
+      lastAction: firstLastAction,
+    });
+    expect(JSON.stringify(firstRow.lastAction)).not.toContain('SYNTHETIC_SECRET');
+
+    activity.recordActionForMetadata(metadata, 'request_start');
+    await executor.emitToolCallEvent(state, 'tool-3', 'Bash', { command: 'git status --token SYNTHETIC_SECRET' });
+    await executor.emitToolResultEvent(state, 'tool-3', true, undefined, { stdout: 'ok' });
+    await vi.advanceTimersByTimeAsync(999);
+    expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(11);
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const secondRow = send.mock.calls[1][1].rows.find((row: any) => row.jobId === jobId);
+    expect(secondRow.actionCount).toBe(9);
+    expect(secondRow.lastAction.label).toBe('bash');
+    publisher.dispose();
+    activity.end(`${ jobId }#0`);
   });
 });
