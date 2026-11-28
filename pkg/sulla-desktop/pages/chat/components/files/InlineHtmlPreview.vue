@@ -5,14 +5,22 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <div class="inline-html-preview">
+  <div ref="previewRoot" class="inline-html-preview">
     <div :class="['html-stage', 'view-' + view]">
       <webview
+        v-if="shouldMountPreview && !renderError"
+        :key="'inline-' + previewGeneration"
         :partition="partition"
         :src="previewUrl"
         :aria-label="'Preview of ' + name"
         webpreferences="nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no"
+        @render-process-gone="handleRenderProcessGone"
+        @unresponsive="handleUnresponsive"
       />
+    </div>
+    <div v-if="renderError" class="preview-error" role="alert">
+      <span>{{ renderError }}</span>
+      <button type="button" @click="reloadPreview">Reload</button>
     </div>
 
     <dialog
@@ -30,18 +38,25 @@
         <button type="button" aria-label="Close preview" @click="closeFullscreen">Close</button>
       </header>
       <webview
-        v-if="fullscreenOpen"
+        v-if="fullscreenOpen && !renderError"
+        :key="'fullscreen-' + previewGeneration"
         :partition="partition"
         :src="previewUrl"
         :aria-label="'Full-screen preview of ' + name"
         webpreferences="nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no"
+        @render-process-gone="handleRenderProcessGone"
+        @unresponsive="handleUnresponsive"
       />
+      <div v-if="fullscreenOpen && renderError" class="preview-error" role="alert">
+        <span>{{ renderError }}</span>
+        <button type="button" @click="reloadPreview">Reload</button>
+      </div>
     </dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
 import { InlineHtmlPreviewDocument, type InlineFileActionReference } from './inlineFilePreview';
@@ -62,9 +77,47 @@ const emit = defineEmits<{
 const previewDocument = new InlineHtmlPreviewDocument();
 const previewUrl = computed(() => previewDocument.toDataUrl(props.source, props.assetBaseUrl));
 const partition = INLINE_HTML_PREVIEW_PARTITION;
+const previewRoot = ref<HTMLElement | null>(null);
 const dialog = ref<HTMLDialogElement | null>(null);
 const fullscreenTrigger = ref<HTMLElement | null>(null);
 const fullscreenOpen = ref(false);
+const hasIntersected = ref(false);
+const shouldMountPreview = computed(() => hasIntersected.value);
+const previewGeneration = ref(0);
+const renderError = ref('');
+let intersectionObserver: IntersectionObserver | undefined;
+
+onMounted(() => {
+  const root = previewRoot.value;
+  if (typeof IntersectionObserver === 'undefined' || !root) {
+    // Electron supports IntersectionObserver; mounting immediately is a safe
+    // compatibility fallback for test DOMs and older embedders.
+    hasIntersected.value = true;
+    return;
+  }
+  intersectionObserver = new IntersectionObserver(entries => {
+    if (!entries.some(entry => entry.isIntersecting)) return;
+    hasIntersected.value = true;
+    intersectionObserver?.disconnect();
+    intersectionObserver = undefined;
+  }, { rootMargin: '100px' });
+  intersectionObserver.observe(root);
+});
+
+onBeforeUnmount(() => intersectionObserver?.disconnect());
+
+function handleRenderProcessGone(): void {
+  renderError.value = 'The HTML preview stopped unexpectedly.';
+}
+
+function handleUnresponsive(): void {
+  renderError.value = 'The HTML preview is not responding.';
+}
+
+function reloadPreview(): void {
+  renderError.value = '';
+  previewGeneration.value++;
+}
 
 function openFullscreen(trigger: HTMLElement): void {
   fullscreenTrigger.value = trigger;
@@ -113,6 +166,9 @@ defineExpose({ openFullscreen });
 .inline-html-preview { min-width: 0; }
 .html-stage { display: flex; justify-content: center; min-height: 0; background: var(--bg-surface-alt); }
 .html-stage webview { display: block; width: 100%; height: 400px; border: 0; background: #fff; }
+.preview-error { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--border-subtle); color: var(--status-error); font-size: 12px; }
+.preview-error button { padding: 4px 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); cursor: pointer; font: inherit; }
+.preview-error button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .html-stage.view-phone { padding: 16px 0; }
 .html-stage.view-phone webview { width: 375px; max-width: 100%; height: 560px; box-shadow: 0 0 0 1px var(--border-default); }
 .html-lightbox:not([open]) { display: none; }
