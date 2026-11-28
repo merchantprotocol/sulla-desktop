@@ -35,7 +35,7 @@ import { normalizeCodexLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } f
 import { resolveCodexExecutionAuth, type CodexExecutionAuth } from './codexExecutionAuth';
 import { graphBrowserControllerContext } from '../utils/graphBrowserController';
 import { RecallDedupe } from '../utils/recallDedupe';
-import { markSteerPending, onSteer } from '../utils/steerChannel';
+import { markSteerDelivered, markSteerPending, onSteer } from '../utils/steerChannel';
 import { UsageRecorder } from './UsageRecorder';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
@@ -915,6 +915,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
       try {
         proc.stdin.write(prompt);
         proc.stdin.end();
+        if (existingSession) {
+          for (let index = messages.length - 1; index >= 0 && messages[index].role === 'user'; index--) {
+            const message = messages[index] as any;
+            if (message.metadata?.steerPending === true && Array.isArray(message.metadata.parentInputWait)) {
+              markSteerDelivered(message, 'codex_resume');
+            }
+          }
+        }
       } catch { /* stdin already closed */ }
 
       const activityReporter = new ProviderToolActivityReporter(callbacks.onActivity);
