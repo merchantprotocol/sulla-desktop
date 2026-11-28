@@ -115,7 +115,7 @@ export class AgentStateProjector {
   }
 
   taskActivity(job: AgentJob, task: AgentJobTask, taskIndex: number, checkin: AgentTaskCheckin | null, answeredAt: number | null, now = this.clock()) {
-    const { state: projected, lastActivityAt, actionCount, lastAction } = this.activity.project(job, task, taskIndex, checkin, answeredAt);
+    const { state: projected, lastActivityAt, actionCount, lastAction } = this.activity.projectWithActions(job, task, taskIndex, checkin, answeredAt);
     // The same boot grace and probe freshness apply to the UI and parent notices.
     const state = (projected === 'quiet' && now - Math.max(lastActivityAt, this.observedSince) < this.config.quietAfterMs
       ? 'working' : projected) as AgentViewStatus;
