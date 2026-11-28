@@ -9,6 +9,7 @@ import { ipcMain } from 'electron';
 
 import { FilesTool } from './common';
 import { AgentFileOpenRoutePolicy } from './AgentFileOpenRoutePolicy';
+import { FilesOpenCallBudget } from './FilesOpenCallBudget';
 import { InlineFileReferenceMessageFactory } from './InlineFileReferenceMessage';
 import { recentFileOpenRegistry } from './RecentFileOpenRegistry';
 
@@ -22,6 +23,8 @@ import type { FileOpenRouteDecision } from './AgentFileOpenRoutePolicy';
 
 interface FilesRecord { file: { id:string; collection_id:string; path:string } }
 interface OpenResult { opened:boolean; tabId:string; path:string; how:string }
+const OPEN_CALL_SIGNAL = Symbol('files-open-call-signal');
+type OpenCallInput = Record<string, any> & { [OPEN_CALL_SIGNAL]?:AbortSignal };
 
 const SULLA_FILES_ROOT = '/mnt/sulla-files/';
 const INLINE_FOLDER_ERROR = 'Inline cards are for files; that path is a folder. Open it with placement "tab" or use files/list.';
@@ -53,14 +56,30 @@ export class FilesOpenWorker extends FilesTool {
     private readonly inlineReferenceFactory = new InlineFileReferenceMessageFactory(),
     private readonly pathNormalizer = new FilesOpenPathNormalizer(),
     private readonly recentOpenRegistry:RecentFileOpenCoordinator = recentFileOpenRegistry,
+    private readonly openBudgetFactory:() => FilesOpenCallBudget = () => new FilesOpenCallBudget(),
   ) {
     super();
   }
 
   protected async _validatedCall(input:any):Promise<ToolResponse> {
+    const budget = this.openBudgetFactory();
+    try {
+      return await this.runValidatedCall(input, budget);
+    } finally {
+      budget.dispose();
+    }
+  }
+
+  protected override containerRequest(path:string, input:unknown, init:RequestInit = {}):Promise<Response> {
+    const signal = input && typeof input === 'object' ? (input as OpenCallInput)[OPEN_CALL_SIGNAL] : undefined;
+    return super.containerRequest(path, input, { ...init, ...(signal ? { signal } : {}) });
+  }
+
+  private async runValidatedCall(input:any, budget:FilesOpenCallBudget):Promise<ToolResponse> {
     const hasPath = input.path !== undefined && input.path !== null;
     let fileId = typeof input.file_id === 'string' ? input.file_id.trim() : '';
     if (!hasPath && !fileId) throw new Error('path or file_id is required');
+    const budgetedInput:OpenCallInput = { ...input, [OPEN_CALL_SIGNAL]: budget.signal };
     let collectionId = '';
     let resolvedPath = '';
     let fileKind:'file' | 'folder' = 'file';
@@ -73,7 +92,7 @@ export class FilesOpenWorker extends FilesTool {
       }
       let resolved;
       try {
-        resolved = await this.resolvePath({ ...input, path: absolutePath });
+        resolved = await budget.run('resolving the requested file path', () => this.resolvePath({ ...budgetedInput, path: absolutePath }));
       } catch (error) {
         if (this.isNotFound(error)) throw new Error('That Sulla Files path was not found', { cause: error });
         throw error;
@@ -97,7 +116,7 @@ export class FilesOpenWorker extends FilesTool {
     } else {
       let record:FilesRecord;
       try {
-        record = await this.containerJson<FilesRecord>(`/v1/agent-files/${ encodeURIComponent(fileId) }`, input);
+        record = await budget.run('fetching the requested file metadata', () => this.containerJson<FilesRecord>(`/v1/agent-files/${ encodeURIComponent(fileId) }`, budgetedInput));
       } catch (error) {
         if (this.isNotFound(error)) throw new Error('That Sulla Files file_id was not found', { cause: error });
         throw error;
@@ -129,10 +148,10 @@ export class FilesOpenWorker extends FilesTool {
     if (decision.kind === 'reject') throw new Error(decision.message);
     const threadId = typeof metadata?.threadId === 'string' ? metadata.threadId.trim() : '';
     const key = threadId ? JSON.stringify([threadId, fileId || resolvedPath, decision.kind, input.mode ?? 'edit']) : '';
-    return this.recentOpenRegistry.openOnce(key, () => this.present(input, fileId, collectionId, resolvedPath, fileKind, decision));
+    return budget.run('waiting for the file open result', () => this.recentOpenRegistry.openOnce(key, () => this.present(input, fileId, collectionId, resolvedPath, fileKind, decision, budget)));
   }
 
-  private async present(input:any, fileId:string, collectionId:string, resolvedPath:string, fileKind:'file' | 'folder', decision:Exclude<FileOpenRouteDecision, { kind:'reject' }>):Promise<ToolResponse> {
+  private async present(input:any, fileId:string, collectionId:string, resolvedPath:string, fileKind:'file' | 'folder', decision:Exclude<FileOpenRouteDecision, { kind:'reject' }>, budget:FilesOpenCallBudget):Promise<ToolResponse> {
     if (decision.kind === 'inline') {
       const record = this.inlineReferenceFactory.create({
         threadId: decision.threadId,
@@ -140,7 +159,7 @@ export class FilesOpenWorker extends FilesTool {
         fileId,
         collectionId,
       });
-      await this.emitInlineFileReference(record);
+      await budget.run('delivering the inline file card', () => this.emitInlineFileReference(record));
       const name = resolvedPath.slice(resolvedPath.lastIndexOf('/') + 1);
       return { successBoolean: true, responseString: JSON.stringify({ opened: true, placement: 'inline', fileId, path: resolvedPath, name }) };
     }
@@ -155,22 +174,7 @@ export class FilesOpenWorker extends FilesTool {
         : 'Inline cards only show in a visible Desktop chat; no Files tab is available for this call.';
       return { successBoolean: true, responseString: JSON.stringify({ opened: false, reason }) };
     }
-    const requestId = randomUUID();
-    const replyChannel = `agent-command-result:${ requestId }`;
-    const result = await new Promise<OpenResult>((resolve, reject) => {
-      const timer = setTimeout(() => { ipcMain.removeAllListeners(replyChannel); reject(new Error('Sulla Desktop did not acknowledge the file open request')); }, 10_000);
-      ipcMain.once(replyChannel, (event, reply:OpenResult & { error?:string }) => {
-        clearTimeout(timer);
-        // Non-editor files reply from the File Manager tab, which renders in an
-        // internal tab-host view owned by the window; resolve it to its owner.
-        if (event.sender !== agentWindow.webContents && agentWindowFromSender(event.sender) !== agentWindow) return reject(new Error('Rejected an untrusted file open acknowledgement'));
-        if (reply?.error) return reject(new Error(reply.error));
-        if (reply?.opened !== true) return reject(new Error('Sulla Desktop did not select the requested Files item'));
-        resolve(reply);
-      });
-      const dispatch = () => agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: fileKind, mode: input.mode ?? 'edit', focus: input.focus !== false });
-      if (agentWindow.webContents.isLoading()) agentWindow.webContents.once('did-finish-load', dispatch); else dispatch();
-    });
+    const result = await budget.run('waiting for the Desktop to acknowledge the Files tab', () => this.requestOpenResult(agentWindow, input, fileId, collectionId, resolvedPath, fileKind, budget));
     if (input.focus !== false) agentWindow.focus();
     const reason = decision.reason === 'requested-tab'
       ? (fileKind === 'folder' && input.placement !== 'tab' ? 'That folder was opened in the Files tab; inline cards are for files.' : undefined)
@@ -178,6 +182,77 @@ export class FilesOpenWorker extends FilesTool {
         ? 'Inline cards only appear in a visible Desktop chat; this hidden sub-agent call was opened in the Files tab instead.'
         : 'Inline cards only appear in a visible Desktop chat; this call was opened in the Files tab instead.';
     return { successBoolean: true, responseString: JSON.stringify({ ...result, ...(reason ? { reason } : {}) }) };
+  }
+
+  private requestOpenResult(
+    agentWindow:Electron.BrowserWindow,
+    input:any,
+    fileId:string,
+    collectionId:string,
+    resolvedPath:string,
+    fileKind:'file' | 'folder',
+    budget:FilesOpenCallBudget,
+  ):Promise<OpenResult> {
+    const requestId = randomUUID();
+    const replyChannel = `agent-command-result:${ requestId }`;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let loadListener:(() => void) | undefined;
+      const cleanup = () => {
+        ipcMain.removeListener(replyChannel, onReply);
+        budget.signal.removeEventListener('abort', onAbort);
+        if (loadListener) agentWindow.webContents.removeListener('did-finish-load', loadListener);
+        loadListener = undefined;
+      };
+      const finish = (result?:OpenResult, error?:Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(result!);
+      };
+      const onReply = (event:Electron.IpcMainEvent, reply:OpenResult & { error?:string }) => {
+        // Non-editor files reply from the File Manager tab, which renders in an
+        // internal tab-host view owned by the window; resolve it to its owner.
+        if (event.sender !== agentWindow.webContents && agentWindowFromSender(event.sender) !== agentWindow) {
+          finish(undefined, new Error('Rejected an untrusted file open acknowledgement'));
+          return;
+        }
+        if (reply?.error) {
+          finish(undefined, new Error(reply.error));
+          return;
+        }
+        if (reply?.opened !== true) {
+          finish(undefined, new Error('Sulla Desktop did not select the requested Files item'));
+          return;
+        }
+        finish(reply);
+      };
+      const onAbort = () => finish(undefined, new Error('Sulla Files open was aborted before the Desktop Files tab opened'));
+      const dispatch = () => {
+        if (settled || budget.signal.aborted) return;
+        loadListener = undefined;
+        try {
+          agentWindow.webContents.send('agent-command', { command: 'open-files-item', requestId, fileId, path: resolvedPath, collectionId, kind: fileKind, mode: input.mode ?? 'edit', focus: input.focus !== false });
+        } catch (error) {
+          finish(undefined, error instanceof Error ? error : new Error(String(error)));
+        }
+      };
+
+      ipcMain.once(replyChannel, onReply);
+      budget.signal.addEventListener('abort', onAbort, { once: true });
+      if (budget.signal.aborted) {
+        onAbort();
+      } else if (agentWindow.webContents.isLoading()) {
+        loadListener = dispatch;
+        agentWindow.webContents.once('did-finish-load', loadListener);
+      } else {
+        // Install the unique reply listener before dispatch so synchronous or
+        // same-tick renderer acknowledgements cannot beat the subscription.
+        dispatch();
+      }
+    });
   }
 
   private isNotFound(error:unknown):boolean {
