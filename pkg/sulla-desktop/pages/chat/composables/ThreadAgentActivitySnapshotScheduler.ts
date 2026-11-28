@@ -13,10 +13,14 @@ export interface ThreadAgentActivitySnapshotSink {
 /** Coalesces working snapshots and drains action blips through one shared timer. */
 export class ThreadAgentActivitySnapshotScheduler {
   private static readonly actionBlipIntervalMs = 100;
+  private static readonly maxPendingActionBlipsPerAgent = 10;
   private latestSnapshot: AgentStateSnapshot;
   private activeThreadId?: string;
   private initialized = false;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timerDueAt: number | null = null;
+  private scopedRows: readonly AgentStateRow[] = [];
+  private scopedWorking = false;
   private publishedRows: readonly AgentStateRow[] = [];
   private lastPublishedAt: number | null = null;
   private readonly lastActionCounts = new Map<string, number>();
@@ -36,20 +40,19 @@ export class ThreadAgentActivitySnapshotScheduler {
     this.initialized = true;
     this.activeThreadId = threadId;
     this.latestSnapshot = snapshot;
-
     const rows = this.rowsForThread(snapshot, threadId);
+    this.scopedRows = rows;
+    this.scopedWorking = rows.some(row => row.state === 'working');
     this.collectActionDeltas(rows, threadChanged);
-    const working = rows.some(row => row.state === 'working');
 
-    if (working) {
+    if (this.scopedWorking) {
       if (threadChanged || this.timer === null) this.publish(rows, true);
-      this.start();
+      this.syncTimer();
       return;
     }
 
     if (threadChanged || this.rowsChanged(rows)) this.publish(rows, true);
-    if (this.pendingActionBlips.size) this.start();
-    else this.stop();
+    this.syncTimer();
   }
 
   dispose(): void { this.stop() }
@@ -67,28 +70,40 @@ export class ThreadAgentActivitySnapshotScheduler {
   }
 
   private onTimer = (): void => {
+    this.timer = null;
+    this.timerDueAt = null;
     this.drainActionBlips();
-    const rows = this.rowsForThread(this.latestSnapshot, this.activeThreadId);
-    const working = rows.some(row => row.state === 'working');
     const now = this.now();
-    if (working && (this.lastPublishedAt === null || now - this.lastPublishedAt >= this.intervalMs)) {
-      this.publish(rows);
+    if (this.activeThreadId && (this.lastPublishedAt === null || now - this.lastPublishedAt >= this.intervalMs)) {
+      if (this.scopedWorking) this.publish(this.scopedRows);
+      else {
+        this.sink.tick?.(now);
+        this.lastPublishedAt = now;
+      }
     }
-    if (!working && !this.pendingActionBlips.size) this.stop();
+    this.syncTimer();
   };
 
   private collectActionDeltas(rows: readonly AgentStateRow[], reset: boolean): void {
+    if (reset) {
+      this.lastActionCounts.clear();
+      this.pendingActionBlips.clear();
+    }
     const currentKeys = new Set<string>();
     for (const row of rows) {
       currentKeys.add(row.key);
       const count = row.actionCount;
       if (count === undefined) {
         this.lastActionCounts.delete(row.key);
+        this.pendingActionBlips.delete(row.key);
         continue;
       }
       const previous = this.lastActionCounts.get(row.key);
-      if (!reset && previous !== undefined && count > previous) {
-        this.pendingActionBlips.set(row.key, (this.pendingActionBlips.get(row.key) ?? 0) + count - previous);
+      if (row.state !== 'working') {
+        this.pendingActionBlips.delete(row.key);
+      } else if (!reset && previous !== undefined && count > previous) {
+        const pending = (this.pendingActionBlips.get(row.key) ?? 0) + count - previous;
+        this.pendingActionBlips.set(row.key, Math.min(ThreadAgentActivitySnapshotScheduler.maxPendingActionBlipsPerAgent, pending));
       }
       this.lastActionCounts.set(row.key, count);
     }
@@ -111,9 +126,20 @@ export class ThreadAgentActivitySnapshotScheduler {
     this.sink.actionBlips?.(agentKeys);
   }
 
-  private start(): void {
-    if (this.timer !== null) return;
-    this.timer = setInterval(this.onTimer, Math.min(this.intervalMs, ThreadAgentActivitySnapshotScheduler.actionBlipIntervalMs));
+  private syncTimer(): void {
+    if (!this.activeThreadId) {
+      this.stop();
+      return;
+    }
+    const now = this.now();
+    const delay = this.pendingActionBlips.size
+      ? ThreadAgentActivitySnapshotScheduler.actionBlipIntervalMs
+      : Math.max(1, (this.lastPublishedAt ?? now) + this.intervalMs - now);
+    const dueAt = now + delay;
+    if (this.timer !== null && this.timerDueAt !== null && this.timerDueAt <= dueAt) return;
+    this.stop();
+    this.timerDueAt = dueAt;
+    this.timer = setTimeout(this.onTimer, delay);
   }
 
   private rowsChanged(rows: readonly AgentStateRow[]): boolean {
@@ -164,8 +190,8 @@ export class ThreadAgentActivitySnapshotScheduler {
   }
 
   private stop(): void {
-    if (this.timer === null) return;
-    clearInterval(this.timer);
+    if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
+    this.timerDueAt = null;
   }
 }
