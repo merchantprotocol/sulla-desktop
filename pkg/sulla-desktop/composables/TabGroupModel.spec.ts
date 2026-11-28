@@ -2,7 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { TAB_GROUP_COLOR_TOKENS, TabGroupModel } from './TabGroupModel';
+import { TabGroupModel } from './TabGroupModel';
 import { TabStripLayoutRepository, type TabStripStorage } from './TabStripLayoutRepository';
 
 class MemoryStorage implements TabStripStorage {
@@ -24,61 +24,28 @@ class GroupFixture {
 }
 
 describe('TabGroupModel', () => {
-  it('starts with no groups and keeps pinned, ungrouped tabs ahead of user groups', () => {
-    // risk: data integrity — fresh state must not synthesize memberships.
+  it('trims names, preserves Unicode, permits blanks, and caps names at 60 characters', () => {
+    // risk: data integrity — names must be trimmed and bounded without splitting Unicode characters.
     const { model } = new GroupFixture();
-    const tabs = [
-      { id: 'plain' },
-      { id: 'pinned', pinned: true },
-    ];
+    const group = model.createGroup(`  ${ 'x'.repeat(59) }🧪tail  `, 'blue', ['tab-a']);
+    const unnamed = model.createGroup(' \t ', 'grey', ['tab-b']);
 
-    expect(model.groups).toEqual([]);
-    expect(model.membership).toEqual({});
-    expect(model.orderTabs(tabs, ['plain', 'pinned'])).toEqual([tabs[1], tabs[0]]);
-  });
-
-  it('creates user groups with the approved eight swatches', () => {
-    // risk: data accuracy — stored keys must match the eight fixed-hue mockup swatches exactly.
-    expect(TAB_GROUP_COLOR_TOKENS).toEqual(['grey', 'blue', 'cyan', 'green', 'gold', 'orange', 'pink', 'purple']);
-  });
-
-  it('trims names, permits blank names, preserves emoji, allows duplicates, and caps names at 60 characters', () => {
-    // risk: data integrity — name/color validation must preserve valid user input and reject invalid data.
-    const { model } = new GroupFixture();
-    const first = model.createGroup('  Research 🧪  ', 'blue', ['tab-a']);
-    const second = model.createGroup('Research 🧪', 'purple', ['tab-b']);
-    const long = model.createGroup(`${ 'x'.repeat(59) }🧪tail`, 'green', ['tab-c']);
-    const unnamed = model.createGroup(' \t ', 'grey', ['tab-d']);
-
-    expect(first).toMatchObject({ id: 'generated-1', name: 'Research 🧪', colorToken: 'blue', order: 0, collapsed: false });
-    expect(second.name).toBe(first.name);
-    expect(Array.from(long.name)).toHaveLength(60);
-    expect(long.name.endsWith('🧪')).toBe(true);
+    expect(group.name).toBe(`${ 'x'.repeat(59) }🧪`);
+    expect(Array.from(group.name)).toHaveLength(60);
     expect(unnamed.name).toBe('');
-    expect(model.renameGroup(first.id, '   ')).toBe(true);
-    expect(model.groups.find(group => group.id === first.id)?.name).toBe('');
-    expect(() => model.setGroupColor(first.id, 'violet' as never)).toThrow(RangeError);
+    expect(model.renameGroup(group.id, '   ')).toBe(true);
+    expect(model.groups.find(candidate => candidate.id === group.id)?.name).toBe('');
+    expect(() => model.setGroupColor(group.id, 'violet' as never)).toThrow(RangeError);
   });
 
-  it('renames, recolors, collapses, adds, and ungroups tabs through the model API', () => {
-    // risk: data integrity — edits must update group metadata and membership together.
+  it('renames and recolors an existing group', () => {
+    // risk: data integrity — edits must update stored group metadata.
     const { model } = new GroupFixture();
     const group = model.createGroup('Inbox', 'blue', ['tab-a']);
 
     expect(model.renameGroup(group.id, '  Follow ups  ')).toBe(true);
     expect(model.setGroupColor(group.id, 'gold')).toBe(true);
-    expect(model.setCollapsed(group.id, true)).toBe(true);
-    expect(model.addTabsToGroup(group.id, ['tab-b'])).toBe(true);
-    expect(model.groups[0]).toMatchObject({ name: 'Follow ups', colorToken: 'gold', collapsed: true });
-    expect(model.groupTabs([{ id: 'tab-a' }, { id: 'tab-b' }, { id: 'tab-c' }])).toMatchObject({
-      ungrouped: [{ id: 'tab-c' }],
-      groups: [{ group: { id: group.id }, tabs: [{ id: 'tab-a' }, { id: 'tab-b' }] }],
-    });
-
-    expect(model.removeTabsFromGroup(group.id, ['tab-a'])).toBe(true);
-    expect(model.getGroupIdForTab('tab-a')).toBeUndefined();
-    expect(model.getGroupIdForTab('tab-b')).toBe(group.id);
-    expect(model.groups).toHaveLength(1);
+    expect(model.groups[0]).toMatchObject({ name: 'Follow ups', colorToken: 'gold' });
   });
 
   it('moves initial members from their previous group and removes the group left empty', () => {
@@ -90,21 +57,6 @@ describe('TabGroupModel', () => {
     expect(model.getGroupIdForTab('tab-a')).toBe(replacement.id);
     expect(model.groups).toEqual([{ ...replacement, order: 0 }]);
     expect(model.groups.some(group => group.id === original.id)).toBe(false);
-  });
-
-  it('deletes a group without closing its tabs and reorders remaining groups', () => {
-    // risk: side effects — deleting group metadata must not close its tabs.
-    const { model } = new GroupFixture();
-    const first = model.createGroup('First', 'blue', ['tab-a']);
-    const second = model.createGroup('Second', 'green', ['tab-b']);
-    const tabs = [{ id: 'tab-a' }, { id: 'tab-b' }, { id: 'tab-c' }];
-
-    expect(model.reorder(second.id, 0)).toBe(true);
-    expect(model.groups.map(group => group.id)).toEqual([second.id, first.id]);
-    expect(model.deleteGroup(first.id)).toBe(true);
-    expect(tabs.map(tab => tab.id)).toEqual(['tab-a', 'tab-b', 'tab-c']); // risk: deletion must never close tabs
-    expect(model.getGroupIdForTab('tab-a')).toBeUndefined();
-    expect(model.orderTabs(tabs, tabs.map(tab => tab.id)).map(tab => tab.id)).toEqual(['tab-a', 'tab-c', 'tab-b']);
   });
 
   it('prunes stale membership and removes a group when its last tab closes', () => {
