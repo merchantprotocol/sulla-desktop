@@ -97,6 +97,7 @@ export default {
 
     config.module.rule('vue').use('vue-loader').tap((options) => {
       _.set(options, 'loaders.ts', 'ts-loader');
+      _.set(options, 'compilerOptions.isCustomElement', (tag) => tag === 'webview');
 
       return options;
     });
