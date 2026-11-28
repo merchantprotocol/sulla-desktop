@@ -13,8 +13,8 @@ vi.mock('@pkg/agent/services/DecisionService', () => ({ decisionService: { reque
 vi.mock('@pkg/agent/tools/meta/askUserQuestionShared', async(original) => ({ ...(await original<object>()), emitQuestionCardViaWs: f.emit }));
 
 import { MCPServerHost } from '@pkg/main/MCPServerHost';
-function tool(run = new AbortController()) {
-  const session = { state: { metadata: { threadId: 'thread-1', wsChannel: 'sulla-desktop', options: { abort: { signal: run.signal } } } } };
+function tool(metadata: Record<string, unknown> = {}, run = new AbortController()) {
+  const session = { state: { metadata: { threadId: 'thread-1', wsChannel: 'sulla-desktop', options: { abort: { signal: run.signal } }, ...metadata } } };
   return (new MCPServerHost() as any).buildMcpServer(session)._registeredTools.ask_user_question;
 }
 const input = { questions: [{ question: 'Color?', options: [{ label: 'Blue' }] }], timeoutMs: 1_800_000 };
@@ -34,6 +34,24 @@ describe('persistent questions over MCP', () => {
     caller.abort();
     expect(f.requestQuestion).toHaveBeenCalledOnce();
     expect(f.emit).toHaveBeenCalledOnce();
+  });
+  it('keeps a delegated child session identity and allows its full-catalog exec capability', async() => {
+    // risk: identity integrity — the saved question must belong to the child thread so routing selects its parent, not the root chat.
+    const delegatedAsk = tool({ threadId: 'child-thread', wsChannel: 'child-channel', allowedToolNames: ['exec'] });
+
+    const reply = await delegatedAsk.handler(input, {});
+
+    expect(reply.isError).not.toBe(true);
+    expect(f.requestQuestion).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'child-thread', channel: 'child-channel' }), expect.any(AbortSignal));
+    expect(f.emit).toHaveBeenCalledWith('child-channel', 'child-thread', 'q-1', expect.any(Array));
+  });
+  it('still refuses a narrow background surface without ask_user_question or exec', async() => {
+    // risk: permissions — parent-first questions must not expand a deliberately narrow background agent's tool surface.
+    const reply = await tool({ threadId: 'restricted-thread', allowedToolNames: ['memory/recall_index_lookup'] }).handler(input, {});
+
+    expect(reply.isError).toBe(true);
+    expect(reply.content[0].text).toContain('unavailable to this agent');
+    expect(f.requestQuestion).not.toHaveBeenCalled();
   });
   it('does not create another transcript card for a repeated request', async() => {
     f.requestQuestion.mockResolvedValue({ record: { id: 'q-1' }, reused: true });
