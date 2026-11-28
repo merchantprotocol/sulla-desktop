@@ -97,6 +97,7 @@
         :name="file.name"
         :path="file.path"
         :source="htmlPreview.source"
+        :asset-base-url="htmlPreview.assetBaseUrl"
         :view="htmlView"
         @open-in-tab="emitOpenInTab"
       />
