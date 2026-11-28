@@ -1,0 +1,96 @@
+// @vitest-environment jsdom
+/*
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+import { describe, expect, it, vi } from 'vitest';
+import { flushPromises, mount } from '@vue/test-utils';
+
+vi.mock('@pkg/utils/ipcRenderer', () => ({ ipcRenderer: { invoke: vi.fn() } }));
+vi.mock('@pkg/composables/useBrowserTabs', () => ({ openWorkspaceTab: vi.fn() }));
+
+import { ipcRenderer } from '@pkg/utils/ipcRenderer';
+import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
+import InlineFileMessage from '../../../../pages/chat/components/files/InlineFileMessage.vue';
+
+const source = '<!doctype html><html><head><style>@font-face{font-family:PreviewFace;src:url("./fonts/preview.woff2")}</style></head><body><img src="./images/hero.png"><script>window.previewRan = true;</script></body></html>';
+const assetBaseUrl = 'sulla-files-preview://fixture-token/Projects/synthetic/page.html';
+
+describe('InlineFileMessage HTML preview assets', () => {
+  it('uses the Files capability URL in an isolated webview and revokes it when the card unmounts', async() => {
+    // risk: data access and resource lifecycle — relative assets use the authorized Files URL, and its temporary access token must not outlive the card.
+    const invoke = ipcRenderer.invoke as any;
+    invoke.mockReset();
+    invoke.mockImplementation(async(channel: string) => {
+      if (channel === 'sulla-files:preview-read') return {
+        state:'ready', kind:'html', content:source, truncated:false,
+        document:{ id:'file-id', path:'Projects/synthetic/page.html', name:'page.html', mime:'text/html', size:source.length, currentVersionId:'version-id' },
+      };
+      if (channel === 'files:preview:open') return { token:'fixture-token', url:assetBaseUrl };
+      if (channel === 'files:preview:revoke') return undefined;
+      throw new Error(`Unexpected IPC channel: ${channel}`);
+    });
+
+    const wrapper = mount(InlineFileMessage, { props:{ reference:{ fileId:'file-id', collectionId:'collection-id', toolCallId:'tool-call-id', threadId:'thread-id' } } });
+    await flushPromises();
+
+    const guest = wrapper.get('webview');
+    expect(wrapper.findAll('iframe')).toHaveLength(0);
+    expect(guest.attributes('partition')).toBe(INLINE_HTML_PREVIEW_PARTITION);
+    expect(guest.attributes('webpreferences')).toBe('nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no');
+    expect(decodeURIComponent((guest.attributes('src') ?? '').slice('data:text/html;charset=utf-8,'.length)))
+      .toBe(source.replace('<head>', `<head><base href="${assetBaseUrl}">`));
+    expect(invoke).toHaveBeenNthCalledWith(1, 'sulla-files:preview-read', { fileId:'file-id' });
+    expect(invoke).toHaveBeenNthCalledWith(2, 'files:preview:open', { collectionId:'collection-id', fileId:'file-id' });
+
+    wrapper.unmount();
+
+    expect(invoke).toHaveBeenLastCalledWith('files:preview:revoke', { token:'fixture-token' });
+  });
+
+  it('still renders the HTML when the optional Files asset grant fails', async() => {
+    // risk: preview availability — a failed asset capability must not hide otherwise-authorized HTML content.
+    const invoke = ipcRenderer.invoke as any;
+    invoke.mockReset();
+    invoke.mockImplementation(async(channel: string) => {
+      if (channel === 'sulla-files:preview-read') return {
+        state:'ready', kind:'html', content:source, truncated:false,
+        document:{ id:'file-id', path:'Projects/synthetic/page.html', name:'page.html', mime:'text/html', size:source.length, currentVersionId:'version-id' },
+      };
+      if (channel === 'files:preview:open') throw new Error('Files asset service unavailable');
+      throw new Error(`Unexpected IPC channel: ${channel}`);
+    });
+
+    const wrapper = mount(InlineFileMessage, { props:{ reference:{ fileId:'file-id', collectionId:'collection-id', toolCallId:'tool-call-id', threadId:'thread-id' } } });
+    await flushPromises();
+
+    const guest = wrapper.get('webview');
+    expect(wrapper.find('.file-error').exists()).toBe(false);
+    expect(decodeURIComponent((guest.attributes('src') ?? '').slice('data:text/html;charset=utf-8,'.length))).toBe(source);
+    wrapper.unmount();
+  });
+
+  it('revokes a capability that resolves after the card unmounts mid-grant', async() => {
+    // risk: authorization lifecycle — a late grant must not leave an active Files capability after its preview is gone.
+    const invoke = ipcRenderer.invoke as any;
+    invoke.mockReset();
+    let resolveGrant!: (grant: { token: string; url: string }) => void;
+    invoke.mockImplementation((channel: string) => {
+      if (channel === 'sulla-files:preview-read') return Promise.resolve({
+        state:'ready', kind:'html', content:source, truncated:false,
+        document:{ id:'file-id', path:'Projects/synthetic/page.html', name:'page.html', mime:'text/html', size:source.length, currentVersionId:'version-id' },
+      });
+      if (channel === 'files:preview:open') return new Promise(resolve => { resolveGrant = resolve; });
+      if (channel === 'files:preview:revoke') return Promise.resolve(undefined);
+      throw new Error(`Unexpected IPC channel: ${channel}`);
+    });
+
+    const wrapper = mount(InlineFileMessage, { props:{ reference:{ fileId:'file-id', collectionId:'collection-id', toolCallId:'tool-call-id', threadId:'thread-id' } } });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('files:preview:open', { collectionId:'collection-id', fileId:'file-id' }));
+    wrapper.unmount();
+    resolveGrant({ token:'late-token', url:assetBaseUrl });
+    await flushPromises();
+
+    expect(invoke).toHaveBeenCalledWith('files:preview:revoke', { token:'late-token' });
+  });
+});

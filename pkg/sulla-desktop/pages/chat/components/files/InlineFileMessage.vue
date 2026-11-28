@@ -1,3 +1,7 @@
+<!--
+  Copyright (c) 2025-2026 Merchant Protocol LLC.
+  SPDX-License-Identifier: GPL-2.0-or-later
+-->
 <template>
   <InlineFileCard :file="file" @open-in-tab="openInTab" @show-in-files="showInFiles" @download="download">
     <template #preview="{ file: previewFile }">
@@ -17,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import InlineFileCard from './InlineFileCard.vue';
@@ -45,6 +49,8 @@ const versionId = ref('');
 const truncated = ref(false);
 const textKind = ref<'markdown' | 'code' | 'csv' | undefined>();
 const saveOutcome = ref<MarkdownSaveOutcome | null>(null);
+let htmlPreviewToken = '';
+let disposed = false;
 
 function bytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
@@ -68,9 +74,29 @@ async function load(): Promise<void> {
       file.value = { fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true };
       return;
     }
+    let htmlAssetBaseUrl: string | undefined;
+    if (result.kind === 'html') {
+      try {
+        const grant = await ipcRenderer.invoke('files:preview:open', {
+          collectionId: props.reference.collectionId,
+          fileId: doc.id,
+        }) as { token: string; url: string };
+        if (disposed) {
+          void ipcRenderer.invoke('files:preview:revoke', { token: grant.token }).catch(() => undefined);
+          return;
+        }
+        htmlPreviewToken = grant.token;
+        htmlAssetBaseUrl = grant.url;
+      } catch {
+        // The HTML remains useful without relative assets if the short-lived
+        // Files capability could not be created.
+        htmlAssetBaseUrl = undefined;
+      }
+    }
+    if (disposed) return;
     content.value = text(result.content); truncated.value = !!result.truncated;
     file.value = { fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true,
-      preview: result.kind === 'html' ? { kind: 'html', source: content.value } : result.kind === 'image' ? { kind: 'image', bytes: bytes(result.content), mimeType: doc.mime, altText: doc.name } : result.kind === 'pdf' ? undefined : { kind: 'custom' } };
+      preview: result.kind === 'html' ? { kind: 'html', source: content.value, assetBaseUrl: htmlAssetBaseUrl } : result.kind === 'image' ? { kind: 'image', bytes: bytes(result.content), mimeType: doc.mime, altText: doc.name } : result.kind === 'pdf' ? undefined : { kind: 'custom' } };
     textKind.value = ['markdown', 'code', 'csv'].includes(result.kind) ? result.kind : undefined;
   } catch (error) { file.value = { ...file.value, status: 'error', message: error instanceof Error ? error.message : 'Preview unavailable.' }; }
 }
@@ -94,4 +120,10 @@ async function saveMarkdown(request: { requestId: number; content: string; baseV
   }
 }
 onMounted(load);
+onBeforeUnmount(() => {
+  disposed = true;
+  const token = htmlPreviewToken;
+  htmlPreviewToken = '';
+  if (token) void ipcRenderer.invoke('files:preview:revoke', { token }).catch(() => undefined);
+});
 </script>
