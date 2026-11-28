@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 // risk: permissions — the Desktop-only service must accept its local API token and reject all other callers.
