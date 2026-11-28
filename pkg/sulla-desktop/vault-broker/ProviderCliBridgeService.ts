@@ -184,9 +184,9 @@ export class ProviderCliBridgeService {
     response.once('close', () => {
       if (!response.writableEnded) abort();
     });
-    const deny = (code: number, type: string, extra: { message?: string; reason: string; headers?: Record<string, string> }) => {
+    const deny = (code: number, type: string, extra: { message?: string; reason: string; headers?: Record<string, string> }, failureType = type) => {
       status = code;
-      const safeType = ProviderCliBridgeFailurePolicy.safeToken(type);
+      const safeType = ProviderCliBridgeFailurePolicy.safeToken(failureType);
       const safeReason = ProviderCliBridgeFailurePolicy.safeToken(extra.reason);
       failureNote += ` failure=${ safeType ?? 'provider_bridge_denied' }${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ stage }`;
       ProviderCliBridgeResponsePolicy.sendError(response, code, type, extra);
@@ -361,7 +361,7 @@ export class ProviderCliBridgeService {
       if (requestAbort.signal.aborted) {
         // The CLI hung up or the job's lifecycle ended: a cancellation, not a bridge failure.
         const reason = lifetime.signal.aborted ? 'lifecycle_revoked' : 'client_disconnected';
-        if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason });
+        if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason }, 'provider_bridge_cancelled');
         else {
           status = 499;
           // The streamed reply can never finish; end the connection so the CLI
@@ -369,7 +369,6 @@ export class ProviderCliBridgeService {
           // alone leaves the socket up once the request body was fully read.
           response.destroy();
         }
-        failureNote += ` failure=provider_bridge_cancelled reason=${ reason } stage=${ stage }`;
         console.warn(`[ProviderCliBridge] request cancelled reason=${ reason } stage=${ stage }`);
         return;
       }
