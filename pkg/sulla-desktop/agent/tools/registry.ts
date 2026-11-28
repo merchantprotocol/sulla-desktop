@@ -406,9 +406,10 @@ export class ToolRegistry {
    * Minimal native tool set pushed to the primary agent in slim tool mode
    * (toolMode setting, default 'slim'). Everything else lives in the tool
    * catalog: discovered via browse_tools and invoked through exec with
-   * `sulla <category>/<tool> '<json>'`. ask_user_question stays native
-   * because it is a blocking, interactive card wired into the chat UI — it
-   * cannot render or pause the loop when run via the CLI.
+   * `sulla <category>/<tool> '<json>'`. ask_user_question is included natively
+   * for direct graph calls and in the CLI catalog as the same persistent,
+   * session-bound decision action; both paths render a card and return a
+   * receipt instead of blocking on the human.
    */
   static readonly SLIM_PRIMARY_TOOL_NAMES = [
     'browse_tools', 'exec', 'read_file', 'write_file', 'ask_user_question',
