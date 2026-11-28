@@ -31,7 +31,7 @@ import InlineFileCard from './InlineFileCard.vue';
 import InlineTextPreview from './inline/InlineTextPreview.vue';
 import { ChatFileOpenAction } from './ChatFileOpenAction';
 import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
-import type { InlinePdfDocumentLoader } from './inlinePdfPreview';
+import type { InlinePdfDocumentLoader } from './inlinePdfPreviewController';
 import type { FilesSaveSuccess } from '@pkg/pages/files/types';
 import type { MarkdownSaveOutcome } from './inline/MarkdownEditSession';
 
