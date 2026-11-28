@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({ window: undefined as any, sent: [] as any[], listener: undefined as any, sender: undefined as any, tabHostOwner: undefined as any }));
-vi.mock('electron', () => ({ ipcMain: { once: vi.fn((_channel: string, listener: any) => { state.listener = listener; }), removeAllListeners: vi.fn() } }));
+vi.mock('electron', () => ({ ipcMain: { once: vi.fn((_channel: string, listener: any) => { state.listener = listener; }), removeListener: vi.fn(), removeAllListeners: vi.fn() } }));
 vi.mock('@pkg/window/agentWindows', () => ({ getActiveAgentWindow: () => state.window }));
 vi.mock('@pkg/window/agentWindowTrust', () => ({ agentWindowFromSender: (sender: any) => (sender === state.tabHostOwner?.view ? state.tabHostOwner.window : null) }));
 

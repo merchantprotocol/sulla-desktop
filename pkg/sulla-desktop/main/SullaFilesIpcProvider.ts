@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
+import Electron from 'electron';
+
 import { SullaFilesIpcBrowseHandlers } from './SullaFilesIpcBrowseHandlers';
 import { SullaFilesIpcDownloadService } from './SullaFilesIpcDownloadService';
 import { SullaFilesIpcLiveHandlers } from './SullaFilesIpcLiveHandlers';
@@ -13,6 +15,7 @@ import { SullaFilesIpcOperationHandlers } from './SullaFilesIpcOperationHandlers
 import { SullaFilesIpcPreviewService } from './SullaFilesIpcPreviewService';
 import { SullaFilesIpcPreviewReadService } from './SullaFilesIpcPreviewReadService';
 import { SullaFilesIpcOriginalRevealService } from './SullaFilesIpcOriginalRevealService';
+import { InlineHtmlPreviewSessionPolicy } from './InlineHtmlPreviewSessionPolicy';
 import { SullaFilesIpcReferenceHandlers } from './SullaFilesIpcReferenceHandlers';
 import { SullaFilesIpcSettingsHandlers } from './SullaFilesIpcSettingsHandlers';
 import { SullaFilesIpcSharingHandlers } from './SullaFilesIpcSharingHandlers';
@@ -20,6 +23,8 @@ import { SullaFilesIpcApi } from './SullaFilesIpcSupport';
 import { SullaFilesIpcUploadHandlers } from './SullaFilesIpcUploadHandlers';
 import { SullaFilesIpcUploadService } from './SullaFilesIpcUploadService';
 import { OrgFilesDesktopRuntime } from './cloud/orgFiles/OrgFilesDesktopRuntime';
+import { openUrlInApp } from '@pkg/window';
+import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
 
 import type { Protocol } from 'electron';
 import type { SullaFilesClient } from './sullaFilesClient';
@@ -58,6 +63,14 @@ export class SullaFilesIpcProvider {
     const upload = new SullaFilesIpcUploadService(client);
     const media = new SullaFilesIpcMediaService(protocol, client);
     const preview = new SullaFilesIpcPreviewService(protocol, api);
+    const previewSession = Electron.session.fromPartition(INLINE_HTML_PREVIEW_PARTITION, { cache: false });
+    new InlineHtmlPreviewSessionPolicy(
+      previewSession,
+      Electron.app,
+      openUrlInApp,
+      url => preview.allowsCapabilityOrigin(url),
+      INLINE_HTML_PREVIEW_PARTITION,
+    ).install();
     const previewRead = new SullaFilesIpcPreviewReadService(api);
     this.deps.registerUseCaseSuggestions(watcher);
     void services.fileProvider().start();
@@ -69,6 +82,7 @@ export class SullaFilesIpcProvider {
     operations.registerOperations(ipc);
     try { media.initialize() } catch (error) { logger.error('Files media protocol failed to initialize:', error) }
     try { preview.initialize() } catch (error) { logger.error('Files HTML preview protocol failed to initialize:', error) }
+    try { preview.initialize(previewSession.protocol) } catch (error) { logger.error('Isolated Files HTML preview protocol failed to initialize:', error) }
     const mountManager = services.mountManager();
     mountManager.on('changed', status => desktop.broadcast('files-ui:native-runtime-changed', status));
     ipc.handle('files-ui:native-runtime', () => mountManager.status());

@@ -23,7 +23,7 @@ export interface SullaFilesPreviewDocument {
 export type SullaFilesPreviewReadResult =
   | { state:'ready'; kind:SullaFilesPreviewKind; document:SullaFilesPreviewDocument; content:string | Uint8Array; truncated:boolean }
   | { state:'metadata-only'; kind:'pdf'; document:SullaFilesPreviewDocument }
-  | { state:'too-large'; kind:'image' | 'pdf'; document:SullaFilesPreviewDocument }
+  | { state:'too-large'; kind:'image' | 'pdf'; document:SullaFilesPreviewDocument; maxBytes:number }
   | { state:'unsupported'; reason:'file-type' | 'binary-text'; document:SullaFilesPreviewDocument }
   | { state:'deleted'; document:SullaFilesPreviewDocument }
   | { state:'unavailable'; reason:'not-available' | 'authority-changed' | 'invalid-metadata' | 'invalid-content' }
@@ -45,7 +45,7 @@ const DEFAULT_PREVIEW_CAPS:SullaFilesPreviewReadCaps = {
   code:     256 * 1024,
   csv:      256 * 1024,
   image:    2 * 1024 * 1024,
-  pdf:      4 * 1024 * 1024,
+  pdf:      20 * 1024 * 1024,
 };
 
 interface NormalizedFile extends SullaFilesPreviewDocument {
@@ -139,6 +139,8 @@ export class SullaFilesPreviewBoundedBodyReader {
  * capability. The opaque principal snapshot prevents a result crossing an account/principal switch.
  */
 export class SullaFilesIpcPreviewReadService {
+  private readonly activeReadRequests = new Map<string, AbortController>();
+
   constructor(
     private readonly api:SullaFilesIpcApi,
     private readonly classifier = new SullaFilesPreviewContentClassifier(),
@@ -165,6 +167,7 @@ export class SullaFilesIpcPreviewReadService {
     }
     if (signal?.aborted) return { state:'cancelled' };
     const metadataAuthority = await this.authorityState(authorityBefore);
+    if (signal?.aborted) return { state:'cancelled' };
     if (metadataAuthority !== 'same') return metadataAuthority === 'offline' ? { state:'offline' } : { state:'unavailable', reason:'authority-changed' };
 
     const file = this.normalize(raw, id);
@@ -174,17 +177,17 @@ export class SullaFilesIpcPreviewReadService {
 
     const preview = this.classifier.classify(file);
     if (!preview) return { state:'unsupported', reason:'file-type', document:this.publicDocument(file) };
-    // PDFs are rendered by the renderer from metadata only in this epic. Never fetch PDF bytes.
-    if (preview.kind === 'pdf') return { state:'metadata-only', kind:'pdf', document:this.publicDocument(file) };
+    // PDF.js receives only a bounded, authorized in-memory byte array from the renderer's isolated worker.
+    if (preview.kind === 'pdf' && file.size > preview.maxBytes) return { state:'too-large', kind:'pdf', document:this.publicDocument(file), maxBytes:preview.maxBytes };
     // Binary image previews must be complete; never issue a Range request or return a prefix.
-    if (preview.kind === 'image' && file.size > preview.maxBytes) return { state:'too-large', kind:'image', document:this.publicDocument(file) };
+    if (preview.kind === 'image' && file.size > preview.maxBytes) return { state:'too-large', kind:'image', document:this.publicDocument(file), maxBytes:preview.maxBytes };
     if (file.size === 0) {
-      const content = preview.kind === 'image' ? new Uint8Array() : '';
+      const content = preview.kind === 'image' || preview.kind === 'pdf' ? new Uint8Array() : '';
       return { state:'ready', kind:preview.kind, document:this.publicDocument(file), content, truncated:false };
     }
 
     if (signal?.aborted) return { state:'cancelled' };
-    const textKind = preview.kind !== 'image'; // PDFs returned metadata-only above.
+    const textKind = preview.kind !== 'image' && preview.kind !== 'pdf';
     const rangeRequested = textKind && file.size > preview.maxBytes;
     const headers = rangeRequested ? { range:`bytes=0-${ preview.maxBytes - 1 }` } : undefined;
     const endpoint = `/v1/files/${ encodeURIComponent(id) }/preview?versionId=${ encodeURIComponent(file.currentVersionId) }`;
@@ -209,6 +212,7 @@ export class SullaFilesIpcPreviewReadService {
     if (signal?.aborted) return { state:'cancelled' };
     if (!bounded || (bounded.overflow && file.size <= preview.maxBytes)) return { state:'unavailable', reason:'invalid-content' };
     const bodyAuthority = await this.authorityState(authorityBefore);
+    if (signal?.aborted) return { state:'cancelled' };
     if (bodyAuthority !== 'same') return bodyAuthority === 'offline' ? { state:'offline' } : { state:'unavailable', reason:'authority-changed' };
 
     if (textKind) {
@@ -223,11 +227,39 @@ export class SullaFilesIpcPreviewReadService {
   register(ipc:SullaFilesIpcRegistrar):void {
     ipc.handle('sulla-files:preview-read', async (event, input:unknown) => {
       if (!isAgentWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted preview-read sender');
-      if (!input || typeof input !== 'object' || Object.keys(input).length !== 1 || typeof (input as { fileId?:unknown }).fileId !== 'string') throw new Error('Invalid preview-read input');
-      const fileId = (input as { fileId:string }).fileId;
+      if (!input || typeof input !== 'object' || Object.keys(input).length !== 2
+        || typeof (input as { fileId?:unknown }).fileId !== 'string'
+        || !this.validRequestId((input as { requestId?:unknown }).requestId)) throw new Error('Invalid preview-read input');
+      const { fileId, requestId } = input as { fileId:string; requestId:string };
       if (fileId.length > 200) throw new Error('Invalid preview-read input');
-      return this.read(fileId);
+
+      const key = this.readRequestKey(event.sender.id, requestId);
+      this.activeReadRequests.get(key)?.abort();
+      const controller = new AbortController();
+      this.activeReadRequests.set(key, controller);
+      try { return await this.read(fileId, { signal:controller.signal }); }
+      finally {
+        if (this.activeReadRequests.get(key) === controller) this.activeReadRequests.delete(key);
+      }
     });
+    ipc.handle('sulla-files:preview-read-cancel', (event, input:unknown) => {
+      if (!isAgentWindowSender(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted preview-read sender');
+      if (!input || typeof input !== 'object' || Object.keys(input).length !== 1
+        || !this.validRequestId((input as { requestId?:unknown }).requestId)) throw new Error('Invalid preview-read cancellation input');
+      const requestId = (input as { requestId:string }).requestId;
+      const controller = this.activeReadRequests.get(this.readRequestKey(event.sender.id, requestId));
+      if (!controller) return { cancelled:false };
+      controller.abort();
+      return { cancelled:true };
+    });
+  }
+
+  private validRequestId(value:unknown):value is string {
+    return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value);
+  }
+
+  private readRequestKey(senderId:number, requestId:string):string {
+    return `${ senderId }:${ requestId }`;
   }
 
   private normalize(value:unknown, requestedId:string):NormalizedFile | undefined {
