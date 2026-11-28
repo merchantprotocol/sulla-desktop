@@ -13,6 +13,7 @@ class MemoryInboxRepository implements AgentInboxRepository {
   async claim(target: AgentInboxTarget, owner: string): Promise<AgentInboxClaim> { const now=Date.now();const entries=[...this.rows.values()].filter(row => !row.delivered && (!row.owner||(row.leaseExpiresAt??0)<now) && row.entry.target.channel===target.channel && (!target.threadId || !row.entry.target.threadId || row.entry.target.threadId===target.threadId)).map(row => { row.owner=owner;row.leaseExpiresAt=now+this.leaseMs;return row.entry; }); return {owner,target,entries}; }
   async renew(claim: AgentInboxClaim): Promise<void> { this.renewals++;for(const entry of claim.entries){const row=this.rows.get(entry.envelope.ids.messageId);if(row?.owner===claim.owner)row.leaseExpiresAt=Date.now()+this.leaseMs;} }
   async acknowledge(claim: AgentInboxClaim): Promise<void> { for(const entry of claim.entries){ const row=this.rows.get(entry.envelope.ids.messageId); if(row?.owner===claim.owner) row.delivered=true; } }
+  async acknowledgeIds(target: AgentInboxTarget, messageIds: string[]): Promise<void> { for(const id of messageIds){const row=this.rows.get(id);if(row?.entry.target.channel===target.channel&&row.entry.target.threadId===target.threadId) {row.delivered=true;delete row.owner;}} }
   async release(claim: AgentInboxClaim): Promise<void> { for(const entry of claim.entries){ const row=this.rows.get(entry.envelope.ids.messageId); if(row?.owner===claim.owner) delete row.owner; } }
   async pendingTargets(): Promise<AgentInboxTarget[]> { return [...this.rows.values()].filter(r=>!r.delivered&&!r.owner).map(r=>r.entry.target).filter((v,i,a)=>a.findIndex(x=>x.channel===v.channel&&x.threadId===v.threadId)===i); }
 }
@@ -32,10 +33,18 @@ describe('AgentInbox',()=>{
     const delivery=new RecordingDelivery(); const inbox=new AgentInbox(new MemoryInboxRepository(),delivery);
     expect(await inbox.receive(entry('m1','pick up I1'))).toBe('delivered'); expect(delivery.batches).toEqual(['[Peer message from mobile-relay]\npick up I1']);
   });
-  it('does not interrupt a running receiver and flushes all messages in one ordered batch',async()=>{ // risk: core messaging
+  it('steers eligible system messages into a running target without acknowledging them, then drains the durable fallback once idle',async()=>{ // risk: duplicate turns and lost inbox messages
+    const repository=new MemoryInboxRepository();const delivery=new RecordingDelivery();delivery.running=true;delivery.receipt='deferred';const inbox=new AgentInbox(repository,delivery);
+    expect(await inbox.receive(entry('m1','first'))).toBe('queued');expect(await inbox.receive(entry('m2','second'))).toBe('queued');
+    expect(delivery.batches).toEqual(['[Peer message from mobile-relay]\nfirst','[Peer message from mobile-relay]\nsecond']);
+    expect([...repository.rows.values()].every(row=>!row.delivered)).toBe(true);delivery.running=false;delivery.receipt='accepted';
+    expect(await inbox.flush(entry('m1').target)).toBe(2);expect(delivery.batches[2]).toContain('first\n\n==========\n\n[Peer message from mobile-relay]\nsecond');
+  });
+  it('keeps human and decision inputs on their existing queue policy while a receiver runs',async()=>{ // risk: human/decision inbox policy
     const delivery=new RecordingDelivery();delivery.running=true;const inbox=new AgentInbox(new MemoryInboxRepository(),delivery);
-    await inbox.receive(entry('m1','first'));await inbox.receive(entry('m2','second'));expect(delivery.batches).toEqual([]);delivery.running=false;
-    expect(await inbox.flush(entry('m1').target)).toBe(2);expect(delivery.batches[0]).toContain('first\n\n==========\n\n[Peer message from mobile-relay]\nsecond');
+    expect(await inbox.receive({...entry('human','answer'),envelope:{...entry('human').envelope,kind:'human'}})).toBe('queued');
+    expect(await inbox.receive({...entry('decision','answer'),envelope:{...entry('decision').envelope,kind:'decision'}})).toBe('queued');
+    expect(delivery.batches).toEqual([]);
   });
   it('keeps a claim pending unless graph input is accepted',async()=>{ // risk: message loss
     const repository=new MemoryInboxRepository();const delivery=new RecordingDelivery();delivery.receipt='failed';const inbox=new AgentInbox(repository,delivery);
@@ -49,8 +58,19 @@ describe('AgentInbox',()=>{
     const repository=new MemoryInboxRepository();await repository.enqueue(entry('once'));const a=await repository.claim(entry('once').target,'a');const b=await repository.claim(entry('once').target,'b');
     expect(a.entries).toHaveLength(1);expect(b.entries).toHaveLength(0);
   });
+  it('acknowledges the exact consumed steer even while an older flush still owns its lease',async()=>{ // risk: duplicate delivery after a same-turn provider boundary
+    const repository=new MemoryInboxRepository();await repository.enqueue(entry('consumed'));await repository.enqueue(entry('unconsumed'));
+    const claim=await repository.claim(entry('consumed').target,'active-flush');
+    const inbox=new AgentInbox(repository,new RecordingDelivery());
+
+    await inbox.acknowledgeEntries(entry('consumed').target,['consumed']);
+
+    expect(repository.rows.get('consumed')?.delivered).toBe(true);
+    expect(repository.rows.get('unconsumed')?.delivered).toBe(false);
+    await repository.release(claim);
+  });
   it('replays pending targets after service restart',async()=>{ // risk: restart durability
-    const repository=new MemoryInboxRepository();const before=new RecordingDelivery();before.running=true;await new AgentInbox(repository,before).receive(entry('restart','still here'));
+    const repository=new MemoryInboxRepository();const before=new RecordingDelivery();before.running=true;before.receipt='deferred';await new AgentInbox(repository,before).receive(entry('restart','still here'));
     const after=new RecordingDelivery();expect(await new AgentInbox(repository,after).replayPending()).toBe(1);expect(after.batches).toEqual(['[Peer message from mobile-relay]\nstill here']);
   });
   it('rechecks for a same-target message arriving while a flush wake is accepted',async()=>{ // risk: late-arrival stranding
@@ -78,6 +98,6 @@ describe('AgentInbox',()=>{
     expect(delivery.delivered).toEqual(['first',...Array.from({length:10},(_,index)=>`late-${index+1}`)]);expect(maxActive).toBe(1);expect(scheduler.callbacks).toHaveLength(0);
   });
   it('deduplicates a repeated messageId',async()=>{ // risk: idempotency
-    const delivery=new RecordingDelivery();delivery.running=true;const inbox=new AgentInbox(new MemoryInboxRepository(),delivery);expect(await inbox.receive(entry('same'))).toBe('queued');expect(await inbox.receive(entry('same'))).toBe('duplicate');
+    const delivery=new RecordingDelivery();delivery.running=true;delivery.receipt='deferred';const inbox=new AgentInbox(new MemoryInboxRepository(),delivery);expect(await inbox.receive(entry('same'))).toBe('queued');expect(await inbox.receive(entry('same'))).toBe('duplicate');
   });
 });
