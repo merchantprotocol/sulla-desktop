@@ -27,7 +27,7 @@ describe('TabStripLayoutRepository', () => {
     expect(main.state.value).toEqual({ version: 2, groups: [], membership: {} });
     expect(otherWindow.state.value).toEqual({ version: 2, groups: [], membership: {} });
 
-    new TabGroupModel(main, () => 'group-main').createGroup('Main tabs', 'accent', ['tab-a']);
+    new TabGroupModel(main, () => 'group-main').createGroup('Main tabs', 'blue', ['tab-a']);
     expect(main.state.value.groups).toHaveLength(1);
     expect(otherWindow.state.value.groups).toEqual([]);
   });
@@ -40,8 +40,8 @@ describe('TabStripLayoutRepository', () => {
       let id = 0;
       return () => `group-${ ++id }`;
     })());
-    const first = model.createGroup('  Work 🧭  ', 'status-warning', ['tab-a', 'tab-b']);
-    const second = model.createGroup('Personal', 'text-accent', ['tab-c']);
+    const first = model.createGroup('  Work 🧭  ', 'gold', ['tab-a', 'tab-b']);
+    const second = model.createGroup('Personal', 'purple', ['tab-c']);
     model.setCollapsed(first.id, true);
     model.reorder(second.id, 0);
 
@@ -50,8 +50,8 @@ describe('TabStripLayoutRepository', () => {
     expect(JSON.parse(saved!)).toEqual({
       version: 2,
       groups: [
-        { id: second.id, name: 'Personal', colorToken: 'text-accent', order: 0, collapsed: false },
-        { id: first.id, name: 'Work 🧭', colorToken: 'status-warning', order: 1, collapsed: true },
+        { id: second.id, name: 'Personal', colorToken: 'purple', order: 0, collapsed: false },
+        { id: first.id, name: 'Work 🧭', colorToken: 'gold', order: 1, collapsed: true },
       ],
       membership: { 'tab-a': first.id, 'tab-b': first.id, 'tab-c': second.id },
     });
@@ -66,7 +66,7 @@ describe('TabStripLayoutRepository', () => {
     // risk: data accuracy — a selected tab must not remain hidden in a collapsed group.
     const repository = new TabStripLayoutRepository(new MemoryStorage(), 'window-key');
     const model = new TabGroupModel(repository, () => 'active-group');
-    const group = model.createGroup('Selected', 'accent', ['browser-tab']);
+    const group = model.createGroup('Selected', 'blue', ['browser-tab']);
     const reveal = new TabGroupReveal(model);
 
     model.setCollapsed(group.id, true);
@@ -86,20 +86,24 @@ describe('TabStripLayoutRepository', () => {
     expect(unsupported.state.value).toEqual({ version: 2, groups: [], membership: {} });
   });
 
-  it('sanitizes invalid groups and stale group membership without throwing', () => {
-    // risk: data integrity — invalid persisted identifiers and colors must be discarded.
+  it('preserves optional empty names and sanitizes invalid groups and stale membership', () => {
+    // risk: durability/data integrity — blank names persist, while malformed records and stale memberships are discarded.
     const raw = JSON.stringify({
       version: 2,
       groups: [
-        { id: 'usable', name: '  Valid  ', colorToken: 'status-error', order: 4, collapsed: true },
-        { id: 'empty-name', name: ' ', colorToken: 'accent', order: 1, collapsed: false },
+        { id: 'usable', name: '  Valid  ', colorToken: 'orange', order: 4, collapsed: true },
+        { id: 'empty-name', name: ' ', colorToken: 'blue', order: 1, collapsed: false },
+        { id: 'missing-name', colorToken: 'green', order: 2, collapsed: false },
         { id: 'unknown-color', name: 'Invalid', colorToken: '#ff00ff', order: 2, collapsed: false },
       ],
-      membership: { 'live-tab': 'usable', 'stale-group': 'absent', 'invalid-group': 'empty-name' },
+      membership: { 'live-tab': 'usable', 'blank-name-tab': 'empty-name', 'missing-name-tab': 'missing-name', 'stale-group': 'absent' },
     });
     const repository = new TabStripLayoutRepository(new MemoryStorage({ state: raw }), 'state');
 
-    expect(repository.state.value.groups).toEqual([{ id: 'usable', name: 'Valid', colorToken: 'status-error', order: 0, collapsed: true }]);
-    expect(repository.state.value.membership).toEqual({ 'live-tab': 'usable' });
+    expect(repository.state.value.groups).toEqual([
+      { id: 'empty-name', name: '', colorToken: 'blue', order: 0, collapsed: false },
+      { id: 'usable', name: 'Valid', colorToken: 'orange', order: 1, collapsed: true },
+    ]);
+    expect(repository.state.value.membership).toEqual({ 'live-tab': 'usable', 'blank-name-tab': 'empty-name' });
   });
 });
