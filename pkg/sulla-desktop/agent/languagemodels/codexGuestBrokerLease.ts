@@ -10,8 +10,10 @@ import { getIntegrationService } from '../services/IntegrationService';
 
 import { getMCPServerHost } from '@pkg/main/MCPServerHost';
 import { getDesktopDeviceId } from '@pkg/main/deviceIdentity';
+import Logging from '@pkg/utils/logging';
 
 import type { BaseThreadState } from '../nodes/Graph';
+import type { TurnTimingProviderRequestSink } from '../services/TurnTiming';
 
 /** Short-lived caller claims; renewed on every bridge request while the process lives. */
 const CONTEXT_TTL_S = 300;
@@ -28,6 +30,10 @@ const CONTEXT_TTL_S = 300;
 export async function createGuestCodexBrokerLease(input: {
   conversationId: string;
   state?:         BaseThreadState;
+  runId?:         string;
+  turnTiming?:    TurnTimingProviderRequestSink;
+  getTimingContext?: () => { runId: string; turnTiming?: TurnTimingProviderRequestSink } | undefined;
+  logTiming?:     (message: string) => void;
 }): Promise<ProviderCliBridgeLease> {
   const integrations = getIntegrationService();
   const accountId = await integrations.getActiveAccountId('codex');
@@ -49,6 +55,8 @@ export async function createGuestCodexBrokerLease(input: {
     orgId:           metadata.orgId,
   });
   const context = { ...base, device_id: await getDesktopDeviceId() };
+  const turnTiming = input.turnTiming ?? ((input.state as any)?.__turnTiming as TurnTimingProviderRequestSink | undefined);
+  const runId = input.runId || turnTiming?.runId || String((input.state?.metadata as any)?.runId || '') || crypto.randomUUID();
   const renewed = () => {
     const now = Math.floor(Date.now() / 1_000);
     return { ...context, iat: now, exp: now + CONTEXT_TTL_S };
@@ -58,6 +66,14 @@ export async function createGuestCodexBrokerLease(input: {
     context:        renewed(),
     provider:       'codex',
     accountId,
+    runId,
+    turnTiming,
+    getTimingContext: input.getTimingContext ?? (() => {
+      const current = (input.state as any)?.__turnTiming as TurnTimingProviderRequestSink | undefined;
+      const currentRunId = String(current?.runId || (input.state?.metadata as any)?.runId || runId);
+      return { runId: currentRunId, turnTiming: current ?? (currentRunId === runId ? turnTiming : undefined) };
+    }),
+    logTiming:      input.logTiming ?? (message => Logging.perf.log(message)),
     advertisedHost: new URL(getMCPServerHost().getVmReachableUrl()).hostname,
     authorize:      renewed,
   });
