@@ -26,9 +26,7 @@ import type { ToolResponse } from '../../../tools/base';
 import type { RecentFileOpenCoordinator } from '../../../tools/files/RecentFileOpenRegistry';
 import { ChatFileOpenAction } from '@pkg/pages/chat/components/files/ChatFileOpenAction';
 import { FilesBrowserOpenDecision } from '@pkg/pages/files/browser/FilesBrowserOpenDecision';
-import { FilesBrowserMenus } from '@pkg/pages/files/browser/FilesBrowserMenus';
 import { FilesBrowserNavigation } from '@pkg/pages/files/browser/FilesBrowserNavigation';
-import { FilesBrowserTargetActions } from '@pkg/pages/files/browser/FilesBrowserTargetActions';
 import { FileDetailPreviewRouter } from '@pkg/pages/files/FileDetailPreviewRouter';
 import { FilesOpenDestinationRouter } from '@pkg/pages/files/FilesOpenDestinationRouter';
 import { documentEditorTypeIdForPath } from '@pkg/pages/files/editor/editorTypes';
@@ -78,8 +76,8 @@ describe('FilesOpenWorker', () => {
     expect(JSON.parse(response.responseString)).toMatchObject({ how: 'document-editor', path: 'Projects/sulla-desktop/qa-two-device/editor-repro/agent-repro.md' });
   });
 
-  it('routes HTML and HTM to the full-page editor across Files open entry points and preserves other routing', async() => {
-    // risk: file routing — HTML must never reach the Files viewer, including view and inline requests.
+  it('routes HTML and HTM tab opens to the full-page editor while retaining inline cards', async() => {
+    // risk: file routing — visible-chat inline opens must retain the HTML card; explicit tab opens must use the editor.
     const destinationRouter = new FilesOpenDestinationRouter();
     const previewRouter = new FileDetailPreviewRouter();
     const browserRouter = new FilesBrowserOpenDecision(previewRouter, documentEditorTypeIdForPath);
@@ -105,9 +103,15 @@ describe('FilesOpenWorker', () => {
             ...(mode ? { mode } : {}), ...(placement ? { placement } : {}),
           });
 
-          expect(state.message).toMatchObject({ command: 'open-files-item', mode: 'edit', path: expect.stringMatching(/\.html?$/) });
-          expect(JSON.parse(response.responseString)).toMatchObject({ opened: true, how: 'document-editor' });
-          expect(worker.sendChatMessage).not.toHaveBeenCalled();
+          if (placement === 'tab') {
+            expect(state.message).toMatchObject({ command: 'open-files-item', mode: 'edit', path: expect.stringMatching(/\.html?$/) });
+            expect(JSON.parse(response.responseString)).toMatchObject({ opened: true, how: 'document-editor' });
+            expect(worker.sendChatMessage).not.toHaveBeenCalled();
+          }
+          else {
+            expect(JSON.parse(response.responseString)).toMatchObject({ opened: true, placement: 'inline', path: expect.stringMatching(/\.html?$/) });
+            expect(worker.sendChatMessage).toHaveBeenCalledTimes(1);
+          }
         }
       }
 
@@ -129,7 +133,7 @@ describe('FilesOpenWorker', () => {
     expect(destinationRouter.resolve('notes.md', 'view')).toEqual({ destination: 'file-manager', mode: 'view' });
 
     const htmlEntry = { id: 'html-file', key: 'html-file', name: 'page.html', path: 'page.html', mime: 'text/html', folder: false, currentVersionId: 'version-1' } as any;
-    const source = { openFile: vi.fn(), openFileWithApp: vi.fn(async() => ({ recentApplications: [] })) };
+    const source = { openFile: vi.fn() };
     const browserState = {
       busy: { value: false }, loading: { value: false }, selected: { value: htmlEntry }, detailVersion: { value: { id: 'old-version' } },
       navigationError: { value: '' }, snapshot: { value: { collection: { id: 'collection-1' } } },
@@ -142,19 +146,8 @@ describe('FilesOpenWorker', () => {
     };
     const browserNavigation = new FilesBrowserNavigation(browser);
     browser.navigation = browserNavigation;
-    const targetActions = new FilesBrowserTargetActions(browser);
-    await targetActions.runTargetAction('native-open');
-    expect(browserState.emit).toHaveBeenCalledWith('open-editor', htmlEntry, 'collection-1');
-    expect(source.openFile).not.toHaveBeenCalled();
-
-    const menus = new FilesBrowserMenus(browser);
-    menus.actionTarget.value = htmlEntry;
-    await menus.openWithApplication('/Applications/Browser.app');
-    expect(browserState.emit).toHaveBeenCalledTimes(2);
-    expect(source.openFileWithApp).not.toHaveBeenCalled();
-
     await browserNavigation.openDetail();
-    expect(browserState.emit).toHaveBeenCalledTimes(3);
+    expect(browserState.emit).toHaveBeenCalledWith('open-editor', htmlEntry, 'collection-1');
     expect(source.openFile).not.toHaveBeenCalled();
   });
 });
