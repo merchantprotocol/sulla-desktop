@@ -1237,7 +1237,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             // several cumulative usage events (one per model call) per run.
             lastUsage = parsed.usage;
             this.usageRecorder.recordCodex(lastUsage, {
-              runId:      options.state?.metadata?.turnRunId,
+              runId:      options.state?.metadata?.runId,
               convId,
               threadId:   capturedSessionId ?? existingSession,
               model:      this.launchModel() || this.getModel(),
