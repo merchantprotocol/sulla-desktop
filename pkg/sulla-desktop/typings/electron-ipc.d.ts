@@ -700,7 +700,8 @@ export interface IpcMainInvokeEvents {
   'sulla-files:set-star':        (input: { starred: boolean; collectionId: string; fileId?: string; folderPath?: string }) => void;
   'sulla-files:operate':         (input: { action: 'move' | 'copy'; collectionId: string; items: { fileId?: string; folderPath?: string; targetPath: string }[] }) => void;
   'sulla-files:metadata':        (input: { fileId: string }) => any;
-  'sulla-files:preview-read':    (input: { fileId: string }) => import('@pkg/main/SullaFilesIpcPreviewReadService').SullaFilesPreviewReadResult;
+  'sulla-files:preview-read':    (input: { fileId: string; requestId: string }) => import('@pkg/main/SullaFilesIpcPreviewReadService').SullaFilesPreviewReadResult;
+  'sulla-files:preview-read-cancel': (input: { requestId: string }) => { cancelled: boolean };
   'sulla-files:live-join': (input:{fileId:string}) => import('@pkg/pages/files/liveTypes').FilesLiveJoin | {error:string};
   'sulla-files:live-start': (input:{peerId:string}) => {error?:string};
   'sulla-files:live-sync': (input:{peerId:string;message:string}) => {message?:string|null;error?:string};

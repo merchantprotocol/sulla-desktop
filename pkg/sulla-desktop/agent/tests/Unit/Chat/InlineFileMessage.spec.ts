@@ -26,6 +26,7 @@ describe('InlineFileMessage HTML preview assets', () => {
         state:'ready', kind:'html', content:source, truncated:false,
         document:{ id:'file-id', path:'Projects/synthetic/page.html', name:'page.html', mime:'text/html', size:source.length, currentVersionId:'version-id' },
       };
+      if (channel === 'sulla-files:preview-read-cancel') return undefined;
       if (channel === 'files:preview:open') return { token:'fixture-token', url:assetBaseUrl };
       if (channel === 'files:preview:revoke') return undefined;
       throw new Error(`Unexpected IPC channel: ${channel}`);
@@ -40,12 +41,14 @@ describe('InlineFileMessage HTML preview assets', () => {
     expect(guest.attributes('webpreferences')).toBe('nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no');
     expect(decodeURIComponent((guest.attributes('src') ?? '').slice('data:text/html;charset=utf-8,'.length)))
       .toBe(source.replace('<head>', `<head><base href="${assetBaseUrl}">`));
-    expect(invoke).toHaveBeenNthCalledWith(1, 'sulla-files:preview-read', { fileId:'file-id' });
+    expect(invoke).toHaveBeenNthCalledWith(1, 'sulla-files:preview-read', { fileId:'file-id', requestId: expect.any(String) });
+    const requestId = invoke.mock.calls[0]?.[1]?.requestId;
     expect(invoke).toHaveBeenNthCalledWith(2, 'files:preview:open', { collectionId:'collection-id', fileId:'file-id' });
 
     wrapper.unmount();
 
-    expect(invoke).toHaveBeenLastCalledWith('files:preview:revoke', { token:'fixture-token' });
+    expect(invoke).toHaveBeenCalledWith('files:preview:revoke', { token:'fixture-token' });
+    expect(invoke).toHaveBeenCalledWith('sulla-files:preview-read-cancel', { requestId });
   });
 
   it('still renders the HTML when the optional Files asset grant fails', async() => {
@@ -57,6 +60,7 @@ describe('InlineFileMessage HTML preview assets', () => {
         state:'ready', kind:'html', content:source, truncated:false,
         document:{ id:'file-id', path:'Projects/synthetic/page.html', name:'page.html', mime:'text/html', size:source.length, currentVersionId:'version-id' },
       };
+      if (channel === 'sulla-files:preview-read-cancel') return undefined;
       if (channel === 'files:preview:open') throw new Error('Files asset service unavailable');
       throw new Error(`Unexpected IPC channel: ${channel}`);
     });
@@ -80,6 +84,7 @@ describe('InlineFileMessage HTML preview assets', () => {
         state:'ready', kind:'html', content:source, truncated:false,
         document:{ id:'file-id', path:'Projects/synthetic/page.html', name:'page.html', mime:'text/html', size:source.length, currentVersionId:'version-id' },
       });
+      if (channel === 'sulla-files:preview-read-cancel') return Promise.resolve(undefined);
       if (channel === 'files:preview:open') return new Promise(resolve => { resolveGrant = resolve; });
       if (channel === 'files:preview:revoke') return Promise.resolve(undefined);
       throw new Error(`Unexpected IPC channel: ${channel}`);

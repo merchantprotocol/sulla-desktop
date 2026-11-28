@@ -11,8 +11,10 @@ const electronMocks = vi.hoisted(() => {
   const previewSession = {
     protocol: { isProtocolHandled: vi.fn(() => false), handle: vi.fn() },
     webRequest: { onBeforeRequest: vi.fn() },
+    on: vi.fn(),
     setPermissionRequestHandler: vi.fn(),
     setPermissionCheckHandler: vi.fn(),
+    setWebRTCIPHandlingPolicy: vi.fn(),
     resolveHost: vi.fn(async() => ({ endpoints: [] })),
   };
   return {
@@ -57,6 +59,7 @@ const PROXIED_CHANNELS = [
   'sulla-files:history',
   'sulla-files:preview',
   'sulla-files:preview-read',
+  'sulla-files:preview-read-cancel',
   'sulla-files:save-content',
   'sulla-files:upload',
   'sulla-files:trash',
@@ -205,6 +208,7 @@ describe('SullaFilesIpcProvider', () => {
     expect(electronMocks.previewSession.protocol.handle).toHaveBeenCalledWith('sulla-files-preview', expect.any(Function));
     expect(electronMocks.previewSession.webRequest.onBeforeRequest).toHaveBeenCalledWith({ urls: ['<all_urls>'] }, expect.any(Function));
     expect(electronMocks.previewSession.setPermissionRequestHandler).toHaveBeenCalledWith(expect.any(Function));
+    expect(electronMocks.previewSession.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith('disable_non_proxied_udp');
     expect(protocol.handle).toHaveBeenCalledWith('sulla-files-preview', expect.any(Function));
   });
 
