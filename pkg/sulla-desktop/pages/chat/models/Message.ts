@@ -129,11 +129,24 @@ export interface ToolMessage extends MessageBase {
   tool:          string;        // Standard-view label; Detailed uses recordedToolName
   desc:          string;        // formatter description when available
   status:        'running' | 'ok' | 'error';
-  meta?:         string;
+  meta?:         string | { step?: ToolStepMetadata; [key: string]: unknown };
   input?:        string;        // full serialized arguments
   output?:       string;        // full captured result
   error?:        string;        // failure detail
   outputFormat?: 'text' | 'code' | 'url' | 'json';
+}
+
+/** Safe, durable timing fields attached to a tool card by the backend event contract. */
+export interface ToolStepMetadata {
+  stepId: string;
+  runId: string;
+  provider: 'codex' | 'claude' | 'api' | 'native';
+  source: 'native' | 'codex_cli' | 'claude_cli' | 'mcp';
+  safeLabel: string;
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
+  ok?: boolean;
 }
 
 // ─── Tool approval ────────────────────────────────────────────────

@@ -265,7 +265,7 @@ export interface IpcMainInvokeEvents {
   'remote-chat:check-identity': () => void;
   'remote-chat:send': (frame: unknown) => boolean;
   'remote-chat:history': (thread: string, cursor: string, ids: string[], reconcileOnly: boolean) => unknown;
-  'chat:run-state': (channelId: string, threadId: string) => boolean;
+  'chat:run-state': (channelId: string, threadId: string) => boolean | null;
   'security:run-check': () => import('@pkg/main/security/types').SecurityCheckReport;
   'security:summary': () => import('@pkg/main/security/types').SecuritySummary;
   'security:lock-vault': () => { ok: boolean; error?: string };

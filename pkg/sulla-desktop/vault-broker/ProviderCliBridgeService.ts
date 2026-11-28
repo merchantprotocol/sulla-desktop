@@ -22,6 +22,42 @@ const RETRY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
 const UNAVAILABLE_MESSAGE = 'Sulla provider bridge is temporarily unavailable';
 const MAX_PROVIDER_ERROR_BODY_BYTES = 8 * 1024;
 const MAX_PROVIDER_REASON_CHARS = 240;
+const MAX_SSE_EVENT_CHARS = 64 * 1024;
+
+/** Detects text-bearing SSE events without retaining their payload in logs. */
+class ProviderResponseTextDetector {
+  private readonly decoder = new TextDecoder();
+  private pending = '';
+  private detected = false;
+
+  hasVisibleText(chunk: Uint8Array): boolean {
+    if (this.detected) return false;
+    this.pending += this.decoder.decode(chunk, { stream: true });
+    if (this.pending.length > MAX_SSE_EVENT_CHARS) this.pending = this.pending.slice(-MAX_SSE_EVENT_CHARS);
+    const events = this.pending.split(/\r?\n\r?\n/);
+    this.pending = events.pop() ?? '';
+    this.detected = events.some(event => this.containsText(event));
+    return this.detected;
+  }
+
+  private containsText(event: string): boolean {
+    const lines = event.split(/\r?\n/);
+    const eventName = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
+    const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('\n');
+    if (!data || data === '[DONE]') return false;
+    let parsed: unknown;
+    try { parsed = JSON.parse(data) as unknown } catch { return false }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const payload = parsed as Record<string, any>;
+    const type = typeof payload.type === 'string' ? payload.type : eventName;
+    if (type === 'response.output_text.delta') return typeof payload.delta === 'string' && !!payload.delta.trim();
+    if (type === 'content_block_delta') {
+      return payload.delta?.type === 'text_delta' && typeof payload.delta.text === 'string' && !!payload.delta.text.trim();
+    }
+    const content = payload.choices?.[0]?.delta?.content;
+    return typeof content === 'string' && !!content.trim();
+  }
+}
 
 /**
  * Create one process-scoped HTTP adapter. The returned environment contains
@@ -89,6 +125,7 @@ export class ProviderCliBridgeService {
     accountId: options.accountId,
     authMode:  options.authMode,
   });
+  const runId = options.runId?.trim() || options.turnTiming?.runId || crypto.randomUUID();
   if (!await ProviderCliBridgeTools.liveContext(options, identity)) throw new Error('Provider CLI bridge identity is not active');
 
   const broker = options.broker ?? this.requireBroker();
@@ -113,6 +150,13 @@ export class ProviderCliBridgeService {
 
   const server = http.createServer(async(request, response) => {
     const startedAt = performance.now();
+    let requestTimingContext: ReturnType<NonNullable<ProviderCliBridgeOptions['getTimingContext']>>;
+    try { requestTimingContext = options.getTimingContext?.() } catch { requestTimingContext = undefined }
+    const requestRunId = requestTimingContext?.runId?.trim() || runId;
+    const requestTurnTiming = options.getTimingContext ? requestTimingContext?.turnTiming : options.turnTiming;
+    const bridgeRequestId = crypto.randomUUID();
+    requestTurnTiming?.beginProviderRequest(bridgeRequestId);
+    const textDetector = new ProviderResponseTextDetector();
     let bodyBytes = 0;
     let requestBodyReadMs = 0;
     let liveContextMs = 0;
@@ -122,9 +166,9 @@ export class ProviderCliBridgeService {
     let status = 500;
     let retryAfterSeconds: number | undefined;
     let openAIReason: string | undefined;
-    let timingPath = 'unknown';
+    let timingPath: string | undefined;
     let failureNote = '';
-    // Where the request was when it failed; part of the logged reason code.
+    // Internal phase for failure classification and the fixed-code timing diagnostic.
     let stage = 'request';
     response.socket?.setNoDelay(true);
     const requestAbort = new AbortController();
@@ -140,9 +184,11 @@ export class ProviderCliBridgeService {
     response.once('close', () => {
       if (!response.writableEnded) abort();
     });
-    const deny = (code: number, type: string, extra: { message?: string; reason: string; headers?: Record<string, string> }) => {
+    const deny = (code: number, type: string, extra: { message?: string; reason: string; headers?: Record<string, string> }, failureType = type) => {
       status = code;
-      failureNote = ` failure=${ type } reason=${ extra.reason } stage=${ stage }`;
+      const safeType = ProviderCliBridgeFailurePolicy.safeToken(failureType);
+      const safeReason = ProviderCliBridgeFailurePolicy.safeToken(extra.reason);
+      failureNote += ` failure=${ safeType ?? 'provider_bridge_denied' }${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ stage }`;
       ProviderCliBridgeResponsePolicy.sendError(response, code, type, extra);
     };
     // Revoking destroys every in-flight request, including this one; detach it
@@ -190,8 +236,8 @@ export class ProviderCliBridgeService {
         return;
       }
       const incomingPath = incoming.pathname.slice(scopedPrefix.length);
-      const upstreamPath = definition.routes[incomingPath];
-      timingPath = incomingPath;
+      const isDefinedRoute = Object.prototype.hasOwnProperty.call(definition.routes, incomingPath);
+      const upstreamPath = isDefinedRoute ? definition.routes[incomingPath] : undefined;
       const upstreamSearch = definition.cli === 'claude-code' && incoming.search === '?beta=true'
         ? incoming.search
         : '';
@@ -199,6 +245,8 @@ export class ProviderCliBridgeService {
         deny(404, 'unsupported_provider_route', { reason: upstreamPath ? 'query_not_allowed' : 'route_not_allowed' });
         return;
       }
+      // This value is safe to log only after it has matched the fixed route table.
+      timingPath = incomingPath;
       stage = 'authorize';
       if (!await checkLive()) return;
       stage = 'request_body';
@@ -229,7 +277,7 @@ export class ProviderCliBridgeService {
         // usually still valid. Failing the request here surfaced as a
         // terminal "request denied" and killed healthy workers. A credential
         // that really expired gets the provider's own 401 instead.
-        failureNote = ' upkeep=credential_upkeep_failed';
+        failureNote += ' upkeep=credential_upkeep_failed';
         console.warn(`[ProviderCliBridge] credential upkeep failed reason=credential_upkeep_failed error=${ ProviderCliBridgeFailurePolicy.safeToken((error as { name?: unknown })?.name) ?? 'Error' }; forwarding with the stored credential`);
       }
       beforeUpstreamMs = performance.now() - upkeepStartedAt;
@@ -284,6 +332,10 @@ export class ProviderCliBridgeService {
               providerErrorBytes += captured.byteLength;
             }
             if (!firstChunkMs) firstChunkMs = performance.now() - startedAt;
+            if (value.byteLength > 0) {
+              requestTurnTiming?.markFirstByte(bridgeRequestId);
+              if (textDetector.hasVisibleText(value)) requestTurnTiming?.markFirstText(bridgeRequestId);
+            }
             if (!response.write(value)) {
               await new Promise<void>(resolve => {
                 const settle = () => { response.off('drain', settle); response.off('close', settle); resolve() };
@@ -309,15 +361,17 @@ export class ProviderCliBridgeService {
       if (requestAbort.signal.aborted) {
         // The CLI hung up or the job's lifecycle ended: a cancellation, not a bridge failure.
         const reason = lifetime.signal.aborted ? 'lifecycle_revoked' : 'client_disconnected';
-        if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason });
+        if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason }, 'provider_bridge_cancelled');
         else {
           status = 499;
+          const safeReason = ProviderCliBridgeFailurePolicy.safeToken(reason);
+          const safeStage = ProviderCliBridgeFailurePolicy.safeToken(stage);
+          failureNote += ` failure=provider_bridge_cancelled${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ safeStage ?? 'bridge' }`;
           // The streamed reply can never finish; end the connection so the CLI
           // sees the cut instead of waiting on an open socket. request.destroy()
           // alone leaves the socket up once the request body was fully read.
           response.destroy();
         }
-        failureNote = ` failure=provider_bridge_cancelled reason=${ reason } stage=${ stage }`;
         console.warn(`[ProviderCliBridge] request cancelled reason=${ reason } stage=${ stage }`);
         return;
       }
@@ -329,7 +383,11 @@ export class ProviderCliBridgeService {
       const brokerStatus = typeof (error as { status?: unknown })?.status === 'number' ? (error as { status: number }).status : undefined;
       const vaultKind = VaultHealthMonitor.failureKind(brokerStatus, failure.errorCode === 'vault_locked' ? 'vault_locked' : failure.reason);
       if (vaultKind) vaultHealthMonitor.record(vaultKind);
-      failureNote = ` failure=${ failure.type }${ failure.errorCode ? `:${ failure.errorCode }` : '' }${ failure.reason ? ` reason=${ failure.reason }` : '' } stage=${ stage }`;
+      const safeType = ProviderCliBridgeFailurePolicy.safeToken(failure.type);
+      const safeCode = ProviderCliBridgeFailurePolicy.safeToken(failure.errorCode);
+      const safeReason = ProviderCliBridgeFailurePolicy.safeToken(failure.reason);
+      const safeStage = ProviderCliBridgeFailurePolicy.safeToken(stage);
+      failureNote += ` failure=${ safeType ?? 'provider_bridge_failed' }${ safeCode ? `:${ safeCode }` : '' }${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ safeStage ?? 'bridge' }`;
       console.error(`[ProviderCliBridge] request failed: ${ failure.errorName }${ failure.errorCode ? ` (${ failure.errorCode })` : '' }` +
         `${ failure.reason ? ` reason=${ failure.reason }` : '' } -> ${ failure.status } ${ failure.type }`);
       if (!response.headersSent) {
@@ -343,8 +401,9 @@ export class ProviderCliBridgeService {
       else abort();
     } finally {
       lifetime.signal.removeEventListener('abort', abort);
+      requestTurnTiming?.endProviderRequest(bridgeRequestId, status, bodyBytes);
       const ms = (value: number) => value.toFixed(1);
-      options.logTiming?.(`[BridgeTiming] provider=${ definition.cli } path=${ timingPath } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ retryAfterSeconds !== undefined ? ` retry_after=${ retryAfterSeconds }s` : '' }${ openAIReason ? ` openai_reason=${ JSON.stringify(openAIReason) }` : '' }${ failureNote }`);
+      options.logTiming?.(`[BridgeTiming] runId=${ requestRunId } bridgeRequestId=${ bridgeRequestId } provider=${ definition.cli }${ timingPath ? ` path=${ timingPath }` : '' } requestBodyReadMs=${ ms(requestBodyReadMs) } liveContextMs=${ ms(liveContextMs) } beforeUpstreamMs=${ ms(beforeUpstreamMs) } upstreamHeadersMs=${ ms(upstreamHeadersMs) } firstChunkMs=${ ms(firstChunkMs) } totalMs=${ ms(performance.now() - startedAt) } status=${ status } bodyBytes=${ bodyBytes }${ retryAfterSeconds !== undefined ? ` retry_after=${ retryAfterSeconds }s` : '' }${ failureNote }`);
     }
   });
   try {
@@ -394,6 +453,7 @@ export class ProviderCliBridgeService {
   return {
     config,
     signal: lifetime.signal,
+    runId,
     podId:  identity.context.pod_id,
     revoke,
     async close() {

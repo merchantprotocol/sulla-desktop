@@ -49,7 +49,7 @@
       <span class="status-rollup__who">{{ displayItem.agentName }}</span>
       <span class="status-rollup__kind">{{ displayItem.kind || 'agent' }}</span>
       <span class="status-rollup__separator" aria-hidden="true">·</span>
-      <span class="status-rollup__text" aria-live="polite">{{ typedText }}</span>
+      <span class="status-rollup__text" aria-live="polite">{{ rollupText }}</span>
       <span
         v-if="displayItem.urgency === 'needs-you' || displayItem.urgency === 'failed'"
         class="status-rollup__urgency"
@@ -87,9 +87,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { StatusRollupQueue, type StatusRollupItem, type StatusRollupShownEvent } from './StatusRollupQueue';
+import { ToolStepClock } from '../transcript/ToolStepClock';
 
 const props = defineProps<{
   /** Active chat-thread identifier; records for any other thread are ignored. */
@@ -108,8 +109,12 @@ const emit = defineEmits<{
 }>();
 
 const queue = new StatusRollupQueue();
+const activityContext = inject<{ toolStepClock?: ToolStepClock } | undefined>('chat:activity-context', undefined);
+const toolStepClock = activityContext ? (activityContext.toolStepClock ??= new ToolStepClock()) : new ToolStepClock();
 const rootElement = ref<HTMLElement | null>(null);
 const currentItem = ref<StatusRollupItem | null>(null);
+const activeToolStep = ref<StatusRollupItem | null>(null);
+const toolStepNow = ref(toolStepClock.nowMs);
 const trailItems = ref<StatusRollupItem[]>([]);
 const historyItems = ref<readonly StatusRollupItem[]>([]);
 const hovered = ref(false);
@@ -129,7 +134,23 @@ const isPaused = computed(() => hovered.value || pinned.value || !documentVisibl
 const fallbackItem = computed(() => props.rootFallback
   ? queue.present({ ...props.rootFallback, role: 'root' }, props.threadId, Date.now())
   : null);
-const displayItem = computed(() => currentItem.value ?? fallbackItem.value);
+const urgentCheckIn = computed(() => props.checkIns.slice().reverse().find(item =>
+  item.urgency === 'needs-you' || item.urgency === 'failed') ?? null);
+const displaySelection = computed(() => toolStepClock.selectDisplayItem(
+  props.threadId,
+  urgentCheckIn.value ?? currentItem.value ?? queue.current,
+  fallbackItem.value,
+  activeToolStep.value,
+));
+const displayItem = computed(() => {
+  const selection = displaySelection.value;
+  if (!selection.item || !selection.toolStep) return selection.item;
+  const elapsed = toolStepClock.elapsed(selection.item, toolStepNow.value);
+  return { ...selection.item, text: `${selection.item.text} · ${toolStepClock.durationLabel(elapsed)}` };
+});
+const rollupText = computed(() => displaySelection.value.toolStep || displaySelection.value.urgent
+  ? displayItem.value?.text ?? ''
+  : typedText.value);
 
 const emitShown = (item: StatusRollupItem): void => {
   emit('shown', {
@@ -203,6 +224,8 @@ const syncInput = (): void => {
   const threadChanged = activeThreadId !== props.threadId;
   if (threadChanged) {
     activeThreadId = props.threadId;
+    toolStepClock.reset();
+    activeToolStep.value = null;
     queue.reset(activeThreadId);
     showItem(null);
     trailItems.value = [];
@@ -210,6 +233,9 @@ const syncInput = (): void => {
     pinned.value = false;
     hovered.value = false;
   }
+
+  toolStepClock.observe([...props.checkIns, ...(props.rootFallback ? [props.rootFallback] : [])]);
+  activeToolStep.value = toolStepClock.currentStep(props.threadId);
 
   const visible = currentItem.value ?? queue.current ?? fallbackItem.value;
   queue.observe(props.checkIns, props.threadId, now, visible);
@@ -221,6 +247,15 @@ const syncInput = (): void => {
   historyItems.value = queue.history;
   if (mounted.value) refresh();
 };
+
+watch(activeToolStep, (step, _, onCleanup) => {
+  toolStepNow.value = toolStepClock.nowMs;
+  if (step) onCleanup(toolStepClock.subscribe(now => { toolStepNow.value = now; }));
+}, { immediate: true });
+
+watch(toolStepNow, () => {
+  activeToolStep.value = toolStepClock.currentStep(props.threadId);
+});
 
 const togglePinned = (): void => {
   pinned.value = !pinned.value;
@@ -248,6 +283,13 @@ const syncReducedMotion = (event?: MediaQueryListEvent): void => {
   }
 };
 
+const onChatRunEnded = (event: Event): void => {
+  const detail = (event as CustomEvent<{ threadId?: string }>).detail;
+  if (detail?.threadId !== props.threadId) return;
+  toolStepClock.endRootRun(props.threadId);
+  activeToolStep.value = toolStepClock.currentStep(props.threadId);
+};
+
 watch(
   () => [props.threadId, props.checkIns, props.rootFallback] as const,
   syncInput,
@@ -257,6 +299,7 @@ watch(
 onMounted(() => {
   emit('consumer-attached');
   mounted.value = true;
+  window.addEventListener('sulla:chat-run-ended', onChatRunEnded);
   documentVisible.value = !document.hidden;
   document.addEventListener('visibilitychange', syncVisibility);
   if (typeof window.matchMedia === 'function') {
@@ -272,6 +315,7 @@ onBeforeUnmount(() => {
   emit('consumer-detached');
   mounted.value = false;
   hovered.value = false;
+  window.removeEventListener('sulla:chat-run-ended', onChatRunEnded);
   if (timer !== undefined) window.clearInterval(timer);
   if (typingTimer !== undefined) window.clearTimeout(typingTimer);
   if (dotTimer !== undefined) window.clearTimeout(dotTimer);

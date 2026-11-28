@@ -48,6 +48,7 @@ import { normalizeClaudeLimitSnapshot, recordCliLimitSnapshot, recordCliUsage } 
 import { buildEditPatch, buildWritePatch, type FilePatchInfo } from '../util/linePatch';
 import { RecallDedupe } from '../utils/recallDedupe';
 import { markSteerDelivered, markSteerPending, onSteer } from '../utils/steerChannel';
+import { UsageRecorder } from './UsageRecorder';
 
 import type { BaseThreadState } from '@pkg/agent/nodes/Graph';
 import { getMCPServerHost, type RegisteredSession } from '@pkg/main/MCPServerHost';
@@ -282,6 +283,7 @@ export class ClaudeCodeService extends BaseLanguageModel {
 
   // conversationId → Claude session_id — in-memory cache backed by Redis.
   private sessions = new Map<string, string>();
+  private readonly usageRecorder = new UsageRecorder(line => perf.log(line));
   private readonly recallDedupe = new RecallDedupe();
 
   // Routes background-task completions from held CLI processes back into
@@ -1732,6 +1734,14 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
               breakdown.push(`${ name }x${ agg.count }=${ agg.ms }ms`);
             });
             const ttft = firstTokenAt ? firstTokenAt - runStartedAt : -1;
+            this.usageRecorder.recordClaude(lastUsage, {
+              runId:       options.state?.metadata?.runId,
+              convId,
+              threadId:    capturedSessionId ?? existingSession,
+              model:       parsed.model ?? this.getModel(),
+              effort:      this.getEffort(),
+              sessionMode: retryWithoutSession ? 'reseed' : existingSession ? 'resume' : 'new',
+            });
             perf.log(`[RunTiming] convId=${ convId } totalMs=${ totalMs } toolMs=${ toolMs } toolCount=${ toolCount } model+overheadMs=${ totalMs - toolMs } ttftMs=${ ttft } tools=[${ breakdown.join(', ') }]`);
 
             if (parsed.is_error) {

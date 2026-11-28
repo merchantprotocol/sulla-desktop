@@ -9,6 +9,7 @@ import http from 'node:http';
 import { ProviderBridgeIdentityError, ProviderBridgeRequestError } from './ProviderBridgeErrors';
 import type { BrokerInjection, ToolExecutionContext } from './index';
 import type { LocalVaultBrokerClient } from './index';
+import type { TurnTimingProviderRequestSink } from '../agent/services/TurnTiming';
 
 // This module is also loaded by the minimal sulla-tools image, which deliberately
 // does not ship Desktop's Electron-backed logging stack. Keep bridge diagnostics on
@@ -109,6 +110,12 @@ export interface ProviderCliBridgeIdentity {
 }
 
 export interface ProviderCliBridgeOptions extends ProviderCliBridgeIdentity {
+  /** Opaque correlation id for the accepted agent turn that owns this lease. */
+  runId?: string;
+  /** Runtime-only per-turn sink; never serialized into CLI configuration or graph state. */
+  turnTiming?: TurnTimingProviderRequestSink;
+  /** Refresh correlation for leases that outlive one turn in a reusable container. */
+  getTimingContext?: () => { runId: string; turnTiming?: TurnTimingProviderRequestSink } | undefined;
   /** Non-secret Anthropic account metadata, used only for API-key requests. */
   workspaceId?: string;
   /**
@@ -145,6 +152,7 @@ export interface ProviderCliOpaqueConfig {
 export interface ProviderCliBridgeLease {
   readonly config: ProviderCliOpaqueConfig;
   readonly signal: AbortSignal;
+  readonly runId?: string;
   /** Pod id the bridge records provider activity under (liveness, retry status). */
   readonly podId?: string;
   revoke(): void;

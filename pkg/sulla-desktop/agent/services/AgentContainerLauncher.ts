@@ -39,6 +39,7 @@ import { runTools } from './RunToolTracker';
 import { getServiceLifecycleManager } from './ServiceLifecycleManager';
 import { getWebSocketClientService } from './WebSocketClientService';
 import { ProviderBridgeAuthorizeUnavailableError, ProviderCliBridgeService, usesContainerVaultAuthority, type ProviderCliAuthMode, type ProviderCliBridgeLease, configuredVaultBrokerProvider } from '../../vault-broker';
+import type { TurnTimingProviderRequestSink } from './TurnTiming';
 import { redisClient } from '../database/RedisClient';
 import {
   withProviderExecutionTransport,
@@ -1490,6 +1491,8 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
     };
     const createBridge = (provider: ProviderName, _pinnedModel: string | undefined): Promise<ProviderCliBridgeLease> => {
       return (async() => {
+        const turnTiming = (run.state as any).__turnTiming as TurnTimingProviderRequestSink | undefined;
+        const runId = String((run.state.metadata as any).runId || turnTiming?.runId || crypto.randomUUID());
         let integrationId: 'anthropic' | 'claude-code' | 'codex' | 'openai';
         let accountId: string;
         let authMode: ProviderCliAuthMode | undefined;
@@ -1557,6 +1560,15 @@ export async function createAgentContainerLifecycle(run: AgentContainerLifecycle
           accountId,
           authMode,
           workspaceId,
+          runId,
+          turnTiming,
+          getTimingContext: () => {
+            const currentTurnTiming = (run.state as any).__turnTiming as TurnTimingProviderRequestSink | undefined;
+            return {
+              runId: String((run.state.metadata as any).runId || currentTurnTiming?.runId || runId),
+              turnTiming: currentTurnTiming,
+            };
+          },
           advertisedHost:   mcpUrl.hostname,
           advertisedOrigin: port => `http://${ HOST_RELAY_NAME }:${ HOST_RELAY_PORT }/_sulla/${ port }`,
           signal:         lifecycleAbort.signal,

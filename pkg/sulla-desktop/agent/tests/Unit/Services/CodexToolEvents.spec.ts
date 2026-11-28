@@ -6,6 +6,7 @@
 import { expect, it } from 'vitest';
 
 import { CodexToolEventEmitter } from '@pkg/agent/languagemodels/codexToolEvents';
+import { SafeToolLabel } from '../../../services/TurnTiming';
 
 // risk: data accuracy — Codex command/MCP inputs, outputs and errors must reach chat without substitution or truncation.
 it('forwards the full command and MCP tool payloads from completed Codex items', () => {
@@ -46,4 +47,16 @@ it('preserves stdout and stderr together when Codex has no aggregate output', ()
   let event: unknown;
   emitter.emit('item.completed', { item_type: 'command_execution', id: 'streams', ...streams, exit_code: 1 }, value => { event = value });
   expect(event).toMatchObject({ result: streams, error: 'FULL_STDERR', isError: true, resultChars: JSON.stringify(streams).length });
+});
+
+it('retains the named MCP server/tool emitted by Codex as a safe tool label', () => {
+  // risk: Codex MCP calls become generic shell labels after the provider item is normalized
+  const emitter = new CodexToolEventEmitter();
+  const item = {
+    item_type: 'mcp_tool_call', id: 'mcp-call', server: 'sulla-native', tool: 'browse_tools',
+    arguments: { query: 'synthetic-private-argument' },
+  };
+  const started = emitter.started(item);
+  expect(started).toMatchObject({ toolUseId: 'mcp-call', toolName: 'sulla-native/browse_tools' });
+  expect(SafeToolLabel.forNamedTool(started?.toolName)).toBe('sulla-native/browse_tools');
 });
