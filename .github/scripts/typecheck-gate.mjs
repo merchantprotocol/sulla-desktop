@@ -71,6 +71,27 @@ export class GitHubAnnotationReporter {
     if (this.githubActions) this.commandWriter('::remove-matcher owner=tsc::\n');
   }
 
+  diagnosticOutput(project, result, output) {
+    if (!this.githubActions) return;
+    const secretPatterns = [/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g, /\bsk-[A-Za-z0-9_-]{20,}\b/g, /\bAKIA[0-9A-Z]{16}\b/g];
+    let safeOutput = output;
+    for (const pattern of secretPatterns) safeOutput = safeOutput.replace(pattern, '[REDACTED]');
+    const excerpt = safeOutput.length > 44000
+      ? `${safeOutput.slice(0, 22000)}\n...[diagnostic output truncated]...\n${safeOutput.slice(-22000)}`
+      : safeOutput;
+    const message = [
+      `project: ${project}`,
+      `status: ${result.status ?? 'null'}`,
+      `signal: ${result.signal ?? 'none'}`,
+      `spawn error: ${result.error?.message ?? 'none'}`,
+      `stdout bytes: ${Buffer.byteLength(result.stdout ?? '')}`,
+      `stderr bytes: ${Buffer.byteLength(result.stderr ?? '')}`,
+      'compiler output:',
+      excerpt || '(empty)',
+    ].join('\n');
+    this.commandWriter(`::error title=${this.escapeProperty(`diagnostic tsc output ${project}`)}::${this.escapeData(message)}\n`);
+  }
+
   report(project, diagnostics, staleFingerprints) {
     if (this.githubActions) {
       for (const diagnostic of diagnostics) this.commandWriter(`${this.annotationFor(diagnostic)}\n`);
@@ -166,8 +187,8 @@ class TypecheckBaselineGate {
     this.reporter.beforeTypecheck();
     const result = this.runTsc();
     const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-    if (process.env.TYPECHECK_DIAGNOSTIC_CAPTURE_PATH) {
-      writeFileSync(process.env.TYPECHECK_DIAGNOSTIC_CAPTURE_PATH, output);
+    if (process.env.TYPECHECK_DIAGNOSTIC_ANNOTATIONS === 'true') {
+      this.reporter.diagnosticOutput(this.project, result, output);
     }
     process.stdout.write(output);
 
