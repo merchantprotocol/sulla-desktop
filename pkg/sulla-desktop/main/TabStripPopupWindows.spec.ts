@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { TabContextMenuRequest } from '@pkg/shared/TabStripPopup';
+import type { TabContextMenuRequest, TabGroupPopoverRequest } from '@pkg/shared/TabStripPopup';
 
 const electron = vi.hoisted(() => ({
   getTheme: vi.fn(),
@@ -131,6 +131,24 @@ describe('native tab strip popups', () => {
     expect(popup.visible).toBe(false);
   });
 
+  it('allows adding a tab only to a group present in the active menu request', async() => {
+    // risk: permissions — renderer actions cannot target groups omitted from the active menu.
+    const owner = opener();
+    const request: TabContextMenuRequest = {
+      requestId: 'group-menu', screenX: 40, screenY: 20, items: ['addToGroup'],
+      groups: [{ id: 'group-1', name: 'Launch', colorToken: 'blue', color: '#123456' }],
+    };
+
+    emit('tab-context-menu:show', owner, request);
+    await vi.advanceTimersByTimeAsync(0);
+    const popup = popups[0];
+
+    emit('tab-context-menu:action', popup, request.requestId, 'joinGroup:unknown');
+    expect(owner.webContents.send).not.toHaveBeenCalled();
+    emit('tab-context-menu:action', popup, request.requestId, 'joinGroup:group-1');
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('tab-context-menu:selected', request.requestId, 'joinGroup:group-1');
+  });
+
   it.each(['navigation', 'crash', 'close'])('hides the current menu on opener %s and detaches the previous opener', async(event) => {
     const first = opener();
     const second = opener();
@@ -188,6 +206,33 @@ describe('native tab strip popups', () => {
     expect(replacement.webContents.send).toHaveBeenCalledWith(
       `${ channel }:data`, expect.objectContaining(channel === 'tab-hover' ? { id: 'second' } : { requestId: 'second' }),
     );
+  });
+
+  it('accepts group edits only from the active popover and forwards allowed changes to its opener', async() => {
+    // risk: permissions — only the active native popup may mutate its opener's group.
+    // risk: data accuracy — group names accept 60 characters and reject longer input.
+    const owner = opener();
+    const request: TabGroupPopoverRequest = {
+      requestId: 'group-edit', groupId: 'group-1', name: 'x'.repeat(60), colorToken: 'blue', focus: 'name',
+      anchor: { x: 20, y: 45, aboveY: 5 }, palette: {},
+      swatches: ['grey', 'blue', 'cyan', 'green', 'gold', 'orange', 'pink', 'purple'].map(token => ({ token, label: token, color: '#123456' })),
+    };
+
+    emit('tab-group-popover:show', owner, request);
+    await vi.advanceTimersByTimeAsync(0);
+    const popup = popups[0];
+    const otherWindow = new FakeWindow();
+
+    emit('tab-group-popover:change', otherWindow, request.requestId, { name: 'Not from the popover' });
+    emit('tab-group-popover:change', popup, request.requestId, { name: 'x'.repeat(61) });
+    emit('tab-group-popover:change', popup, request.requestId, { name: 'x'.repeat(60) });
+    emit('tab-group-popover:change', popup, request.requestId, { colorToken: 'unlisted-color' });
+    expect(owner.webContents.send).toHaveBeenCalledExactlyOnceWith('tab-group-popover:changed', request.requestId, { name: 'x'.repeat(60) });
+
+    emit('tab-group-popover:done', popup, request.requestId);
+    expect(owner.webContents.send.mock.calls.filter(([channel]) => channel === 'tab-group-popover:closed')).toHaveLength(1);
+    expect(owner.webContents.send).toHaveBeenLastCalledWith('tab-group-popover:closed', request.requestId);
+    expect(popup.visible).toBe(false);
   });
 
 });

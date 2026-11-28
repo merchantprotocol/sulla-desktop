@@ -68,11 +68,11 @@ export class TabStripLayoutRepository {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
       const group = value as Record<string, unknown>;
       const id = typeof group.id === 'string' ? group.id.trim() : '';
-      const name = typeof group.name === 'string' ? Array.from(group.name.trim()).slice(0, 60).join('') : '';
+      const name = typeof group.name === 'string' ? Array.from(group.name.trim()).slice(0, 60).join('') : undefined;
       const colorToken = typeof group.colorToken === 'string' && allowedColors.has(group.colorToken)
         ? group.colorToken as TabGroupColorToken
         : undefined;
-      if (!id || seenIds.has(id) || !name || !colorToken || typeof group.collapsed !== 'boolean') return [];
+      if (!id || seenIds.has(id) || name === undefined || !colorToken || typeof group.collapsed !== 'boolean') return [];
       seenIds.add(id);
       return [{
         id,

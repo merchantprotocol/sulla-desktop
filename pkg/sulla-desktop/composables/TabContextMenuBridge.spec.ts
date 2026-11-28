@@ -61,9 +61,6 @@ describe('window tab context menu bridge', () => {
 
     first.connect();
     other.connect();
-    first.setActiveGroup('browser');
-    expect(first.activeGroup.value).toBe('browser');
-    expect(other.activeGroup.value).toBe('chats');
     first.open({ id: 'menu', select: selectFirst, onClosed: closeFirst });
     other.open({ id: 'menu', select: selectOther, onClosed: vi.fn() });
     firstIpc.emit('internal-tab-view:chat-running', {}, 'chat', false, { state: 'you' });

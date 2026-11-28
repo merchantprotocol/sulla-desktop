@@ -8,170 +8,69 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Tab Context Menu</title>
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-
+      * { box-sizing: border-box; }
       :root {
-        /* Dark theme (default) - matches 3-dots menu */
-        --menu-bg: rgba(30, 41, 59, 0.98);
-        --menu-border: rgba(51, 65, 85, 0.6);
-        --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.3);
-        --text-primary: #f1f5f9;
-        --text-hover: #38bdf8;
-        --item-hover-bg: rgba(56, 189, 248, 0.1);
-        --icon-opacity: 0.6;
-        --separator-bg: rgba(71, 85, 105, 0.6);
+        color-scheme: dark;
+        --menu-bg: #0d1524;
+        --menu-border: rgba(168, 192, 220, .18);
+        --menu-shadow: 0 12px 48px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 255, 255, .04);
+        --text: #f3f5f8;
+        --text-muted: #a9b3c1;
+        --text-dim: #7f8a99;
+        --hover: rgba(255, 255, 255, .08);
+        --accent: #5096b3;
+        --danger: #f85149;
       }
-
-      /* OS preference fallback when IPC doesn't work */
-      @media (prefers-color-scheme: light) {
-        :root:not(.light-mode):not(.dark-mode) {
-          --menu-bg: rgba(255, 255, 255, 0.98);
-          --menu-border: rgba(148, 163, 184, 0.4);
-          --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
-          --text-primary: #334155;
-          --text-hover: #0284c7;
-          --item-hover-bg: rgba(14, 165, 233, 0.1);
-          --icon-opacity: 0.7;
-          --separator-bg: rgba(148, 163, 184, 0.3);
-        }
+      html.light-mode, html.theme-studio-light, html.theme-default-light {
+        color-scheme: light;
+        --menu-bg: #fff;
+        --menu-border: oklch(88.5% .014 240);
+        --menu-shadow: 0 20px 48px oklch(25% .03 250 / .16), 0 3px 10px oklch(25% .03 250 / .07);
+        --text: oklch(18% .025 260);
+        --text-muted: oklch(36% .025 260);
+        --text-dim: oklch(60% .018 240);
+        --hover: color-mix(in oklab, var(--text) 7%, var(--menu-bg));
+        --accent: oklch(52% .14 240);
+        --danger: oklch(55% .21 25);
       }
-
-      html, body {
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-        font-size: 13px;
-        background: transparent;
-        color: var(--text-primary);
-        user-select: none;
-        overflow: hidden;
-      }
-
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; color: var(--text); font: 13px/1.4 system-ui, sans-serif; }
+      .surface { position: relative; width: 100%; height: 100%; }
       .menu {
-        min-width: 240px;
-        background: var(--menu-bg);
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 1px solid var(--menu-border);
-        border-radius: 8px;
-        box-shadow: var(--menu-shadow);
-        padding: 6px 0;
-        animation: fadeIn 0.12s ease-out;
+        position: absolute; top: 4px; left: 4px; width: 240px; max-height: calc(100vh - 8px); overflow-y: auto;
+        padding: 4px; border: 1px solid var(--menu-border); border-radius: 10px;
+        background: var(--menu-bg); box-shadow: var(--menu-shadow);
       }
-
-      @keyframes fadeIn {
-        from { opacity: 0; transform: scale(0.96); }
-        to   { opacity: 1; transform: scale(1); }
+      .submenu {
+        position: absolute; top: 4px; left: 248px; width: 204px; max-height: calc(100vh - 8px); overflow-y: auto;
+        padding: 4px; border: 1px solid var(--menu-border); border-radius: 10px;
+        background: var(--menu-bg); box-shadow: var(--menu-shadow);
       }
-
       .menu-item {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        width: 100%;
-        padding: 7px 14px;
-        border: none;
-        background: transparent;
-        color: var(--text-primary);
-        font-size: 13px;
-        font-family: inherit;
-        cursor: pointer;
-        text-align: left;
-        transition: background 0.1s, color 0.1s;
+        display: flex; align-items: center; width: 100%; height: 30px; gap: 10px; padding: 0 8px;
+        border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit;
+        text-align: left; white-space: nowrap; cursor: default;
       }
-
-      .menu-item:hover {
-        background: var(--item-hover-bg);
-        color: var(--text-hover);
-      }
-
-      .menu-item:hover .menu-icon {
-        opacity: 1;
-        stroke: var(--text-hover);
-      }
-
-      .menu-icon {
-        width: 14px;
-        height: 14px;
-        opacity: var(--icon-opacity);
-        flex-shrink: 0;
-        stroke: currentColor;
-        fill: none;
-        stroke-width: 1.5;
-        stroke-linecap: round;
-      }
-
-      .separator {
-        height: 1px;
-        background: var(--separator-bg);
-        margin: 4px 0;
-      }
-
-      /* Light mode override class (set by IPC) - uses !important to override media query */
-      html.light-mode {
-        --menu-bg: rgba(255, 255, 255, 0.98) !important;
-        --menu-border: rgba(148, 163, 184, 0.4) !important;
-        --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
-        --text-primary: #334155 !important;
-        --text-hover: #0284c7 !important;
-        --item-hover-bg: rgba(14, 165, 233, 0.1) !important;
-        --icon-opacity: 0.7 !important;
-        --separator-bg: rgba(148, 163, 184, 0.3) !important;
-      }
-
-      html.theme-studio-light {
-        --menu-bg: oklch(100% 0 0 / 0.98);
-        --menu-border: oklch(93.5% 0 0);
-        --menu-shadow: 0 20px 48px oklch(0% 0 0 / 0.105), 0 3px 10px oklch(0% 0 0 / 0.045);
-        --text-primary: oklch(15% 0 0);
-        --text-hover: oklch(33% 0 0);
-        --item-hover-bg: color-mix(in oklab, oklch(33% 0 0) 4%, white);
-        --icon-opacity: 0.7;
-        --separator-bg: oklch(96.5% 0 0);
-      }
-
-      /* Dark mode explicit class (optional, for consistency) */
-      html.dark-mode {
-        --menu-bg: rgba(30, 41, 59, 0.98) !important;
-        --menu-border: rgba(51, 65, 85, 0.6) !important;
-        --menu-shadow: 0 16px 48px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.3) !important;
-        --text-primary: #f1f5f9 !important;
-        --text-hover: #38bdf8 !important;
-        --item-hover-bg: rgba(56, 189, 248, 0.1) !important;
-        --icon-opacity: 0.6 !important;
-        --separator-bg: rgba(71, 85, 105, 0.6) !important;
-      }
-
-      /* Remove browser default focus outline (orange border) */
-      .menu-item:focus {
-        outline: none !important;
-        box-shadow: none !important;
-        -webkit-focus-ring-color: transparent !important;
-      }
-
-      /* Optional: subtle focus indicator for accessibility */
-      .menu-item:focus-visible {
-        background: var(--item-hover-bg);
-        outline: none !important;
-        box-shadow: none !important;
-      }
-
-      /* First item focus state - prevent orange outline from autofocus */
-      .menu-item:first-child:focus {
-        outline: none !important;
-        box-shadow: none !important;
-        -webkit-focus-ring-color: transparent !important;
-      }
+      .menu-item:is(:hover, :focus-visible, .open) { outline: none; background: var(--hover); }
+      .menu-item:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--accent) 55%, transparent); }
+      .menu-item:active { background: color-mix(in oklab, var(--accent) 13%, var(--menu-bg)); }
+      .menu-item.danger { color: color-mix(in oklab, var(--danger) 82%, var(--text)); }
+      .menu-item.danger:hover, .menu-item.danger:focus-visible { background: color-mix(in oklab, var(--danger) 10%, transparent); }
+      .menu-icon { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .menu-item.danger .menu-icon { stroke: currentColor; }
+      .menu-label { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+      .separator { height: 1px; margin: 4px 8px; background: color-mix(in oklab, var(--text) 10%, transparent); }
+      .group-dot { width: 10px; height: 10px; flex: none; margin: 0 3px; border-radius: 50%; }
+      .arrow { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+      .check { width: 14px; height: 14px; flex: none; fill: none; stroke: var(--text); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+      .unnamed { color: var(--text-muted); }
       .menu.attention {
-        min-width: 0; max-height: 100vh; overflow-y: auto;
-        padding: 5px;
-        background: var(--strip-bg-elevated, Canvas);
-        border-color: var(--strip-border-default, ButtonBorder);
-        box-shadow: var(--strip-elev-raised, none);
-        font: 12px/1.35 system-ui, sans-serif;
-        animation: none;
+        width: calc(100% - 8px); min-width: 0; max-height: calc(100vh - 8px); overflow-y: auto;
+        padding: 5px; background: var(--strip-bg-elevated, Canvas); border-color: var(--strip-border-default, ButtonBorder);
+        box-shadow: var(--strip-elev-raised, none); font: 12px/1.35 system-ui, sans-serif;
       }
-
       .attention-heading { padding: 7px 8px; font-weight: 600; color: var(--strip-text-muted, GrayText); }
       .attention .menu-item { height: 49px; padding: 6px 8px; border-radius: 8px; color: var(--strip-text-primary, CanvasText); }
       .attention .menu-item:is(:hover, :focus-visible) { background: var(--strip-bg-surface-hover, ButtonFace); }
@@ -182,218 +81,245 @@
       .attention-title, .attention-reason { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .attention-title { font-weight: 600; }
       .attention-reason { color: var(--strip-text-muted, GrayText); font-size: 12px; }
-
-      @media (prefers-reduced-motion: reduce) {
-        .menu { animation: none; }
-        .menu-item { transition: none; }
-      }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
     </style>
   </head>
   <body>
-    <div class="menu" id="menu"></div>
+    <div class="surface" id="surface">
+      <div class="menu" id="menu" role="menu"></div>
+      <div class="submenu" id="submenu" role="menu" hidden></div>
+    </div>
     <script>
-      const { ipcRenderer } = require("electron");
+      const { ipcRenderer } = require('electron');
+      const menu = document.getElementById('menu');
+      const submenu = document.getElementById('submenu');
+      let renderedRequestId;
+      let groupOptions = [];
+      let activeGroupId;
 
-      /** Menu item definitions — each has an action key, label, SVG paths, and optional group separator */
-      const ALL_ITEMS = {
-        pin: {
-          label: "Pin Tab",
-          paths: [
-            '<path d="M12 17v5" />',
-            '<path d="M5 3h14l-3 6v4l2 2H6l2-2V9L5 3z" />',
-          ],
-        },
-        unpin: {
-          label: "Unpin Tab",
-          paths: [
-            '<path d="M12 17v5" />',
-            '<path d="M5 3h14l-3 6v4l2 2H6l2-2V9L5 3z" />',
-            '<path d="M3 3l18 18" />',
-          ],
-        },
-        rename: {
-          label: "Rename Tab",
-          paths: [
-            '<path d="M4 20h4L19 9l-4-4L4 16v4z" />',
-            '<path d="M13.5 6.5l4 4" />',
-          ],
-        },
-        close: {
-          label: "Close Tab",
-          paths: ['<path d="M18 6L6 18M6 6l12 12" />'],
-        },
-        closeOther: {
-          label: "Close Other Tabs",
-          paths: [
-            '<path d="M9 3H5a2 2 0 0 0-2 2v4" />',
-            '<path d="M15 3h4a2 2 0 0 1 2 2v4" />',
-            '<path d="M9 21H5a2 2 0 0 1-2-2v-4" />',
-            '<path d="M15 21h4a2 2 0 0 0 2-2v-4" />',
-            '<path d="M14 10l-4 4M10 10l4 4" />',
-          ],
-        },
-        closeRight: {
-          label: "Close Tabs to the Right",
-          paths: [
-            '<path d="M9 18l6-6-6-6" />',
-            '<path d="M18 6L18 18" />',
-          ],
-        },
-        duplicate: {
-          label: "Duplicate Tab",
-          paths: [
-            '<rect x="8" y="8" width="13" height="13" rx="2" />',
-            '<path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />',
-          ],
-        },
-        moveNewWindow: {
-          label: "Move Tab to New Window",
-          paths: ['<rect x="3" y="4" width="13" height="13" rx="2" />', '<path d="M9 20h10a2 2 0 0 0 2-2V8" />'],
-        },
-        moveStart: {
-          label: "Move to Start",
-          paths: [
-            '<path d="M11 17l-5-5 5-5" />',
-            '<path d="M18 17l-5-5 5-5" />',
-          ],
-        },
-        moveEnd: {
-          label: "Move to End",
-          paths: [
-            '<path d="M13 7l5 5-5 5" />',
-            '<path d="M6 7l5 5-5 5" />',
-          ],
-        },
-        reload: {
-          label: "Reload",
-          paths: [
-            '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />',
-            '<path d="M3 3v5h5" />',
-            '<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />',
-            '<path d="M16 16h5v5" />',
-          ],
-        },
-        copyUrl: {
-          label: "Copy URL",
-          paths: [
-            '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />',
-            '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />',
-          ],
-        },
+      const ICONS = {
+        pin: ['<path d="M12 17v5" />', '<path d="M5 3h14l-3 6v4l2 2H6l2-2V9L5 3z" />'],
+        unpin: ['<path d="M12 17v5" />', '<path d="M5 3h14l-3 6v4l2 2H6l2-2V9L5 3z" />', '<path d="M3 3l18 18" />'],
+        rename: ['<path d="M4 20h4L19 9l-4-4L4 16v4z" />', '<path d="M13.5 6.5l4 4" />'],
+        close: ['<path d="M18 6L6 18M6 6l12 12" />'],
+        closeOther: ['<path d="M9 3H5a2 2 0 0 0-2 2v4" />', '<path d="M15 3h4a2 2 0 0 1 2 2v4" />', '<path d="M9 21H5a2 2 0 0 1-2-2v-4" />', '<path d="M15 21h4a2 2 0 0 0 2-2v-4" />', '<path d="M14 10l-4 4M10 10l4 4" />'],
+        closeRight: ['<path d="M2.75 8h7.5M7.5 5l3 3-3 3M13.25 3.5v9" />'],
+        duplicate: ['<rect x="5.25" y="5.25" width="8" height="8" rx="1.5" />', '<path d="M10.75 5.25v-1a1.5 1.5 0 0 0-1.5-1.5h-5a1.5 1.5 0 0 0-1.5 1.5v5a1.5 1.5 0 0 0 1.5 1.5h1" />'],
+        moveNewWindow: ['<rect x="2.75" y="3.25" width="10.5" height="9.5" rx="1.5" />', '<path d="M2.75 6.25h10.5" />'],
+        moveStart: ['<path d="M11 17l-5-5 5-5M18 17l-5-5 5-5" />'],
+        moveEnd: ['<path d="M13 7l5 5-5 5M6 7l5 5-5 5" />'],
+        reload: ['<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16M16 16h5v5" />'],
+        copyUrl: ['<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />'],
+        addToNewGroup: ['<rect x="2.25" y="5.25" width="8.5" height="8.5" rx="2" />', '<path d="M12.25 1.75v4M10.25 3.75h4" />'],
+        addToGroup: ['<rect x="2.25" y="2.25" width="8" height="8" rx="2" />', '<path d="M5.75 13.75h6a2 2 0 0 0 2-2v-6" />'],
+        removeFromGroup: ['<rect x="2.25" y="5.25" width="8.5" height="8.5" rx="2" />', '<path d="M10.25 3.75h4" />'],
+        renameGroup: ['<path d="M4 20h4L19 9l-4-4L4 16v4z" />', '<path d="M13.5 6.5l4 4" />'],
+        ungroup: ['<rect x="2.75" y="2.75" width="10.5" height="10.5" rx="2.5" stroke-dasharray="2.6 2.4" />'],
+        closeGroup: ['<rect x="2.75" y="2.75" width="10.5" height="10.5" rx="2.5" />', '<path d="M6 6l4 4M10 6l-4 4" />'],
+        changeGroupColor: ['<circle cx="8" cy="8" r="5.25" />', '<path d="M8 2.75v10.5M2.75 8h10.5" />'],
+      };
+      const LABELS = {
+        pin: 'Pin Tab', unpin: 'Unpin Tab', rename: 'Rename Tab', close: 'Close Tab', closeOther: 'Close Other Tabs',
+        closeRight: 'Close Tabs to the Right', duplicate: 'Duplicate Tab', moveNewWindow: 'Move Tab to New Window',
+        moveStart: 'Move to Start', moveEnd: 'Move to End', reload: 'Reload', copyUrl: 'Copy URL',
+        addToNewGroup: 'Add to New Group', addToGroup: 'Add to Group', removeFromGroup: 'Remove from Group',
+        renameGroup: 'Rename Group', changeGroupColor: 'Change Color', ungroup: 'Ungroup', closeGroup: 'Close Group',
       };
 
-      let renderedRequestId;
+      function icon(name) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 16 16');
+        svg.setAttribute('class', 'menu-icon');
+        svg.setAttribute('aria-hidden', 'true');
+        for (const pathData of ICONS[name] || []) {
+          const path = document.createElementNS(svg.namespaceURI, 'path');
+          for (const [key, value] of Object.entries(Object.fromEntries([...pathData.matchAll(/(d|stroke-linejoin|stroke-linecap|stroke-dasharray)="([^"]+)"/g)].map(match => [match[1], match[2]])))) path.setAttribute(key, value);
+          svg.appendChild(path);
+        }
+        return svg;
+      }
+
+      function setAction(button, requestId) {
+        button.addEventListener('click', () => ipcRenderer.send('tab-context-menu:action', requestId, button.dataset.action));
+      }
+
+      function makeItem(action, requestId) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'menu-item';
+        button.dataset.action = action;
+        button.setAttribute('role', 'menuitem');
+        button.appendChild(icon(action));
+        const label = document.createElement('span');
+        label.className = 'menu-label';
+        label.textContent = LABELS[action] || action;
+        button.appendChild(label);
+        if (action === 'addToGroup') {
+          button.setAttribute('aria-haspopup', 'menu');
+          button.setAttribute('aria-expanded', 'false');
+          const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          arrow.setAttribute('viewBox', '0 0 16 16');
+          arrow.setAttribute('class', 'arrow');
+          arrow.setAttribute('aria-hidden', 'true');
+          const path = document.createElementNS(arrow.namespaceURI, 'path');
+          path.setAttribute('d', 'M6.25 4 10.25 8l-4 4');
+          arrow.appendChild(path);
+          button.appendChild(arrow);
+          button.addEventListener('mouseenter', () => openSubmenu(button, requestId));
+          button.addEventListener('focus', () => openSubmenu(button, requestId));
+          button.addEventListener('click', () => openSubmenu(button, requestId));
+        } else {
+          if (action === 'closeGroup') button.classList.add('danger');
+          setAction(button, requestId);
+        }
+        return button;
+      }
+
+      function openSubmenu(parent, requestId) {
+        if (!groupOptions.length || submenu.hidden === false) return;
+        submenu.replaceChildren();
+        for (const group of groupOptions) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'menu-item';
+          button.dataset.action = 'joinGroup:' + group.id;
+          button.setAttribute('role', 'menuitem');
+          const dot = document.createElement('span');
+          dot.className = 'group-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          dot.style.backgroundColor = group.color;
+          button.appendChild(dot);
+          const label = document.createElement('span');
+          label.className = 'menu-label' + (group.name ? '' : ' unnamed');
+          label.textContent = group.name || 'Unnamed group';
+          button.appendChild(label);
+          if (group.id === activeGroupId) {
+            const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            check.setAttribute('viewBox', '0 0 16 16');
+            check.setAttribute('class', 'check');
+            check.setAttribute('aria-hidden', 'true');
+            const path = document.createElementNS(check.namespaceURI, 'path');
+            path.setAttribute('d', 'M3.5 8.5l3 3 6-7');
+            check.appendChild(path);
+            button.appendChild(check);
+          }
+          setAction(button, requestId);
+          submenu.appendChild(button);
+        }
+        submenu.hidden = false;
+        const desiredTop = parent.getBoundingClientRect().top;
+        submenu.style.top = `${ Math.max(4, Math.min(desiredTop, innerHeight - submenu.offsetHeight - 4)) }px`;
+        parent.classList.add('open');
+        parent.setAttribute('aria-expanded', 'true');
+      }
+
+      function closeSubmenu() {
+        submenu.hidden = true;
+        menu.querySelector('[data-action="addToGroup"]')?.classList.remove('open');
+        menu.querySelector('[data-action="addToGroup"]')?.setAttribute('aria-expanded', 'false');
+      }
 
       function attentionRow(row, requestId) {
-        const btn = document.createElement("button");
-        const dot = document.createElement("span");
-        const copy = document.createElement("span");
-        const title = document.createElement("span");
-        const reason = document.createElement("span");
-        btn.className = "menu-item";
-        btn.dataset.action = "attention:" + row.id;
-        dot.className = row.state === "stalled" ? "attention-dot stalled" : "attention-dot";
-        dot.setAttribute("aria-hidden", "true");
-        copy.className = "attention-copy";
-        title.className = "attention-title";
-        title.dir = "auto";
+        const button = document.createElement('button');
+        const copy = document.createElement('span');
+        const title = document.createElement('span');
+        const reason = document.createElement('span');
+        button.type = 'button';
+        button.className = 'menu-item';
+        button.dataset.action = 'attention:' + row.id;
+        button.setAttribute('role', 'menuitem');
+        copy.className = 'attention-copy';
+        title.className = 'attention-title';
+        title.dir = 'auto';
         title.textContent = row.title;
-        reason.className = "attention-reason";
+        reason.className = 'attention-reason';
         reason.textContent = row.reason;
         copy.append(title, reason);
         if (row.iconPath) {
-          const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-          const path = document.createElementNS(svg.namespaceURI, "path");
-          svg.setAttribute("viewBox", "0 0 24 24");
-          svg.setAttribute("class", "menu-icon");
-          svg.setAttribute("aria-hidden", "true");
-          path.setAttribute("d", row.iconPath);
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          const path = document.createElementNS(svg.namespaceURI, 'path');
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.setAttribute('class', 'menu-icon');
+          svg.setAttribute('aria-hidden', 'true');
+          path.setAttribute('d', row.iconPath);
           svg.appendChild(path);
-          btn.appendChild(svg);
+          button.appendChild(svg);
         } else {
-          btn.appendChild(dot);
+          const dot = document.createElement('span');
+          dot.className = row.state === 'stalled' ? 'attention-dot stalled' : 'attention-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          button.appendChild(dot);
         }
-        btn.appendChild(copy);
-        btn.addEventListener("click", () => ipcRenderer.send("tab-context-menu:action", requestId, btn.dataset.action));
-        return btn;
+        button.appendChild(copy);
+        button.addEventListener('click', () => ipcRenderer.send('tab-context-menu:action', requestId, button.dataset.action));
+        return button;
       }
 
-      function buildMenu(items, attention, requestId) {
-        const menu = document.getElementById("menu");
-        const focused = document.activeElement?.dataset.action;
-        const scrollTop = menu.scrollTop;
-        menu.replaceChildren();
-        menu.classList.toggle("attention", Boolean(attention));
-        if (attention) {
-          for (const token of ["bg-elevated", "bg-surface-hover", "border-default", "elev-raised", "text-primary", "text-muted", "status-warning", "status-error"]) {
-            menu.style.setProperty("--strip-" + token, attention.palette?.[token] || "");
-          }
-          const heading = document.createElement("div");
-          heading.className = "attention-heading";
-          heading.textContent = attention.title || "Waiting on you";
-          menu.appendChild(heading);
-        }
-
-        items.forEach((entry) => {
-          if (entry === "---") {
-            const sep = document.createElement("div");
-            sep.className = "separator";
-            menu.appendChild(sep);
-            return;
-          }
-
-          if (attention && typeof entry === "object" && entry) {
-            menu.appendChild(attentionRow(entry, requestId));
-            return;
-          }
-          if (typeof entry !== "string" || !Object.hasOwn(ALL_ITEMS, entry)) return;
-          const def = ALL_ITEMS[entry];
-          if (!def) return;
-
-          const btn = document.createElement("button");
-          btn.className = "menu-item";
-          btn.innerHTML =
-            '<svg viewBox="0 0 24 24" class="menu-icon">' +
-            def.paths.join("") +
-            "</svg>" +
-            def.label;
-          btn.addEventListener("click", () => {
-            ipcRenderer.send("tab-context-menu:action", requestId, entry);
-          });
-          menu.appendChild(btn);
-        });
-        if (attention) {
-          menu.scrollTop = scrollTop;
-          const previous = Array.from(menu.querySelectorAll("button")).find(button => button.dataset.action === focused);
-          previous?.focus({ preventScroll: true });
-        }
-      }
-
-      ipcRenderer.on("tab-context-menu:data", (_event, data) => {
-        buildMenu(data.items || [], data.attention, data.requestId);
+      function buildMenu(data) {
         renderedRequestId = data.requestId;
-        [...document.documentElement.classList]
-          .filter((name) => name.startsWith("theme-"))
-          .forEach((name) => document.documentElement.classList.remove(name));
-        if (data.themeId) document.documentElement.classList.add(`theme-${data.themeId}`);
-        if (data.theme === "light") {
-          document.documentElement.classList.add("light-mode");
-        } else {
-          document.documentElement.classList.remove("light-mode");
+        menu.classList.toggle('attention', Boolean(data.attention));
+        menu.replaceChildren();
+        closeSubmenu();
+        if (data.attention) {
+          const paletteTokens = ['bg-elevated', 'bg-surface-hover', 'border-default', 'elev-raised', 'text-primary', 'text-muted', 'status-warning', 'status-error'];
+          for (const token of paletteTokens) menu.style.setProperty('--strip-' + token, data.attention.palette?.[token] || '');
+          const heading = document.createElement('div');
+          heading.className = 'attention-heading';
+          heading.textContent = data.attention.title || 'Group tabs';
+          menu.appendChild(heading);
+          for (const row of data.items || []) menu.appendChild(attentionRow(row, data.requestId));
+          menu.querySelector('.menu-item')?.focus({ preventScroll: true });
+          return;
         }
+
+        groupOptions = Array.isArray(data.groups) ? data.groups : [];
+        activeGroupId = data.activeGroupId;
+        for (const token of ['bg-elevated', 'bg-surface-hover', 'border-default', 'elev-raised', 'text-primary', 'text-muted', 'status-warning', 'status-error']) {
+          menu.style.removeProperty('--strip-' + token);
+        }
+        for (const action of data.items || []) {
+          if (action === '---') {
+            const separator = document.createElement('div');
+            separator.className = 'separator';
+            separator.setAttribute('role', 'separator');
+            menu.appendChild(separator);
+          } else if (typeof action === 'string' && Object.hasOwn(LABELS, action) && (action !== 'addToGroup' || groupOptions.length > 0)) {
+            const button = makeItem(action, data.requestId);
+            if (action !== 'addToGroup') button.addEventListener('mouseenter', closeSubmenu);
+            menu.appendChild(button);
+          }
+        }
+      }
+
+      ipcRenderer.on('tab-context-menu:data', (_event, data) => {
+        buildMenu(data);
+        [...document.documentElement.classList].filter(name => name.startsWith('theme-')).forEach(name => document.documentElement.classList.remove(name));
+        if (data.themeId) document.documentElement.classList.add('theme-' + data.themeId);
+        document.documentElement.classList.toggle('light-mode', data.theme === 'light');
+        menu.querySelector('.menu-item')?.focus({ preventScroll: true });
       });
 
-      // Dismiss on Escape
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") {
-          if (renderedRequestId) ipcRenderer.send("tab-context-menu:dismiss", renderedRequestId);
-        } else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && document.querySelector(".attention")) {
-          const rows = [...document.querySelectorAll(".attention button")];
-          const current = rows.indexOf(document.activeElement);
-          const next = current < 0 ? (e.key === "ArrowDown" ? 0 : rows.length - 1)
-            : (current + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length;
-          e.preventDefault();
-          rows[next]?.focus();
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && renderedRequestId) {
+          event.preventDefault();
+          ipcRenderer.send('tab-context-menu:dismiss', renderedRequestId);
+        } else if (event.key === 'ArrowRight' && document.activeElement?.dataset.action === 'addToGroup') {
+          event.preventDefault();
+          openSubmenu(document.activeElement, renderedRequestId);
+          submenu.querySelector('.menu-item')?.focus({ preventScroll: true });
+        } else if (event.key === 'ArrowLeft' && document.activeElement?.closest('.submenu')) {
+          event.preventDefault();
+          closeSubmenu();
+          menu.querySelector('[data-action="addToGroup"]')?.focus({ preventScroll: true });
+        } else if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && document.activeElement?.closest('.menu, .submenu')) {
+          const list = document.activeElement.closest('.submenu') || menu;
+          const buttons = [...list.querySelectorAll('button:not([disabled])')];
+          const index = buttons.indexOf(document.activeElement);
+          const next = index < 0 ? (event.key === 'ArrowDown' ? 0 : buttons.length - 1)
+            : (index + (event.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length;
+          event.preventDefault();
+          buttons[next]?.focus();
         }
       });
     </script>

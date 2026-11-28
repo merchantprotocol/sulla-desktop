@@ -8,22 +8,11 @@
   <header
     class="app-titlebar relative flex flex-none items-end justify-start pl-4 lg:pl-22 pr-4 lg:pr-4 pt-3 lg:pt-1 pb-0 z-99"
     style="-webkit-app-region: drag; app-region: drag;"
+    :style="groupSwatchStyles"
   >
     <div class="relative flex shrink-0 items-center self-stretch">
       <WindowDragLogo :size="20" />
     </div>
-    <button
-      v-if="needsYouRows.length"
-      ref="needsYouButton"
-      class="tab-needs-button"
-      type="button"
-      aria-haspopup="menu"
-      :aria-expanded="Boolean(attentionMenuId)"
-      @click="openAttentionMenu"
-    >
-      Needs you
-      <span class="tab-needs-count">{{ needsYouRows.length }}</span>
-    </button>
     <div
       ref="tabScrollWrapper"
       class="tab-scroll-wrapper"
@@ -119,21 +108,14 @@
             <button
               class="tab-group-label"
               type="button"
+              :aria-label="`${section.group.name || 'Unnamed group'}, ${section.tabs.length} tabs`"
               :aria-expanded="!isGroupFolded(section.group.id)"
+              :title="`${section.group.name || 'Unnamed group'} · ${section.tabs.length} tab${section.tabs.length === 1 ? '' : 's'}`"
               @click="toggleGroup(section.group.id)"
+              @contextmenu.stop.prevent="openGroupContextMenu($event, section.group)"
             >
-              <svg
-                class="tab-group-icon"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              ><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z" /></svg>
+              <span class="tab-group-color-dot" aria-hidden="true" />
               <span class="tab-group-name">{{ section.group.name }}</span>
-              <span class="tab-group-count">{{ section.tabs.length }}</span>
               <span
                 v-if="isGroupFolded(section.group.id)"
                 class="tab-group-dots"
@@ -438,6 +420,9 @@ import { isTabCloseable } from './tabStrip';
 import { getExtensionService } from '@pkg/agent';
 import WindowDragLogo from '@pkg/components/WindowDragLogo.vue';
 import { TabDragClickSuppression } from '@pkg/composables/TabDragClickSuppression';
+import { TabGroupColorPalette } from '@pkg/composables/TabGroupColorPalette';
+import { TabGroupMenuActions } from '@pkg/composables/TabGroupMenuActions';
+import { TabGroupPopoverBridge } from '@pkg/composables/TabGroupPopoverBridge';
 import { type TabGroup, type TabGroupId } from '@pkg/composables/TabGroupModel';
 import { TabHoverController } from '@pkg/composables/TabHoverController';
 import { calculateTabStripLayout, type TabGroupLayoutResult, type TabStripLayoutGroup } from '@pkg/composables/TabStripLayoutAllocator';
@@ -446,7 +431,8 @@ import { TabTransferPayload, type TabEditorTransferSnapshot } from '@pkg/composa
 import { windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { useBrowserTabs, type BrowserTabMode } from '@pkg/composables/useBrowserTabs';
 import type { ThreadActivityState } from '@pkg/pages/chat/messages/threadActivity';
-import type { TabAttentionRow } from '@pkg/shared/TabStripPopup';
+import { TAB_GROUP_COLOR_SWATCHES } from '@pkg/shared/TabGroupColor';
+import type { TabAttentionRow, TabGroupMenuOption, TabGroupPopoverChange, TabGroupPopoverRequest } from '@pkg/shared/TabStripPopup';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 const ACTIVITY_LABEL: Record<ThreadActivityState, string> = {
@@ -513,10 +499,24 @@ const {
   reorderTabs, promoteTab, isTabPinned, setTabPinned, prunePinnedTabs,
   tabGroupModel,
 } = useBrowserTabs();
-defineProps<{
+const props = defineProps<{
   isDark:         boolean;
   toggleTheme:    () => void;
 }>();
+
+const tabGroupColorPalette = new TabGroupColorPalette();
+const tabGroupMenuActions = new TabGroupMenuActions(tabGroupModel, {
+  openTabIds: () => orderedTabs.value.filter(tab => Boolean(tab.browserId) && !tab.pinned).map(tab => tab.id),
+  closeTabs: async(tabIds) => {
+    for (const tabId of tabIds) {
+      const tab = orderedTabs.value.find(candidate => candidate.id === tabId);
+
+      if (tab?.browserId) await closeBrowserTab(tab.browserId);
+    }
+  },
+}, tabGroupColorPalette);
+const tabGroupPopoverBridge = new TabGroupPopoverBridge(ipcRenderer);
+let groupPopoverRequestId: string | undefined;
 
 const emit = defineEmits<{
   'toggle-left-pane':   [];
@@ -525,6 +525,15 @@ const emit = defineEmits<{
 }>();
 
 const extensionMenuItems = computed(() => extensionService.getHeaderMenuItems());
+const groupSwatchStyles = computed(() => {
+  const isDark = props.isDark;
+  const themeStyle = window.getComputedStyle(document.documentElement);
+
+  return tabGroupColorPalette.styles({
+    lightness: themeStyle.getPropertyValue('--tab-group-swatch-l').trim() || (isDark ? '74%' : '56%'),
+    chroma:    themeStyle.getPropertyValue('--tab-group-swatch-c').trim() || (isDark ? '.12' : '.15'),
+  });
+});
 
 const route = useRoute();
 const isMobileMenuOpen = ref(false);
@@ -642,8 +651,6 @@ const hover = new TabHoverController(
   request => ipcRenderer.send('tab-hover:show', request),
   id => ipcRenderer.send('tab-hover:hide', id),
 );
-const needsYouButton = ref<HTMLButtonElement | null>(null);
-const attentionMenuId = ref<string>();
 let contextMenuId: string | undefined;
 
 function scheduleTabHover(event: PointerEvent, tab: HeaderTab): void {
@@ -674,44 +681,6 @@ function hideTabHover(): void {
   hover.cancel();
 }
 
-function openAttentionMenu(): void {
-  if (attentionMenuId.value) {
-    hideTabContextMenu();
-    return;
-  }
-  hideTabHover();
-  publishAttentionMenu(crypto.randomUUID(), false);
-}
-
-function publishAttentionMenu(id: string, update: boolean): void {
-  const button = needsYouButton.value;
-  const position = button && popupAnchor.locate(button);
-
-  if (!position || !needsYouRows.value.length) {
-    hideTabContextMenu();
-    return;
-  }
-  if (!update) {
-    windowTabStrip.open({
-      id,
-      select: action => {
-        if (!action.startsWith('attention:')) return;
-        const tabId = action.slice('attention:'.length);
-
-        if (needsYouRows.value.some(row => row.id === tabId)) activateTabById(tabId);
-      },
-      onClosed: trackContextMenu(id),
-    });
-    attentionMenuId.value = id;
-  }
-  ipcRenderer.send('tab-context-menu:show', {
-    requestId: id,
-    items:     needsYouRows.value,
-    attention: position,
-    update,
-  });
-}
-
 function openGroupTabList(section: GroupTabStripSection, event: MouseEvent): void {
   const button = event.currentTarget as HTMLElement;
   const position = popupAnchor.locate(button);
@@ -719,6 +688,7 @@ function openGroupTabList(section: GroupTabStripSection, event: MouseEvent): voi
   if (!position) return;
   hideTabHover();
   hideTabContextMenu();
+  hideGroupPopover();
   const id = crypto.randomUUID();
   const rows: TabAttentionRow[] = section.tabs.map(tab => {
     const state = groupDotState(tab) ?? 'idle';
@@ -747,17 +717,110 @@ function openGroupTabList(section: GroupTabStripSection, event: MouseEvent): voi
   ipcRenderer.send('tab-context-menu:show', {
     requestId: id,
     items: rows,
-    attention: { ...position, title: `${ section.group.name } tabs` },
+    attention: {
+      anchor: { x: position.anchor.x, y: position.anchor.y },
+      palette: position.palette,
+      title: `${ section.group.name || 'Unnamed group' } tabs`,
+    },
     update: false,
   });
+}
+
+function groupPopoverAnchor(groupId: TabGroupId): HTMLElement | null {
+  const container = getScrollEl();
+
+  if (!container) return null;
+  const groupElement = Array.from(container.querySelectorAll<HTMLElement>('.tab-group[data-group-id]'))
+    .find(element => element.dataset.groupId === groupId);
+
+  return groupElement?.querySelector<HTMLElement>('.tab-group-label') ?? container;
+}
+
+async function openGroupPopover(groupId: TabGroupId, focus: TabGroupPopoverRequest['focus']): Promise<void> {
+  const group = tabGroupModel.groups.find(candidate => candidate.id === groupId);
+
+  if (!group) return;
+  hideTabHover();
+  await nextTick();
+  const anchorElement = groupPopoverAnchor(groupId);
+  if (!anchorElement) return;
+  const position = popupAnchor.locate(anchorElement, getScrollEl() ?? undefined);
+
+  if (!position) return;
+  const requestId = crypto.randomUUID();
+  const request: TabGroupPopoverRequest = {
+    requestId,
+    groupId,
+    name: group.name,
+    colorToken: group.colorToken,
+    focus,
+    anchor: position.anchor,
+    palette: position.palette,
+    swatches: popupAnchor.swatches(anchorElement, TAB_GROUP_COLOR_SWATCHES.map(({ token, label }) => ({ token, label }))),
+  };
+
+  groupPopoverRequestId = requestId;
+  tabGroupPopoverBridge.open(request, change => handleGroupPopoverChange(groupId, change), () => {
+    if (groupPopoverRequestId === requestId) groupPopoverRequestId = undefined;
+  });
+}
+
+function handleGroupPopoverChange(groupId: TabGroupId, change: TabGroupPopoverChange): void {
+  if (typeof change.name === 'string') {
+    tabGroupMenuActions.renameGroup(groupId, change.name);
+    return;
+  }
+  if (change.colorToken) tabGroupMenuActions.changeGroupColor(groupId, change.colorToken);
+}
+
+function openGroupContextMenu(event: MouseEvent, group: TabGroup): void {
+  hideStripPopups();
+  const requestId = crypto.randomUUID();
+
+  windowTabStrip.open({
+    id: requestId,
+    select: action => handleGroupContextMenuAction(action, group.id),
+    onClosed: trackContextMenu(requestId),
+  });
+  ipcRenderer.send('tab-context-menu:show', {
+    requestId,
+    screenX: event.screenX,
+    screenY: event.screenY,
+    items: ['renameGroup', 'changeGroupColor', '---', 'ungroup', 'closeGroup'],
+  });
+}
+
+function handleGroupContextMenuAction(action: string, groupId: TabGroupId): void {
+  if (!tabGroupModel.groups.some(group => group.id === groupId)) return;
+  switch (action) {
+  case 'renameGroup':
+    void openGroupPopover(groupId, 'name');
+    break;
+  case 'changeGroupColor':
+    void openGroupPopover(groupId, 'color');
+    break;
+  case 'ungroup':
+    tabGroupMenuActions.ungroup(groupId);
+    break;
+  case 'closeGroup':
+    void tabGroupMenuActions.closeGroup(groupId);
+    break;
+  }
 }
 
 function trackContextMenu(id: string): () => void {
   contextMenuId = id;
   return () => {
     if (contextMenuId === id) contextMenuId = undefined;
-    if (attentionMenuId.value === id) attentionMenuId.value = undefined;
   };
+}
+
+function hideGroupPopover(): void {
+  const id = groupPopoverRequestId;
+
+  if (!id) return;
+  groupPopoverRequestId = undefined;
+  tabGroupPopoverBridge.close(id);
 }
 
 function hideTabContextMenu(): void {
@@ -771,6 +834,7 @@ function hideTabContextMenu(): void {
 function hideStripPopups(): void {
   hideTabHover();
   hideTabContextMenu();
+  hideGroupPopover();
 }
 
 function onStripVisibilityChange(): void {
@@ -809,6 +873,7 @@ onUnmounted(() => {
   cancelCurrentDrag();
   suppressDragClick.cancel();
   hideStripPopups();
+  tabGroupPopoverBridge.dispose();
   window.removeEventListener('blur', hideTabHover);
   document.removeEventListener('visibilitychange', onStripVisibilityChange);
   window.removeEventListener('keydown', handleKeyboardShortcuts);
@@ -998,13 +1063,6 @@ interface GroupTabStripSection {
 
 type TabStripSection = PinnedTabStripSection | UngroupedTabStripSection | GroupTabStripSection;
 
-const needsYouRows = computed<TabAttentionRow[]>(() => orderedTabs.value.flatMap(tab => {
-  const state = tab.activity;
-
-  if (state !== 'you') return [];
-  return [{ id: tab.id, title: tab.label, state, iconPath: tab.iconPath, reason: [ACTIVITY_LABEL[state], tab.statusLine].filter(Boolean).join(' · ') }];
-}));
-
 function isGroupFolded(id: TabGroupId): boolean {
   return tabGroupModel.groups.find(group => group.id === id)?.collapsed ?? false;
 }
@@ -1029,11 +1087,6 @@ function activateTab(tab: HeaderTab): void {
     if (groupId) setGroupCollapsed(groupId, false);
   }
   router.push(tab.route);
-}
-
-function activateTabById(tabId: string): void {
-  const tab = orderedTabs.value.find(candidate => candidate.id === tabId);
-  if (tab) activateTab(tab);
 }
 
 const tabSections = computed<TabStripSection[]>(() => {
@@ -1117,9 +1170,8 @@ const orderedTabs = computed(() => tabGroupModel.orderTabs([...allTabsById.value
 const availableTabWidth = ref<number | null>(null);
 
 function groupBaseWidth(section: GroupTabStripSection): { baseWidth: number; foldedWidth: number } {
-  const labelWidth = Math.min(100, Array.from(section.group.name).length * 7);
-  const countWidth = String(section.tabs.length).length * 6;
-  const labelButtonWidth = 14 + 12 + labelWidth + Math.max(16, countWidth + 12) + 16;
+  const labelWidth = Math.min(150, Array.from(section.group.name).length * 7);
+  const labelButtonWidth = 14 + 12 + labelWidth + 16;
   const dots = section.tabs.filter(tab => Boolean(groupDotState(tab))).length;
   const dotsWidth = dots ? dots * 6 + Math.max(0, dots - 1) * 3 : 0;
 
@@ -1165,7 +1217,7 @@ function isGroupCompact(id: TabGroupId): boolean {
 }
 
 function groupColorStyle(group: TabGroup): Record<string, string> {
-  return { '--group-accent': `var(--${ group.colorToken })` };
+  return { '--group-accent': `var(--tab-group-swatch-${ group.colorToken })` };
 }
 
 function groupDisplayTabs(section: GroupTabStripSection): HeaderTab[] {
@@ -1200,9 +1252,6 @@ watch(tabStripLayout, () => {
   });
 }, { flush: 'post' });
 
-watch(() => attentionMenuId.value ? JSON.stringify(needsYouRows.value) : null, (rows, previous) => {
-  if (attentionMenuId.value && previous !== null && rows !== null) publishAttentionMenu(attentionMenuId.value, true);
-}, { flush: 'post' });
 watch(() => route.path, hideStripPopups, { flush: 'sync' });
 watch(() => orderedTabs.value.find(tab => tab.isActive)?.mode, hideStripPopups, { flush: 'sync' });
 watch(() => tabGroupModel.groups.map(group => `${ group.id }:${ group.collapsed }`).join('|'), hideTabHover);
@@ -1587,8 +1636,16 @@ function onAuxClick(e: MouseEvent, tab: HeaderTab) {
 
 function onTabContextMenu(event: MouseEvent, tab: HeaderTab) {
   hideStripPopups();
-  // Build the list of menu items for this tab
-  const items: string[] = [tab.pinned ? 'unpin' : 'pin'];
+  const groupId = tabGroupModel.getGroupIdForTab(tab.id);
+  const items: string[] = [];
+
+  if (tab.browserId && !tab.pinned) {
+    items.push('addToNewGroup');
+    if (tabGroupModel.groups.length) items.push('addToGroup');
+    if (groupId) items.push('removeFromGroup');
+    items.push('---');
+  }
+  items.push(tab.pinned ? 'unpin' : 'pin');
 
   if (tab.browserId) items.push('rename');
   items.push('---');
@@ -1606,6 +1663,13 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab) {
   }
 
   const requestId = crypto.randomUUID();
+  const groupAnchor = getScrollEl();
+  const groups: TabGroupMenuOption[] = groupAnchor ? tabGroupModel.groups.map(group => ({
+    id: group.id,
+    name: group.name,
+    colorToken: group.colorToken,
+    color: popupAnchor.colorForToken(groupAnchor, group.colorToken),
+  })) : [];
 
   windowTabStrip.openForTab(
     requestId,
@@ -1618,6 +1682,8 @@ function onTabContextMenu(event: MouseEvent, tab: HeaderTab) {
     screenX: event.screenX,
     screenY: event.screenY,
     items,
+    groups,
+    activeGroupId: groupId,
   });
 }
 
@@ -1662,7 +1728,24 @@ function handleTabContextMenuAction(action: string, headerTab: HeaderTab): void 
 
   if (index === -1) return;
 
+  if (action.startsWith('joinGroup:')) {
+    const groupId = action.slice('joinGroup:'.length);
+
+    if (tabGroupMenuActions.addToGroup(tabId, groupId)) tabGroupModel.setCollapsed(groupId, false);
+    return;
+  }
+
   switch (action) {
+  case 'addToNewGroup': {
+    const groupId = tabGroupMenuActions.addToNewGroup(tabId);
+
+    void openGroupPopover(groupId, 'name');
+    break;
+  }
+  case 'removeFromGroup':
+    tabGroupMenuActions.removeFromGroup(tabId);
+    break;
+
   case 'pin':
     setTabPinned(tabId, true);
     break;

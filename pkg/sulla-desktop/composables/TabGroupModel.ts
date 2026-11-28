@@ -4,19 +4,12 @@
 
 import type { TabStripLayoutRepository } from './TabStripLayoutRepository';
 
+import { TAB_GROUP_COLOR_TOKENS, type TabGroupColorToken } from '../shared/TabGroupColor';
+
+export { TAB_GROUP_COLOR_SWATCHES, TAB_GROUP_COLOR_TOKENS } from '../shared/TabGroupColor';
+export type { TabGroupColorToken } from '../shared/TabGroupColor';
+
 export type TabGroupId = string;
-
-/** Theme tokens used by the group-color picker; never store literal colors. */
-export const TAB_GROUP_COLOR_TOKENS = [
-  'accent',
-  'accent-2',
-  'text-accent',
-  'status-success',
-  'status-warning',
-  'status-error',
-] as const;
-
-export type TabGroupColorToken = typeof TAB_GROUP_COLOR_TOKENS[number];
 
 export interface TabGroup {
   id:         TabGroupId;
@@ -285,9 +278,7 @@ export class TabGroupModel {
   }
 
   private normalizeName(name: string): string {
-    const clean = Array.from(name.trim()).slice(0, 60).join('');
-    if (!clean) throw new RangeError('Tab group name cannot be empty');
-    return clean;
+    return Array.from(name.trim()).slice(0, 60).join('');
   }
 
   private assertColorToken(colorToken: string): asserts colorToken is TabGroupColorToken {

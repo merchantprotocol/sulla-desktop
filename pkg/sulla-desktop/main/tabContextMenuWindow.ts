@@ -8,10 +8,11 @@ import path from 'path';
 import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
 import { TabHoverWindow } from './tabHoverWindow';
+import { TabGroupPopoverWindow } from './tabGroupPopoverWindow';
 
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
-import type { TabContextMenuRequest } from '@pkg/shared/TabStripPopup';
+import type { TabAttentionContextMenuRequest, TabContextMenuRequest } from '@pkg/shared/TabStripPopup';
 import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
 import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 
@@ -29,8 +30,16 @@ class TabContextMenuWindow {
 
   async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
     if (!this.liveContents(opener)) return;
-    if (typeof payload.requestId !== 'string' || !payload.requestId || !Array.isArray(payload.items) || !payload.items.length) return;
-    if (payload.update && (!payload.attention || this.pending?.opener !== opener || this.pending.payload.requestId !== payload.requestId)) return;
+    if (typeof payload.requestId !== 'string' || !payload.requestId || payload.requestId.length > 128 || !Array.isArray(payload.items) || !payload.items.length) return;
+    if (this.isAttentionRequest(payload)) {
+      if (!this.validAttentionRequest(payload)) return;
+    } else {
+      if (payload.items.some(item => typeof item !== 'string')) return;
+      if (payload.groups && (!Array.isArray(payload.groups) || payload.groups.some(group =>
+        !group || typeof group.id !== 'string' || !group.id || typeof group.name !== 'string' ||
+        typeof group.colorToken !== 'string' || typeof group.color !== 'string'))) return;
+      if (payload.activeGroupId !== undefined && typeof payload.activeGroupId !== 'string') return;
+    }
     const request = { opener, payload };
 
     const previous = this.pending;
@@ -50,7 +59,7 @@ class TabContextMenuWindow {
       if (!popup.isDestroyed()) popup.destroy();
       return;
     }
-    if (!payload.attention) {
+    if (!this.isAttentionRequest(payload)) {
       try {
         themeId = await SullaSettingsModel.get('theme', DEFAULT_THEME_ID) as string;
       } catch { /* keep the default theme */ }
@@ -68,10 +77,16 @@ class TabContextMenuWindow {
     }
     popup.setBounds(bounds);
     popup.webContents.send('tab-context-menu:data', {
-      requestId: payload.requestId, items: payload.items, theme: themeId.includes('-light') ? 'light' : 'dark', themeId, attention: payload.attention,
+      requestId:  payload.requestId,
+      items:      payload.items,
+      groups:     this.isAttentionRequest(payload) ? [] : payload.groups ?? [],
+      activeGroupId: this.isAttentionRequest(payload) ? undefined : payload.activeGroupId,
+      theme: themeId.includes('-light') ? 'light' : 'dark',
+      themeId,
+      attention: this.isAttentionRequest(payload) ? payload.attention : undefined,
     });
     this.rendered = request;
-    if (!popup.isVisible() || !payload.update) {
+    if (!popup.isVisible()) {
       popup.showInactive();
       setTimeout(() => {
         if (popup.isDestroyed() || this.pending?.opener !== opener) return;
@@ -89,8 +104,13 @@ class TabContextMenuWindow {
   act(sender: Electron.WebContents, id: string, action: string): void {
     const request = this.rendered;
 
-    if (sender !== this.popup?.webContents || !request || request !== this.pending || request.payload.requestId !== id) return;
-    const allowed = request.payload.items.some(item => typeof item === 'string' ? item !== '---' && item === action : `attention:${ item?.id }` === action);
+    if (typeof id !== 'string' || typeof action !== 'string' || sender !== this.popup?.webContents || !request ||
+        request !== this.pending || request.payload.requestId !== id) return;
+    const allowed = this.isAttentionRequest(request.payload)
+      ? request.payload.items.some(item => `attention:${ item.id }` === action)
+      : (action !== '---' && request.payload.items.includes(action)) ||
+        (action.startsWith('joinGroup:') && request.payload.items.includes('addToGroup') &&
+          request.payload.groups?.some(group => `joinGroup:${ group.id }` === action) === true);
 
     if (allowed) this.close(action);
   }
@@ -143,25 +163,36 @@ class TabContextMenuWindow {
     };
   }
 
-  private bounds(opener: BrowserWindow, payload: TabContextMenuRequest): Electron.Rectangle | undefined {
-    if (!payload.attention) {
-      const height = payload.items.reduce((sum, item) => sum + (item === '---' ? 9 : 31), 12);
+  private bounds(_opener: BrowserWindow, payload: TabContextMenuRequest): Electron.Rectangle | undefined {
+    if (this.isAttentionRequest(payload)) {
+      const origin = _opener.getContentBounds();
+      const zoom = _opener.webContents.getZoomFactor();
+      const point = {
+        x: Math.round(origin.x + (payload.attention.anchor.x * zoom)),
+        y: Math.round(origin.y + (payload.attention.anchor.y * zoom)),
+      };
 
-      if (!Number.isFinite(payload.screenX) || !Number.isFinite(payload.screenY)) return undefined;
-      return { x: payload.screenX, y: payload.screenY, width: 260, height };
+      if (![point.x, point.y].every(Number.isFinite)) return undefined;
+      const { workArea } = screen.getDisplayNearestPoint(point);
+      const width = Math.min(340, workArea.width);
+      const height = Math.min(360, workArea.height, 42 + (payload.items.length * 49));
+
+      return {
+        x: Math.max(workArea.x, Math.min(point.x, workArea.x + workArea.width - width)),
+        y: Math.max(workArea.y, Math.min(point.y, workArea.y + workArea.height - height)),
+        width,
+        height,
+      };
     }
 
-    const origin = opener.getContentBounds();
-    const zoom = opener.webContents.getZoomFactor();
-    const anchor = payload.attention.anchor;
-
-    if (!anchor) return undefined;
-    const point = { x: Math.round(origin.x + (anchor.x * zoom)), y: Math.round(origin.y + (anchor.y * zoom)) };
-
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return undefined;
+    if (!Number.isFinite(payload.screenX) || !Number.isFinite(payload.screenY)) return undefined;
+    const point = { x: Math.round(payload.screenX), y: Math.round(payload.screenY) };
     const { workArea } = screen.getDisplayNearestPoint(point);
-    const width = Math.min(340, workArea.width);
-    const height = Math.min(360, workArea.height, 42 + (payload.items.length * 49));
+    const hasGroupSubmenu = payload.items.includes('addToGroup') && Boolean(payload.groups?.length);
+    const width = Math.min(hasGroupSubmenu ? 456 : 260, workArea.width);
+    const rowsHeight = payload.items.reduce((sum, item) => sum + (item === '---' ? 9 : 30), 10);
+    const submenuHeight = hasGroupSubmenu ? 10 + Math.min(payload.groups!.length, 10) * 30 : 0;
+    const height = Math.min(workArea.height, Math.max(rowsHeight, submenuHeight));
 
     return {
       x: Math.max(workArea.x, Math.min(point.x, workArea.x + workArea.width - width)),
@@ -169,6 +200,24 @@ class TabContextMenuWindow {
       width,
       height,
     };
+  }
+
+  private isAttentionRequest(payload: TabContextMenuRequest): payload is TabAttentionContextMenuRequest {
+    return 'attention' in payload;
+  }
+
+  private validAttentionRequest(payload: TabAttentionContextMenuRequest): boolean {
+    const allowedPaletteTokens = ['bg-elevated', 'bg-surface-hover', 'border-default', 'elev-raised', 'text-primary', 'text-muted', 'status-warning', 'status-error'];
+    const { anchor, palette, title } = payload.attention;
+
+    if (payload.update !== false || !anchor || ![anchor.x, anchor.y].every(Number.isFinite) || !palette || typeof palette !== 'object' || Array.isArray(palette)) return false;
+    if (title !== undefined && (typeof title !== 'string' || title.length > 128)) return false;
+    if (Object.entries(palette).some(([token, value]) => !allowedPaletteTokens.includes(token) || typeof value !== 'string' || value.length > 256 || /url\s*\(|[;{}]/i.test(value))) return false;
+    const allowedStates = ['you', 'stalled', 'working', 'waiting', 'quiet', 'idle'];
+
+    return payload.items.every(item => item && typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 128 &&
+      typeof item.title === 'string' && item.title.length <= 512 && typeof item.reason === 'string' && item.reason.length <= 512 &&
+      allowedStates.includes(item.state) && (item.iconPath === undefined || (typeof item.iconPath === 'string' && item.iconPath.length <= 256)));
   }
 
   private create(): BrowserWindow {
@@ -213,6 +262,7 @@ function logPopupError(error: unknown): void {
 export function registerTabContextMenuIpc(): void {
   const menu = new TabContextMenuWindow();
   const hover = new TabHoverWindow();
+  const groupPopover = new TabGroupPopoverWindow();
 
   ipcMain.on('tab-context-menu:show', (event, payload: TabContextMenuRequest) => {
     const opener = agentWindowFromSender(event.sender);
@@ -236,4 +286,17 @@ export function registerTabContextMenuIpc(): void {
 
     if (owner?.webContents === event.sender && typeof id === 'string') hover.hide(owner, id);
   });
+  ipcMain.on('tab-group-popover:show', (event, payload) => {
+    const opener = agentWindowFromSender(event.sender);
+
+    if (opener?.webContents === event.sender && payload) groupPopover.show(opener, payload).catch(logPopupError);
+  });
+  ipcMain.on('tab-group-popover:hide', (event, id: string) => {
+    const opener = agentWindowFromSender(event.sender);
+
+    if (opener?.webContents === event.sender && typeof id === 'string') groupPopover.hide(opener, id);
+  });
+  ipcMain.on('tab-group-popover:change', (event, id: string, change) => groupPopover.change(event.sender, id, change));
+  ipcMain.on('tab-group-popover:done', (event, id: string) => groupPopover.finish(event.sender, id));
+  ipcMain.on('tab-group-popover:dismiss', (event, id: string) => groupPopover.finish(event.sender, id));
 }

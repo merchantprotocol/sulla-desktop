@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { TabStripPopupPalette } from '../shared/TabStripPopup';
+import type { TabGroupPopoverSwatch, TabStripPopupPalette } from '../shared/TabStripPopup';
 
 export class TabStripPopupAnchor {
   constructor(private readonly viewport: Window) {}
@@ -29,5 +29,15 @@ export class TabStripPopupAnchor {
       if (value) palette[token] = value;
     }
     return { anchor: { x, y: bounds.bottom + 6, aboveY: bounds.top - 6 }, palette };
+  }
+
+  colorForToken(element: HTMLElement, token: string): string {
+    const style = this.viewport.getComputedStyle(element);
+
+    return style.getPropertyValue(`--tab-group-swatch-${ token }`).trim() || style.getPropertyValue('--accent').trim() || 'currentColor';
+  }
+
+  swatches(element: HTMLElement, tokens: readonly { token: string; label: string }[]): TabGroupPopoverSwatch[] {
+    return tokens.map(({ token, label }) => ({ token, label, color: this.colorForToken(element, token) }));
   }
 }
