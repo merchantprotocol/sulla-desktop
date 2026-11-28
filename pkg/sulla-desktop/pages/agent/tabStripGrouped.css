@@ -1,0 +1,352 @@
+/* Sulla Desktop · https://sulladesktop.com
+ * Copyright (c) 2025-2026 Merchant Protocol LLC.
+ * SPDX-License-Identifier: GPL-2.0-or-later */
+/* User-defined groups share the titlebar with the main-style tab row. */
+:root { --tab-group-swatch-l: 56%; --tab-group-swatch-c: .15; }
+:root[class*="-dark"] { --tab-group-swatch-l: 74%; --tab-group-swatch-c: .12; }
+.app-titlebar {
+  justify-content: flex-start;
+  gap: calc(var(--spacing) * 3);
+}
+.app-titlebar .titlebar-controls {
+  margin-left: auto;
+}
+.app-titlebar .tab-scroll-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 44px;
+  margin-left: 0;
+  padding: 0;
+  gap: 4px;
+  align-items: center;
+  overflow: hidden;
+}
+.app-titlebar .tab-scroll-container {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: 44px;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0 8px 0 0;
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+.app-titlebar .tab-pinned-section,
+.app-titlebar .tab-group-tabs {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 2px;
+}
+.app-titlebar .tab-group > .tab-group-tabs {
+  flex: 0 1 auto;
+  overflow: visible;
+}
+.app-titlebar .tab-pinned-section { min-width: 0; }
+.app-titlebar .tab-ungrouped-section { display: flex; flex: 0 1 auto; min-width: 0; align-items: flex-end; }
+.app-titlebar .tab-ungrouped-tabs { min-width: 0; }
+.app-titlebar .tab-group {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 40px;
+  align-items: flex-end;
+  padding: 0 4px 0 2px;
+  border-radius: 11px 11px 0 0;
+  background: color-mix(in oklab, var(--group-accent) 11%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--group-accent) 34%, transparent),
+    inset 1px 0 0 color-mix(in oklab, var(--group-accent) 18%, transparent),
+    inset -1px 0 0 color-mix(in oklab, var(--group-accent) 18%, transparent);
+}
+.app-titlebar .tab-group-label {
+  display: flex;
+  flex: none;
+  height: 30px;
+  align-items: center;
+  gap: 7px;
+  margin: 0 2px 2px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  color: color-mix(in oklab, var(--group-accent) 62%, var(--text-primary));
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.app-titlebar .tab-group-label:hover,
+.app-titlebar .tab-group-label:focus-visible {
+  background: color-mix(in oklab, var(--group-accent) 16%, transparent);
+  outline: none;
+}
+.app-titlebar .tab-group-color-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--group-accent); }
+.app-titlebar .tab-needs-alert-icon { display: inline-flex; width: 16px; height: 16px; align-items: center; justify-content: center; color: color-mix(in oklab, var(--status-warning) 70%, var(--text-primary)); }
+.app-titlebar .tab-needs-alert-icon svg { display: block; width: 16px; height: 16px; }
+.app-titlebar .tab-group-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-titlebar .tab-group-name:empty { display: none; }
+.app-titlebar .tab-group-dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.app-titlebar .tab-group-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.app-titlebar .tab-group-dot-working { background: var(--accent); }
+.app-titlebar .tab-group-dot-waiting { background: var(--text-muted); }
+.app-titlebar .tab-group-dot-quiet { background: var(--text-muted); }
+.app-titlebar .tab-group-dot-you { background: var(--status-warning); }
+.app-titlebar .tab-group-dot-stalled { background: var(--status-error); }
+.app-titlebar .tab-group-folded {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 30px;
+  align-self: center;
+  padding: 0;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--group-accent) 30%, transparent);
+}
+.app-titlebar .tab-group-folded .tab-group-label { height: 30px; margin: 0; }
+.app-titlebar .tab-group-folded .tab-group-tabs { display: none; }
+.app-titlebar .tab-group-compact { flex: 0 1 auto; min-width: 0; }
+.app-titlebar .tab-group-compact .tab-item.tab-compact {
+  width: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 6px;
+  overflow: visible;
+}
+.app-titlebar .tab-item.tab-compact .tab-label,
+.app-titlebar .tab-item.tab-compact .tab-close-spacer,
+.app-titlebar .tab-item.tab-compact .tab-close,
+.app-titlebar .tab-item.tab-compact .tab-pin {
+  display: none !important;
+}
+.app-titlebar .tab-group-more {
+  display: grid;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+  align-self: flex-end;
+  margin: 0 0 4px 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--group-accent);
+  background: color-mix(in srgb, var(--group-accent) 12%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.app-titlebar .tab-group-more:hover,
+.app-titlebar .tab-group-more:focus-visible {
+  background: color-mix(in srgb, var(--group-accent) 20%, transparent);
+  outline: none;
+}
+.app-titlebar .tab-item {
+  position: relative;
+  display: flex;
+  flex: 0 1 180px;
+  min-width: 64px;
+  max-width: none;
+  height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px 9px 0 0;
+  color: var(--text-muted);
+  background: transparent;
+  font-size: 13px;
+  text-decoration: none;
+  overflow: visible;
+  transition: color 150ms, background-color 150ms, transform 180ms;
+}
+.app-titlebar .tab-group .tab-item:hover {
+  background: color-mix(in oklab, var(--group-accent) 14%, transparent);
+}
+.app-titlebar .tab-busy {
+  min-width: 64px;
+}
+.app-titlebar .tab-active,
+.app-titlebar .tab-active-native {
+  z-index: 2;
+  flex: 0 1 180px;
+  min-width: 64px;
+  margin-bottom: -1px;
+  border: 1px solid var(--border-default);
+  border-bottom: 0;
+  border-radius: 9px 9px 0 0;
+  color: var(--text-primary);
+  background: var(--bg-chrome-active);
+  font-weight: 600;
+}
+.app-titlebar .tab-active .tab-label,
+.app-titlebar .tab-active-native .tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  text-overflow: ellipsis;
+}
+.app-titlebar .tab-accent-bar {
+  display: block;
+  position: absolute;
+  top: -1px;
+  left: 8px;
+  right: 8px;
+  width: auto;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--accent);
+  opacity: 0;
+  pointer-events: none;
+}
+.app-titlebar .tab-active .tab-accent-bar,
+.app-titlebar .tab-active-native .tab-accent-bar {
+  top: -1px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  opacity: 1;
+}
+.app-titlebar .tab-active::before,
+.app-titlebar .tab-active::after,
+.app-titlebar .tab-active-native::before,
+.app-titlebar .tab-active-native::after {
+  display: block;
+  position: absolute;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+  content: '';
+  pointer-events: none;
+  background: radial-gradient(circle at 0 0, transparent 9.5px, var(--border-default) 9.5px, var(--border-default) 10.5px, var(--bg-chrome-active) 10.5px);
+}
+.app-titlebar .tab-active::before,
+.app-titlebar .tab-active-native::before { left: -10px; }
+.app-titlebar .tab-active::after,
+.app-titlebar .tab-active-native::after { right: -10px; transform: scaleX(-1); }
+.app-titlebar .tab-active:hover,
+.app-titlebar .tab-active-native:hover { background: var(--bg-chrome-active); }
+.app-titlebar .tab-label {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.app-titlebar .tab-label.tab-label-overflowing {
+  -webkit-mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
+  mask-image: linear-gradient(90deg, var(--text-primary) calc(100% - 20px), transparent);
+}
+.app-titlebar .tab-item .tab-close {
+  position: absolute;
+  right: 8px;
+  margin-left: 0;
+  visibility: hidden;
+  transition: opacity 150ms, visibility 0s linear 150ms, color 150ms, background-color 150ms;
+}
+.app-titlebar .tab-close-spacer {
+  display: block;
+  flex: 0 1 16px;
+  min-width: 0;
+  height: 16px;
+}
+.app-titlebar .tab-item:hover .tab-close,
+.app-titlebar .tab-active .tab-close,
+.app-titlebar .tab-active-native .tab-close {
+  visibility: visible;
+  transition-delay: 0s;
+}
+.app-titlebar .tab-pinned-boundary { margin-left: 12px; }
+.app-titlebar .tab-pinned-boundary::before {
+  position: absolute;
+  top: 8px;
+  left: -8px;
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong, var(--border-default));
+  content: '';
+  pointer-events: none;
+}
+.app-titlebar .tab-pin { width: 13px; height: 13px; flex: none; color: var(--accent); }
+.app-titlebar .tab-icon { position: relative; width: 16px; height: 16px; flex: 0 0 16px; }
+.app-titlebar .tab-status { width: 16px; height: 16px; }
+.app-titlebar .tab-status-working svg { display: none; }
+.app-titlebar .tab-working .tab-icon::after {
+  display: block;
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 55%, var(--accent) 85%, transparent);
+  content: '';
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), var(--text-primary) calc(100% - 1.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.6px), var(--text-primary) calc(100% - 1.5px));
+  animation: tab-working-spin 1s linear infinite;
+  pointer-events: none;
+}
+.app-titlebar .tab-activity-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  z-index: 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg-surface-alt);
+}
+.app-titlebar .tab-activity-you { background: var(--status-warning); }
+.app-titlebar .tab-activity-stalled { background: var(--status-error); }
+.app-titlebar .tab-activity-waiting { border: 1.5px solid var(--text-muted); background: var(--bg-surface-alt); }
+.app-titlebar .tab-activity-quiet { border: 1.5px solid var(--text-muted); background: var(--bg-surface-alt); }
+.app-titlebar .tab-active .tab-activity-dot,
+.app-titlebar .tab-active-native .tab-activity-dot { box-shadow: 0 0 0 2px var(--bg-chrome-active); }
+.app-titlebar .tab-anim-move { transition: transform 180ms cubic-bezier(.2, .8, .2, 1); }
+.app-titlebar .tab-active-indicator { display: none; }
+.app-titlebar .tab-scroll-chevron { display: none; }
+.app-titlebar .tab-pointer-dragging {
+  z-index: 10;
+  opacity: .97;
+  transition: none !important;
+  transform: translateY(-1px) !important;
+  translate: var(--tab-drag-x, 0px) 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-titlebar .tab-working .tab-icon::after { animation: none; }
+  .app-titlebar .tab-status-working path { animation: none; }
+  .app-titlebar .tab-anim-enter-active,
+  .app-titlebar .tab-anim-leave-active,
+  .app-titlebar .tab-anim-move,
+  .app-titlebar .tab-item { transition-duration: 0s; }
+}
+@keyframes tab-working-spin { to { transform: rotate(1turn); } }

@@ -4,6 +4,7 @@
 // (.github/workflows/agent-tests.yml) against a real Postgres service.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { compileScript, parse } from '@vue/compiler-sfc';
 import { transformWithEsbuild, type Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
@@ -30,7 +31,7 @@ class VueSfcTestPlugin implements Plugin {
   }
 }
 
-export default defineConfig({
+const agentTestConfig = defineConfig({
   plugins: [new VueSfcTestPlugin()],
   resolve: {
     alias: [
@@ -52,3 +53,21 @@ export default defineConfig({
     passWithNoTests: true,
   },
 });
+
+if (agentTestConfig.test) {
+  agentTestConfig.test.include = [
+    ...(agentTestConfig.test.include ?? []),
+    'pkg/sulla-desktop/composables/TabGroupModel.spec.ts',
+    'pkg/sulla-desktop/composables/TabStripLayoutRepository.spec.ts',
+    'pkg/sulla-desktop/composables/useBrowserTabs.transfer.spec.ts',
+    'pkg/sulla-desktop/main/tabs/TabTransferService.spec.ts',
+    'pkg/sulla-desktop/composables/TabTransferPayload.spec.ts',
+    'pkg/sulla-desktop/composables/TabContextMenuBridge.spec.ts',
+    'pkg/sulla-desktop/main/TabStripPopupWindows.spec.ts',
+    'pkg/sulla-desktop/composables/TabAgentHeaderLifecycle.spec.ts',
+    'pkg/sulla-desktop/composables/TabGroupMenuActions.spec.ts',
+    'pkg/sulla-desktop/composables/TabGroupPopoverBridge.spec.ts',
+  ];
+}
+
+export default agentTestConfig;

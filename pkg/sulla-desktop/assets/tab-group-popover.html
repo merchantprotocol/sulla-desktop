@@ -1,0 +1,146 @@
+<!doctype html>
+<!--
+  Sulla Desktop · https://sulladesktop.com
+  Copyright (c) 2026 Merchant Protocol LLC.
+  SPDX-License-Identifier: GPL-2.0-or-later
+  "Sulla" is a trademark. See TRADEMARK.md.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tab group</title>
+    <style>
+      * { box-sizing: border-box; }
+      :root {
+        color-scheme: light dark;
+        --menu-bg: var(--strip-bg-elevated, Canvas);
+        --menu-border: var(--strip-border-default, ButtonBorder);
+        --menu-shadow: var(--strip-elev-raised, 0 20px 48px rgba(0, 0, 0, .3));
+        --text-primary: var(--strip-text-primary, CanvasText);
+        --text-muted: var(--strip-text-muted, GrayText);
+        --accent: var(--strip-accent, #5096b3);
+        --hover: var(--strip-bg-surface-hover, color-mix(in oklab, var(--text-primary) 7%, var(--menu-bg)));
+      }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; color: var(--text-primary); font: 13px/1.4 system-ui, sans-serif; }
+      .popover {
+        width: 264px; height: 164px; padding: 12px; border: 1px solid var(--menu-border); border-radius: 14px;
+        background: var(--menu-bg); box-shadow: var(--menu-shadow);
+      }
+      label { display: block; }
+      .input {
+        display: block; width: 100%; height: 36px; padding: 0 10px; border: 0; border-radius: 8px;
+        outline: 0; background: color-mix(in oklab, var(--text-primary) 3%, var(--menu-bg));
+        box-shadow: inset 0 0 0 1px var(--menu-border); color: var(--text-primary); font: inherit; font-size: 14px;
+      }
+      .input::placeholder { color: var(--text-muted); }
+      .input:focus { box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 3px color-mix(in oklab, var(--accent) 28%, transparent); }
+      .swatches { display: flex; justify-content: space-between; margin: 14px 1px 0; }
+      .swatch {
+        position: relative; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+        background: var(--swatch-color); cursor: pointer; transition: transform 120ms ease;
+      }
+      .swatch::after {
+        content: ''; position: absolute; inset: -4px; border-radius: 50%;
+        box-shadow: inset 0 0 0 2px var(--swatch-color); opacity: 0; transform: scale(.8);
+        transition: opacity 160ms ease, transform 160ms ease;
+      }
+      .swatch[aria-checked="true"]::after { opacity: 1; transform: none; }
+      .swatch:hover { transform: scale(1.1); }
+      .swatch:active { transform: scale(.94); }
+      .swatch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--menu-bg), 0 0 0 4px color-mix(in oklab, var(--swatch-color) 55%, transparent); }
+      .footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+      .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+      .hint { color: var(--text-muted); font-size: 12px; }
+      .done {
+        height: 32px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--accent);
+        color: #fff; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+      }
+      .done:hover { filter: brightness(.92); }
+      .done:active { transform: scale(.97); }
+      .done:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 34%, transparent); }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+    </style>
+  </head>
+  <body>
+    <main class="popover" role="dialog" aria-label="Group name and color">
+      <label>
+        <span class="visually-hidden">Group name</span>
+        <input id="name" class="input" type="text" maxlength="120" placeholder="Name this group" autocomplete="off" spellcheck="false" />
+      </label>
+      <div id="swatches" class="swatches" role="radiogroup" aria-label="Color"></div>
+      <div class="footer">
+        <span class="hint">Enter to save</span>
+        <button id="done" class="done" type="button">Done</button>
+      </div>
+    </main>
+    <script>
+      const { ipcRenderer } = require('electron');
+      const nameInput = document.getElementById('name');
+      const swatchesEl = document.getElementById('swatches');
+      let requestId;
+
+      function sendChange(change) {
+        if (requestId) ipcRenderer.send('tab-group-popover:change', requestId, change);
+      }
+
+      function applyPalette(palette) {
+        const style = document.documentElement.style;
+        for (const token of ['bg-elevated', 'bg-surface-hover', 'border-default', 'elev-raised', 'text-primary', 'text-muted', 'status-warning', 'status-error']) {
+          style.setProperty('--strip-' + token, palette?.[token] || '');
+        }
+      }
+
+      function renderSwatches(data) {
+        swatchesEl.replaceChildren();
+        for (const swatch of data.swatches || []) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'swatch';
+          button.setAttribute('role', 'radio');
+          button.setAttribute('aria-label', swatch.label);
+          button.setAttribute('title', swatch.label);
+          button.setAttribute('aria-checked', String(swatch.token === data.colorToken));
+          button.dataset.token = swatch.token;
+          button.style.backgroundColor = swatch.color;
+          button.style.setProperty('--swatch-color', swatch.color);
+          button.addEventListener('click', () => {
+            for (const item of swatchesEl.querySelectorAll('.swatch')) item.setAttribute('aria-checked', String(item === button));
+            sendChange({ colorToken: swatch.token });
+          });
+          swatchesEl.appendChild(button);
+        }
+      }
+
+      ipcRenderer.on('tab-group-popover:data', (_event, data) => {
+        requestId = data.requestId;
+        nameInput.value = data.name || '';
+        applyPalette(data.palette);
+        renderSwatches(data);
+        if (data.focus === 'color') swatchesEl.querySelector('[aria-checked="true"]')?.focus();
+        else {
+          nameInput.focus();
+          nameInput.select();
+        }
+      });
+      nameInput.addEventListener('input', () => {
+        const name = Array.from(nameInput.value).slice(0, 60).join('');
+
+        if (name !== nameInput.value) nameInput.value = name;
+        sendChange({ name });
+      });
+      document.getElementById('done').addEventListener('click', () => {
+        if (requestId) ipcRenderer.send('tab-group-popover:done', requestId);
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && requestId) {
+          event.preventDefault();
+          ipcRenderer.send('tab-group-popover:dismiss', requestId);
+        } else if (event.key === 'Enter' && event.target === nameInput && requestId) {
+          event.preventDefault();
+          ipcRenderer.send('tab-group-popover:done', requestId);
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -176,15 +176,17 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Ref } from 'vue';
 
 import ThreadAgentActions from './ThreadAgentActions.vue';
+import { ChatDecisions } from '../../composables/useChatDecisions';
 import { useChatController } from '../../controller/useChatController';
-import { chatActivityByTab } from '../../messages/chatActivityStore';
 import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quietDetail, runningDetail, waitTarget, type ThreadActivityState } from '../../messages/threadActivity';
 
+import { windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
 import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
+import type { ChatTabActivitySnapshot } from '@pkg/shared/ChatTabActivity';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
 import type { ToolApprovalMessage, ToolQuestionMessage } from '../../models/Message';
@@ -193,6 +195,8 @@ const NUDGE = 'Status check from the user: report your progress, or what is bloc
 const LIVE = new Set<AgentStateRow['state']>(['queued', 'working', 'parked', 'quiet', 'blocked']);
 
 const controller = useChatController();
+const { openCount } = ChatDecisions.useChatDecisions();
+const windowTabStrip = inject(windowTabStripKey, null);
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
@@ -322,9 +326,23 @@ function jumpTo(messageId: string): void {
   window.dispatchEvent(new CustomEvent('chat:jump-to-message', { detail: { messageId } }));
 }
 
-// Tab dots: tell the tab strip what this thread is doing.
-watch(() => activity.value.state, state => {
-  if (context.tabId) chatActivityByTab.set(context.tabId, state);
+function reportTabActivity(snapshot: ChatTabActivitySnapshot): void {
+  if (!context.tabId) return;
+  windowTabStrip?.setSnapshot(context.tabId, snapshot);
+  window.dispatchEvent(new CustomEvent('sulla:chat-activity', {
+    detail: { tabId: context.tabId, ...snapshot },
+  }));
+}
+
+// Include the short reason so the shell can show useful attention summaries
+// even when this chat lives in its own process-per-tab renderer.
+watch([
+  () => openCount.value ? 'you' as const : activity.value.state === 'you' ? 'waiting' as const : activity.value.state,
+  () => openCount.value
+    ? `${ openCount.value } pending request${ openCount.value === 1 ? '' : 's' }`
+    : activity.value.parts.slice(0, 2).join(' · ').slice(0, 240),
+], ([state, detail]) => {
+  reportTabActivity({ state, detail });
 }, { immediate: true });
 watch(hasItems, has => { if (!has) open.value = false; });
 
@@ -334,7 +352,10 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   window.removeEventListener('click', clearConfirm);
-  if (context.tabId) chatActivityByTab.delete(context.tabId);
+  if (context.tabId) {
+    reportTabActivity({ state: 'idle', detail: 'nothing running or scheduled' });
+    windowTabStrip?.clearSnapshot(context.tabId);
+  }
 });
 </script>
 

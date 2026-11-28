@@ -2406,10 +2406,9 @@
     },
     "pkg/sulla-desktop/main/tabContextMenuWindow.ts": {
       "rules": {
-        "mutable-state": 2,
         "procedural-module": 1
       },
-      "reason": "pre-existing module-level mutable state; move into a class instance bound in a ServiceProvider; pre-existing procedural module; convert to a Service/Repository class"
+      "reason": "pre-existing procedural module; convert to a Service/Repository class"
     },
     "pkg/sulla-desktop/main/teleprompterTracking.ts": {
       "rules": {

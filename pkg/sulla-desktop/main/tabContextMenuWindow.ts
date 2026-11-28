@@ -3,184 +3,300 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // "Sulla" is a trademark. See TRADEMARK.md.
 
-/**
- * Tab Context Menu — popup window for browser-tab context menus.
- *
- * A frameless, transparent, always-on-top BrowserWindow that displays
- * the tab context menu on top of WebContentsView layers (which sit above
- * normal DOM elements).  Follows the heartbeatNotification pattern.
- *
- * Flow:
- *   1. Renderer calls  ipcRenderer.send('tab-context-menu:show', { screenX, screenY, items, tabData })
- *   2. Main creates/positions the popup, sends menu items to it
- *   3. User clicks an item → popup sends  ipcMain.on('tab-context-menu:action', action)
- *   4. Main forwards the action to the renderer via  mainWindow.webContents.send('tab-context-menu:selected', action, tabData)
- *   5. Click outside / Escape → popup sends  'tab-context-menu:dismiss'  → main hides window
- */
-
 import path from 'path';
 
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain, app, screen } from 'electron';
 
-import Logging from '@pkg/utils/logging';
-import { getActiveAgentWindow } from '@pkg/window/agentWindows';
-import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
-import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
+import { TabHoverWindow } from './tabHoverWindow';
+import { TabGroupPopoverWindow } from './tabGroupPopoverWindow';
+
 import { SullaSettingsModel } from '@pkg/agent/database/models/SullaSettingsModel';
 import { DEFAULT_THEME_ID } from '@pkg/config/theme';
+import type { TabAttentionContextMenuRequest, TabContextMenuRequest } from '@pkg/shared/TabStripPopup';
+import { agentWindowFromSender } from '@pkg/window/agentWindowTrust';
+import { releaseWhenHidden } from '@pkg/window/releaseHiddenWindow';
 
-const console = Logging.background;
-
-let win: BrowserWindow | null = null;
-
-/** Read the exact theme so the popup can apply scheme-specific classes. */
-async function getTheme(): Promise<string> {
-  try {
-    return await SullaSettingsModel.get('theme', DEFAULT_THEME_ID) as string;
-  } catch {
-    return DEFAULT_THEME_ID;
-  }
+interface MenuRequest {
+  opener:  BrowserWindow;
+  payload: TabContextMenuRequest;
 }
 
-/** Tab data forwarded back to the renderer with the selected action. */
-let pendingTabData: Record<string, unknown> | null = null;
+class TabContextMenuWindow {
+  private popup?:        BrowserWindow;
+  private loaded?:       Promise<void>;
+  private pending?:      MenuRequest;
+  private rendered?:     MenuRequest;
+  private detachOpener?: () => void;
 
-/** The agent window that opened this popup; the selected action goes back to it. */
-let openerWindow: BrowserWindow | null = null;
+  async show(opener: BrowserWindow, payload: TabContextMenuRequest): Promise<void> {
+    if (!this.liveContents(opener)) return;
+    if (typeof payload.requestId !== 'string' || !payload.requestId || payload.requestId.length > 128 || !Array.isArray(payload.items) || !payload.items.length) return;
+    if (this.isAttentionRequest(payload)) {
+      if (!this.validAttentionRequest(payload)) return;
+    } else {
+      if (payload.items.some(item => typeof item !== 'string')) return;
+      if (payload.groups && (!Array.isArray(payload.groups) || payload.groups.some(group =>
+        !group || typeof group.id !== 'string' || !group.id || typeof group.name !== 'string' ||
+        typeof group.colorToken !== 'string' || typeof group.color !== 'string'))) return;
+      if (payload.activeGroupId !== undefined && typeof payload.activeGroupId !== 'string') return;
+    }
+    const request = { opener, payload };
 
-const MENU_WIDTH = 260;
-const MENU_ITEM_HEIGHT = 31;   // 7px padding top+bottom + ~17px content
-const SEPARATOR_HEIGHT = 9;    // 1px line + 4px margin each side
-const MENU_PADDING = 12;       // 6px top + 6px bottom
+    const previous = this.pending;
 
-/**
- * Register IPC handlers.  Call once from background.ts during startup.
- */
-export function registerTabContextMenuIpc(): void {
-  ipcMain.on('tab-context-menu:show', onShow);
-  ipcMain.on('tab-context-menu:action', onAction);
-  ipcMain.on('tab-context-menu:dismiss', onDismiss);
-}
+    this.detachOpener?.();
+    this.pending = request;
+    this.detachOpener = this.watchOpener(request);
+    if (previous && (previous.opener !== opener || previous.payload.requestId !== payload.requestId)) {
+      this.notifyClosed(previous);
+    }
+    const popup = this.popup ?? this.create();
+    let themeId: string = DEFAULT_THEME_ID;
 
-// ─── IPC handlers ───────────────────────────────────────────────
+    try {
+      await this.loaded;
+    } catch {
+      if (!popup.isDestroyed()) popup.destroy();
+      return;
+    }
+    if (!this.isAttentionRequest(payload)) {
+      try {
+        themeId = await SullaSettingsModel.get('theme', DEFAULT_THEME_ID) as string;
+      } catch { /* keep the default theme */ }
+    }
+    if (this.pending !== request || popup.isDestroyed()) return;
+    if (!this.liveContents(opener)) {
+      this.close(undefined, false);
+      return;
+    }
+    const bounds = this.bounds(opener, payload);
 
-async function onShow(
-  _event: Electron.IpcMainEvent,
-  payload: { screenX: number; screenY: number; items: string[]; tabData: Record<string, unknown> },
-): Promise<void> {
-  const { screenX, screenY, items, tabData } = payload;
-
-  pendingTabData = tabData;
-  openerWindow = agentWindowFromSender(_event.sender);
-
-  // Detect theme for proper styling
-  const themeId = await getTheme();
-  const theme = themeId.includes('-light') ? 'light' : 'dark';
-
-  // Estimate height from item count
-  const itemCount = items.filter(i => i !== '---').length;
-  const separatorCount = items.filter(i => i === '---').length;
-  const estimatedHeight = (itemCount * MENU_ITEM_HEIGHT) + (separatorCount * SEPARATOR_HEIGHT) + MENU_PADDING;
-
-  if (win && !win.isDestroyed()) {
-    win.setBounds({
-      x: screenX, y: screenY, width: MENU_WIDTH, height: estimatedHeight,
+    if (!bounds) {
+      this.close();
+      return;
+    }
+    popup.setBounds(bounds);
+    popup.webContents.send('tab-context-menu:data', {
+      requestId:  payload.requestId,
+      items:      payload.items,
+      groups:     this.isAttentionRequest(payload) ? [] : payload.groups ?? [],
+      activeGroupId: this.isAttentionRequest(payload) ? undefined : payload.activeGroupId,
+      theme: themeId.includes('-light') ? 'light' : 'dark',
+      themeId,
+      attention: this.isAttentionRequest(payload) ? payload.attention : undefined,
     });
-    win.webContents.send('tab-context-menu:data', { items, theme, themeId });
-    win.showInactive();
-    // Focus after a tick so the window can receive keyboard events
-    setTimeout(() => {
-      if (win && !win.isDestroyed()) {
-        win.focus();
-      }
-    }, 50);
-    return;
+    this.rendered = request;
+    if (!popup.isVisible()) {
+      popup.showInactive();
+      setTimeout(() => {
+        if (popup.isDestroyed() || this.pending?.opener !== opener) return;
+        if (this.pending.payload.requestId !== payload.requestId) return;
+        if (!opener.isDestroyed() && (opener.isFocused() || popup.isFocused())) popup.focus();
+        else this.close();
+      }, 50);
+    }
   }
 
-  // ── Create the window ──
-
-  win = new BrowserWindow({
-    width:          MENU_WIDTH,
-    height:         estimatedHeight,
-    x:              screenX,
-    y:              screenY,
-    show:           false,
-    frame:          false,
-    transparent:    true,
-    resizable:      false,
-    alwaysOnTop:    true,
-    skipTaskbar:    true,
-    hasShadow:      true,
-    focusable:      true,
-    webPreferences: {
-      contextIsolation: false,
-      nodeIntegration:  true,
-    },
-  });
-
-  const appRoot = app.getAppPath();
-  const htmlPath = app.isPackaged
-    ? path.join(appRoot, 'dist', 'app', 'assets', 'tab-context-menu.html')
-    : path.join(appRoot, 'pkg', 'sulla-desktop', 'assets', 'tab-context-menu.html');
-
-  win.loadFile(htmlPath);
-
-  win.once('ready-to-show', () => {
-    if (!win || win.isDestroyed()) return;
-    win.webContents.send('tab-context-menu:data', { items, theme, themeId });
-    win.showInactive();
-    setTimeout(() => {
-      if (win && !win.isDestroyed()) {
-        win.focus();
-      }
-    }, 50);
-  });
-
-  // Dismiss when the window loses focus (user clicked elsewhere)
-  win.on('blur', () => {
-    _close();
-  });
-
-  // Let the renderer go once the menu has been hidden for a while.
-  releaseWhenHidden(win);
-
-  win.on('closed', () => {
-    win = null;
-    pendingTabData = null;
-  });
-
-  console.log('[TabContextMenu] Opened popup');
-}
-
-/** Window the popup should reply to: its opener if still alive, else the active agent window. */
-function openerTarget(): BrowserWindow | null {
-  if (openerWindow && !openerWindow.isDestroyed()) return openerWindow;
-  return getActiveAgentWindow();
-}
-
-function onAction(_event: Electron.IpcMainEvent, action: string): void {
-  console.log(`[TabContextMenu] Action: ${ action }`);
-
-  // Forward the selected action + original tab data back to the renderer
-  const mainWindow = openerTarget();
-
-  if (mainWindow && !mainWindow.isDestroyed() && pendingTabData) {
-    mainWindow.webContents.send('tab-context-menu:selected', action, pendingTabData);
+  hide(opener: BrowserWindow, id: string): void {
+    if (this.pending?.opener === opener && this.pending.payload.requestId === id) this.close();
   }
 
-  _close();
-}
+  act(sender: Electron.WebContents, id: string, action: string): void {
+    const request = this.rendered;
 
-function onDismiss(): void {
-  _close();
-}
+    if (typeof id !== 'string' || typeof action !== 'string' || sender !== this.popup?.webContents || !request ||
+        request !== this.pending || request.payload.requestId !== id) return;
+    const allowed = this.isAttentionRequest(request.payload)
+      ? request.payload.items.some(item => `attention:${ item.id }` === action)
+      : (action !== '---' && request.payload.items.includes(action)) ||
+        (action.startsWith('joinGroup:') && request.payload.items.includes('addToGroup') &&
+          request.payload.groups?.some(group => `joinGroup:${ group.id }` === action) === true);
 
-// ─── Internal ───────────────────────────────────────────────────
-
-function _close(): void {
-  if (win && !win.isDestroyed()) {
-    win.hide();
+    if (allowed) this.close(action);
   }
-  pendingTabData = null;
-  openerWindow = null;
+
+  dismiss(sender: Electron.WebContents, id: string): void {
+    if (sender === this.popup?.webContents && this.rendered === this.pending && this.pending?.payload.requestId === id) this.close();
+  }
+
+  private close(action?: string, notify = true): void {
+    const closed = this.pending;
+
+    this.pending = undefined;
+    this.rendered = undefined;
+    this.detachOpener?.();
+    this.detachOpener = undefined;
+    if (this.popup && !this.popup.isDestroyed()) this.popup.hide();
+    if (!closed || !notify) return;
+    if (action === undefined) this.notifyClosed(closed);
+    else this.liveContents(closed.opener)?.send('tab-context-menu:selected', closed.payload.requestId, action);
+  }
+
+  private notifyClosed(closed: MenuRequest): void {
+    this.liveContents(closed.opener)?.send('tab-context-menu:closed', closed.payload.requestId);
+  }
+
+  private liveContents(opener: BrowserWindow): Electron.WebContents | undefined {
+    if (opener.isDestroyed()) return undefined;
+    const contents = opener.webContents;
+
+    return !contents.isDestroyed() && !contents.isCrashed() ? contents : undefined;
+  }
+
+  private watchOpener(request: MenuRequest): () => void {
+    const { opener } = request;
+    const contents = opener.webContents;
+    const onGone = () => {
+      if (this.pending === request) this.close(undefined, false);
+    };
+    const onNavigate = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>, _url: string, _inPlace: boolean, mainFrame: boolean) => {
+      if ((details.isMainFrame ?? mainFrame) && this.pending === request) this.close();
+    };
+
+    contents.on('did-start-navigation', onNavigate);
+    contents.on('render-process-gone', onGone);
+    opener.on('closed', onGone);
+    return () => {
+      contents.removeListener('did-start-navigation', onNavigate);
+      contents.removeListener('render-process-gone', onGone);
+      opener.removeListener('closed', onGone);
+    };
+  }
+
+  private bounds(_opener: BrowserWindow, payload: TabContextMenuRequest): Electron.Rectangle | undefined {
+    if (this.isAttentionRequest(payload)) {
+      const origin = _opener.getContentBounds();
+      const zoom = _opener.webContents.getZoomFactor();
+      const point = {
+        x: Math.round(origin.x + (payload.attention.anchor.x * zoom)),
+        y: Math.round(origin.y + (payload.attention.anchor.y * zoom)),
+      };
+
+      if (![point.x, point.y].every(Number.isFinite)) return undefined;
+      const { workArea } = screen.getDisplayNearestPoint(point);
+      const width = Math.min(340, workArea.width);
+      const height = Math.min(360, workArea.height, 42 + (payload.items.length * 49));
+
+      return {
+        x: Math.max(workArea.x, Math.min(point.x, workArea.x + workArea.width - width)),
+        y: Math.max(workArea.y, Math.min(point.y, workArea.y + workArea.height - height)),
+        width,
+        height,
+      };
+    }
+
+    if (!Number.isFinite(payload.screenX) || !Number.isFinite(payload.screenY)) return undefined;
+    const point = { x: Math.round(payload.screenX), y: Math.round(payload.screenY) };
+    const { workArea } = screen.getDisplayNearestPoint(point);
+    const hasGroupSubmenu = payload.items.includes('addToGroup') && Boolean(payload.groups?.length);
+    const width = Math.min(hasGroupSubmenu ? 456 : 260, workArea.width);
+    const rowsHeight = payload.items.reduce((sum, item) => sum + (item === '---' ? 9 : 30), 10);
+    const submenuHeight = hasGroupSubmenu ? 10 + Math.min(payload.groups!.length, 10) * 30 : 0;
+    const height = Math.min(workArea.height, Math.max(rowsHeight, submenuHeight));
+
+    return {
+      x: Math.max(workArea.x, Math.min(point.x, workArea.x + workArea.width - width)),
+      y: Math.max(workArea.y, Math.min(point.y, workArea.y + workArea.height - height)),
+      width,
+      height,
+    };
+  }
+
+  private isAttentionRequest(payload: TabContextMenuRequest): payload is TabAttentionContextMenuRequest {
+    return 'attention' in payload;
+  }
+
+  private validAttentionRequest(payload: TabAttentionContextMenuRequest): boolean {
+    const allowedPaletteTokens = ['bg-elevated', 'bg-surface-hover', 'border-default', 'elev-raised', 'text-primary', 'text-muted', 'status-warning', 'status-error'];
+    const { anchor, palette, title } = payload.attention;
+
+    if (payload.update !== false || !anchor || ![anchor.x, anchor.y].every(Number.isFinite) || !palette || typeof palette !== 'object' || Array.isArray(palette)) return false;
+    if (title !== undefined && (typeof title !== 'string' || title.length > 128)) return false;
+    if (Object.entries(palette).some(([token, value]) => !allowedPaletteTokens.includes(token) || typeof value !== 'string' || value.length > 256 || /url\s*\(|[;{}]/i.test(value))) return false;
+    const allowedStates = ['you', 'stalled', 'working', 'waiting', 'quiet', 'idle'];
+
+    return payload.items.every(item => item && typeof item.id === 'string' && item.id.length > 0 && item.id.length <= 128 &&
+      typeof item.title === 'string' && item.title.length <= 512 && typeof item.reason === 'string' && item.reason.length <= 512 &&
+      allowedStates.includes(item.state) && (item.iconPath === undefined || (typeof item.iconPath === 'string' && item.iconPath.length <= 256)));
+  }
+
+  private create(): BrowserWindow {
+    const popup = new BrowserWindow({
+      width:          260,
+      height:         80,
+      show:           false,
+      frame:          false,
+      transparent:    true,
+      resizable:      false,
+      alwaysOnTop:    true,
+      skipTaskbar:    true,
+      hasShadow:      true,
+      focusable:      true,
+      webPreferences: { contextIsolation: false, nodeIntegration: true },
+    });
+    const assets = app.isPackaged ? ['dist', 'app', 'assets'] : ['pkg', 'sulla-desktop', 'assets'];
+
+    this.popup = popup;
+    this.loaded = popup.loadFile(path.join(app.getAppPath(), ...assets, 'tab-context-menu.html'));
+    popup.on('blur', () => {
+      if (this.popup === popup) this.close();
+    });
+    popup.webContents.once('render-process-gone', () => {
+      if (!popup.isDestroyed()) popup.destroy();
+    });
+    popup.once('closed', () => {
+      if (this.popup !== popup) return;
+      this.popup = undefined;
+      this.loaded = undefined;
+      this.close();
+    });
+    releaseWhenHidden(popup);
+    return popup;
+  }
+}
+
+function logPopupError(error: unknown): void {
+  console.error('[TabStripPopup] Could not show popup', error);
+}
+
+export function registerTabContextMenuIpc(): void {
+  const menu = new TabContextMenuWindow();
+  const hover = new TabHoverWindow();
+  const groupPopover = new TabGroupPopoverWindow();
+
+  ipcMain.on('tab-context-menu:show', (event, payload: TabContextMenuRequest) => {
+    const opener = agentWindowFromSender(event.sender);
+
+    if (opener && payload) menu.show(opener, payload).catch(logPopupError);
+  });
+  ipcMain.on('tab-context-menu:hide', (event, id: string) => {
+    const opener = agentWindowFromSender(event.sender);
+
+    if (opener && typeof id === 'string') menu.hide(opener, id);
+  });
+  ipcMain.on('tab-context-menu:action', (event, id: string, action: string) => menu.act(event.sender, id, action));
+  ipcMain.on('tab-context-menu:dismiss', (event, id: string) => menu.dismiss(event.sender, id));
+  ipcMain.on('tab-hover:show', (event, payload) => {
+    const owner = agentWindowFromSender(event.sender);
+
+    if (owner?.webContents === event.sender && payload) hover.show(owner, payload).catch(logPopupError);
+  });
+  ipcMain.on('tab-hover:hide', (event, id: string) => {
+    const owner = agentWindowFromSender(event.sender);
+
+    if (owner?.webContents === event.sender && typeof id === 'string') hover.hide(owner, id);
+  });
+  ipcMain.on('tab-group-popover:show', (event, payload) => {
+    const opener = agentWindowFromSender(event.sender);
+
+    if (opener?.webContents === event.sender && payload) groupPopover.show(opener, payload).catch(logPopupError);
+  });
+  ipcMain.on('tab-group-popover:hide', (event, id: string) => {
+    const opener = agentWindowFromSender(event.sender);
+
+    if (opener?.webContents === event.sender && typeof id === 'string') groupPopover.hide(opener, id);
+  });
+  ipcMain.on('tab-group-popover:change', (event, id: string, change) => groupPopover.change(event.sender, id, change));
+  ipcMain.on('tab-group-popover:done', (event, id: string) => groupPopover.finish(event.sender, id));
+  ipcMain.on('tab-group-popover:dismiss', (event, id: string) => groupPopover.finish(event.sender, id));
 }

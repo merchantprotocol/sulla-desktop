@@ -109,21 +109,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted } from 'vue';
+import { computed, nextTick, reactive, ref, watch, onMounted, onUnmounted, provide } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { lazyScreen } from './agent/lazyScreen';
-const BrowserTab = lazyScreen(() => import('./BrowserTab.vue'), 'BrowserTab');
-import ModeRail from './chat/components/chrome/ModeRail.vue';
-import StartupOverlay from './agent/StartupOverlay.vue';
 import AgentHeader from './agent/AgentHeader.vue';
+import StartupOverlay from './agent/StartupOverlay.vue';
 import VaultUnlockScreen from './agent/VaultUnlockScreen.vue';
+import { lazyScreen } from './agent/lazyScreen';
 import { useStartupProgress } from './agent/useStartupProgress';
 import BookmarksPane from './bookmarks/BookmarksPane.vue';
-import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
+import ModeRail from './chat/components/chrome/ModeRail.vue';
+import { ConversationShellPolicy } from './conversations/ConversationShellPolicy';
 
 import { getHumanPresenceTracker } from '@pkg/agent/services/HumanPresenceTracker';
+import NoAiConnectedBanner from '@pkg/components/NoAiConnectedBanner.vue';
 import { isStudioSection, railSubTabFor } from '@pkg/components/routines/studioSections';
+import { TabGroupReveal } from '@pkg/composables/TabGroupReveal';
+import { WindowTabStripState, windowTabStripKey } from '@pkg/composables/WindowTabStripState';
 import type { WorkspaceTabRequest } from '@pkg/shared/workspaceTabRequest';
 import { openDocumentTab, openWorkspaceTab, orderPinnedFirst, useBrowserTabs, getPersistedActiveTabId, persistActiveTabId } from '@pkg/composables/useBrowserTabs';
 import type { BrowserTab as BrowserTabDescriptor } from '@pkg/composables/useBrowserTabs';
@@ -134,7 +136,8 @@ import { FilesOpenCommandHandler } from '@pkg/pages/files/FilesOpenCommandHandle
 import { shouldShowVaultUnlockOverlay, useVaultUnlock } from '@pkg/composables/useVaultUnlock';
 import { restoreChatFromHistory } from '@pkg/pages/chat/services/historyRestore';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
-import { ConversationShellPolicy } from './conversations/ConversationShellPolicy';
+
+const BrowserTab = lazyScreen(() => import('./BrowserTab.vue'), 'BrowserTab');
 
 const hookPromptLabels:Record<string,string>={on_user_message:'Read your messages',after_model_response:'Read Sulla’s replies',after_tool_call:'See tool results',on_memory_write:'See what Sulla saves to memory',on_workflow_node_start:'See workflow steps start',on_workflow_node_finish:'See workflow steps finish',on_agent_job_start:'See agents start',on_agent_job_finish:'See agents finish',before_tool_call:'Check tool calls before they run',before_model_call:'Check what Sulla sends to the AI model'};
 const permissionPrompt=ref<{event:{extensionId:string;hook:any};name:string;label:string}>();
@@ -163,6 +166,12 @@ const filesOpenCommandHandler = new FilesOpenCommandHandler({
   reply: (requestId, result) => ipcRenderer.send(`agent-command-result:${ requestId }` as any, result),
 }, filesOpenDestinationRouter);
 const { tryAutoLogin, invalidateStatus, statusResolved: vaultStatusResolved, loggedIn: vaultLoggedIn, waitingOnUnlock } = useVaultUnlock();
+const { tabGroupModel, isTabPinned } = useBrowserTabs();
+const windowTabStrip = new WindowTabStripState(window, ipcRenderer);
+
+provide(windowTabStripKey, windowTabStrip);
+windowTabStrip.connect();
+onUnmounted(() => windowTabStrip.dispose());
 const vaultUnlockVisible = computed(() => shouldShowVaultUnlockOverlay({
   statusResolved: vaultStatusResolved.value,
   loggedIn: vaultLoggedIn.value,
@@ -293,6 +302,27 @@ const hasTitlebar = computed(() => isBrowserRoute.value || [
   'AgentIntegrationDetail',
   'ExtensionView',
 ].includes(String(route.name)));
+
+// This shell outlives both the hosted and native-browser headers. Remember
+// the restored selection so reopening the window preserves a manual fold.
+const restoredTabId = getPersistedActiveTabId();
+const restoredTab = browserTabs.find(tab => tab.id === restoredTabId);
+const tabGroupReveal = new TabGroupReveal(
+  tabGroupModel,
+  restoredTab && { id: `browser-${ restoredTab.id }`, pinned: isTabPinned(`browser-${ restoredTab.id }`) },
+);
+watch(() => {
+  const id = /^\/Browser\/(.+)$/.exec(route.path)?.[1];
+  if (id) {
+    const tab = browserTabs.find(candidate => candidate.id === id);
+
+    return tab && { id: `browser-${ id }`, pinned: isTabPinned(`browser-${ id }`) };
+  }
+
+  return route.path.startsWith('/Extension/') ? { id: `ext-${ route.path }`, pinned: isTabPinned(`ext-${ route.path }`) } : null;
+}, active => {
+  if (active !== undefined) tabGroupReveal.select(active);
+}, { immediate: route.path !== '/' && route.path !== '' });
 
 // Persist active tab ID whenever the route changes so restarts can resume it
 watch(() => route.path, (path) => {
