@@ -71,6 +71,33 @@ export class GitHubAnnotationReporter {
     if (this.githubActions) this.commandWriter('::remove-matcher owner=tsc::\n');
   }
 
+  diagnosticOutput(project, result, output, parsedDiagnostics) {
+    if (!this.githubActions) return;
+    const redact = (value) => String(value)
+      .replace(/\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g, '[REDACTED]')
+      .replace(/\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g, '[REDACTED]')
+      .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED]')
+      .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
+    const lines = output.split(/\r?\n/);
+    const summary = [
+      `project=${project}`,
+      `status=${result.status ?? 'null'}`,
+      `signal=${result.signal ?? 'none'}`,
+      `spawnError=${result.error?.message ?? 'none'}`,
+      `stdoutBytes=${Buffer.byteLength(result.stdout ?? '')}`,
+      `stderrBytes=${Buffer.byteLength(result.stderr ?? '')}`,
+      `parsedDiagnostics=${parsedDiagnostics.length}`,
+      `rawTypeScriptLines=${lines.filter((line) => /error TS\d+/.test(line)).length}`,
+    ].join('; ');
+    this.commandWriter(`::warning title=diagnostic tsc summary ${this.escapeProperty(project)}::${this.escapeData(redact(summary))}\n`);
+    for (const file of ['BackendGraphWebSocketService.ts', 'report_progress.ts', 'PostgresAgentInboxRepository.ts', 'ClaudeCodeService.ts', 'CodexService.ts']) {
+      const matches = lines.filter((line) => line.includes(file)).slice(0, 2);
+      const message = matches.length ? matches.map(redact).join('\n') : `${file}: no matching line in raw tsc output`;
+      const level = matches.length ? 'error' : 'warning';
+      this.commandWriter(`::${level} title=diagnostic tsc ${this.escapeProperty(file)}::${this.escapeData(message)}\n`);
+    }
+  }
+
   report(project, diagnostics, staleFingerprints) {
     if (this.githubActions) {
       for (const diagnostic of diagnostics) this.commandWriter(`${this.annotationFor(diagnostic)}\n`);
@@ -172,6 +199,9 @@ class TypecheckBaselineGate {
       .split('\n')
       .map((line) => TypeScriptDiagnostic.parse(line))
       .filter(Boolean);
+    if (process.env.TYPECHECK_DIAGNOSTIC_ANNOTATIONS === 'true') {
+      this.reporter.diagnosticOutput(this.project, result, output, diagnostics);
+    }
 
     const currentCounts = new Map();
     const instancesByFingerprint = new Map();
