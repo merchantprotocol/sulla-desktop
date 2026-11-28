@@ -125,6 +125,7 @@ class MemoryDecisionStore {
 
 class RecordingDelivery implements DecisionHolderDelivery {
   readonly delivered: Array<{ holder: string; message: string }> = [];
+  readonly jobMessages: Array<Parameters<DecisionHolderDelivery['sendJob']>[0]> = [];
   unavailableTools = new Set<string>();
   activeChats = new Set<string>();
   queuedForNextBoundary = false;
@@ -132,9 +133,10 @@ class RecordingDelivery implements DecisionHolderDelivery {
   beforeDeliver?: () => void;
   deliveryGate?: Promise<void>;
 
-  async sendJob(input: { jobId: string; taskIndex: number; message: string }) {
+  async sendJob(input: Parameters<DecisionHolderDelivery['sendJob']>[0]) {
     if (this.throwsOnDelivery) throw new Error('delivery unavailable');
     this.beforeDeliver?.();
+    this.jobMessages.push(input);
     this.delivered.push({ holder: `${ input.jobId }:${ input.taskIndex }`, message: input.message });
     await this.deliveryGate;
     return { successBoolean: true, responseString: JSON.stringify(this.queuedForNextBoundary ? { deliveredLive: 0, queuedForNextBoundary: 1 } : { deliveredLive: 1 }) };
@@ -290,6 +292,49 @@ describe('DecisionEscalationService', () => {
       expect(harness.delivery.delivered.map(delivery => delivery.holder)).toEqual(['root-chat']);
       expect(current.route!.holderDeadline).toBe(harness.now + DecisionEscalationService.DELIVERY_WINDOW_MS);
     }
+  });
+
+  it('routes a delegated child question to its parent, wakes that holder, and delivers the parent answer to the child task', async() => {
+    // risk: identity and delivery — a child must not ask as the root chat, and its parent answer must reach the exact child job/task.
+    const childTask: AgentJobTaskTarget = {
+      jobId: 'child-job', taskIndex: 3, jobStatus: 'running', taskStatus: 'running', threadId: 'child-thread',
+      parentThreadId: 'parent-thread', parentChannel: 'parent-channel', agentId: 'codex-sol-worker', spawnMode: 'async',
+    };
+    const parentTask: AgentJobTaskTarget = {
+      jobId: 'parent-job', taskIndex: 1, jobStatus: 'running', taskStatus: 'running', threadId: 'parent-thread',
+      parentThreadId: 'root-chat', parentChannel: 'root-channel', agentId: 'coding-manager', parentJobId: null,
+    };
+    const tasks = new Map<string, AgentJobTaskTarget>([
+      ['child-thread', childTask],
+      ['parent-thread', parentTask],
+    ]);
+    const routes = new DecisionRouteResolver({ taskForThread: async(threadId) => tasks.get(threadId) ?? null });
+    const harness = new EscalationHarness(routes);
+    harness.store.askerTask = childTask;
+
+    const requested = await harness.decisions.requestQuestion({
+      conversationId: 'child-thread', channel: 'child-channel', title: 'Choose the implementation route?',
+      questions: [{ question: 'Which route?', options: [{ label: 'A' }, { label: 'B' }] }],
+    });
+    const record = (await harness.store.findById(requested.record.id))!;
+    expect(record.route).toMatchObject({ authority: 'any', holderIndex: 0 });
+    expect(record.route?.chain[0]).toMatchObject({
+      threadId: 'parent-thread', channel: 'parent-channel', agentId: 'coding-manager', jobId: 'parent-job', taskIndex: 1, kind: 'agent',
+    });
+    expect(harness.delivery.jobMessages).toHaveLength(1);
+    expect(harness.delivery.jobMessages[0]).toMatchObject({ jobId: 'parent-job', taskIndex: 1, waitForWake: false, messageKind: 'decision' });
+    expect(harness.delivery.jobMessages[0].message).toContain(`[Decision from codex-sol-worker (decision ${ record.id })]`);
+
+    await expect(harness.decisions.answerAsAgent('parent-thread', record.id, 'answer', [
+      { question: 'Which route?', selected: ['B'] },
+    ])).resolves.toMatchObject({ settled: true, conversationId: 'child-thread', late: true });
+    expect(await harness.store.findById(record.id)).toMatchObject({
+      status: 'answered', answerDelivery: 'delivered', answeredBy: { kind: 'agent', threadId: 'parent-thread' },
+      answers: [{ question: 'Which route?', selected: ['B'] }],
+    });
+    expect(harness.askerMessages).toEqual([{
+      jobId: 'child-job', taskIndex: 3, message: expect.stringContaining('[Decision answered by coding-manager]'),
+    }]);
   });
 
   it('skips a holder without answer_decision, re-delivers a missing startup notice, and advances an overdue one', async() => {

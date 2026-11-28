@@ -28,12 +28,15 @@ export const BASE_DISALLOWED_TOOLS = 'AskUserQuestion TaskCreate TaskUpdate Task
 export const ACTING_NATIVE_TOOL_DENYLIST = 'SendMessage TaskStop Workflow CronCreate CronDelete CronList RemoteTrigger';
 
 /**
- * Native detached-work and direct-human controls are not available to any
- * delegated worker or manager. Delegated agents must use Sulla's graph-bound
- * tools; Bash remains available for synchronous commands, but Claude's
- * run_in_background mode cannot be denied independently by tool name.
+ * Native detached-work and direct-management controls are not available to
+ * delegated workers or managers. The session-bound Sulla ask_user_question
+ * MCP tool stays available: it records a persistent decision using the
+ * caller's graph state and routes plain questions parent-first. Claude's own
+ * AskUserQuestion remains disabled in BASE_DISALLOWED_TOOLS. Bash remains
+ * available for synchronous commands, but run_in_background cannot be denied
+ * independently by tool name.
  */
-export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop ScheduleWakeup CronCreate CronDelete CronList RemoteTrigger SendMessage Workflow mcp__sulla-native__ask_user_question';
+export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop ScheduleWakeup CronCreate CronDelete CronList RemoteTrigger SendMessage Workflow';
 
 /**
  * Additional native tools disabled for SUBCONSCIOUS memory-processing spawns.
@@ -51,7 +54,7 @@ export const DELEGATED_NATIVE_TOOL_DENYLIST = 'Monitor TaskOutput TaskStop Sched
  * on either side is harmless — an unknown disallowed name is simply ignored.
  * (Task also appears in BASE_DISALLOWED_TOOLS now; the duplicate is harmless.)
  */
-export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';
+export const SUBCONSCIOUS_NATIVE_TOOL_DENYLIST = 'Read Write Edit MultiEdit NotebookEdit Bash BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand mcp__sulla-native__ask_user_question';
 
 /** Support chats use only the graph-scoped MCP transport. */
 export const SUPPORT_NATIVE_TOOL_DENYLIST = 'Bash Read Write Edit MultiEdit NotebookEdit BashOutput KillShell KillBash Glob Grep WebFetch WebSearch Task SlashCommand';

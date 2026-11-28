@@ -79,7 +79,7 @@ export const metaToolManifests: ToolManifest[] = [
   },
   {
     name:        'ask_user_question',
-    description: 'Save one or more multiple-choice questions in For You. The human may answer at any time. An agent in the delegation chain may also answer or pass plain questions when one is available; task questions require the human. Replies identify who answered. End this turn and wait; do not re-ask or proceed with dependent work.',
+    description: 'Save one or more persistent decision questions in For You. A delegated agent\'s plain question is routed to its parent first; the human may answer at any time, and task questions require the human. Replies identify who answered. Returns a receipt immediately; end this turn and wait before dependent work.',
     category:    'meta',
     schemaDef:   {
       questions: {
@@ -110,7 +110,7 @@ export const metaToolManifests: ToolManifest[] = [
       timeoutMs: { type: 'number', optional: true, description: 'Timeout in ms (min 5000, max 1800000, default 300000 = 5 min). On timeout resolves with no selection.' },
     },
     operationTypes: ['read'],
-    // Waits on a human for timeoutMs (default 300 s); a 15 s read deadline would cut it off.
+    // Returns a durable receipt; keep a generous limit for the decision-service and routing path.
     deadlineMs:     305_000,
     loader:         () => import('./ask_user_question'),
   },

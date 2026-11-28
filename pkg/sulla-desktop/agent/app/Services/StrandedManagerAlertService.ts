@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 Merchant Protocol LLC.
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-import type { ParentNoticeInbox } from '../../services/BlockerEscalationService';
+import type { ParentNoticeInbox } from '../../services/ParentNoticeInbox';
 import type { StrandedManagerCandidate } from './StrandedManagerDetector';
 
 export interface StrandedAlertDispatcher { alert(candidate: StrandedManagerCandidate): Promise<boolean> }

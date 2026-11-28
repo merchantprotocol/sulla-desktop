@@ -23,6 +23,16 @@ import { RoutedQuestionAnswerRecovery } from './RoutedQuestionAnswerRecovery';
 import type { DecisionActor, DecisionAgentAction, DecisionOutcome, DecisionRecord, DecisionResponse, DecisionRouteHistoryEntry } from '@pkg/shared/decisions';
 import type { DecisionSettlementStatus, DecisionTransitionActor } from '../repositories/DecisionRouteTransitionSqlBuilder';
 
+export interface BlockerDecisionInput {
+  conversationId: string;
+  channel: string;
+  jobId: string;
+  taskIndex: number;
+  label: string;
+  blockers: string[];
+  blockersChanged: boolean;
+}
+
 /** Durable human requests retain their context after execution waiters expire.
  * Late question answers enter the original chat mailbox; expired approvals fail closed.
  * No tool arguments or credentials are copied into cloud snapshots.
@@ -90,16 +100,81 @@ export class DecisionService {
   }>();
 
   private questionWrites = Promise.resolve();
+  private blockerWrites = Promise.resolve();
+
+  /** Create, keep, or withdraw the one live decision representing a task's latest blocker. */
+  reconcileBlockerDecision(input: BlockerDecisionInput): Promise<void> {
+    const operation = this.blockerWrites.then(() => this.applyBlockerDecision(input));
+    this.blockerWrites = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  /** Current blocker decisions are the authoritative source for fleet Blocked state. */
+  async openBlockerTaskKeys(jobIds: string[]): Promise<Set<string>> {
+    return await this.pendingDecisions.openBlockerTaskKeys?.(jobIds) ?? new Set();
+  }
+
+  private async applyBlockerDecision(input: BlockerDecisionInput): Promise<void> {
+    const latest = await this.pendingDecisions.latestBlockerForTask?.(input.jobId, input.taskIndex);
+    const isOpen = !!latest && ['pending', 'deferred'].includes(latest.status) &&
+      latest.attention !== 'answered' && latest.attention !== 'dismissed';
+    const text = input.blockers.join('; ');
+
+    if (input.blockers.length === 0) {
+      if (latest && isOpen) {
+        const withdrawn = await this.pendingDecisions.dismissBlockerForTask?.(latest.id, input.jobId, input.taskIndex);
+        if (withdrawn) this.changed(withdrawn);
+      }
+      return;
+    }
+
+    // Retry publication when a prior report persisted its check-in but failed
+    // before its decision row was saved. A matching answered decision is still
+    // terminal: retries must not reopen a question the parent already answered.
+    if (!input.blockersChanged) {
+      if (latest?.payload?.blockerText === text) {
+        if (isOpen && latest.route?.authority === 'any' && latest.route.deliveredAt == null) {
+          await this.escalation.start(latest);
+        }
+        return;
+      }
+    }
+
+    // A changed blocker replaces the old obligation with a fresh decision id.
+    if (latest && isOpen) {
+      const withdrawn = await this.pendingDecisions.dismissBlockerForTask?.(latest.id, input.jobId, input.taskIndex);
+      if (withdrawn) this.changed(withdrawn);
+    }
+
+    const title = `Blocker from ${ input.label } (job ${ input.jobId } task ${ input.taskIndex })`;
+    await this.requestQuestion({
+      conversationId: input.conversationId,
+      channel: input.channel,
+      title,
+      questions: [{
+        question: `${ input.label } reported a blocker for job ${ input.jobId }, task ${ input.taskIndex }: ${ text }\n\nReply with agents/answer_decision; any selected text, including free text, is delivered to the worker.`,
+        header: 'Worker blocker',
+        options: [{ label: 'Acknowledged; continue' }],
+      }],
+      payload: {
+        blockerDecision: 'true',
+        blockerJobId: input.jobId,
+        blockerTaskIndex: String(input.taskIndex),
+        blockerText: text,
+      },
+    }, undefined, { reuseOpenQuestion: false, parkAsker: false });
+  }
 
   /** Human questions outlive tool transports; answers always use the durable mailbox. */
-  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal): Promise<{ record: DecisionRecord; reused: boolean; parked?: boolean }> {
+  requestQuestion(input: Pick<DecisionRecord, 'conversationId' | 'channel' | 'title' | 'questions'> & Partial<Pick<DecisionRecord, 'payload'>>, signal?: AbortSignal,
+    options: { reuseOpenQuestion?: boolean; parkAsker?: boolean } = {}): Promise<{ record: DecisionRecord; reused: boolean; parked?: boolean }> {
     const operation = this.questionWrites.then(async() => {
       if (signal?.aborted) throw new Error('Request cancelled');
       if (!input.conversationId || !input.channel || !input.questions?.length) throw new Error('A question requires its original conversation and options.');
       const asker = await this.pendingDecisions.taskForThread?.(input.conversationId);
-      const existing = await this.pendingDecisions.findOpenQuestion(input);
+      const existing = options.reuseOpenQuestion === false ? undefined : await this.pendingDecisions.findOpenQuestion(input);
       if (existing) {
-        const parked = existing.attention !== 'answered' && await this.askerWaiter.parkQuestionAsker(asker, existing.id);
+        const parked = options.parkAsker !== false && existing.attention !== 'answered' && await this.askerWaiter.parkQuestionAsker(asker, existing.id);
         const startEscalation = existing.kind === 'question' && existing.route?.authority === 'any' && existing.route.chain[existing.route.holderIndex]?.kind === 'agent';
         return { record: existing, reused: true, startEscalation, ...(parked ? { parked: true } : {}) };
       }
@@ -126,7 +201,7 @@ export class DecisionService {
       };
       await this.decisions.insert(record, this.session);
       await this.parentFyiNotifier.notify(record);
-      const parked = await this.askerWaiter.parkQuestionAsker(asker, record.id);
+      const parked = options.parkAsker === false ? false : await this.askerWaiter.parkQuestionAsker(asker, record.id);
       const startEscalation = record.route?.authority === 'any' && record.route.chain[record.route.holderIndex]?.kind === 'agent';
       return { record, reused: false, startEscalation, ...(parked ? { parked: true } : {}) };
     });

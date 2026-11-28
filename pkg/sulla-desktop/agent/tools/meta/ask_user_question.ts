@@ -4,17 +4,14 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 /**
- * ask_user_question — pause the agent and ask the user one or more
- * multiple-choice questions. The chat transcript renders an interactive
- * card in For You. The tool returns its saved receipt immediately; the
- * actual answer is delivered later through the existing durable chat inbox.
+ * ask_user_question — save one or more persistent decision questions. The
+ * chat transcript renders an interactive card in For You. Plain questions
+ * from delegated agents route to their parent first; the tool returns a
+ * receipt immediately and the answer arrives later through the durable inbox.
  *
- * This is the single "pause and ask the human" tool. Use it when you need
- * the user to *choose* between concrete options, supply a small piece of
- * information, or give a yes/no go-ahead (offer Approve / Deny options)
- * before you can proceed. It is sent to EVERY model — not the Sulla CLI
- * catalog — so any provider can call it, and claude-code reciprocates its
- * own native AskUserQuestion through the matching MCP tool.
+ * This is the single logical question tool exposed both as an in-process
+ * graph tool and through the Sulla CLI catalog. Its caller identity is the
+ * current graph/session, so a delegated child never asks as its root chat.
  */
 
 import { BaseTool, type InputSchemaDef, type ToolResponse } from '../base';

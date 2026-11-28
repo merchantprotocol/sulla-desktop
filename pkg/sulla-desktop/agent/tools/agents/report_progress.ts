@@ -55,6 +55,17 @@ export class ReportProgressWorker extends BaseTool {
       return { successBoolean: false, responseString: 'No running delegated job task is bound to this thread.', errorCode: 'task_inactive' };
     }
 
+    try {
+      await agentJobProvider.blockerDecisions.publish(result, threadId, String((this.state as any)?.metadata?.wsChannel ?? 'sulla-desktop'));
+    } catch {
+      agentJobProvider.states.touch();
+      return {
+        successBoolean: false,
+        responseString: 'Check-in recorded, but its blocker decision could not be published. Retry report_progress.',
+        errorCode: 'decision_publish_failed',
+      };
+    }
+
     agentJobProvider.states.touch();
 
     return {
