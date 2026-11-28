@@ -9,13 +9,14 @@ export type AgentMessageKind = 'human' | 'decision' | 'parent' | 'child' | 'peer
 export type AgentInboxDeliveryReceipt = 'accepted' | 'deferred' | 'failed';
 export interface AgentMessageEnvelope { from: string; kind: AgentMessageKind; body: string; senderChannel?: string; senderThreadId?: string; senderJobId?: string; senderLabel?: string; targetId?: string; replyToThreadId?: string; ids: { messageId: string; remoteMessageId?: string; orgId?: string; orgName?: string; jobId?: string; taskIndex?: number; threadId?: string; hostSeq?: number; relayed?: boolean } }
 export interface AgentInboxTarget { channel: string; threadId?: string; agentId?: string; jobId?: string; label?: string }
-export interface AgentInboxEntry { envelope: AgentMessageEnvelope; target: AgentInboxTarget }
+export interface AgentInboxEntry { envelope: AgentMessageEnvelope; target: AgentInboxTarget; queuedAtMs?: number }
 export interface AgentInboxClaim { owner: string; target: AgentInboxTarget; entries: AgentInboxEntry[] }
 export interface AgentInboxRepository {
   enqueue(entry: AgentInboxEntry): Promise<boolean>;
   claim(target: AgentInboxTarget, owner: string): Promise<AgentInboxClaim>;
   renew(claim: AgentInboxClaim): Promise<void>;
   acknowledge(claim: AgentInboxClaim): Promise<void>;
+  acknowledgeIds(target: AgentInboxTarget, messageIds: string[]): Promise<void>;
   release(claim: AgentInboxClaim): Promise<void>;
   pendingTargets(): Promise<AgentInboxTarget[]>;
 }
@@ -41,10 +42,29 @@ export class AgentInbox {
   ) {}
 
   async receive(entry: AgentInboxEntry): Promise<'duplicate' | 'queued' | 'delivered'> {
-    const inserted = await this.repository.enqueue(entry);
+    const queuedEntry = entry.queuedAtMs === undefined ? { ...entry, queuedAtMs: Date.now() } : entry;
+    const inserted = await this.repository.enqueue(queuedEntry);
     if (!inserted) return 'duplicate';
-    if (this.delivery.isRunning(entry.target)) return 'queued';
-    return await this.flush(entry.target) > 0 ? 'delivered' : 'queued';
+    if (this.delivery.isRunning(queuedEntry.target)) {
+      // Human and decision answers retain their existing queued/ownership
+      // policy. Eligible system messages may steer the existing graph, but
+      // stay durable until that graph confirms the provider boundary.
+      if (queuedEntry.envelope.kind !== 'human' && queuedEntry.envelope.kind !== 'decision' && queuedEntry.target.threadId) {
+        const receipt = await this.delivery.wake(queuedEntry.target, this.render([queuedEntry]), [queuedEntry]).catch(() => 'failed' as const);
+        if (receipt === 'accepted') {
+          await this.acknowledgeEntries(queuedEntry.target, [queuedEntry.envelope.ids.messageId]);
+          return 'delivered';
+        }
+      }
+      return 'queued';
+    }
+    return await this.flush(queuedEntry.target) > 0 ? 'delivered' : 'queued';
+  }
+
+  /** Acknowledge only IDs whose active-run steer reached a provider boundary. */
+  async acknowledgeEntries(target: AgentInboxTarget, messageIds: string[]): Promise<void> {
+    const uniqueIds = [...new Set(messageIds.filter(Boolean))];
+    if (uniqueIds.length) await this.repository.acknowledgeIds(target, uniqueIds);
   }
 
   /** Claims across processes and rechecks after each accepted turn so late arrivals cannot strand. */
