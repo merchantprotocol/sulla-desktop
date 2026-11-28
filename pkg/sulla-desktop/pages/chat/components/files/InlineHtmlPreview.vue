@@ -5,15 +5,22 @@
   "Sulla" is a trademark. See TRADEMARK.md.
 -->
 <template>
-  <div class="inline-html-preview">
+  <div ref="previewRoot" class="inline-html-preview">
     <div :class="['html-stage', 'view-' + view]">
-      <iframe
-        :srcdoc="srcdoc"
-        :title="'Static preview of ' + name"
-        sandbox=""
-        referrerpolicy="no-referrer"
-        loading="lazy"
+      <webview
+        v-if="shouldMountPreview && !renderError"
+        :key="'inline-' + previewGeneration"
+        :partition="partition"
+        :src="previewUrl"
+        :aria-label="'Preview of ' + name"
+        webpreferences="nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no"
+        @render-process-gone="handleRenderProcessGone"
+        @unresponsive="handleUnresponsive"
       />
+    </div>
+    <div v-if="renderError" class="preview-error" role="alert">
+      <span>{{ renderError }}</span>
+      <button type="button" @click="reloadPreview">Reload</button>
     </div>
 
     <dialog
@@ -30,27 +37,36 @@
         <button type="button" @click="openInTab">Open in tab</button>
         <button type="button" aria-label="Close preview" @click="closeFullscreen">Close</button>
       </header>
-      <iframe
-        v-if="fullscreenOpen"
-        :srcdoc="srcdoc"
-        :title="'Full-screen static preview of ' + name"
-        sandbox=""
-        referrerpolicy="no-referrer"
+      <webview
+        v-if="fullscreenOpen && !renderError"
+        :key="'fullscreen-' + previewGeneration"
+        :partition="partition"
+        :src="previewUrl"
+        :aria-label="'Full-screen preview of ' + name"
+        webpreferences="nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no"
+        @render-process-gone="handleRenderProcessGone"
+        @unresponsive="handleUnresponsive"
       />
+      <div v-if="fullscreenOpen && renderError" class="preview-error" role="alert">
+        <span>{{ renderError }}</span>
+        <button type="button" @click="reloadPreview">Reload</button>
+      </div>
     </dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
-import { InlineHtmlPreviewPolicy, type InlineFileActionReference } from './inlineFilePreview';
+import { INLINE_HTML_PREVIEW_PARTITION } from '@pkg/shared/inlineHtmlPreview';
+import { InlineHtmlPreviewDocument, type InlineFileActionReference } from './inlineFilePreview';
 
 const props = defineProps<{
   fileId: string;
   name: string;
   path: string;
   source: string;
+  assetBaseUrl?: string;
   view: 'desktop' | 'phone';
 }>();
 
@@ -58,11 +74,50 @@ const emit = defineEmits<{
   'open-in-tab': [reference: InlineFileActionReference];
 }>();
 
-const policy = new InlineHtmlPreviewPolicy();
-const srcdoc = computed(() => policy.toSrcdoc(props.source));
+const previewDocument = new InlineHtmlPreviewDocument();
+const previewUrl = computed(() => previewDocument.toDataUrl(props.source, props.assetBaseUrl));
+const partition = INLINE_HTML_PREVIEW_PARTITION;
+const previewRoot = ref<HTMLElement | null>(null);
 const dialog = ref<HTMLDialogElement | null>(null);
 const fullscreenTrigger = ref<HTMLElement | null>(null);
 const fullscreenOpen = ref(false);
+const hasIntersected = ref(false);
+const shouldMountPreview = computed(() => hasIntersected.value);
+const previewGeneration = ref(0);
+const renderError = ref('');
+let intersectionObserver: IntersectionObserver | undefined;
+
+onMounted(() => {
+  const root = previewRoot.value;
+  if (typeof IntersectionObserver === 'undefined' || !root) {
+    // Electron supports IntersectionObserver; mounting immediately is a safe
+    // compatibility fallback for test DOMs and older embedders.
+    hasIntersected.value = true;
+    return;
+  }
+  intersectionObserver = new IntersectionObserver(entries => {
+    if (!entries.some(entry => entry.isIntersecting)) return;
+    hasIntersected.value = true;
+    intersectionObserver?.disconnect();
+    intersectionObserver = undefined;
+  }, { rootMargin: '100px' });
+  intersectionObserver.observe(root);
+});
+
+onBeforeUnmount(() => intersectionObserver?.disconnect());
+
+function handleRenderProcessGone(): void {
+  renderError.value = 'The HTML preview stopped unexpectedly.';
+}
+
+function handleUnresponsive(): void {
+  renderError.value = 'The HTML preview is not responding.';
+}
+
+function reloadPreview(): void {
+  renderError.value = '';
+  previewGeneration.value++;
+}
 
 function openFullscreen(trigger: HTMLElement): void {
   fullscreenTrigger.value = trigger;
@@ -110,9 +165,12 @@ defineExpose({ openFullscreen });
 <style scoped>
 .inline-html-preview { min-width: 0; }
 .html-stage { display: flex; justify-content: center; min-height: 0; background: var(--bg-surface-alt); }
-.html-stage iframe { display: block; width: 100%; height: 400px; border: 0; background: #fff; }
+.html-stage webview { display: block; width: 100%; height: 400px; border: 0; background: #fff; }
+.preview-error { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--border-subtle); color: var(--status-error); font-size: 12px; }
+.preview-error button { padding: 4px 9px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--bg-surface); color: var(--text-primary); cursor: pointer; font: inherit; }
+.preview-error button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
 .html-stage.view-phone { padding: 16px 0; }
-.html-stage.view-phone iframe { width: 375px; max-width: 100%; height: 560px; box-shadow: 0 0 0 1px var(--border-default); }
+.html-stage.view-phone webview { width: 375px; max-width: 100%; height: 560px; box-shadow: 0 0 0 1px var(--border-default); }
 .html-lightbox:not([open]) { display: none; }
 .html-lightbox { position: fixed; inset: 3vh 3vw; width: 94vw; max-width: none; height: 94vh; max-height: none; overflow: hidden; padding: 0; border: 1px solid var(--border-default); border-radius: 12px; background: var(--bg-surface); color: var(--text-primary); box-shadow: var(--elev-float); }
 .html-lightbox::backdrop { background: var(--bg-overlay, rgb(0 0 0 / 55%)); }
@@ -121,6 +179,6 @@ defineExpose({ openFullscreen });
 .lightbox-spacer { flex: 1; }
 .lightbox-header button { min-height: 28px; padding: 0 9px; border: 1px solid var(--border-default); border-radius: 7px; background: var(--bg-surface); color: var(--text-secondary); font: inherit; font-size: 12px; }
 .lightbox-header button:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
-.html-lightbox iframe { display: block; width: 100%; height: calc(100% - 42px); border: 0; background: #fff; }
+.html-lightbox webview { display: block; width: 100%; height: calc(100% - 42px); border: 0; background: #fff; }
 @media (max-width: 600px) { .html-lightbox { inset: 0; width: 100vw; height: 100vh; border-radius: 0; } }
 </style>
