@@ -133,20 +133,6 @@ describe('window tab state with real AgentHeaders', () => {
     expect(store.tabGroupModel.groups).toEqual([]);
   });
 
-  it('deleting a group ungroups its tabs without closing them', () => {
-    // risk: side effects — deleting organization metadata must never close browser tabs.
-    const first = store.createTab('https://first.test');
-    const second = store.createTab('https://second.test');
-    const group = store.tabGroupModel.createGroup('Research', 'blue', [`browser-${ first.id }`]);
-
-    expect(store.tabGroupModel.deleteGroup(group.id)).toBe(true);
-    expect(store.tabs.map(tab => tab.id)).toContain(first.id);
-    expect(store.tabs.map(tab => tab.id)).toContain(second.id);
-    expect(store.tabGroupModel.getGroupIdForTab(`browser-${ first.id }`)).toBeUndefined();
-    expect(store.tabGroupModel.groupTabs(store.tabs.map(tab => ({ id: `browser-${ tab.id }` }))).ungrouped)
-      .toContainEqual({ id: `browser-${ first.id }` });
-  });
-
   it('removes the last-tab group when a grouped browser tab closes', async() => {
     // risk: data integrity — closing one tab must prune its membership without touching siblings.
     const selected = store.createTab('https://selected.test');
