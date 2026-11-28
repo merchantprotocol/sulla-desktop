@@ -1859,11 +1859,11 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       providerToolStarted = true;
       toolActivity.finished(event.toolUseId);
       new TurnOutputCounter(state.metadata as any).record();
-      providerTools.finished({ ...event, toolName: SafeToolLabel.from(event.toolName) });
+      providerTools.finished({ ...event, toolName: SafeToolLabel.forNamedTool(event.toolName) });
     };
     const onToolStarted = (event?: { toolUseId: string; toolName: string; input?: unknown }): void => {
       providerToolStarted = true;
-      const safeToolName = SafeToolLabel.from(event?.toolName);
+      const safeToolName = SafeToolLabel.forNamedTool(event?.toolName);
       toolActivity.started(event?.toolUseId, safeToolName);
       new TurnOutputCounter(state.metadata as any).record();
       if (event?.toolUseId) providerTools.started({ ...event, toolName: safeToolName });
