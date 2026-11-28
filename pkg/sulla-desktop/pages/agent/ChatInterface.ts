@@ -170,13 +170,9 @@ export class ChatInterface {
       if (!raw) return;
       const parsed = JSON.parse(raw) as ChatMessage[];
       if (Array.isArray(parsed) && parsed.length > 0 && this.persona.messages.length === 0) {
-        // Mark any stale running tool cards as failed
-        for (const m of parsed) {
-          if (m.toolCard?.status === 'running') {
-            m.toolCard.status = 'failed';
-            m.toolCard.error = 'Interrupted by page reload';
-          }
-        }
+        // Local renderer storage cannot tell whether another renderer still
+        // has the backend run alive; PersonaAdapter settles only after an
+        // authoritative idle answer or a real run-end transition.
         this.persona.messages.push(...parsed);
         console.log(`[ChatInterface] Restored ${ parsed.length } messages from localStorage`);
       }
