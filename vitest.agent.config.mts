@@ -61,16 +61,12 @@ if (agentTestConfig.test) {
     'pkg/sulla-desktop/composables/TabStripLayoutRepository.spec.ts',
     'pkg/sulla-desktop/composables/useBrowserTabs.transfer.spec.ts',
     'pkg/sulla-desktop/main/tabs/TabTransferService.spec.ts',
-    'pkg/sulla-desktop/composables/TabHoverController.spec.ts',
-    'pkg/sulla-desktop/composables/TabDragGesture.spec.ts',
     'pkg/sulla-desktop/composables/TabTransferPayload.spec.ts',
     'pkg/sulla-desktop/composables/TabContextMenuBridge.spec.ts',
     'pkg/sulla-desktop/main/TabStripPopupWindows.spec.ts',
     'pkg/sulla-desktop/composables/TabAgentHeaderLifecycle.spec.ts',
-    'pkg/sulla-desktop/composables/TabGroupColorPalette.spec.ts',
     'pkg/sulla-desktop/composables/TabGroupMenuActions.spec.ts',
     'pkg/sulla-desktop/composables/TabGroupPopoverBridge.spec.ts',
-    'pkg/sulla-desktop/composables/TabNeedsYouIconResolver.spec.ts',
   ];
 }
 
