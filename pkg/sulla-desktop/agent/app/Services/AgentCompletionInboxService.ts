@@ -27,6 +27,7 @@ export interface PendingCompletion {
   noticeKind?: 'stall' | 'decision' | 'decision-fyi';
   stall?: { childThread: string; baseline: string; label?: string; hungTool?: string };
   dedupeKey?: string;
+  queuedAtMs?: number;
 }
 
 interface CompletionInbox {
@@ -46,6 +47,7 @@ export class AgentCompletionInboxService extends Service {
     private readonly idleDispatcher: CompletionIdleDispatcher,
     private readonly formatter: CompletionFormatter,
     private readonly backoff: CompletionRequeueBackoff = new CompletionRequeueBackoff(),
+    private readonly clock: () => number = Date.now,
   ) {
     super();
   }
@@ -80,10 +82,11 @@ export class AgentCompletionInboxService extends Service {
   private enqueueInternal(channel: string, threadId: string, completion: PendingCompletion, dispatch: boolean): boolean {
     const key = this.keyFor(channel, threadId);
     const inbox = this.inboxes.get(key) ?? { entries: [], stopped: false };
+    const queuedCompletion = completion.queuedAtMs === undefined ? { ...completion, queuedAtMs: this.clock() } : completion;
     const entryKey = this.entryKey(completion);
     const duplicate = this.claimedKeys.has(entryKey) || this.acknowledgedKeys.has(entryKey) || this.backoff.isWaiting(entryKey) ||
       inbox.entries.some(entry => this.entryKey(entry) === entryKey);
-    if (!duplicate) inbox.entries.push(completion);
+    if (!duplicate) inbox.entries.push(queuedCompletion);
     this.inboxes.set(key, inbox);
     if (dispatch && !inbox.stopped && !duplicate) this.idleDispatcher.dispatch(channel, threadId);
     return !duplicate;

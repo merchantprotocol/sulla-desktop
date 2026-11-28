@@ -5,6 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path'; // used by enrichPrompt for active_projects_file
+import { performance } from 'node:perf_hooks';
 
 import { prepareProviderMessages } from './contextBudget';
 import { ChatController, type ChatMode } from '../controllers/ChatController';
@@ -12,6 +13,7 @@ import { ToolExecutor } from '../controllers/ToolExecutor';
 import { SullaSettingsModel } from '../database/models/SullaSettingsModel';
 import { SystemPromptSectionModel } from '../database/models/SystemPromptSectionModel';
 import { getServiceByProvider } from '../languagemodels';
+import { ReplyStreamThrottle } from './ReplyStreamThrottle';
 import { BaseLanguageModel, ChatMessage, NormalizedResponse, FinishReason, isCliManagedLoop, type StreamCallbacks } from '../languagemodels/BaseLanguageModel';
 import { extensionHooks } from '../extensions/HookRegistry';
 import { ModelRecoveryPolicy } from '../languagemodels/ModelRecoveryPolicy';
@@ -54,6 +56,7 @@ import { turnProviderResolver } from './TurnProviderResolver';
 import { TurnOutputCounter } from '../services/TurnOutputCounter';
 import { turnProviderMemo } from './turnProviderMemo';
 import { templateSnapshotCache } from './TemplateSnapshotCache';
+import { LoopProviderResolution } from './LoopProviderResolution';
 import type { WebSocketMessageHandler } from '../services/WebSocketClientService';
 import type { ToolResult, ThreadState } from '../types';
 import '../prompts/sections/index'; // Register all sections on import
@@ -514,7 +517,12 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   protected parallelToolCalls = false;
   private routingCandidates: ModelCandidate[] = [];
 
-  constructor(id: string, name: string, private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy()) {
+  constructor(
+    id: string,
+    name: string,
+    private readonly agentAwarenessPolicy: AgentAwarenessPolicy = new AgentAwarenessPolicy(),
+    private readonly loopProviderResolution: LoopProviderResolution = new LoopProviderResolution(),
+  ) {
     this.id = id;
     this.name = name;
   }
@@ -522,20 +530,22 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
   /** Resolve the provider that owns this graph turn. */
   protected async resolveLoopProvider(state: BaseThreadState): Promise<BaseLanguageModel> {
     const workerRoute = !(state.metadata as any).workerModelChatOverride && (state.metadata as any).workerModelRoute;
-    if (workerRoute) {
-      // Same handle contract as throwIfAborted: an AbortService or a raw AbortSignal.
-      const runAbort = state.metadata?.options?.abort as any;
-      this.routingCandidates = await workerModelRouting.resolveRoute(workerRoute, isAbortSignal(runAbort) ? runAbort : runAbort?.signal);
-      const selected = this.routingCandidates[0];
-      await workerModelRouting.persistSelection(state, selected);
-      const service = await getServiceByProvider(selected.provider, selected.model, selected.effort);
-      await this.persistModelDecision(state, service);
-      return service;
-    }
-    const resolved = await turnProviderResolver.resolve(state);
-    this.routingCandidates = resolved.candidates;
-    await this.persistModelDecision(state, resolved.provider);
-    return resolved.provider;
+    const runAbort = state.metadata?.options?.abort as any;
+    const runSignal = isAbortSignal(runAbort) ? runAbort : runAbort?.signal;
+    return this.loopProviderResolution.run(async({ stage, signal }) => {
+      if (workerRoute) {
+        this.routingCandidates = await stage('workerModelRouting.resolveRoute', () => workerModelRouting.resolveRoute(workerRoute, signal));
+        const selected = this.routingCandidates[0];
+        await stage('workerModelRouting.persistSelection', () => workerModelRouting.persistSelection(state, selected));
+        const service = await stage('providerRegistry.getServiceByProvider', () => getServiceByProvider(selected.provider, selected.model, selected.effort));
+        await stage('modelDecision.persist', () => this.persistModelDecision(state, service));
+        return service;
+      }
+      const resolved = await stage('turnProviderResolver.resolve', () => turnProviderResolver.resolve(state));
+      this.routingCandidates = resolved.candidates;
+      await stage('modelDecision.persist', () => this.persistModelDecision(state, resolved.provider));
+      return resolved.provider;
+    }, runSignal);
   }
 
   private recordModelStatus(state: BaseThreadState, service: BaseLanguageModel): void {
@@ -667,9 +677,14 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     const agentId = resolveAgentIdentity(state.metadata);
     const agentMeta = (state.metadata as any).agent as AgentConfig | undefined;
     const timing: Record<string, number> = {};
+    const wallTiming: Record<string, number> = {};
     const measured = async <T>(key: string, work: Promise<T>): Promise<T> => {
-      const started = Date.now();
-      try { return await work; } finally { timing[key] = Date.now() - started; }
+      const monotonicStarted = performance.now();
+      const wallStarted = Date.now();
+      try { return await work; } finally {
+        timing[key] = performance.now() - monotonicStarted;
+        wallTiming[key] = Date.now() - wallStarted;
+      }
     };
     const templateVarsPromise = measured('templateVars', getTemplateVariables(String(state.metadata.threadId || 'unknown')));
     const definitionPromise = agentId && agentId !== DEFAULT_CORE_ROUTINE_AGENT_ID ? turnAgentDefinitionMemo.get(state, agentId, () => agentDefinitionService.findBySlug(agentId)) : undefined;
@@ -804,7 +819,10 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
 
     // Build the prompt using the section-based builder
     const built = await measured('SystemPromptBuilder.build', SystemPromptBuilder.build(buildCtx));
-    perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).map(([key, ms]) => `${ key }=${ ms }ms`).join(' ') }`);
+    perf.log(`[PreModelSubTiming] threadId=${ String(state.metadata.threadId || 'unknown') } enrichPrompt ${ Object.entries(timing).flatMap(([key, ms]) => [
+      `${ key }=${ Math.round(ms) }ms`,
+      `${ key }Wall=${ Math.round(wallTiming[key] ?? ms) }ms`,
+    ]).join(' ') }`);
     (state.metadata as any).__promptSectionTimings = built.sectionTimings || [];
 
     // The human's Personality notes are contextual, not system instructions.
@@ -1695,7 +1713,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // Text streaming state — throttle at ~50ms to avoid flooding the WebSocket
     let contentBuffer = '';
     let displayBuffer = '';
-    let lastStreamFlush = 0;
     let streamingWsSent = false;
     let streamingOpen = false;
     let thinkingOpen = false;
@@ -1714,16 +1731,40 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     let lastWsStreamingSendAt = 0;
     const replyStreamId = randomUUID();
     const replyAttribution = this.recordedReplyAttribution(state, provider.getModel());
+    // Distinguish open segments of this reply even if a close event was missed.
+    let replySegment = 0;
     const sendStreamingUpdate = (content: string): void => {
       nodeRunContext?.turnTiming?.markFirstVisibleText();
       wsStreamingSendCount++;
       lastWsStreamingSendAt = Date.now();
-      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replyAttribution });
+      this.wsChatMessage(state, content, 'assistant', 'streaming', { replyStreamId, replySegment, replyAttribution })
+        .catch(error => console.warn(`[${ this.name }] live reply send failed:`, error));
       streamingOpen = true;
     };
-    const flushStreamingSegment = (): void => {
-      if (isVoiceMode) return;
-      if (contentBuffer.trim()) {
+    // Leading update at once, then at most one per window. The held tail of a
+    // burst is published when the window ends instead of waiting for the next
+    // token, which during a long tool run could be minutes away.
+    // Runs from a timer for the held tail, outside the provider's onToken
+    // try/catch, so it must not throw.
+    const streamThrottle = new ReplyStreamThrottle(() => {
+      try {
+        const stripped = stripProtocolTagsStreaming(displayBuffer);
+        if (!stripped.trim()) return false;
+        sendStreamingUpdate(stripped);
+        streamingWsSent = true;
+
+        return true;
+      } catch (error) {
+        console.warn(`[${ this.name }] live reply update failed:`, error);
+
+        return false;
+      }
+    }, STREAM_THROTTLE_MS);
+    const flushStreamingSegment = (): boolean => {
+      streamThrottle.reset();
+      if (isVoiceMode) return false;
+      const hadText = contentBuffer.trim().length > 0;
+      if (hadText) {
         const stripped = stripProtocolTagsStreaming(displayBuffer);
         if (stripped.trim()) {
           sendStreamingUpdate(stripped);
@@ -1736,6 +1777,9 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       streamingOpen = false;
       contentBuffer = '';
       displayBuffer = '';
+      if (hadText) replySegment++;
+
+      return hadText;
     };
 
     const onToken = (token: string): void => {
@@ -1766,17 +1810,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // like `<AGENT_DONE` (closing tag hasn't arrived yet) is truncated
       // immediately instead of leaking into the bubble.
       if (!cleaned) suppressedDeltaCount++;
-      if (!isVoiceMode && cleaned) {
-        const now = Date.now();
-        if (now - lastStreamFlush >= STREAM_THROTTLE_MS) {
-          lastStreamFlush = now;
-          const stripped = stripProtocolTagsStreaming(displayBuffer);
-          if (stripped.trim()) {
-            sendStreamingUpdate(stripped);
-            streamingWsSent = true;
-          }
-        }
-      }
+      if (!isVoiceMode && cleaned) streamThrottle.changed();
     };
 
     // Activity channel for providers that emit rich events (e.g. Claude Code
@@ -1791,7 +1825,15 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
     // think → message → think → message instead of merging everything.
     let lastActivity = '';
     const onActivity = (message: string, reportingActivity?: 'status' | 'tool'): void => {
-      if (!message || message === lastActivity) return;
+      if (!message) return;
+      // Back-to-back tools of one kind report the same line ("Running a shell
+      // command"). When narration ran between them, that is still a boundary:
+      // skipping it left the bubble on its first update and glued the next
+      // paragraph onto it. Other repeated lines (status heartbeats) stay
+      // suppressed and don't split the reply.
+      const hasText = !isVoiceMode && stripProtocolTagsStreaming(displayBuffer).trim().length > 0;
+      if (message === lastActivity && !(reportingActivity === 'tool' && hasText)) return;
+      const flushedStreaming = flushStreamingSegment();
       if (!firstActivitySeen) { firstActivitySeen = true; TurnHopTiming.firstEvent(state, 'first.stream'); }
       lastActivity = message;
 
@@ -1799,9 +1841,6 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       // is happening even if raw tokens are sparse (long Claude Code turns).
       state.metadata.lastActivityMs = Date.now();
       RunActivity.touch(state.metadata);
-
-      const flushedStreaming = !isVoiceMode && contentBuffer.trim().length > 0;
-      flushStreamingSegment();
 
       const parentWsCh = (state.metadata as any).parentWsChannel;
       const willForward = !!(parentWsCh && (state.metadata as any).isSubAgent);
@@ -1924,6 +1963,7 @@ export abstract class BaseNode<T extends BaseThreadState = BaseThreadState> {
       //
       // Close only bubbles opened by this attempt; a suppressed stale wake
       // must not emit a completion sentinel into someone else's stream.
+      streamThrottle.stop();
       if (!isVoiceMode) {
         if (contentBuffer.trim()) {
           const stripped = stripProtocolTagsStreaming(displayBuffer);

@@ -159,6 +159,27 @@ describe('delegated job heartbeat lifecycle', () => {
     provider.scheduler().unregister('done-thread');
   });
 
+  it('clears a stale child-job binding before the renderer configures its parent chat', async() => {
+    // risk: the composer shows a chat heartbeat as active while the stale child binding routes beats to a stopped job.
+    const { provider } = harness([
+      job('stopped-child', [task({ threadId: 'child-thread' })], { status: 'stopped', parentThreadId: 'parent-thread' }),
+    ]);
+    const scheduler = provider.scheduler();
+    scheduler.register({
+      threadId: 'parent-thread', channel: 'sulla-desktop', jobId: 'stopped-child', taskIndex: 0,
+      config: { intervalMinutes: null, message: 'Check the chat.', setBy: 'human' },
+    });
+
+    const status = await provider.registrations().configure('parent-thread', { intervalMinutes: 1, message: 'Check the chat.', setBy: 'human' });
+
+    expect(status).toMatchObject({ enabled: true, intervalMinutes: 1 });
+    expect(scheduler.jobTarget('parent-thread')).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(MINUTE);
+    expect(network.send).toHaveBeenCalledTimes(1);
+    expect(network.wake).not.toHaveBeenCalled();
+    scheduler.unregister('parent-thread');
+  });
+
   it('clears the heartbeat and its record when the job is stopped through the real stop cascade', async() => {
     // risk: stop_agent_job leaves a timer that keeps waking an agent the manager stopped.
     const { provider, states, heartbeats } = harness([job('stopped-job', [task({ threadId: 'stopped-thread' })])]);

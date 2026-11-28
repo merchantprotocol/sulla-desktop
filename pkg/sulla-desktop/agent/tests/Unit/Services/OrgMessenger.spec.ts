@@ -29,6 +29,7 @@ class MemoryInboxRepository implements AgentInboxRepository {
   async claim(target: AgentInboxTarget, owner: string) { return { owner, target, entries: [...this.entries.values()].filter(entry => entry.target.channel === target.channel) }; }
   async renew() {}
   async acknowledge(claim: { entries: AgentInboxEntry[] }) { for (const entry of claim.entries) this.entries.delete(entry.envelope.ids.messageId); }
+  async acknowledgeIds(target: AgentInboxTarget, messageIds: string[]) { for (const id of messageIds) if (this.entries.get(id)?.target.channel === target.channel && this.entries.get(id)?.target.threadId === target.threadId) this.entries.delete(id); }
   async release() {}
   async pendingTargets() { return []; }
 }

@@ -25,7 +25,13 @@ export class ChatMessageQueue {
   private readonly queue = ref<QueuedMessage[]>([]);
   private processing = ref(false);
 
+  constructor(private readonly onChanged: (messages: readonly QueuedMessage[]) => void = () => {}) {}
+
   readonly pendingMessages = computed(() => this.queue.value);
+  /** Queue rows awaiting dispatch; transient steers stay out of the chat UI. */
+  readonly visiblePendingMessages = computed(() => this.queue.value.filter(message => message.metadata?.deliveryStatus !== 'delivering'));
+  readonly hasVisiblePendingMessages = computed(() => this.visiblePendingMessages.value.length > 0);
+  readonly visibleQueueLength = computed(() => this.visiblePendingMessages.value.length);
   readonly hasPendingMessages = computed(() => this.queue.value.length > 0);
   readonly isProcessing = computed(() => this.processing.value);
   readonly queueLength = computed(() => this.queue.value.length);
@@ -56,7 +62,9 @@ export class ChatMessageQueue {
     };
 
     this.queue.value.push(message);
-    console.log(`[ChatMessageQueue] Enqueued message #${ this.queue.value.length }: ${ content.slice(0, 50) }...`);
+    this.notifyChanged();
+    this.notifyChanged();
+    console.log(`[ChatMessageQueue] Enqueued message #${ this.queue.value.length }`);
 
     return message;
   }
@@ -76,7 +84,9 @@ export class ChatMessageQueue {
     if (index === -1) return false;
 
     const removed = this.queue.value.splice(index, 1)[0];
-    console.log(`[ChatMessageQueue] Dequeued message: ${ removed.content.slice(0, 50) }...`);
+    this.notifyChanged();
+    this.notifyChanged();
+    console.log(`[ChatMessageQueue] Dequeued id=${ removed.id }`);
 
     return true;
   }
@@ -95,7 +105,9 @@ export class ChatMessageQueue {
     if (this.queue.value.length === 0) return null;
 
     const message = this.queue.value.shift()!;
-    console.log(`[ChatMessageQueue] Processing message: ${ message.content.slice(0, 50) }...`);
+    this.notifyChanged();
+    this.notifyChanged();
+    console.log(`[ChatMessageQueue] Processing id=${ message.id }`);
 
     return message;
   }
@@ -106,6 +118,8 @@ export class ChatMessageQueue {
   clear(): void {
     const count = this.queue.value.length;
     this.queue.value = [];
+    this.notifyChanged();
+    this.notifyChanged();
     console.log(`[ChatMessageQueue] Cleared ${ count } pending messages`);
   }
 
@@ -126,6 +140,7 @@ export class ChatMessageQueue {
     const temp = this.queue.value[index - 1];
     this.queue.value[index - 1] = this.queue.value[index];
     this.queue.value[index] = temp;
+    this.notifyChanged();
 
     return true;
   }
@@ -140,12 +155,66 @@ export class ChatMessageQueue {
     const temp = this.queue.value[index + 1];
     this.queue.value[index + 1] = this.queue.value[index];
     this.queue.value[index] = temp;
+    this.notifyChanged();
 
     return true;
+  }
+
+  /** Restore only well-shaped queued sends; an unacknowledged in-flight item is retryable. */
+  restore(snapshot: unknown): void {
+    if (!Array.isArray(snapshot)) return;
+    const restored: QueuedMessage[] = [];
+    for (const value of snapshot) {
+      if (!value || typeof value !== 'object') continue;
+      const candidate = value as Partial<QueuedMessage>;
+      if (typeof candidate.id !== 'string' || typeof candidate.content !== 'string'
+          || !Array.isArray(candidate.attachments) || typeof candidate.timestamp !== 'number') continue;
+      const attachments = candidate.attachments.filter((attachment): attachment is PendingAttachment => !!attachment
+        && typeof attachment === 'object'
+        && typeof (attachment as PendingAttachment).name === 'string'
+        && typeof (attachment as PendingAttachment).mediaType === 'string'
+        && typeof (attachment as PendingAttachment).base64 === 'string'
+        && typeof (attachment as PendingAttachment).preview === 'string');
+      const metadata = candidate.metadata && typeof candidate.metadata === 'object' && !Array.isArray(candidate.metadata)
+        ? this.plainMetadata(candidate.metadata) as Record<string, unknown>
+        : undefined;
+      if (metadata?.deliveryStatus === 'delivering') metadata.deliveryStatus = 'pending';
+      restored.push({
+        id: candidate.id,
+        content: candidate.content,
+        attachments,
+        metadata: metadata ? markRaw(metadata) : undefined,
+        timestamp: candidate.timestamp,
+      });
+    }
+    this.queue.value = restored;
+    this.notifyChanged();
+  }
+
+  /** Update a durable row without exposing mutable queue objects to callers. */
+  updateMetadataBySendId(sendId: string, patch: Record<string, unknown>): boolean {
+    const queued = this.queue.value.find(message => message.metadata?.sendId === sendId);
+    return queued ? this.updateMetadata(queued, patch) : false;
+  }
+
+  updateMetadataById(messageId: string, patch: Record<string, unknown>): boolean {
+    const queued = this.queue.value.find(message => message.id === messageId);
+    return queued ? this.updateMetadata(queued, patch) : false;
+  }
+
+  private updateMetadata(queued: QueuedMessage, patch: Record<string, unknown>): boolean {
+    if (!queued) return false;
+    queued.metadata = markRaw(this.plainMetadata({ ...queued.metadata, ...patch }) as Record<string, unknown>);
+    this.notifyChanged();
+    return true;
+  }
+
+  private notifyChanged(): void {
+    this.onChanged(this.queue.value);
   }
 }
 
 // Singleton instance per tab would be created in ChatInterface
-export function createMessageQueue(): ChatMessageQueue {
-  return new ChatMessageQueue();
+export function createMessageQueue(onChanged?: (messages: readonly QueuedMessage[]) => void): ChatMessageQueue {
+  return new ChatMessageQueue(onChanged);
 }

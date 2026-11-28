@@ -18,7 +18,9 @@ import { ProcessGuard } from './ProcessGuard.js';
 import { RedisHealthProbe } from './RedisHealthProbe.js';
 import { DatabaseHealthRepository } from './Repositories/DatabaseHealthRepository.js';
 import { StartupDatabaseWait } from './StartupDatabaseWait.js';
-import { CapabilityTokenError, verifyCapabilityToken } from '../../../packages/runtime-protocol/src/capabilityToken.js';
+import { CapabilityTokenClockRecovery } from './CapabilityTokenClockRecovery.js';
+import { HostClockSyncClient } from './HostClockSyncClient.js';
+import { CapabilityTokenError } from '../../../packages/runtime-protocol/src/capabilityToken.js';
 import { RelayDesktopExecutor } from '../../../packages/relay-protocol/src/relayDesktopExecutor.js';
 import { HttpDesktopExecutor, toolRequestRejectionStatus } from '../../../packages/runtime-protocol/src/desktopExecutor.js';
 
@@ -33,6 +35,16 @@ const toolDeadlines = new ToolDeadlinePolicy();
 const lateToolResults = new LateToolResultStore();
 process.env.SULLA_DATABASE_URL = config.databaseUrl;
 process.env.SULLA_REDIS_URL = config.redisUrl;
+
+const installationSecret = process.env.SULLA_API_TOKEN ?? '';
+const hostApiPort = Number(process.env.SULLA_API_PORT ?? 3000);
+const hostClockSyncClient = Buffer.byteLength(installationSecret) >= 32 && Number.isInteger(hostApiPort) && hostApiPort > 0 && hostApiPort <= 65_535
+  ? new HostClockSyncClient(`http://host.sulla.internal:${ hostApiPort }/internal/runtime/sync-clock`, installationSecret)
+  : undefined;
+const capabilityTokenRecovery = new CapabilityTokenClockRecovery(async() => {
+  if (!hostClockSyncClient) throw new Error('Authenticated Desktop clock synchronization is unavailable');
+  await hostClockSyncClient.synchronize();
+});
 
 const guard = new ProcessGuard({ name: 'sulla-tools' }).catchCrashes();
 const app = express();
@@ -104,7 +116,7 @@ app.post('/v1/tools/internal/:category/:tool/call', async(request, response) => 
   const bearer = request.headers.authorization?.replace(/^Bearer\s+/i, '');
   let ctx: ToolExecutionContext;
   try {
-    const claims = await verifyCapabilityToken(bearer, config.signingKey, { category, tool: tool.name, revocations });
+    const claims = await capabilityTokenRecovery.verify(bearer, config.signingKey, { category, tool: tool.name, revocations });
     ctx = { ...claims, request_id: requestId };
     if (tool.executionTarget === 'agent-local') await assertAgentContainerCaller(request, ctx);
   } catch (error) {

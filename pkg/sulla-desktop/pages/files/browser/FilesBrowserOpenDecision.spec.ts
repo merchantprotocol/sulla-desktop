@@ -44,7 +44,6 @@ describe('FilesBrowserOpenDecision', () => {
       { label: 'video', folder: false, path: 'clip.mp4', mime: 'video/mp4', expected: 'media-preview' },
       { label: 'audio', folder: false, path: 'voice.wav', mime: 'audio/wav', expected: 'media-preview' },
       { label: 'Markdown', folder: false, path: 'notes.md', mime: 'text/markdown', expected: 'editor' },
-      { label: 'HTML', folder: false, path: 'page.html', mime: 'text/html', expected: 'editor' },
       { label: 'text', folder: false, path: 'readme.txt', mime: 'text/plain', expected: 'editor' },
       { label: 'image', folder: false, path: 'photo.png', mime: 'image/png', expected: 'detail-preview' },
       { label: 'PDF', folder: false, path: 'report.pdf', mime: 'application/pdf', expected: 'detail-preview' },

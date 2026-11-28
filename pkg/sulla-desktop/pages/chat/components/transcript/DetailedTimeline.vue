@@ -110,7 +110,7 @@ function registerLine(id: string, element: unknown): void { props.registerElemen
 </script>
 
 <style scoped>
-.dtr-conversation { box-sizing: border-box; width: 100%; max-width: 948px; margin: 0 auto; padding: 8px 24px 28px; }
+.dtr-conversation { box-sizing: border-box; width: 100%; margin: 0; padding: 8px 0 28px; }
 .dtr-turn { margin: 0 0 8px; }
 /* Approved row geometry: 24px icon column plus 10px text gap; the opaque icon backplate masks the centered rail. */
 .dtr-trace { position: relative; margin: 6px 0 0; padding: 0; list-style: none; }
@@ -122,6 +122,7 @@ function registerLine(id: string, element: unknown): void { props.registerElemen
 .dtr-th span { white-space: nowrap; }
 .dtr-message { position: relative; min-width: 0; padding: 2px 0; list-style: none; }
 .dtr-message-content { min-width: 0; margin-left: 34px; }
+.dtr-message-content :deep(.chat-body) { overflow-wrap: anywhere; overflow-x: auto; }
 .dtr-message-label { display: block; margin: 0 0 4px; color: var(--text-muted); font: 10px var(--font-mono, ui-monospace, monospace); letter-spacing: .06em; text-transform: uppercase; }
 .dtr-message[data-kind="user"] { display: flex; justify-content: flex-end; margin: 24px 0 16px; padding: 0; }
 .dtr-message[data-kind="user"] .dtr-message-content { margin-left: 0; }
@@ -142,5 +143,5 @@ function registerLine(id: string, element: unknown): void { props.registerElemen
 .dtr-waiting-ic { position: relative; z-index: 1; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--bg-page); color: var(--accent); }
 .dtr-waiting-ic span { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .dtr-waiting-content { min-width: 0; padding: 2px 0; }
-@media (max-width: 600px) { .dtr-conversation { padding: 4px 12px 20px; } .dtr-th { padding-right: 34px; } }
+@media (max-width: 600px) { .dtr-conversation { padding: 4px 0 20px; } .dtr-th { padding-right: 34px; } }
 </style>

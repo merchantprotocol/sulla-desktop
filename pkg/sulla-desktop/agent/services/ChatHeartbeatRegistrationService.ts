@@ -35,7 +35,9 @@ export class ChatHeartbeatRegistrationService {
   ) {}
 
   async register(input: ChatHeartbeatRegistration): Promise<ChatHeartbeatStatus> {
-    const target = input.jobId ? undefined : await this.unboundJobTarget(input.threadId);
+    const resolved = input.jobId ? undefined : await this.jobTargetForThread(input.threadId);
+    const target = resolved?.target;
+    if (resolved?.resolved && !target) this.scheduler.unbindJob(input.threadId);
     const status = this.scheduler.register({ ...input, ...(target ?? {}) });
     // Save only: a tab can re-register a stale "off" before startup recovery has restored the
     // job's own record, and that must not delete it.
@@ -45,8 +47,10 @@ export class ChatHeartbeatRegistrationService {
 
   async configure(threadId: string, config: ChatHeartbeatConfig): Promise<ChatHeartbeatStatus | null> {
     if (!this.scheduler.has(threadId)) return null;
-    const target = await this.unboundJobTarget(threadId);
+    const resolved = await this.jobTargetForThread(threadId);
+    const target = resolved.target;
     if (target) this.scheduler.bindJob(threadId, target);
+    else if (resolved.resolved) this.scheduler.unbindJob(threadId);
     const status = this.scheduler.configure(threadId, config);
     if (this.scheduler.jobTarget(threadId)) await this.persist(threadId);
     return status;
@@ -60,17 +64,16 @@ export class ChatHeartbeatRegistrationService {
     this.scheduler.unregisterFromUi(threadId);
   }
 
-  /** The open job task behind a thread the scheduler has not bound to a job yet. */
-  private async unboundJobTarget(threadId: string): Promise<ChatHeartbeatJobTarget | undefined> {
-    if (this.scheduler.jobTarget(threadId)) return undefined;
+  /** Resolves membership by task thread, never by parentThreadId or a cached binding. */
+  private async jobTargetForThread(threadId: string): Promise<{ resolved: boolean; target?: ChatHeartbeatJobTarget }> {
     try {
       const task = await this.ports.taskForThread(threadId);
       if (!task || !ChatHeartbeatRegistrationService.OPEN.includes(task.jobStatus)
-          || !ChatHeartbeatRegistrationService.OPEN.includes(task.taskStatus)) return undefined;
-      return { jobId: task.jobId, taskIndex: task.taskIndex };
+          || !ChatHeartbeatRegistrationService.OPEN.includes(task.taskStatus)) return { resolved: true };
+      return { resolved: true, target: { jobId: task.jobId, taskIndex: task.taskIndex } };
     } catch (error) {
       console.warn(`[ChatHeartbeat] could not resolve a job task for thread ${ threadId }:`, error);
-      return undefined;
+      return { resolved: false };
     }
   }
 

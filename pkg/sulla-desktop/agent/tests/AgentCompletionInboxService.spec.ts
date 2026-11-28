@@ -14,9 +14,9 @@ const completion = (jobId: string, taskIndex: number): PendingCompletion => ({
   results: [{ label: `worker-${ taskIndex }`, status: 'completed', output: 'done', threadId: 'child' }],
 });
 
-const createInbox = () => {
+const createInbox = (clock: () => number = Date.now) => {
   const dispatcher = new CompletionIdleDispatcher();
-  const inbox = new AgentCompletionInboxService(dispatcher, new CompletionFormatter(8_000));
+  const inbox = new AgentCompletionInboxService(dispatcher, new CompletionFormatter(8_000), undefined, clock);
   return { dispatcher, inbox };
 };
 
@@ -33,6 +33,14 @@ describe('AgentCompletionInboxService', () => {
 
     expect(dispatch).toHaveBeenCalledTimes(2);
     expect(inbox.take('parent', 'thread').map(entry => entry.taskIndex)).toEqual([0, 1]);
+  });
+
+  it('stamps the original completion enqueue time used by parent wait measurement', () => {
+    // risk: parent-input dwell reports must use the real completion queue time.
+    const { inbox } = createInbox(() => 1234);
+    inbox.enqueue('parent', 'thread', completion('job-queued', 0));
+
+    expect(inbox.take('parent', 'thread')[0].queuedAtMs).toBe(1234);
   });
 
   it('holds stopped inboxes and offers every held task together when the run ends', () => {

@@ -11,6 +11,7 @@ import events from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { performance } from 'node:perf_hooks';
 
 import Electron, { ipcMain } from 'electron';
 import merge from 'lodash/merge';
@@ -48,6 +49,7 @@ import { NamedVolumeMigrator, type NamedVolumeSpec } from './sullaVolumeMigratio
 import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
+import { GuestClockSyncCoordinator, RuntimeCommandGuestClockPort } from './sullaRuntime/GuestClockSyncCoordinator';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare, SullaRuntimeStartError } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
 import { FilesCloudIdentityProjection } from './sullaRuntime/FilesCloudIdentityProjection';
@@ -297,6 +299,11 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** The native Sulla runtime VM. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
+  #guestClockSyncCoordinator?: GuestClockSyncCoordinator;
+  private readonly handleHostResume = () => {
+    if (!this.#sullaRuntime) return;
+    void this.#guestClockSyncCoordinator?.syncNow('host-resume').catch(() => undefined);
+  };
 
   private beginManagedServicesGeneration(): number {
     this.#managedServicesGeneration += 1;
@@ -468,6 +475,55 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
   }
 
+  private async synchronizeGuestClockFromHost(): Promise<void> {
+    if (!this.#sullaRuntime) throw new Error('Sulla runtime is not running');
+    const coordinator = this.#guestClockSyncCoordinator;
+
+    if (!coordinator) throw new Error('Sulla runtime guest clock sync is not ready');
+
+    await coordinator.syncNow('on-demand');
+  }
+
+  /** Start the time loop as soon as the guest runtime is ready; never gate services for more than 10 seconds. */
+  private async startGuestClockSyncCoordinator(): Promise<void> {
+    const coordinator = new GuestClockSyncCoordinator({
+      hostClock: {
+        wallTimeMs:      () => Date.now(),
+        monotonicTimeMs: () => performance.now(),
+      },
+      guestClock: new RuntimeCommandGuestClockPort(args => this.runtimeCommand(args)),
+      scheduler: {
+        setTimeout:  (callback, delayMs) => setTimeout(callback, delayMs),
+        clearTimeout: handle => clearTimeout(handle as NodeJS.Timeout),
+      },
+      logger: {
+        info:  line => console.log(line),
+        error: line => console.warn(line),
+      },
+    });
+
+    this.#guestClockSyncCoordinator?.stop();
+    this.#guestClockSyncCoordinator = coordinator;
+    let timeout: NodeJS.Timeout | undefined;
+
+    try {
+      const outcome = await Promise.race([
+        coordinator.start().then(() => 'complete' as const),
+        new Promise<'timeout'>(resolve => {
+          timeout = setTimeout(() => resolve('timeout'), 10_000);
+        }),
+      ]);
+
+      if (outcome === 'timeout') {
+        console.warn('[sulla-runtime] runtime-ready guest clock sync exceeded 10s; continuing startup while bounded retries continue');
+      }
+    } catch {
+      // The coordinator logs the exhausted attempt with its underlying error; startup remains available.
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   spawn(...command: string[]): childProcess.ChildProcess;
   spawn(options: execOptions, ...command: string[]): childProcess.ChildProcess;
   spawn(optionsOrCommand: string | execOptions, ...command: string[]): ChildProcess {
@@ -558,7 +614,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
       console.log('[sulla-runtime] Generated new API token during CLI install');
     }
     // Usually 3000; another app on the Mac may hold it (chatCompletionsPort).
-    const { chatCompletionsPort } = await import('@pkg/main/chatCompletionsServer');
+    const { chatCompletionsPort, getChatCompletionsServer } = await import('@pkg/main/chatCompletionsServer');
+    getChatCompletionsServer().setGuestClockSyncHandler(() => this.synchronizeGuestClockFromHost());
     const port = await chatCompletionsPort();
 
     await fs.promises.mkdir(paths.appHome, { recursive: true });
@@ -575,6 +632,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
 
   async start(config_: BackendSettings): Promise<void> {
+    Electron.powerMonitor.removeListener('resume', this.handleHostResume);
+    Electron.powerMonitor.on('resume', this.handleHostResume);
     const config = this.cfg = clone(config_);
     const managedServicesGeneration = this.beginManagedServicesGeneration();
 
@@ -753,6 +812,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
     console.log(`[startup-perf] sulla-runtime spawn -> docker-ready (cold boot or restore): ${ Date.now() - spawnedAt }ms`);
 
+    await this.startGuestClockSyncCoordinator();
+
     // Guest commands go through `paths.sullaRuntime`, which already points at the host binary.
     setSullaRuntimeActive(true, guestUser);
   }
@@ -878,6 +939,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const runtime = this.#sullaRuntime;
     const wasActive = isSullaRuntimeActive();
 
+    this.#guestClockSyncCoordinator?.stop();
+    this.#guestClockSyncCoordinator = undefined;
     this.#sullaRuntimeForwarder?.stop();
     this.#sullaRuntimeForwarder = undefined;
     this.#sullaRuntime = undefined;
@@ -2251,6 +2314,7 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   }
 
   async stop(): Promise<void> {
+    Electron.powerMonitor.removeListener('resume', this.handleHostResume);
     // When we manually call stop, the subprocess will terminate, which will
     // cause stop to get called again.  Prevent the reentrancy.
     // If we're in the middle of starting, also ignore the call to stop (from

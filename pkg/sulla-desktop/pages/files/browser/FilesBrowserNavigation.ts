@@ -4,6 +4,7 @@
 // "Sulla" is a trademark. See TRADEMARK.md.
 
 import { DURABLE_FILE_ID_PATTERN } from '@pkg/shared/filesReferences';
+import { FilesOpenDestinationRouter } from '../FilesOpenDestinationRouter';
 
 import { FilesBrowserState } from './FilesBrowserState';
 
@@ -18,7 +19,7 @@ export class FilesBrowserNavigation {
   private requestGeneration = 0;
   private consumedNavigation?:FilesNavigationPayload;
 
-  constructor(private readonly browser:FilesBrowserController) {}
+  constructor(private readonly browser:FilesBrowserController, private readonly openDestinationRouter = new FilesOpenDestinationRouter()) {}
 
   private get state():FilesBrowserState { return this.browser.state }
 
@@ -116,6 +117,7 @@ export class FilesBrowserNavigation {
   readonly openDetail = async():Promise<void> => {
     const { selected, detailVersion, navigationError } = this.state;
     if (!selected.value) return;
+    if (this.openDestinationRouter.isHtmlPath(selected.value.path)) { this.openDisplayEntry(selected.value); return }
     if (!detailVersion.value) { this.openDisplayEntry(selected.value); return }
     navigationError.value = '';
     try {

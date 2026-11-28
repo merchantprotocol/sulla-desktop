@@ -41,6 +41,7 @@ import { getDatabaseReadGuard } from '@pkg/main/DatabaseReadGuard';
 import { getIpcMainProxy } from '@pkg/main/ipcMain';
 import { PRIMARY_COLOR_SETTING_KEY, sanitizePrimaryColor } from '@pkg/config/primaryColor';
 import Logging from '@pkg/utils/logging';
+import { HumanSendWaitRecorder, type HumanSendDispatch, type HumanSendPath, type HumanSendRoute } from '@pkg/shared/HumanSend';
 import { resolveSullaHomeDir } from '@pkg/agent/utils/sullaPaths';
 
 const console = Logging.background;
@@ -76,6 +77,7 @@ function assertInsideUserHome(targetPath: string): string {
  */
 export function initSullaEvents(): void {
   const ipcControllers = new MainIpcControllersProvider();
+  const humanSendWaitRecorder = new HumanSendWaitRecorder(line => Logging.perf.log(line));
   initDebugErrorReporting();
   ipcControllers.messageBus.register();
   ipcControllers.extensionUi.register();
@@ -867,11 +869,27 @@ export function initSullaEvents(): void {
 
   // Renderer send timings contain identifiers and numeric marks only—never message content.
   ipcMainProxy.on('send-hop:log' as any, (_event: unknown, rawPayload: unknown) => {
-    const payload = rawPayload as { threadId?: unknown; messageCount?: unknown; marks?: unknown } | undefined;
+    const payload = rawPayload as { threadId?: unknown; messageCount?: unknown; route?: unknown; marks?: unknown } | undefined;
     if (typeof payload?.threadId !== 'string' || typeof payload.messageCount !== 'number' || !payload.marks || typeof payload.marks !== 'object') return;
     const allowedMarks = ['keydown', 'controllerSend', 'adapterStart', 'connectionStatusResolved', 'userBubblePushed', 'userBubblePainted', 'ipcSendIssued', 'thinkingShown', 'firstTokenPainted'];
     const marks = Object.fromEntries(allowedMarks.filter(key => typeof (payload.marks as any)[key] === 'number').map(key => [key, (payload.marks as any)[key]]));
-    Logging.perf.info(`[SendHop] ${ JSON.stringify({ threadId: payload.threadId.slice(0, 100), messageCount: Math.max(0, payload.messageCount), marks }) }`);
+    const route = payload.route === 'injected' || payload.route === 'queued' || payload.route === 'sent_fresh' ? payload.route as HumanSendPath : undefined;
+    Logging.perf.info(`[SendHop] ${ JSON.stringify({ threadId: payload.threadId.slice(0, 100), messageCount: Math.max(0, payload.messageCount), ...(route ? { route } : {}), marks }) }`);
+  });
+
+  // Only accept structured, content-free enqueue telemetry from renderer sends.
+  ipcMainProxy.on('human-send-wait:enqueued' as any, (_event: unknown, rawPayload: unknown) => {
+    const payload = rawPayload as { sendId?: unknown; threadId?: unknown; route?: unknown; path?: unknown; enqueuedAtMs?: unknown } | undefined;
+    const route = payload?.route;
+    if (typeof payload?.sendId !== 'string' || typeof payload.threadId !== 'string'
+        || (route !== 'steer' && route !== 'new_turn' && route !== 'idle')
+        || typeof payload.enqueuedAtMs !== 'number' || !Number.isFinite(payload.enqueuedAtMs)) return;
+    humanSendWaitRecorder.enqueued({
+      sendId: payload.sendId,
+      route: route as HumanSendRoute,
+      ...(payload.path === 'injected' || payload.path === 'queued' || payload.path === 'sent_fresh' ? { path: payload.path as HumanSendPath } : {}),
+      enqueuedAtMs: payload.enqueuedAtMs,
+    } satisfies HumanSendDispatch, payload.threadId);
   });
 
   console.log('[Sulla] IPC event handlers initialized');
