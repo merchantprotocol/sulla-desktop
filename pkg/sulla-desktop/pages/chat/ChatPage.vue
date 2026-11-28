@@ -63,6 +63,7 @@
                 :root="chartRoot"
                 :chat-column-width="appWidth"
                 :snippet-tick="snippetTick"
+                :now="activityNow"
                 @open-agent="openChartAgent"
               />
             </template>
@@ -493,6 +494,7 @@ const threadAgentActivity = useThreadAgentActivity({
 });
 const chartRoot = threadAgentActivity.chartRoot;
 const snippetTick = threadAgentActivity.snippetTick;
+const activityNow = () => threadAgentActivity.clock.value;
 provide(THREAD_AGENT_ACTIVITY_KEY, threadAgentActivity);
 
 function openSubAgentConversation(target: SubAgentConversationTarget): void {
