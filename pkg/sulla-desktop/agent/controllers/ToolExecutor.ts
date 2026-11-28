@@ -605,6 +605,7 @@ export class ToolExecutor {
     args: unknown,
     kind?: string,
   ): Promise<boolean> {
+    RunActivity.recordActionForMetadata(state.metadata, 'tool_start', toolName, toolRunId);
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
     const sent = await this.dispatchToWebSocket(connectionId, {
       type: 'progress',
@@ -690,6 +691,7 @@ export class ToolExecutor {
     result?: any,
     payloadThreadId?: string,
   ): Promise<boolean> {
+    RunActivity.recordActionForMetadata(state.metadata, 'tool_end', 'tool', toolRunId);
     (state.metadata as any).lastAgentActivityAt = Date.now();
     RunActivity.touch(state.metadata);
     const connectionId = (state.metadata.wsChannel) || DEFAULT_WS_CHANNEL;
