@@ -65,6 +65,10 @@ export interface AgentStateRow extends ResultTracking {
  endedAt: string | null;
  /** Latest task-scoped activity across start, check-in, model/tool turn, and settlement. */
  lastActivityAt: string;
+ /** Cumulative discrete provider-request/tool-step actions observed during this run. */
+ actionCount?: number;
+ /** Latest discrete action for live status text: kind and a safe label (tool name or "model call"), never arguments. */
+ lastAction?: { kind: 'model' | 'tool'; label: string; at: string } | null;
  lastCheckinAt: string | null;
  lastCheckinSummary: string | null;
  /** The oldest tool call the task is still running (e.g. a long shell command), when known. */
