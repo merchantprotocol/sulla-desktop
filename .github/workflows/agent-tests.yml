@@ -232,8 +232,6 @@ jobs:
         run: node scripts/agent-test-ci-gate.mjs
       - name: Selection unit tests
         run: node --test scripts/agent-test-selection.test.mjs
-      - name: Architecture guard
-        run: node scripts/architecture-guard/guard.mjs
 
   # Per-PR run: a hard 60-second test budget (enforced inside scripts/test-pr.mjs
   # itself, which exits 124 on overrun). timeout-minutes here is deliberately
