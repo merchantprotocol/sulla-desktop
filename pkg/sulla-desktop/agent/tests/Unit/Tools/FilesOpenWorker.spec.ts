@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
 vi.mock('electron', () => ({
   ipcMain: {
     once: vi.fn((_channel: string, listener: typeof state.listener) => { state.listener = listener; }),
+    removeListener: vi.fn(),
     removeAllListeners: vi.fn(),
   },
 }));
