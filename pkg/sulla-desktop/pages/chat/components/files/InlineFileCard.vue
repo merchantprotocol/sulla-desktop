@@ -58,7 +58,8 @@
             type="button"
             aria-label="Previous page"
             title="Previous page"
-            :disabled="pdfState.status !== 'ready' || pdfState.pageNumber <= 1"
+            ref="previousPdfPageButton"
+            :disabled="pdfNavigationBlocked || pdfState.pageNumber <= 1"
             @click="previousPdfPage"
           >
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
@@ -69,7 +70,8 @@
             type="button"
             aria-label="Next page"
             title="Next page"
-            :disabled="pdfState.status !== 'ready' || pdfState.pageNumber >= pdfState.pageCount"
+            ref="nextPdfPageButton"
+            :disabled="pdfNavigationBlocked || pdfState.pageNumber >= pdfState.pageCount"
             @click="nextPdfPage"
           >
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" /></svg>
@@ -166,7 +168,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 import FileGlyph from './FileGlyph.vue';
 import InlineArchivePreview from './InlineArchivePreview.vue';
@@ -191,6 +193,8 @@ const emit = defineEmits<{
 const htmlView = ref<'desktop' | 'phone'>('desktop');
 const htmlPreviewComponent = ref<InstanceType<typeof InlineHtmlPreview> | null>(null);
 const pdfPreviewComponent = ref<InstanceType<typeof InlinePdfPreview> | null>(null);
+const previousPdfPageButton = ref<HTMLButtonElement | null>(null);
+const nextPdfPageButton = ref<HTMLButtonElement | null>(null);
 const pdfState = ref<InlinePdfPreviewState>({ status: 'loading', pageNumber: 1, pageCount: 0 });
 
 const isReady = computed(() => !props.file.status || props.file.status === 'ready');
@@ -198,6 +202,7 @@ const htmlPreview = computed(() => props.file.preview?.kind === 'html' ? props.f
 const imagePreview = computed(() => props.file.preview?.kind === 'image' ? props.file.preview : null);
 const archivePreview = computed(() => props.file.preview?.kind === 'archive' ? props.file.preview : null);
 const pdfPreview = computed(() => props.file.preview?.kind === 'pdf' ? props.file.preview : null);
+const pdfNavigationBlocked = computed(() => pdfState.value.status === 'loading' || pdfState.value.status === 'load-error');
 const isCompact = computed(() => !props.file.preview || archivePreview.value !== null
   || (props.file.preview.kind === 'custom' && !canOpenInTab.value));
 const canOpenInTab = computed(() => props.file.canOpenInTab
@@ -218,16 +223,31 @@ function onPdfStateChange(state: InlinePdfPreviewState): void {
   pdfState.value = state;
 }
 
-function previousPdfPage(): void {
-  void pdfPreviewComponent.value?.previousPage();
+async function previousPdfPage(): Promise<void> {
+  await pdfPreviewComponent.value?.previousPage();
+  await nextTick();
+  if (previousPdfPageButton.value?.disabled) nextPdfPageButton.value?.focus();
 }
 
-function nextPdfPage(): void {
-  void pdfPreviewComponent.value?.nextPage();
+async function nextPdfPage(): Promise<void> {
+  await pdfPreviewComponent.value?.nextPage();
+  await nextTick();
+  if (nextPdfPageButton.value?.disabled) previousPdfPageButton.value?.focus();
 }
 
 function handlePdfKeyboard(event: KeyboardEvent): void {
-  if (!pdfPreview.value || !pdfPreviewComponent.value?.handleKey(event.key)) return;
+  if (!pdfPreview.value || event.altKey || event.metaKey || event.ctrlKey) return;
+  if (event.key === 'ArrowLeft' && pdfState.value.pageNumber <= 1) {
+    nextPdfPageButton.value?.focus();
+    event.preventDefault();
+    return;
+  }
+  if (event.key === 'ArrowRight' && pdfState.value.pageCount > 0 && pdfState.value.pageNumber >= pdfState.value.pageCount) {
+    previousPdfPageButton.value?.focus();
+    event.preventDefault();
+    return;
+  }
+  if (!pdfPreviewComponent.value?.handleKey(event.key)) return;
   event.preventDefault();
 }
 
