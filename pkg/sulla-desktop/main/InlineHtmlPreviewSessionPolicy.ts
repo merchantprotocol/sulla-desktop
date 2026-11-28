@@ -22,12 +22,14 @@ const WEB_PREFERENCES = {
 const WEB_PREFERENCES_ATTRIBUTE = 'nodeIntegration=no,contextIsolation=yes,sandbox=yes,webSecurity=yes,disableDialogs=yes,nodeIntegrationInSubFrames=no,nodeIntegrationInWorker=no';
 const LINK_WINDOW_MS = 60_000;
 const LINK_LIMIT_PER_WINDOW = 5;
+const USER_GESTURE_WINDOW_MS = 1_000;
 
 /** Main-process security policy for the dedicated chat HTML guest session. */
 export class InlineHtmlPreviewSessionPolicy {
   private readonly blockedNetworks = new BlockList();
   private readonly recentLinkOpens: number[] = [];
   private readonly initialDataUrls = new Map<string, { count: number; expiresAt: number }>();
+  private readonly recentUserInputAt = new WeakMap<WebContents, number>();
   private installed = false;
 
   constructor(
@@ -71,6 +73,8 @@ export class InlineHtmlPreviewSessionPolicy {
 
     this.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.session.setPermissionCheckHandler(() => false);
+    this.session.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+    this.session.on('will-download', event => event.preventDefault());
     this.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       void this.shouldBlockRequest(details.url)
         .then(cancel => callback({ cancel }))
@@ -80,6 +84,7 @@ export class InlineHtmlPreviewSessionPolicy {
     this.application.on('web-contents-created', (_event: ElectronEvent, contents: WebContents) => {
       contents.on('will-attach-webview', (event, webPreferences, params) => this.onWillAttachWebview(event, webPreferences, params));
       if (contents.session === this.session) this.protectPreviewContents(contents);
+      else if (contents.getType() === 'webview') this.protectOtherWebviewNavigation(contents);
     });
   }
 
@@ -121,28 +126,54 @@ export class InlineHtmlPreviewSessionPolicy {
     delete params.allowpopups;
     delete params.preload;
 
-    if (/^data:text\/html(?:;|,)/i.test(source)) this.addInitialDataUrl(source);
+    if (this.isPreviewDataUrl(source)) this.addInitialDataUrl(source);
   }
 
   private isAllowedInitialSource(source: string): boolean {
-    if (/^data:text\/html(?:;|,)/i.test(source)) return true;
+    if (this.isPreviewDataUrl(source)) return true;
     return this.isAllowedPreviewUrl(source);
   }
 
+  private isPreviewDataUrl(source: string): boolean {
+    return /^data:(?:text\/html|image\/svg\+xml|application\/xhtml\+xml)(?:[;,]|$)/i.test(source);
+  }
+
   private isPreviewIntentSource(source: string): boolean {
-    return /^data:text\/html(?:;|,)/i.test(source) || /^sulla-files-preview:/i.test(source);
+    return this.isPreviewDataUrl(source)
+      || /^sulla-files-preview:/i.test(source);
   }
 
   private protectPreviewContents(contents: WebContents): void {
+    contents.on('input-event', (_event, input) => {
+      if (input.type === 'mouseUp' || input.type === 'keyDown') this.recentUserInputAt.set(contents, this.now());
+    });
     contents.setWindowOpenHandler(details => {
-      void this.routeExternalLink(details.url).catch(() => undefined);
+      if (this.consumeRecentUserInput(contents)) void this.routeExternalLink(details.url).catch(() => undefined);
       return { action: 'deny' };
     });
     contents.on('will-navigate', (event, url) => {
       if (this.isAllowedPreviewUrl(url) || this.consumeInitialDataUrl(url)) return;
       event.preventDefault();
-      void this.routeExternalLink(url).catch(() => undefined);
+      if (this.consumeRecentUserInput(contents)) void this.routeExternalLink(url).catch(() => undefined);
     });
+  }
+
+  private protectOtherWebviewNavigation(contents: WebContents): void {
+    contents.on('will-navigate', (event, navigationUrl) => {
+      if (!this.isPreviewIntentSource(navigationUrl)) return;
+      event.preventDefault();
+    });
+    contents.on('did-start-navigation', (_event, navigationUrl) => {
+      if (this.isPreviewIntentSource(navigationUrl)) contents.stop();
+    });
+  }
+
+  private consumeRecentUserInput(contents: WebContents): boolean {
+    const inputAt = this.recentUserInputAt.get(contents);
+    this.recentUserInputAt.delete(contents);
+    if (inputAt === undefined) return false;
+    const age = this.now() - inputAt;
+    return age >= 0 && age <= USER_GESTURE_WINDOW_MS;
   }
 
   private addInitialDataUrl(url: string): void {
