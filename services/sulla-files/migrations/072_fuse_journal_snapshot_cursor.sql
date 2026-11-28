@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 ALTER TABLE fuse_change_journal ADD COLUMN current_version_id UUID;
 ALTER TABLE fuse_change_journal ADD COLUMN size BIGINT;
 CREATE INDEX fuse_change_journal_collection_xid ON fuse_change_journal(collection_id,xid);
