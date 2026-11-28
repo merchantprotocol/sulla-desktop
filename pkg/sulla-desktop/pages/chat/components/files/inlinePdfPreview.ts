@@ -13,7 +13,7 @@ export const INLINE_PDF_LOAD_TIMEOUT_MS = 12_000;
 export const INLINE_PDF_RENDER_TIMEOUT_MS = 8_000;
 
 export type InlinePdfPreviewState = Readonly<{
-  status: 'idle' | 'loading' | 'ready' | 'error';
+  status: 'idle' | 'loading' | 'ready' | 'load-error' | 'render-error';
   pageNumber: number;
   pageCount: number;
   message?: string;
@@ -237,12 +237,12 @@ export class InlinePdfPreviewController {
   }
 
   async goToPage(pageNumber: number): Promise<InlinePdfPreviewState> {
-    if (!this.document || this.state.status !== 'ready' || !Number.isFinite(pageNumber)) return this.snapshot();
+    if (!this.document || !Number.isFinite(pageNumber)) return this.snapshot();
     const boundedPage = Math.max(1, Math.min(this.state.pageCount, Math.trunc(pageNumber)));
     if (boundedPage === this.state.pageNumber) return this.snapshot();
 
     this.cancelRender();
-    this.state = { ...this.state, pageNumber: boundedPage, message: undefined };
+    this.state = { ...this.state, status: 'ready', pageNumber: boundedPage, message: undefined };
     const lifecycle = this.lifecycle;
     await this.renderPage(boundedPage, lifecycle);
     return this.snapshot();
@@ -313,7 +313,7 @@ export class InlinePdfPreviewController {
       if (!this.isCurrentRender(lifecycle, renderSequence)) return;
       this.state = {
         ...this.state,
-        status: 'error',
+        status: 'render-error',
         message: error instanceof Error && error.message === 'PDF page render timed out.'
           ? 'This PDF page took too long to render. Open it in a tab to view it.'
           : 'This PDF page could not be rendered. Open it in a tab to view it.',
@@ -347,7 +347,7 @@ export class InlinePdfPreviewController {
   }
 
   private fail(message: string): InlinePdfPreviewState {
-    this.state = { ...this.state, status: 'error', message };
+    this.state = { ...this.state, status: 'load-error', message };
     return this.snapshot();
   }
 }
