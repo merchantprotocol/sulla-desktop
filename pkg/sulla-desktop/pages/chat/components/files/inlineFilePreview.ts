@@ -5,8 +5,6 @@
  * "Sulla" is a trademark. See TRADEMARK.md.
  */
 
-import DOMPurify from 'dompurify';
-
 export type InlineFileStatus = 'ready' | 'loading' | 'error' | 'access-denied';
 
 export interface InlineArchiveEntryPreview {
@@ -15,7 +13,7 @@ export interface InlineArchiveEntryPreview {
 }
 
 export type InlineFilePreview =
-  | { kind: 'html'; source: string }
+  | { kind: 'html'; source: string; assetBaseUrl?: string }
   | { kind: 'image'; bytes: Uint8Array; mimeType: string; altText?: string }
   | { kind: 'archive'; entries: readonly InlineArchiveEntryPreview[]; totalEntries: number }
   | { kind: 'custom' };
@@ -51,55 +49,28 @@ export interface InlineFileActionReference {
   path: string;
 }
 
-const HTML_PREVIEW_CSP = [
-  "default-src 'none'",
-  "script-src 'none'",
-  "connect-src 'none'",
-  "img-src data:",
-  "media-src data:",
-  "font-src data:",
-  "style-src 'unsafe-inline'",
-  "object-src 'none'",
-  "frame-src 'none'",
-  "child-src 'none'",
-  "base-uri 'none'",
-  "form-action 'none'",
-  "navigate-to 'none'",
-].join('; ');
-
 export const MAX_INLINE_HTML_SOURCE_CHARACTERS = 256 * 1024;
 
-const SAFE_CSS_SOURCE = /(?:@import\b|url\s*\(|image-set\s*\(|expression\s*\(|-moz-binding\s*:)/i;
+/** Keeps an HTML page intact for an isolated srcdoc iframe and gives relative
+ * resources the same Files preview URL base as the HTML editor. */
+export class InlineHtmlPreviewDocument {
+  constructor(private readonly maxCharacters = MAX_INLINE_HTML_SOURCE_CHARACTERS) {}
 
-/**
- * Builds a passive document for an empty-sandbox srcdoc iframe.
- *
- * DOMPurify removes executable markup and URL-bearing attributes outside the
- * narrow local-fragment/data-raster allowlist. A restrictive CSP remains in
- * place as a second boundary for CSS, navigation and resource loads.
- */
-export class InlineHtmlPreviewPolicy {
-  constructor(private readonly purifier: Pick<typeof DOMPurify, 'sanitize'> = DOMPurify) {}
+  toSrcdoc(source: string, assetBaseUrl?: string): string {
+    const documentSource = source.slice(0, this.maxCharacters);
+    if (!assetBaseUrl) return documentSource;
 
-  toSrcdoc(source: string): string {
-    const boundedSource = source.slice(0, MAX_INLINE_HTML_SOURCE_CHARACTERS);
-    const cleanMarkup = this.purifier.sanitize(boundedSource, {
-      USE_PROFILES:       { html: true },
-      ADD_TAGS:           ['style'],
-      FORBID_TAGS:        ['script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'form', 'base', 'meta', 'link', 'portal', 'fencedframe'],
-      FORBID_ATTR:        ['srcdoc', 'srcset', 'ping', 'target', 'action', 'formaction', 'formtarget'],
-      ALLOWED_URI_REGEXP: /^(?:#|data:image\/(?:png|jpeg|gif|webp|avif);base64,)/i,
-    });
-    const passiveMarkup = this.stripCssResourceReferences(cleanMarkup);
-    const csp = '<meta http-equiv="Content-Security-Policy" content="' + HTML_PREVIEW_CSP + '">';
-
-    return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' + csp + '</head><body>' + passiveMarkup + '</body></html>';
+    // Match the Files HTML builder: insert its capability URL after an existing
+    // head start, or prepend it when the source has no head element.
+    const baseTag = '<base href="' + this.escapeAttribute(assetBaseUrl) + '">';
+    const head = /<head(?:\s[^>]*)?>/i.exec(documentSource);
+    return head
+      ? documentSource.slice(0, head.index + head[0].length) + baseTag + documentSource.slice(head.index + head[0].length)
+      : baseTag + documentSource;
   }
 
-  private stripCssResourceReferences(markup: string): string {
-    return markup
-      .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, block => SAFE_CSS_SOURCE.test(block) ? '' : block)
-      .replace(/\sstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, attribute => SAFE_CSS_SOURCE.test(attribute) ? '' : attribute);
+  private escapeAttribute(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   }
 }
 
