@@ -1735,7 +1735,7 @@ This is a hard rule, not a suggestion: catalog and memory first, improvise last.
             });
             const ttft = firstTokenAt ? firstTokenAt - runStartedAt : -1;
             this.usageRecorder.recordClaude(lastUsage, {
-              runId:       options.state?.metadata?.turnRunId,
+              runId:       options.state?.metadata?.runId,
               convId,
               threadId:    capturedSessionId ?? existingSession,
               model:       parsed.model ?? this.getModel(),
