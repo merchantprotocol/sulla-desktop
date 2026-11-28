@@ -65,6 +65,8 @@ extraResources:
 files:
   - dist/app/**/*
   - '!**/node_modules/*/prebuilds/!(${platform}*)/*.node'
+  # PDF.js is bundled by renderer webpack; never ship its optional native canvas packages.
+  - '!**/node_modules/@napi-rs/canvas*{,/**}'
   # `yarn install --ignore-platform` pulls every sherpa-onnx platform package
   # (~30-60 MB each); ship only the one for the target OS (see per-OS files).
 # Update feed. electron-builder writes this into the app's app-update.yml, and
