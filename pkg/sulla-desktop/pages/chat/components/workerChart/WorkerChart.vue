@@ -97,9 +97,7 @@
         :ready="controller.ready"
         :page-hidden="controller.hidden"
         :style="controller.popoverPosition"
-        :elapsed="controller.activePopoverAgent ? controller.elapsed(controller.activePopoverAgent) : ''"
-        :last-check-in-time="controller.activePopoverAgent ? controller.lastCheckInTime(controller.activePopoverAgent) : ''"
-        :activity-buckets="controller.activityValues"
+        :now="controller.currentNow"
         @enter="controller.cancelTooltipClose()"
         @leave="controller.scheduleTooltipClose()"
         @open="agentId => controller.openAgent(agentId)"
@@ -130,6 +128,8 @@ const props = defineProps<{
   /** Measured width of the chat column; below 900 px the chart becomes a compact rail. */
   chatColumnWidth: number;
   snippetTick?: WorkerChartSnippetTick | null;
+  /** Stable accessor for the thread's shared one-second activity clock. */
+  now?: () => number;
 }>();
 
 const emit = defineEmits<{ 'open-agent': [payload: { agentId: string }] }>();
@@ -137,6 +137,7 @@ const sources: WorkerChartControllerSources = {
   root: computed(() => props.root),
   chatColumnWidth: computed(() => props.chatColumnWidth),
   snippetTick: computed(() => props.snippetTick),
+  now: props.now ?? Date.now,
   instanceId: useId(),
   openAgent: payload => emit('open-agent', payload),
 };
