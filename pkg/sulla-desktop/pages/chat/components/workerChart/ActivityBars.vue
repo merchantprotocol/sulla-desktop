@@ -11,7 +11,6 @@
         v-for="(value, index) in props.values"
         :key="index"
         class="worker-chart__activity-bar"
-        :title="`${value} actions`"
         :style="{ transform: `scaleY(${buckets.scale(value, maxValue).toFixed(2)})` }"
       />
     </div>
