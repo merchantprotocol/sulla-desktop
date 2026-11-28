@@ -220,6 +220,8 @@ describe('ThreadAgentActivityPresenter', () => {
       scheduler.observe(idle, 'root');
       expect(shown.rows.find(row => row.key === 'scheduled:0')?.actionCount).toBe(507);
       expect(snapshotPublishes).toBe(3);
+      expect(vi.getTimerCount()).toBe(1);
+      vi.advanceTimersByTime(50_000);
       expect(vi.getTimerCount()).toBe(0);
       const idleClock = clock;
       const unrelated = new RowFactory().create('unrelated:0', 'another-root');
@@ -227,6 +229,40 @@ describe('ThreadAgentActivityPresenter', () => {
       vi.advanceTimersByTime(2_000);
       expect(shown.version).toBe(4);
       expect(clock).toBe(idleClock);
+      scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('queues one worker-chart avatar blip per action-count delta and none for a zero-delta idle row', () => {
+    // risk: avatars must reflect every real action without faking activity for idle agents
+    vi.useFakeTimers();
+    try {
+      const factory = new RowFactory();
+      const working = factory.create('active:0', 'root');
+      const idle = factory.create('idle:0', 'root');
+      idle.state = 'parked';
+      const initial = snapshot(1, [working, idle]);
+      const blips: string[] = [];
+      const scheduler = new ThreadAgentActivitySnapshotScheduler(initial, {
+        publish: () => undefined,
+        actionBlips: agentKeys => blips.push(...agentKeys),
+      });
+
+      scheduler.observe(initial, 'root');
+      vi.advanceTimersByTime(500);
+      expect(blips).toEqual([]);
+
+      const burst = snapshot(2, initial.rows.map(row => row.key === 'active:0' ? { ...row, actionCount: 5 } : row));
+      scheduler.observe(burst, 'root');
+      vi.advanceTimersByTime(500);
+      expect(blips).toEqual(['active:0', 'active:0', 'active:0', 'active:0', 'active:0']);
+
+      const unchangedIdle = snapshot(3, burst.rows.map(row => ({ ...row })));
+      scheduler.observe(unchangedIdle, 'root');
+      vi.advanceTimersByTime(1_000);
+      expect(blips).toHaveLength(5);
       scheduler.dispose();
     } finally {
       vi.useRealTimers();
