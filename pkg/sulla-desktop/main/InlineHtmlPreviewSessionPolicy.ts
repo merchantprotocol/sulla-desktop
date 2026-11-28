@@ -73,7 +73,6 @@ export class InlineHtmlPreviewSessionPolicy {
 
     this.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     this.session.setPermissionCheckHandler(() => false);
-    this.session.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     this.session.on('will-download', event => event.preventDefault());
     this.session.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
       void this.shouldBlockRequest(details.url)
@@ -144,6 +143,7 @@ export class InlineHtmlPreviewSessionPolicy {
   }
 
   private protectPreviewContents(contents: WebContents): void {
+    contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
     contents.on('input-event', (_event, input) => {
       if (input.type === 'mouseUp' || input.type === 'keyDown') this.recentUserInputAt.set(contents, this.now());
     });

@@ -13,7 +13,6 @@ class FakeSession extends EventEmitter {
     onBeforeRequest: vi.fn((_filter: unknown, listener: typeof this.beforeRequest) => { this.beforeRequest = listener; }),
   };
   readonly resolveHost = vi.fn(async() => ({ endpoints: [{ address: '93.184.216.34', family: 'ipv4' as const }] }));
-  readonly setWebRTCIPHandlingPolicy = vi.fn();
   readonly setPermissionRequestHandler = vi.fn((handler: typeof this.permissionRequestHandler) => { this.permissionRequestHandler = handler; });
   readonly setPermissionCheckHandler = vi.fn((handler: typeof this.permissionCheckHandler) => { this.permissionCheckHandler = handler; });
 }
@@ -21,6 +20,7 @@ class FakeSession extends EventEmitter {
 class FakeWebContents extends EventEmitter {
   openHandler?: (details: { url: string }) => { action: string };
   readonly stop = vi.fn();
+  readonly setWebRTCIPHandlingPolicy = vi.fn();
   constructor(readonly session: FakeSession, private readonly type = 'window') { super(); }
   setWindowOpenHandler(handler: typeof this.openHandler): void { this.openHandler = handler; }
   getType(): string { return this.type; }
@@ -134,14 +134,17 @@ describe('InlineHtmlPreviewSessionPolicy', () => {
   });
 
   // risk: chat availability and network privacy — HTML cannot spawn downloads or expose non-proxied WebRTC UDP addresses.
-  it('cancels session downloads and disables non-proxied WebRTC UDP', () => {
-    const { session, guest } = createPolicy();
+  it('cancels session downloads and applies the WebRTC policy only to preview-session contents', () => {
+    const { app, session, guest } = createPolicy();
+    const nonPreviewWebview = new FakeWebContents(new FakeSession(), 'webview');
+    app.emit('web-contents-created', {}, nonPreviewWebview);
     const preventDefault = vi.fn();
 
     session.emit('will-download', { preventDefault }, {}, guest);
 
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(session.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith('disable_non_proxied_udp');
+    expect(guest.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith('disable_non_proxied_udp');
+    expect(nonPreviewWebview.setWebRTCIPHandlingPolicy).not.toHaveBeenCalled();
   });
 
   // risk: local service and file access — requests to private, loopback, link-local, app and file targets are blocked; only active Files capability origins are allowed.
