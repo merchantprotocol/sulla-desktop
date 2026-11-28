@@ -11,6 +11,7 @@ import events from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { performance } from 'node:perf_hooks';
 
 import Electron, { ipcMain } from 'electron';
 import merge from 'lodash/merge';
@@ -48,6 +49,7 @@ import { NamedVolumeMigrator, type NamedVolumeSpec } from './sullaVolumeMigratio
 import { ensureAgentNetworkCommand, provisionStateCommand, threatProxyComposeService } from './threatProxyEgress';
 import { findSullaRuntimeArtifacts, sullaRuntimeSockets } from './sullaRuntime/artifacts';
 import { ensureSullaRuntimeDataDisk } from './sullaRuntime/dataDisk';
+import { GuestClockSyncCoordinator, RuntimeCommandGuestClockPort } from './sullaRuntime/GuestClockSyncCoordinator';
 import { guestUserFor, NativeRuntime, SullaRuntimeShare, SullaRuntimeStartError } from './sullaRuntime/NativeRuntime';
 import { SullaRuntimePortForwarder } from './sullaRuntime/portForwarder';
 import { FilesCloudIdentityProjection } from './sullaRuntime/FilesCloudIdentityProjection';
@@ -297,12 +299,10 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
   /** The native Sulla runtime VM. */
   #sullaRuntime?: NativeRuntime;
   #sullaRuntimeForwarder?: SullaRuntimePortForwarder;
-  #clockSyncInFlight?: Promise<void>;
+  #guestClockSyncCoordinator?: GuestClockSyncCoordinator;
   private readonly handleHostResume = () => {
     if (!this.#sullaRuntime) return;
-    void this.synchronizeGuestClockFromHost().catch(() => {
-      console.warn('[sulla-runtime] Guest clock correction after host resume failed');
-    });
+    void this.#guestClockSyncCoordinator?.syncNow('host-resume').catch(() => undefined);
   };
 
   private beginManagedServicesGeneration(): number {
@@ -477,15 +477,50 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
 
   private async synchronizeGuestClockFromHost(): Promise<void> {
     if (!this.#sullaRuntime) throw new Error('Sulla runtime is not running');
-    if (this.#clockSyncInFlight) return this.#clockSyncInFlight;
+    const coordinator = this.#guestClockSyncCoordinator;
 
-    const hostTimeSeconds = Math.floor(Date.now() / 1000);
-    const sync = this.runtimeCommand(['exec', '--', '/bin/date', '-u', '-s', `@${ hostTimeSeconds }`]).then(() => undefined);
-    this.#clockSyncInFlight = sync;
+    if (!coordinator) throw new Error('Sulla runtime guest clock sync is not ready');
+
+    await coordinator.syncNow('on-demand');
+  }
+
+  /** Start the time loop as soon as the guest runtime is ready; never gate services for more than 10 seconds. */
+  private async startGuestClockSyncCoordinator(): Promise<void> {
+    const coordinator = new GuestClockSyncCoordinator({
+      hostClock: {
+        wallTimeMs:      () => Date.now(),
+        monotonicTimeMs: () => performance.now(),
+      },
+      guestClock: new RuntimeCommandGuestClockPort(args => this.runtimeCommand(args)),
+      scheduler: {
+        setTimeout:  (callback, delayMs) => setTimeout(callback, delayMs),
+        clearTimeout: handle => clearTimeout(handle as NodeJS.Timeout),
+      },
+      logger: {
+        info:  line => console.log(line),
+        error: line => console.warn(line),
+      },
+    });
+
+    this.#guestClockSyncCoordinator?.stop();
+    this.#guestClockSyncCoordinator = coordinator;
+    let timeout: NodeJS.Timeout | undefined;
+
     try {
-      await sync;
+      const outcome = await Promise.race([
+        coordinator.start().then(() => 'complete' as const),
+        new Promise<'timeout'>(resolve => {
+          timeout = setTimeout(() => resolve('timeout'), 10_000);
+        }),
+      ]);
+
+      if (outcome === 'timeout') {
+        console.warn('[sulla-runtime] runtime-ready guest clock sync exceeded 10s; continuing startup while bounded retries continue');
+      }
+    } catch {
+      // The coordinator logs the exhausted attempt with its underlying error; startup remains available.
     } finally {
-      if (this.#clockSyncInFlight === sync) this.#clockSyncInFlight = undefined;
+      clearTimeout(timeout);
     }
   }
 
@@ -777,6 +812,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     }
     console.log(`[startup-perf] sulla-runtime spawn -> docker-ready (cold boot or restore): ${ Date.now() - spawnedAt }ms`);
 
+    await this.startGuestClockSyncCoordinator();
+
     // Guest commands go through `paths.sullaRuntime`, which already points at the host binary.
     setSullaRuntimeActive(true, guestUser);
   }
@@ -902,6 +939,8 @@ export default class SullaRuntimeBackend extends events.EventEmitter implements 
     const runtime = this.#sullaRuntime;
     const wasActive = isSullaRuntimeActive();
 
+    this.#guestClockSyncCoordinator?.stop();
+    this.#guestClockSyncCoordinator = undefined;
     this.#sullaRuntimeForwarder?.stop();
     this.#sullaRuntimeForwarder = undefined;
     this.#sullaRuntime = undefined;
