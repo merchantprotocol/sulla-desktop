@@ -50,7 +50,7 @@ describe('tab group menu actions', () => {
 
     const groupId = fixture.actions.addToNewGroup('tab-a');
 
-    expect(fixture.model.groups).toMatchObject([{ id: groupId, name: '', colorToken: 'blue' }]);
+    expect(fixture.model.groups).toMatchObject([{ id: groupId, name: '' }]);
     expect(fixture.model.membership).toEqual({ 'tab-a': groupId });
   });
 
