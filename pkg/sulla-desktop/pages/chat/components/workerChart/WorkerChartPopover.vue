@@ -60,7 +60,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import ActivityBars from './ActivityBars.vue';
 import WorkerChartMarker from './WorkerChartMarker.vue';
-import type { WorkerChartAgent, WorkerChartState } from './workerChartModel';
+import { WorkerChartActivityBuckets, type WorkerChartAgent, type WorkerChartState } from './workerChartModel';
+import { WorkerChartTimeFormatter } from './WorkerChartTimeFormatter';
 
 const props = defineProps<{
   id: string;
@@ -69,9 +70,10 @@ const props = defineProps<{
   ready: boolean;
   pageHidden: boolean;
   style: Record<string, string>;
-  elapsed: string;
-  lastCheckInTime: string;
-  activityBuckets: readonly number[];
+  now?: () => number;
+  elapsed?: string;
+  lastCheckInTime?: string;
+  activityBuckets?: readonly number[];
 }>();
 
 const emit = defineEmits<{
@@ -81,6 +83,12 @@ const emit = defineEmits<{
   'register-element': [element: HTMLElement | null];
 }>();
 const root = ref<HTMLElement | null>(null);
+const buckets = new WorkerChartActivityBuckets();
+const timeFormatter = new WorkerChartTimeFormatter();
+const currentNow = (): number => props.now?.() ?? Date.now();
+const elapsed = computed(() => props.elapsed ?? (props.agent ? timeFormatter.elapsed(props.agent, currentNow()) : ''));
+const lastCheckInTime = computed(() => props.lastCheckInTime ?? (props.agent ? timeFormatter.lastCheckIn(props.agent, currentNow()) : ''));
+const activityBuckets = computed(() => props.activityBuckets ?? buckets.values(props.agent?.activity, currentNow()));
 
 const stateLabel = computed(() => {
   const state: WorkerChartState | undefined = props.agent?.state;

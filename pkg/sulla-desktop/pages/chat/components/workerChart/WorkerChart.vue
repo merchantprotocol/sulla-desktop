@@ -29,8 +29,7 @@
           :state="row.agent.state"
           :initials="row.agent.initials"
           :role="row.agent.role ?? (row.depth === 0 ? 'main' : 'wrk')"
-          :ping="controller.rowPings(row)"
-          :ping-delay="controller.pulseDelay(row)"
+          :pulse-sequence="controller.pulseSequence(row)"
           :style="{ top: `${row.y}px`, left: '7.5px' }"
         />
       </span>
@@ -74,8 +73,7 @@
               :popover-id="controller.popoverId"
               :selected="controller.selectedId === row.agent.id"
               :hovered="controller.hoveredKey === row.key"
-              :ping="controller.rowPings(row)"
-              :ping-delay="controller.pulseDelay(row)"
+              :pulse-sequence="controller.pulseSequence(row)"
               @activate="row => controller.activate(row)"
               @enter="row => controller.onNodeEnter(row)"
               @leave="row => controller.onNodeLeave(row)"
@@ -97,9 +95,7 @@
         :ready="controller.ready"
         :page-hidden="controller.hidden"
         :style="controller.popoverPosition"
-        :elapsed="controller.activePopoverAgent ? controller.elapsed(controller.activePopoverAgent) : ''"
-        :last-check-in-time="controller.activePopoverAgent ? controller.lastCheckInTime(controller.activePopoverAgent) : ''"
-        :activity-buckets="controller.activityValues"
+        :now="controller.currentNow"
         @enter="controller.cancelTooltipClose()"
         @leave="controller.scheduleTooltipClose()"
         @open="agentId => controller.openAgent(agentId)"
@@ -130,6 +126,10 @@ const props = defineProps<{
   /** Measured width of the chat column; below 900 px the chart becomes a compact rail. */
   chatColumnWidth: number;
   snippetTick?: WorkerChartSnippetTick | null;
+  /** One sequence per worker, incremented once for each real action-count delta. */
+  actionBlips?: ReadonlyMap<string, number>;
+  /** Stable accessor for the thread's shared one-second activity clock. */
+  now?: () => number;
 }>();
 
 const emit = defineEmits<{ 'open-agent': [payload: { agentId: string }] }>();
@@ -137,6 +137,8 @@ const sources: WorkerChartControllerSources = {
   root: computed(() => props.root),
   chatColumnWidth: computed(() => props.chatColumnWidth),
   snippetTick: computed(() => props.snippetTick),
+  actionBlips: computed(() => props.actionBlips ?? new Map()),
+  now: props.now ?? Date.now,
   instanceId: useId(),
   openAgent: payload => emit('open-agent', payload),
 };

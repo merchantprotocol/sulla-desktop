@@ -16,6 +16,12 @@ import type { TraceRow } from '../components/transcript/traceTypes';
 import type { Message } from '../models/Message';
 import type { WorkerChartAgent, WorkerChartRole, WorkerChartState } from '../components/workerChart/workerChartModel';
 
+export interface ThreadAgentRunningActionStatus {
+  running: boolean;
+  count: number;
+  label: string | null;
+}
+
 /** Adapts the detailed transcript, scoped live snapshots, and authorized trace history into line events. */
 export class ThreadAgentActivityMapper {
   public constructor(private readonly traceProjection: DetailedTraceProjection) {}
@@ -114,6 +120,30 @@ export class ThreadAgentActivityMapper {
     const lastText = ownRoot.row.lastCheckinSummary?.trim() || ownRoot.row.stateReason?.trim() || this.stateLabel(ownRoot.row.state);
     const observedAt = this.timestamp(ownRoot.row.lastCheckinAt ?? ownRoot.row.lastActivityAt, now) ?? now;
     return this.statusItem(ownRoot, threadId, lastText, observedAt, `${ownRoot.row.key}:fallback`, 'status', 'root');
+  }
+
+  runningActionStatus(projection: ThreadAgentActivityProjection): ThreadAgentRunningActionStatus {
+    let count = 0;
+    let label: string | null = null;
+    let latestAt = Number.NEGATIVE_INFINITY;
+    const running = projection.agents.some(agent => agent.row.state === 'working');
+    if (!running) return { running: false, count: 0, label: null };
+
+    for (const agent of projection.agents) {
+      const { row } = agent;
+      if (Number.isFinite(row.actionCount)) count += row.actionCount ?? 0;
+
+      if (row.state !== 'working') continue;
+      const action = row.lastAction;
+      if (!action || !action.label) continue;
+      const at = Date.parse(action.at);
+      if (label === null || (Number.isFinite(at) && at >= latestAt)) {
+        label = action.label;
+        if (Number.isFinite(at)) latestAt = at;
+      }
+    }
+
+    return { running, count, label };
   }
 
   chartRoot(projection: ThreadAgentActivityProjection, threadId: string | undefined): WorkerChartAgent | null {
@@ -238,9 +268,8 @@ export class ThreadAgentActivityMapper {
       startedAt: this.timestamp(row.startedAt),
       finishedAt: this.timestamp(row.endedAt),
       lastCheckIn: latestCheckin ? { timestamp: this.timestamp(latestCheckin.at)!, text: latestCheckin.summary } : null,
-      activity: agent.activity.flatMap(value => {
-        const timestamp = this.timestamp(value);
-        return timestamp === null ? [] : [{ timestamp, value: 1 }];
+      activity: agent.activity.flatMap(sample => {
+        return Number.isFinite(sample.at) && sample.count > 0 ? [{ timestamp: sample.at, value: sample.count }] : [];
       }),
       children: node.children.map(child => this.chartNode(child)),
     };

@@ -15,12 +15,12 @@
     <!-- The line, then any trailing controls the host adds (the dock's move button), in one row. -->
     <div
       class="ta-row"
-      :class="`ta-row-${activity.state}`"
+      :class="`ta-row-${statusLineActivity.state}`"
     >
       <button
         type="button"
         class="ta-line"
-        :class="`ta-${activity.state}`"
+        :class="`ta-${statusLineActivity.state}`"
         :aria-expanded="open"
         aria-controls="ta-tray"
         :disabled="!hasItems"
@@ -28,11 +28,11 @@
       >
         <span
           class="ta-dot"
-          :class="`ta-dot-${activity.state}`"
+          :class="`ta-dot-${statusLineActivity.state}`"
         />
-        <span class="ta-lead">{{ activity.lead }}</span>
+        <span class="ta-lead">{{ statusLineActivity.lead }}</span>
         <template
-          v-for="part in activity.parts"
+          v-for="part in statusLineActivity.parts"
           :key="part"
         >
           <span class="ta-sep">·</span><span class="ta-part">{{ part }}</span>
@@ -183,6 +183,7 @@ import { activityAge, blockedDetail, deriveThreadActivity, parkedActivity, quiet
 import { AgentActionController } from '@pkg/services/agentState/AgentActionController';
 import { AGENT_STATE_CLIENT_KEY } from '@pkg/services/agentState/AgentStateInjection';
 import { AgentTreeBuilder } from '@pkg/services/agentState/AgentTreeBuilder';
+import { THREAD_AGENT_ACTIVITY_KEY } from '../../composables/useThreadAgentActivity';
 import type { AgentStateRow } from '@pkg/shared/agentState/AgentStateSnapshot';
 import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 
@@ -195,9 +196,10 @@ const controller = useChatController();
 const client = inject(AGENT_STATE_CLIENT_KEY);
 if (!client) throw new Error('AgentStateClient is not provided');
 const actions = new AgentActionController(ipcRenderer as any, client);
+const threadActivity = inject(THREAD_AGENT_ACTIVITY_KEY, null);
 const context = inject<{ tabId?: string; backendThreadId: Ref<string | undefined> }>('chat:activity-context', { backendThreadId: ref(undefined) });
 
-const now = ref(Date.now());
+const now = threadActivity?.snapshotClock ?? ref(Date.now());
 const open = ref(false);
 const expanded = reactive(new Set<string>());
 const busy = reactive(new Set<string>());
@@ -206,8 +208,9 @@ const notice = reactive<Record<string, string>>({});
 const inputs: Record<string, HTMLInputElement> = {};
 const confirmStop = ref('');
 
+const activityRows = computed(() => threadActivity?.projection.value.agents.map(agent => agent.row) ?? client.snapshot.value.rows);
 const tree = computed(() => context.backendThreadId.value
-  ? new AgentTreeBuilder(client.snapshot.value.rows).forThread(context.backendThreadId.value)
+  ? new AgentTreeBuilder(activityRows.value).forThread(context.backendThreadId.value)
   : []);
 // Show every live descendant as a row without requiring its parent to expand.
 const agentNodes = computed(() => new AgentTreeBuilder([]).flatten(tree.value).filter(node => LIVE.has(node.row.state)));
@@ -223,6 +226,16 @@ const activity = computed(() => deriveThreadActivity({
   agents:           liveRows.value,
   heartbeatMinutes: heartbeatMinutes.value,
 }));
+const actionStatus = computed(() => threadActivity?.actionStatus.value ?? null);
+const statusLineActivity = computed(() => {
+  const summary = activity.value;
+  const actions = actionStatus.value;
+  if (!actions?.running) return summary;
+  return {
+    ...summary,
+    parts: [...summary.parts, ...(actions.label ? [actions.label] : []), `${actions.count} actions`],
+  };
+});
 const hasItems = computed(() => agentNodes.value.length > 0 || !!heartbeatMinutes.value);
 const stalledRows = computed(() => liveRows.value.filter(row => row.state === 'quiet' && row.canMessage));
 const ageText = computed(() => {
@@ -315,14 +328,11 @@ watch(() => activity.value.state, state => {
 }, { immediate: true });
 watch(hasItems, has => { if (!has) open.value = false; });
 
-let timer: ReturnType<typeof setInterval> | null = null;
 function clearConfirm(): void { confirmStop.value = '' }
 onMounted(() => {
-  timer = setInterval(() => { now.value = Date.now() }, 1000);
   window.addEventListener('click', clearConfirm);
 });
 onBeforeUnmount(() => {
-  if (timer) clearInterval(timer);
   window.removeEventListener('click', clearConfirm);
   if (context.tabId) chatActivityByTab.delete(context.tabId);
 });

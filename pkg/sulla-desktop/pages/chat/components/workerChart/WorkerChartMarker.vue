@@ -7,31 +7,36 @@
 <template>
   <span
     class="worker-chart__marker"
-    :class="{ 'worker-chart__marker--ping': ping }"
+    :class="{ 'worker-chart__marker--ping': pulsedAfterMount }"
     :data-role="role"
     :data-state="visualState"
-    :style="{ '--mk-dl': pingDelay }"
     aria-hidden="true"
   >
     <svg v-if="state === 'done'" viewBox="0 0 10 10"><path d="M2 5.300 4.200 7.500 8 3" /></svg>
     <svg v-else-if="state === 'failed'" viewBox="0 0 10 10"><path d="M2.500 2.500l5 5M7.500 2.500l-5 5" /></svg>
     <span v-else>{{ state === 'needs-you' ? '!' : initials }}</span>
-    <i class="worker-chart__ring" />
+    <i :key="pulseSequence" class="worker-chart__ring" />
   </span>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 import type { WorkerChartRole, WorkerChartState } from './workerChartModel';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   state: WorkerChartState | null;
   initials: string;
   role: WorkerChartRole;
-  ping?: boolean;
-  pingDelay?: string;
-}>();
+  pulseSequence?: number;
+}>(), { pulseSequence: 0 });
+
+const pulsedAfterMount = ref(false);
+let mounted = false;
+onMounted(() => { mounted = true; });
+watch(() => props.pulseSequence, (sequence, previous) => {
+  if (mounted && sequence !== previous) pulsedAfterMount.value = true;
+});
 
 const visualState = computed(() => {
   if (!props.state) return undefined;
