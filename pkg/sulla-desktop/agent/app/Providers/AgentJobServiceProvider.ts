@@ -28,7 +28,7 @@ import { JobStopService } from '../Services/JobStopService';
 import { JobWrapUpService, type JobWrapUpMessageSender } from '../Services/JobWrapUpService';
 import { JobCompletionDelivery } from '../../tools/agents/jobDelivery';
 import { completionInboxStore } from '../../services/AgentCompletionInbox';
-import { BlockerEscalationService } from '../../services/BlockerEscalationService';
+import { BlockerDecisionPublisher, RuntimeBlockerDecisionAccess } from '../../services/BlockerDecisionPublisher';
 import { postgresClient } from '../../database/PostgresClient';
 import { RunActivity } from '../../services/RunActivity';
 import { GraphRegistry } from '../../services/GraphRegistry';
@@ -59,7 +59,7 @@ export class AgentJobServiceProvider {
   readonly completionAcknowledgements: CompletionAcknowledgementService;
   readonly delivery: JobCompletionDelivery;
   readonly wrapUp: JobWrapUpService;
-  readonly blockerEscalation: BlockerEscalationService;
+  readonly blockerDecisions: BlockerDecisionPublisher;
   readonly custody: JobCustodyService;
   readonly custodyCallerVerifier: CustodyCallerVerifier;
   readonly custodyLineage: JobTaskCustodyLineage;
@@ -71,14 +71,14 @@ export class AgentJobServiceProvider {
     this.messaging = new AgentJobMessagingRepository(connection);
     this.reviewItems = new AgentJobReviewItemRepository(connection);
     this.reviewGate = new ReviewObligationGate(this.reviewItems);
-    this.blockerEscalation = new BlockerEscalationService(this.messaging, completionInboxStore);
+    this.blockerDecisions = new BlockerDecisionPublisher(new RuntimeBlockerDecisionAccess());
     const clock = new SystemClock();
     this.runtime = new JobRuntimeRegistry();
     this.states = new AgentStateService(this.jobs, this.runtime, Date.now, new AgentJobMutationQueue(), new AgentJobFailureLogger({ error: message => Logging.background.error(message) }));
     this.activity = new AgentTaskActivityProjector(runActivity);
     const titles = new ConversationTitleRepository(connection);
     const strandedEpisodes = new StrandedEpisodeRepository(connection);
-    this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes, this.activity, this.reviewItems);
+    this.fleet = new AgentFleetProjectionService(this.states, this.messaging, titles, Date.now, strandedEpisodes, this.activity, this.reviewItems, this.blockerDecisions);
     this.stranded = new StrandedManagerScheduler(this.fleet, new StrandedManagerDetector(Date.now, new RunActivityManagerActivitySource(runActivity)),
       strandedEpisodes, new StrandedManagerAlertService(completionInboxStore));
     const recovery = new JobRecoveryService(this.jobs);
