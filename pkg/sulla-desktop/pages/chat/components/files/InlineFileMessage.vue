@@ -22,8 +22,8 @@ import { ipcRenderer } from '@pkg/utils/ipcRenderer';
 import { openWorkspaceTab } from '@pkg/composables/useBrowserTabs';
 import InlineFileCard from './InlineFileCard.vue';
 import InlineTextPreview from './inline/InlineTextPreview.vue';
-import { InlinePdfJsDocumentLoaderFactory } from './inlinePdfJsRuntime';
 import type { InlineFileActionReference, InlineFileCardViewModel } from './inlineFilePreview';
+import type { InlinePdfDocumentLoader } from './inlinePdfPreview';
 import type { FilesSaveSuccess } from '@pkg/pages/files/types';
 import type { MarkdownSaveOutcome } from './inline/MarkdownEditSession';
 
@@ -41,7 +41,7 @@ function formatSize(bytes: unknown): string | undefined {
 }
 const props = defineProps<{ reference: Reference }>();
 const requestId = crypto.randomUUID();
-const pdfDocumentLoader = new InlinePdfJsDocumentLoaderFactory().create();
+const pdfDocumentLoader = ref<InlinePdfDocumentLoader>();
 const file = ref<InlineFileCardViewModel>({ fileId: props.reference.fileId, name: 'File', path: '', status: 'loading' });
 const content = ref('');
 const versionId = ref('');
@@ -69,7 +69,7 @@ async function load(): Promise<void> {
     const doc = result.document;
     versionId.value = doc.currentVersionId || '';
     if (metadataOnly) {
-      content.value = ''; textKind.value = undefined; truncated.value = false;
+      content.value = ''; textKind.value = undefined; truncated.value = false; pdfDocumentLoader.value = undefined;
       file.value = {
         fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true,
         ...(result.state === 'too-large' && result.kind === 'pdf' ? { cap: { label: `PDF inline preview is limited to ${ formatSize(result.maxBytes) || '20 MB' }. This file exceeds that limit.`, canOpenInTab: true } } : {}),
@@ -77,6 +77,16 @@ async function load(): Promise<void> {
       return;
     }
     const isPdf = result.kind === 'pdf';
+    pdfDocumentLoader.value = undefined;
+    if (isPdf) {
+      try {
+        const { InlinePdfJsDocumentLoaderFactory } = await import('./inlinePdfJsRuntime');
+        if (disposed) return;
+        pdfDocumentLoader.value = new InlinePdfJsDocumentLoaderFactory().create();
+      } catch {
+        // Keep the file card ready with its Open in tab fallback if PDF.js cannot load.
+      }
+    }
     content.value = isPdf ? '' : text(result.content); truncated.value = !!result.truncated;
     file.value = { fileId: doc.id, name: doc.name, path: doc.path, mimeType: doc.mime, sizeLabel: formatSize(doc.size), status: 'ready', canOpenInTab: true,
       preview: result.kind === 'html' ? { kind: 'html', source: content.value } : result.kind === 'image' ? { kind: 'image', bytes: bytes(result.content), mimeType: doc.mime, altText: doc.name } : result.kind === 'pdf' ? { kind: 'pdf', bytes: bytes(result.content) } : { kind: 'custom' } };
