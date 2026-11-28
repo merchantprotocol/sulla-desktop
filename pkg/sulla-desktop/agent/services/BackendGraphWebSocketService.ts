@@ -6,6 +6,7 @@
 // BackendGraphWebSocketService.ts
 // Main-process agent dispatcher: routes messages on the sulla-desktop and
 // heartbeat channels to the default agent via GraphRegistry.
+import { randomUUID } from 'node:crypto';
 import { toolRegistry } from '@pkg/agent/tools/registry';
 import { SUPPORT_TOOL_NAMES } from '@pkg/agent/tools/support/manifests';
 import { DeferredStallInput } from '../app/Services/DeferredStallInput';
@@ -67,6 +68,8 @@ import { PostgresOrgMessagingStateRepository } from '../app/Repositories/Postgre
 import { AgentReadinessStatus } from '@pkg/shared/agentReadinessStatus';
 import { HumanSendWaitRecorder, type HumanSendDispatch, type HumanSendPath, type HumanSendRoute } from '@pkg/shared/HumanSend';
 import Logging from '@pkg/utils/logging';
+import { SystemTurnTimingClock, TurnTiming, TurnTimingDispatchContext, TurnTimingDispatchLifecycle } from './TurnTiming';
+import type { TurnTimingOutcome, TurnTimingProvider } from './TurnTiming';
 
 import type { CalendarEventData } from './CalendarClient';
 import type { AgentGraphState } from '../nodes/Graph';
@@ -1749,6 +1752,9 @@ export class BackendGraphWebSocketService {
 
     let state: AgentGraphState | undefined;
     let turnConsumedInput = false;
+    let turnTiming: TurnTiming | undefined;
+    let turnTimingLifecycle: TurnTimingDispatchLifecycle | undefined;
+    let turnOutcome: TurnTimingOutcome = 'ok';
     const abortKey = this.abortKey(channelId, threadId);
     let runAbort: AbortService | undefined;
     // Set only for a dormant parked job (no live in-process waiter) this turn
@@ -2024,18 +2030,45 @@ export class BackendGraphWebSocketService {
       const runLocation = this.resolveRunLocation(state, channelId);
       const tracedProvider = String(state.metadata.agent?.provider || '').trim();
       firstRunTrace('chat', 'chat started', { providerId: tracedProvider || 'primary', runLocation, channelId });
+      const normalizedProvider = tracedProvider.toLowerCase();
+      const timingProvider: TurnTimingProvider = normalizedProvider === 'codex'
+        ? 'codex'
+        : normalizedProvider.includes('claude')
+          ? 'claude'
+          : ['openai', 'anthropic', 'api'].includes(normalizedProvider) ? 'api' : 'other';
+      const selectedModel = state.metadata.agent?.model;
+      const model = timingProvider === 'codex' || timingProvider === 'claude'
+        ? cliPinnedModelId(normalizedProvider, selectedModel) ?? null
+        : typeof selectedModel === 'string' && selectedModel.trim() ? selectedModel.trim() : null;
+      const runId = randomUUID();
+      const timingContext = new TurnTimingDispatchContext(state.metadata as any, channelId, triggerType, HEARTBEAT_CHANNEL_ID);
+      turnTiming = new TurnTiming({
+        clock: new SystemTurnTimingClock(),
+        perfLog: Logging.perf,
+        runId,
+        surface: timingContext.surface,
+        provider: timingProvider,
+        model,
+        threadId,
+        jobId: timingContext.jobId,
+        taskIndex: timingContext.taskIndex,
+        startedAtMs: Date.now(),
+      });
+      turnTimingLifecycle = new TurnTimingDispatchLifecycle(turnTiming, state);
+      (state.metadata as any).runId = runId;
+      Object.defineProperty(state, '__turnTiming', { value: turnTiming, configurable: true, enumerable: false });
       // Only the claim-owned late-answer dispatch may attribute its reply.
       // Do not source this from client-provided chat metadata.
       if (decisionTurn && threadId && state.metadata.reportingSteerRevision === initialSteerRevision) {
         state.metadata.reportingDecisionFollowUp = { id: answerInputs[0].id, threadId };
       }
       if (runLocation === 'container') {
-        await this.runInConversationContainer(state, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
+        await turnTimingLifecycle.executeGraph(() => this.runInConversationContainer(state!, channelId, threadId, () => { assertDecisionOwner(); return graph.execute(state, startNode) }, message => this.emitMessage(channelId, 'assistant_message', {
           content: message, role: 'assistant', kind: 'progress', thread_id: threadId,
-        }), runAbort?.signal, assertDecisionOwner);
+        }), runAbort?.signal, assertDecisionOwner), runAbort?.signal);
       } else {
         assertDecisionOwner();
-        await graph.execute(state, startNode);
+        await turnTimingLifecycle.executeGraph(() => graph.execute(state, startNode), runAbort?.signal);
       }
       assertDecisionOwner();
       await awaitSteerAcknowledgements(state as any);
@@ -2063,6 +2096,8 @@ export class BackendGraphWebSocketService {
       turnConsumedInput = true;
       completionConsumption.confirmSeen();
     } catch (err: any) {
+      turnOutcome = err?.name === 'AbortError' ? 'aborted' : 'error';
+      turnTimingLifecycle?.setOutcome(turnOutcome);
       if (err?.name === 'AbortError' && state) {
         // Cleanly aborted by user. If a newer run superseded this one, leave
         // the shared thread state alone so the new run is not poisoned.
@@ -2097,6 +2132,7 @@ export class BackendGraphWebSocketService {
         });
       }
     } finally {
+      try { turnTimingLifecycle?.finish() } catch { /* perf logging must not change turn settlement */ }
       if (state && isCurrentRun()) delete state.metadata.reportingDecisionFollowUp;
       if (decisionTurn && !turnConsumedInput) {
         try { const { decisionService } = await import('./DecisionService'); await decisionService.finishAnswers(answerInputs, threadId, false) } catch { /* Lease recovery restores the saved answer without replaying it. */ }
