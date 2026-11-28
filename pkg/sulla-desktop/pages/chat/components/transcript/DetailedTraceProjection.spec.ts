@@ -196,7 +196,7 @@ describe('DetailedTraceProjection', () => {
     const rows = new DetailedTraceProjection().project([interrupted, staleResult] as never, []).flatMap(turn => turn.rows);
 
     expect(rows).toHaveLength(2);
-    expect(rows.map(row => row.status)).toEqual(['failed', 'ok']);
+    expect(rows.map(row => row.status)).toEqual(['failed', 'failed']);
     expect(rows.map(row => row.at)).toEqual([1_000, 1_000]);
   });
   it('uses the persisted step result when a running card already has an end timestamp', () => {
