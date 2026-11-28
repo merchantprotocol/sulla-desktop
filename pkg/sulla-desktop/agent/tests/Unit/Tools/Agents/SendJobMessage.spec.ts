@@ -10,6 +10,7 @@ const runtime = vi.hoisted(() => ({
   queueMessage: vi.fn(async(_target: any, _message: string, messageKind = 'orchestrator') => ({ id: 'queued-message', messageKind })),
   markMessagesDelivered: vi.fn(async() => undefined),
   wakeParkedAgent: vi.fn(async() => true),
+  steerBusyMessage: vi.fn(() => false),
   cancel: vi.fn(async() => undefined),
   graph: { state: { messages: [], metadata: {} } },
   job: { visibility: 'hidden', parentChannel: 'sulla-desktop', tasks: [{ agentId: 'manager' }] },
@@ -24,7 +25,10 @@ vi.mock('../../../../app/Providers/AgentJobServiceProvider', () => ({ agentJobPr
 vi.mock('../../../../tools/agents/jobRegistry', () => ({ getJob: vi.fn(async() => runtime.job) }));
 vi.mock('../../../../services/GraphRegistry', () => ({ GraphRegistry: { get: vi.fn(() => runtime.graph) } }));
 vi.mock('../../../../services/AgentWaitServices', () => ({ agentWaitProvider: { cancel: runtime.cancel } }));
-vi.mock('../../../../services/BackendGraphWebSocketService', () => ({ getBackendGraphWebSocketService: () => ({ wakeParkedAgent: runtime.wakeParkedAgent }) }));
+vi.mock('../../../../services/BackendGraphWebSocketService', () => ({ getBackendGraphWebSocketService: () => ({
+  wakeParkedAgent: runtime.wakeParkedAgent,
+  steerOrchestratorMessageIfBusy: runtime.steerBusyMessage,
+}) }));
 vi.mock('../../../../utils/steerChannel', () => ({ injectSteer: vi.fn() }));
 vi.mock('../../../../tools/base', () => ({ BaseTool: class {} }));
 vi.mock('../../../../app/Services/PendingReturnedTaskMessage', () => ({ PendingReturnedTaskMessage: class {} }));
@@ -36,7 +40,9 @@ describe('sendJobMessage', () => {
   beforeEach(() => {
     runtime.targetsForJob.mockResolvedValue([{ jobId: 'parent-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'parked', threadId: 'parent-thread' }]);
     runtime.queueMessage.mockClear();
+    runtime.markMessagesDelivered.mockClear();
     runtime.wakeParkedAgent.mockReset().mockResolvedValue(true);
+    runtime.steerBusyMessage.mockReset().mockReturnValue(false);
     runtime.cancel.mockClear();
     runtime.graph = { state: { messages: [], metadata: {} } };
     vi.mocked(injectSteer).mockClear();
@@ -78,5 +84,20 @@ describe('sendJobMessage', () => {
       content: `[Message from orchestrator]\n${ message }`,
       metadata: expect.objectContaining({ jobMessageKind: 'orchestrator' }),
     }));
+  });
+
+  it('routes a busy parent through provider-boundary acknowledgement instead of marking the queued row delivered', async() => {
+    // risk: message loss or duplicate replay if an active turn ends before its provider consumes a steer.
+    runtime.targetsForJob.mockResolvedValue([{ jobId: 'parent-job', taskIndex: 0, jobStatus: 'running', taskStatus: 'running', threadId: 'parent-thread' }]);
+    runtime.steerBusyMessage.mockReturnValue(true);
+
+    const response = await sendJobMessage({ jobId: 'parent-job', taskIndex: 0, message: 'manager update' });
+
+    expect(runtime.steerBusyMessage).toHaveBeenCalledWith('sulla-desktop', 'parent-thread', 'manager update', expect.objectContaining({
+      jobMessageId: 'queued-message', jobMessageThreadId: 'parent-thread', jobMessageKind: 'orchestrator',
+    }));
+    expect(injectSteer).not.toHaveBeenCalled();
+    expect(runtime.markMessagesDelivered).not.toHaveBeenCalled();
+    expect(JSON.parse(response.responseString)).toMatchObject({ deliveredLive: 1, queuedForNextBoundary: 0 });
   });
 });
