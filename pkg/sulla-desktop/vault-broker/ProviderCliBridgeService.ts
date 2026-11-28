@@ -364,6 +364,9 @@ export class ProviderCliBridgeService {
         if (!response.headersSent && !response.destroyed) deny(403, 'provider_bridge_revoked', { reason }, 'provider_bridge_cancelled');
         else {
           status = 499;
+          const safeReason = ProviderCliBridgeFailurePolicy.safeToken(reason);
+          const safeStage = ProviderCliBridgeFailurePolicy.safeToken(stage);
+          failureNote += ` failure=provider_bridge_cancelled${ safeReason ? ` reason=${ safeReason }` : '' } stage=${ safeStage ?? 'bridge' }`;
           // The streamed reply can never finish; end the connection so the CLI
           // sees the cut instead of waiting on an open socket. request.destroy()
           // alone leaves the socket up once the request body was fully read.
