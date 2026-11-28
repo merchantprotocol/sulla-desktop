@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ ipcRenderer: { on: vi.fn(), removeListener: vi.fn(), invoke: vi.fn() }, default: {} }));
